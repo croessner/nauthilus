@@ -579,6 +579,33 @@ func TestMFASelectTemplateUsesLocalizedChallengeEndpoints(t *testing.T) {
 	assert.NotContains(t, output, `href="/login/recovery"`)
 }
 
+func TestMFASelectTemplatePreservesRecommendedChallengeTicket(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		endpoint string
+	}{
+		{name: "TOTP", method: "totp", endpoint: "/login/totp/de?flow=flow-ticket"},
+		{name: "WebAuthn", method: "webauthn", endpoint: "/login/webauthn/de?flow=flow-ticket"},
+		{name: "recovery", method: "recovery", endpoint: "/login/recovery/de?flow=flow-ticket"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output := renderMFASelectTemplate(t, map[string]any{
+				"RecommendedMethod":     test.method,
+				"HasOtherMethods":       true,
+				"TOTPLoginEndpoint":     test.endpoint,
+				"WebAuthnLoginEndpoint": test.endpoint,
+				"RecoveryLoginEndpoint": test.endpoint,
+			})
+
+			assert.Contains(t, output, `href="`+test.endpoint+`"`)
+			assert.NotContains(t, output, `action="`+test.endpoint+`"`)
+		})
+	}
+}
+
 func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
 	script := loadIDPUIScript(t)
 

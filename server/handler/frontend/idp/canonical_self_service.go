@@ -74,21 +74,10 @@ func (h *FrontendHandler) authorizeCanonicalSelfServiceMutation(
 		return true
 	}
 
-	handle, err := sessionstate.NewRandomHandleGenerator(nil).NewHandle()
+	handle, err := beginCanonicalSelfServiceStepUp(
+		ctx, session, target.action, supportedMethods, credentialID, deviceName,
+	)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-
-		return false
-	}
-
-	record := &sessionstate.StepUpRecord{
-		Record: sessionstate.Record{Handle: handle}, Session: session.Handle,
-		SelfServiceOperation: target.action, RequestedLevel: 1,
-		SelfServiceCredentialID: credentialID, SelfServiceDeviceName: deviceName,
-		SupportedMethods: append([]string(nil), supportedMethods...), Scope: canonicalSelfServiceAssuranceScope,
-	}
-	if err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalStepUpTTL).
-		BeginStepUp(ctx.Request.Context(), record); err != nil {
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return false
@@ -100,6 +89,32 @@ func (h *FrontendHandler) authorizeCanonicalSelfServiceMutation(
 	)
 
 	return false
+}
+
+// beginCanonicalSelfServiceStepUp stores one operation-bound assurance challenge.
+func beginCanonicalSelfServiceStepUp(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	operation string,
+	supportedMethods []string,
+	credentialID string,
+	deviceName string,
+) (sessionstate.Handle, error) {
+	handle, err := sessionstate.NewRandomHandleGenerator(nil).NewHandle()
+	if err != nil {
+		return "", err
+	}
+
+	record := &sessionstate.StepUpRecord{
+		Record: sessionstate.Record{Handle: handle}, Session: session.Handle,
+		SelfServiceOperation: operation, RequestedLevel: 1,
+		SelfServiceCredentialID: credentialID, SelfServiceDeviceName: deviceName,
+		SupportedMethods: append([]string(nil), supportedMethods...), Scope: canonicalSelfServiceAssuranceScope,
+	}
+	err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalStepUpTTL).
+		BeginStepUp(ctx.Request.Context(), record)
+
+	return handle, err
 }
 
 // authorizeCanonicalSelfServiceCaller resolves factor choices only from the canonical identity and backend capability.

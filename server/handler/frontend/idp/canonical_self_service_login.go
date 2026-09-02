@@ -29,7 +29,11 @@ func (h *FrontendHandler) CanonicalSelfServiceLoginMiddleware() gin.HandlerFunc 
 			return
 		}
 
-		if _, authenticated := session.Identity(); authenticated {
+		if identity, authenticated := session.Identity(); authenticated {
+			if h.requireCanonicalSelfServiceAssurance(ctx, session, identity) {
+				return
+			}
+
 			ctx.Set(canonicalAuthenticatedViewContextKey, true)
 			ctx.Next()
 
@@ -46,6 +50,48 @@ func (h *FrontendHandler) CanonicalSelfServiceLoginMiddleware() gin.HandlerFunc 
 		ctx.Redirect(http.StatusFound, target)
 		ctx.Abort()
 	}
+}
+
+// requireCanonicalSelfServiceAssurance starts a portal-entry challenge when an enrolled factor exists.
+func (h *FrontendHandler) requireCanonicalSelfServiceAssurance(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	identity cookie.SessionIdentity,
+) bool {
+	if canonicalSessionHasFreshSelfServiceAssurance(session) {
+		return false
+	}
+
+	resolver := h.canonicalMFAAvailabilityResolver
+	if resolver == nil {
+		resolver = h.resolveCanonicalMFAAvailability
+	}
+
+	availability, err := resolver(ctx, session, identity, nil, nil)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return true
+	}
+
+	supportedMethods := canonicalSelfServiceSupportedMethods(availability)
+	if len(supportedMethods) == 0 {
+		return false
+	}
+
+	handle, err := beginCanonicalSelfServiceStepUp(
+		ctx, session, mfaSelfServiceActionPortalEntry, supportedMethods, "", "",
+	)
+	if err != nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+
+		return true
+	}
+
+	ctx.Redirect(http.StatusFound, flowdomain.AppendTicket(h.getMFASelectPath(ctx), string(handle)))
+	ctx.Abort()
+
+	return true
 }
 
 // startOrResumeCanonicalSelfServiceLogin reuses one matching live flow or creates a new isolated flow.

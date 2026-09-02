@@ -183,6 +183,7 @@ func (h *FrontendHandler) canonicalMissingRequiredMFA(
 }
 
 const (
+	mfaSelfServiceActionPortalEntry        = "portal_entry"
 	mfaSelfServiceActionRecoveryGenerate   = "recovery_generate"
 	mfaSelfServiceActionTOTPDelete         = "totp_delete"
 	mfaSelfServiceActionWebAuthnDelete     = "webauthn_delete"
@@ -279,7 +280,8 @@ func isWebAuthnDeviceNamePath(path string) bool {
 // each pending self-service action.
 func mfaSelfServiceStepUpReturnForAction(action string) (string, bool) {
 	switch action {
-	case mfaSelfServiceActionRecoveryGenerate, mfaSelfServiceActionTOTPDelete, mfaSelfServiceActionWebAuthnDelete:
+	case mfaSelfServiceActionPortalEntry, mfaSelfServiceActionRecoveryGenerate, mfaSelfServiceActionTOTPDelete,
+		mfaSelfServiceActionWebAuthnDelete:
 		return definitions.MFARoot + "/register/home", true
 	case mfaSelfServiceActionWebAuthnDeviceDrop, mfaSelfServiceActionWebAuthnDeviceName:
 		return definitions.MFARoot + "/webauthn/devices", true

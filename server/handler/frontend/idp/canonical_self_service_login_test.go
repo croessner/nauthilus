@@ -27,12 +27,37 @@ import (
 func TestCanonicalSelfServiceMissingSessionCompletesPasswordLoginAndOpensPortal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	journey := newCanonicalSelfServiceLoginJourney(t)
+	journey := newCanonicalSelfServiceLoginJourney(t, false)
 	entryCookie, loginTarget := journey.enter(t)
 	rotatedCookie, portalTarget := journey.authenticate(t, entryCookie, loginTarget)
 
 	assertCanonicalSelfServiceLoginState(t, journey.runtime, entryCookie, rotatedCookie)
 	journey.assertPortal(t, rotatedCookie, portalTarget)
+}
+
+func TestCanonicalSelfServiceExistingFactorRequiresFreshAssurance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	journey := newCanonicalSelfServiceLoginJourney(t, true)
+	entryCookie, loginTarget := journey.enter(t)
+	rotatedCookie, portalTarget := journey.authenticate(t, entryCookie, loginTarget)
+
+	portalRequest := httptest.NewRequest(http.MethodGet, portalTarget, nil)
+	portalRequest.AddCookie(rotatedCookie)
+
+	portal := httptest.NewRecorder()
+	journey.router.ServeHTTP(portal, portalRequest)
+
+	location, err := url.Parse(portal.Header().Get("Location"))
+	if portal.Code != http.StatusFound || err != nil || location.Path != "/login/mfa/de" ||
+		location.Query().Get(flowdomain.FlowTicketParameter) == "" {
+		t.Fatalf(
+			"self-service portal without assurance = status %d location %q error %v",
+			portal.Code,
+			portal.Header().Get("Location"),
+			err,
+		)
+	}
 }
 
 type canonicalSelfServiceLoginJourney struct {
@@ -41,7 +66,7 @@ type canonicalSelfServiceLoginJourney struct {
 }
 
 // newCanonicalSelfServiceLoginJourney composes the real handlers with bounded test doubles at backend boundaries.
-func newCanonicalSelfServiceLoginJourney(t *testing.T) *canonicalSelfServiceLoginJourney {
+func newCanonicalSelfServiceLoginJourney(t *testing.T, haveTOTP bool) *canonicalSelfServiceLoginJourney {
 	t.Helper()
 
 	runtime, _, _ := seedCanonicalIDPFlow(t, nil)
@@ -55,7 +80,8 @@ func newCanonicalSelfServiceLoginJourney(t *testing.T) *canonicalSelfServiceLogi
 	}
 
 	handler.canonicalPasswordAuthenticator = canonicalSelfServicePasswordAuthenticator(t)
-	handler.canonicalSelfServiceBackendResolver = newCanonicalSelfServiceBackendResolver(t)
+	handler.canonicalSelfServiceBackendResolver = newCanonicalSelfServiceBackendResolver(t, haveTOTP)
+	handler.canonicalMFAAvailabilityResolver = newCanonicalSelfServiceAvailabilityResolver(t, haveTOTP)
 
 	return &canonicalSelfServiceLoginJourney{
 		runtime: runtime,
@@ -202,7 +228,7 @@ func canonicalSelfServicePasswordAuthenticator(t *testing.T) canonicalPasswordAu
 }
 
 // newCanonicalSelfServiceBackendResolver exposes the authenticated identity to the protected portal view.
-func newCanonicalSelfServiceBackendResolver(t *testing.T) canonicalSelfServiceBackendResolver {
+func newCanonicalSelfServiceBackendResolver(t *testing.T, haveTOTP bool) canonicalSelfServiceBackendResolver {
 	t.Helper()
 
 	return func(
@@ -216,7 +242,30 @@ func newCanonicalSelfServiceBackendResolver(t *testing.T) canonicalSelfServiceBa
 
 		return &UserBackendData{
 			Username: "alice", UniqueUserID: "identity-42", DisplayName: "Canonical Alice",
+			HaveTOTP: haveTOTP,
 		}, uint8(definitions.BackendRemote), nil
+	}
+}
+
+// newCanonicalSelfServiceAvailabilityResolver exposes the factor inventory at the portal boundary.
+func newCanonicalSelfServiceAvailabilityResolver(
+	t *testing.T,
+	haveTOTP bool,
+) canonicalMFAAvailabilityResolver {
+	t.Helper()
+
+	return func(
+		_ *gin.Context,
+		_ *cookie.CanonicalSession,
+		identity cookie.SessionIdentity,
+		_ *flowdomain.State,
+		_ []string,
+	) (mfaAvailability, error) {
+		if identity.Account != "alice" || identity.Reference != "identity-42" {
+			t.Fatalf("self-service assurance identity = %#v", identity)
+		}
+
+		return mfaAvailability{haveTOTP: haveTOTP}, nil
 	}
 }
 
