@@ -19,6 +19,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"regexp"
 	"testing"
 	"time"
 
@@ -47,6 +48,7 @@ func TestAccessToken_OOP(t *testing.T) {
 		ClientID:          "client1",
 		UserID:            "user1",
 		Scopes:            []string{"openid", "profile"},
+		DynamicUserEpoch:  "0",
 		AuthTime:          time.Now(),
 		AccessTokenClaims: map[string]any{"name": "Test User"},
 		IDTokenClaims:     map[string]any{"preferred_username": "testuser", "email": "test@example.com"},
@@ -67,10 +69,18 @@ func TestAccessToken_OOP(t *testing.T) {
 	})
 
 	t.Run("Opaque Access Token", func(t *testing.T) {
-		mock.Regexp().ExpectSet("test:oidc:access_token:.*", ".*", time.Hour).SetVal("OK")
-		mock.Regexp().ExpectSAdd("test:oidc:user_access_tokens:user1", ".*").SetVal(1)
-		mock.ExpectExpireNX("test:oidc:user_access_tokens:user1", time.Hour).SetVal(true)
-		mock.ExpectExpireGT("test:oidc:user_access_tokens:user1", time.Hour).SetVal(false)
+		mock.Regexp().ExpectEval(
+			regexp.QuoteMeta(dynamicTrackedStoreScript),
+			[]string{
+				regexp.QuoteMeta("test:oidc:dcr:{dynamic}:access_token:") + ".*",
+				regexp.QuoteMeta("test:oidc:dcr:{dynamic}:user_access_tokens:user1"),
+				regexp.QuoteMeta("test:oidc:dcr:{dynamic}:dynamic_user_epoch:user1"),
+			},
+			".*",
+			int64(time.Hour.Milliseconds()),
+			".*",
+			"0",
+		).SetVal(int64(1))
 
 		tokenGen := NewDefaultTokenGenerator()
 		token := NewOpaqueAccessToken(session, storage, tokenGen, time.Hour)
@@ -86,18 +96,20 @@ func TestAccessToken_OOP(t *testing.T) {
 
 func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	session := &OIDCSession{
-		ClientID: "client1",
-		UserID:   "user1",
-		Scopes:   []string{"openid", "profile"},
+		ClientID:         "client1",
+		UserID:           "user1",
+		Scopes:           []string{"openid", "profile"},
+		DynamicUserEpoch: "7",
 		AccessTokenClaims: map[string]any{
-			"active":        false,
-			"aud":           "evil-client",
-			"custom_access": "allowed",
-			"exp":           int64(1),
-			"iat":           int64(1),
-			"iss":           "https://evil.example.test",
-			"scope":         "admin",
-			"sub":           "attacker",
+			"active":                        false,
+			"aud":                           "evil-client",
+			"custom_access":                 "allowed",
+			"exp":                           int64(1),
+			"iat":                           int64(1),
+			"iss":                           "https://evil.example.test",
+			definitions.ClaimUserTokenEpoch: "999",
+			"scope":                         "admin",
+			"sub":                           "attacker",
 		},
 	}
 	signer := &captureAccessTokenSigner{}
@@ -115,6 +127,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.NotEqual(t, int64(1), signer.claims["exp"])
 	assert.NotEqual(t, int64(1), signer.claims["iat"])
 	assert.Equal(t, definitions.TokenTypeAccessToken, signer.claims[definitions.ClaimTokenType])
+	assert.Equal(t, "7", signer.claims[definitions.ClaimUserTokenEpoch])
 	assert.Equal(t, "allowed", signer.claims["custom_access"])
 
 	opaque := NewOpaqueAccessToken(session, nil, nil, time.Hour)
@@ -129,6 +142,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.Nil(t, claims["exp"])
 	assert.Nil(t, claims["iat"])
 	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
+	assert.Nil(t, claims[definitions.ClaimUserTokenEpoch])
 	assert.Equal(t, "allowed", claims["custom_access"])
 }
 
@@ -204,17 +218,19 @@ func TestOpaqueAccessToken_Validate(t *testing.T) {
 		ClientID:          "client1",
 		UserID:            "user1",
 		Scopes:            []string{"openid", "profile"},
+		DynamicUserEpoch:  "0",
 		AuthTime:          time.Now(),
 		AccessTokenClaims: map[string]any{"name": "Test User"},
 		IDTokenClaims:     map[string]any{"preferred_username": "testuser", "email": "test@example.com"},
 	}
 
 	tokenGen := NewDefaultTokenGenerator()
-	tokenKey := "test:oidc:access_token:na_at_testtoken"
+	tokenKey := storage.dynamicRefreshKey(oidcAccessTokenKeyKind, storage.accessTokenReference("na_at_testtoken"))
 	sessionData, _ := json.Marshal(session)
 
 	t.Run("Validate returns AccessTokenClaims", func(t *testing.T) {
 		mock.ExpectGet(tokenKey).SetVal(string(sessionData))
+		mock.ExpectGet("test:oidc:dcr:{dynamic}:dynamic_user_epoch:user1").RedisNil()
 
 		token := NewOpaqueAccessToken(session, storage, tokenGen, time.Hour)
 		claims, err := token.Validate(ctx, "na_at_testtoken")
@@ -233,6 +249,7 @@ func TestOpaqueAccessToken_Validate(t *testing.T) {
 
 	t.Run("ValidateForUserInfo returns IDTokenClaims", func(t *testing.T) {
 		mock.ExpectGet(tokenKey).SetVal(string(sessionData))
+		mock.ExpectGet("test:oidc:dcr:{dynamic}:dynamic_user_epoch:user1").RedisNil()
 
 		token := NewOpaqueAccessToken(session, storage, tokenGen, time.Hour)
 		claims, err := token.ValidateForUserInfo(ctx, "na_at_testtoken")

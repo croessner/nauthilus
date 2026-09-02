@@ -49,13 +49,14 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 	now := time.Now()
 
 	accessClaims := jwt.MapClaims{
-		oidcClaimIssuer:            t.issuer,
-		oidcClaimSubject:           t.session.UserID,
-		oidcClaimAudience:          accessTokenAudience(t.session),
-		oidcClaimExpiresAt:         now.Add(t.lifetime).Unix(),
-		oidcClaimIssuedAt:          now.Unix(),
-		oidcClaimScope:             strings.Join(t.session.Scopes, " "),
-		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+		oidcClaimIssuer:                 t.issuer,
+		oidcClaimSubject:                t.session.UserID,
+		oidcClaimAudience:               accessTokenAudience(t.session),
+		oidcClaimExpiresAt:              now.Add(t.lifetime).Unix(),
+		oidcClaimIssuedAt:               now.Unix(),
+		oidcClaimScope:                  strings.Join(t.session.Scopes, " "),
+		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
+		definitions.ClaimUserTokenEpoch: t.session.DynamicUserEpoch,
 	}
 
 	copyCustomAccessTokenClaims(accessClaims, t.session.AccessTokenClaims)

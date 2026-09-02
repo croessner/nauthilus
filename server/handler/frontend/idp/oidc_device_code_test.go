@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -103,7 +105,8 @@ func newTestDeviceCodeOIDCHandler(t *testing.T) (*OIDCHandler, config.OIDCClient
 		clients:    []config.OIDCClient{client},
 	}
 
-	db, _ := redismock.NewClientMock()
+	server := miniredis.RunT(t)
+	db := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	rClient := rediscli.NewTestClient(db)
 
 	d := &deps.Deps{

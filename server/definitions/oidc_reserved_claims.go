@@ -24,6 +24,9 @@ const (
 	// ClaimTokenType identifies the issuer-owned access-token purpose claim.
 	ClaimTokenType = "token_type"
 
+	// ClaimUserTokenEpoch binds an access token to the issuer's user-wide revocation state.
+	ClaimUserTokenEpoch = "nauthilus_user_epoch"
+
 	// TokenTypeAccessToken marks bearer tokens that may authorize protected APIs.
 	TokenTypeAccessToken = "access_token"
 
@@ -57,6 +60,7 @@ var reservedAccessTokenClaims = map[string]struct{}{
 	"scope":                {},
 	reservedClaimSubject:   {},
 	ClaimTokenType:         {},
+	ClaimUserTokenEpoch:    {},
 }
 
 var reservedIDTokenClaims = map[string]struct{}{

@@ -665,6 +665,12 @@ To protect sensitive data in Redis, Nauthilus can encrypt all session-related da
 - **Signing Key**: All OIDC signing keys (static and dynamic) can be published via the JWKS endpoint. Dynamically
   rotated keys are stored encrypted in Redis. Static keys from the configuration are not stored in Redis.
 
+### 10.2 Token Storage Cutover
+
+Opaque access tokens and refresh tokens use keyed references in an epoch-bound Redis namespace. Nauthilus does not
+read the retired raw-token key schema. Upgrading from a version that issued tokens in that schema invalidates those
+active tokens and requires the affected users to authenticate again.
+
 ---
 
 ## 11. Troubleshooting

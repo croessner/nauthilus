@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -446,18 +447,18 @@ func (c *redisActivityCounter) Count() int64 {
 	return c.commands.Load()
 }
 
-type redisSetValueCapture struct {
+type redisSessionValueCapture struct {
 	value string
 	mu    sync.Mutex
 }
 
-// Match validates a Redis expectation while capturing its serialized SET value.
-func (c *redisSetValueCapture) Match(expected, actual []interface{}) error {
+// Match validates a Redis expectation while capturing its serialized session value.
+func (c *redisSessionValueCapture) Match(expected, actual []interface{}) error {
 	for index := range expected {
-		if index == 2 {
+		if expected[index] == "captured-session" {
 			value, ok := actual[index].(string)
 			if !ok {
-				return fmt.Errorf("captured Redis SET value has type %T", actual[index])
+				return fmt.Errorf("captured Redis session value has type %T", actual[index])
 			}
 
 			c.mu.Lock()
@@ -476,7 +477,7 @@ func (c *redisSetValueCapture) Match(expected, actual []interface{}) error {
 }
 
 // Value returns the last serialized session written to the selected key.
-func (c *redisSetValueCapture) Value() string {
+func (c *redisSessionValueCapture) Value() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -495,23 +496,45 @@ func (m *mockIdpConfig) GetServer() *config.ServerSection {
 }
 
 func testAccessTokenKey(token string) string {
-	return testRedisPrefix + "oidc:access_token:" + token
+	return testRedisPrefix + "oidc:dcr:{dynamic}:access_token:" + testAccessTokenReference(token)
 }
 
 func testDeniedAccessTokenKey(token string) string {
 	return testRedisPrefix + "oidc:denied_access_token:" + token
 }
 
-func testRefreshTokenKey(token string) string {
-	return testRedisPrefix + "oidc:refresh_token:" + token
-}
-
 func testUserAccessTokensKey(userID string) string {
-	return testRedisPrefix + "oidc:user_access_tokens:" + userID
+	return testRedisPrefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
 }
 
-func testUserRefreshTokensKey(userID string) string {
-	return testRedisPrefix + "oidc:user_refresh_tokens:" + userID
+// testAccessTokenReference returns the bounded Redis reference for an opaque bearer token.
+func testAccessTokenReference(token string) string {
+	domain := "oidc-static-access"
+	if strings.HasPrefix(token, definitions.OIDCTokenPrefixAccessToken+dcr.ClientIDPrefix) {
+		domain = "oidc-dynamic-access"
+	}
+
+	return rediscli.NewSecurityManager(secret.Value{}).IndexDigest(domain, token)
+}
+
+// testStaticRefreshTokenReference returns the bounded Redis reference for a static bearer token.
+func testStaticRefreshTokenReference(token string) string {
+	return rediscli.NewSecurityManager(secret.Value{}).IndexDigest("oidc-static-refresh", token)
+}
+
+// testStaticRefreshTokenKey returns the cluster-safe storage key for a static refresh token.
+func testStaticRefreshTokenKey(token string) string {
+	return testRedisPrefix + "oidc:dcr:{dynamic}:static_refresh_token:" + testStaticRefreshTokenReference(token)
+}
+
+// testStaticUserRefreshTokensKey returns the cluster-safe static refresh-token index key.
+func testStaticUserRefreshTokensKey(userID string) string {
+	return testRedisPrefix + "oidc:dcr:{dynamic}:static_user_refresh_tokens:" + userID
+}
+
+// testUserTokenEpochKey returns the authoritative user-wide token epoch key.
+func testUserTokenEpochKey(userID string) string {
+	return testRedisPrefix + "oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID
 }
 
 func testOIDCKeysHashKey() string {
@@ -595,13 +618,14 @@ func signedTestAccessToken(t *testing.T, kid string, pemData string) string {
 	t.Helper()
 
 	return signedTestTokenWithClaims(t, kid, pemData, jwt.MapClaims{
-		claimIssuer:                testIssuer,
-		claimSubject:               testUserID,
-		claimAudience:              testClientID,
-		claimIssuedAt:              time.Now().Add(-time.Minute).Unix(),
-		claimExpires:               time.Now().Add(time.Hour).Unix(),
-		claimScope:                 testScopeClaim,
-		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+		claimIssuer:                     testIssuer,
+		claimSubject:                    testUserID,
+		claimAudience:                   testClientID,
+		claimIssuedAt:                   time.Now().Add(-time.Minute).Unix(),
+		claimExpires:                    time.Now().Add(time.Hour).Unix(),
+		claimScope:                      testScopeClaim,
+		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
+		definitions.ClaimUserTokenEpoch: "0",
 	})
 }
 
@@ -789,6 +813,7 @@ func assertIssueAndValidateToken(t *testing.T, fixture idpTokenTestFixture) {
 
 	session := testOIDCSession([]string{"openid", "profile"}, fixture.fixedTime)
 	session.Nonce = "test-nonce"
+	expectUserTokenEpoch(fixture.mock, session.UserID)
 
 	idToken, accessToken, refreshToken, expiresIn, err := fixture.idp.IssueTokens(fixture.ctx, session)
 	assert.NoError(t, err)
@@ -810,6 +835,7 @@ func assertIssueWithoutOpenIDScope(t *testing.T, fixture idpTokenTestFixture) {
 
 	session := testOIDCSession([]string{"profile"}, fixture.fixedTime)
 	session.Nonce = "test-nonce"
+	expectUserTokenEpoch(fixture.mock, session.UserID)
 
 	idToken, accessToken, refreshToken, expiresIn, err := fixture.idp.IssueTokens(fixture.ctx, session)
 	assert.NoError(t, err)
@@ -824,6 +850,7 @@ func assertIssueWithOfflineAccess(t *testing.T, fixture idpTokenTestFixture) {
 	t.Helper()
 
 	session := testOIDCSession([]string{"openid", "offline_access"}, fixture.fixedTime)
+	expectUserTokenEpoch(fixture.mock, session.UserID)
 	expectFixedRefreshTokenStore(fixture.mock)
 
 	idToken, accessToken, refreshToken, _, err := fixture.idp.IssueTokens(fixture.ctx, session)
@@ -904,52 +931,75 @@ func testOIDCSession(scopes []string, authTime time.Time) *OIDCSession {
 func testRefreshOIDCSession(accessToken string, authTime time.Time) *OIDCSession {
 	session := testOIDCSession([]string{"openid", "offline_access"}, authTime)
 	session.AccessToken = accessToken
+	session.DynamicUserEpoch = "0"
 
 	return session
 }
 
 // expectFixedRefreshTokenStore expects persistence of the deterministic mock refresh token.
 func expectFixedRefreshTokenStore(mock redismock.ClientMock) {
-	mock.Regexp().ExpectSet(testRefreshTokenKey("na_rt_fixed-token"), ".*", 7*24*time.Hour).SetVal("OK")
-	mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), "na_rt_fixed-token").SetVal(1)
-	expectUserTokenIndexTTL(mock, testUserRefreshTokensKey(testUserID), 7*24*time.Hour)
+	expectStaticRefreshTokenStore(mock, "na_rt_fixed-token")
+}
+
+// expectUserTokenEpoch expects an absent epoch to resolve to the baseline value.
+func expectUserTokenEpoch(mock redismock.ClientMock, userID string) {
+	mock.ExpectGet(testUserTokenEpochKey(userID)).RedisNil()
+}
+
+// expectStaticRefreshTokenStore expects the cluster-safe epoch-guarded storage script.
+func expectStaticRefreshTokenStore(mock redismock.ClientMock, refreshToken string) {
+	reference := testStaticRefreshTokenReference(refreshToken)
+	keys := []string{
+		regexp.QuoteMeta(testStaticRefreshTokenKey(refreshToken)),
+		regexp.QuoteMeta(testStaticUserRefreshTokensKey(testUserID)),
+		regexp.QuoteMeta(testUserTokenEpochKey(testUserID)),
+	}
+	mock.Regexp().ExpectEval(
+		regexp.QuoteMeta(dynamicTrackedStoreScript),
+		keys,
+		".*",
+		int64((7 * 24 * time.Hour).Milliseconds()),
+		regexp.QuoteMeta(reference),
+		"0",
+	).SetVal(int64(1))
+}
+
+// expectStaticRefreshTokenConsume expects an authoritative load followed by one atomic claim.
+func expectStaticRefreshTokenConsume(mock redismock.ClientMock, refreshToken string, sessionData string) {
+	reference := testStaticRefreshTokenReference(refreshToken)
+	keys := []string{
+		testStaticRefreshTokenKey(refreshToken),
+		testStaticUserRefreshTokensKey(testUserID),
+		testUserTokenEpochKey(testUserID),
+	}
+	mock.ExpectGet(testStaticRefreshTokenKey(refreshToken)).SetVal(sessionData)
+	expectUserTokenEpoch(mock, testUserID)
+	mock.ExpectEval(staticRefreshConsumeScript, keys, reference, "0", sessionData).SetVal([]any{int64(1), sessionData})
 }
 
 // expectJWTRefreshTokenExchange expects JWT access-token denial and refresh-token rotation.
 func expectJWTRefreshTokenExchange(mock redismock.ClientMock, refreshToken string, accessToken string, sessionData string) {
-	mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(sessionData)
+	expectStaticRefreshTokenConsume(mock, refreshToken, sessionData)
 	mock.ExpectSet(testDeniedAccessTokenKey(accessToken), "1", 2*time.Hour).SetVal("OK")
-	mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(sessionData)
-	mock.ExpectSRem(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(1)
-	mock.ExpectDel(testRefreshTokenKey(refreshToken)).SetVal(1)
 	expectFixedRefreshTokenStore(mock)
 }
 
 // expectOpaqueRefreshTokenExchange expects opaque access-token deletion and refresh-token rotation.
 func expectOpaqueRefreshTokenExchange(mock redismock.ClientMock, refreshToken string, accessToken string, sessionData string) {
-	mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(sessionData)
+	expectStaticRefreshTokenConsume(mock, refreshToken, sessionData)
 	mock.ExpectGet(testAccessTokenKey(accessToken)).SetVal(sessionData)
-	mock.ExpectSRem(testUserAccessTokensKey(testUserID), accessToken).SetVal(1)
+	mock.ExpectTxPipeline()
 	mock.ExpectDel(testAccessTokenKey(accessToken)).SetVal(1)
-	mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(sessionData)
-	mock.ExpectSRem(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(1)
-	mock.ExpectDel(testRefreshTokenKey(refreshToken)).SetVal(1)
+	mock.ExpectSRem(testUserAccessTokensKey(testUserID), testAccessTokenReference(accessToken)).SetVal(1)
+	mock.ExpectTxPipelineExec()
 	expectFixedRefreshTokenStore(mock)
 }
 
 // expectStableRefreshTokenExchange expects refresh-token reuse without rotation.
 func expectStableRefreshTokenExchange(mock redismock.ClientMock, refreshToken string, accessToken string, sessionData string) {
-	mock.ExpectGet(testRefreshTokenKey(refreshToken)).SetVal(sessionData)
+	expectStaticRefreshTokenConsume(mock, refreshToken, sessionData)
 	mock.ExpectSet(testDeniedAccessTokenKey(accessToken), "1", 2*time.Hour).SetVal("OK")
-	mock.Regexp().ExpectSet(testRefreshTokenKey(refreshToken), ".*", 7*24*time.Hour).SetVal("OK")
-	mock.ExpectSAdd(testUserRefreshTokensKey(testUserID), refreshToken).SetVal(0)
-	expectUserTokenIndexTTL(mock, testUserRefreshTokensKey(testUserID), 7*24*time.Hour)
-}
-
-// expectUserTokenIndexTTL expects monotonic TTL updates for user token indexes.
-func expectUserTokenIndexTTL(mock redismock.ClientMock, userKey string, ttl time.Duration) {
-	mock.ExpectExpireNX(userKey, ttl).SetVal(true)
-	mock.ExpectExpireGT(userKey, ttl).SetVal(false)
+	expectStaticRefreshTokenStore(mock, refreshToken)
 }
 
 // assertRefreshTokenExchange verifies the common rotated refresh-token exchange result.
@@ -957,7 +1007,10 @@ func assertRefreshTokenExchange(t *testing.T, fixture idpTokenTestFixture, sessi
 	t.Helper()
 
 	exchangedSession, idToken, accessToken, newRefreshToken, _, err := fixture.idp.ExchangeRefreshToken(fixture.ctx, refreshToken, testClientID)
-	assert.NoError(t, err)
+	if !assert.NoError(t, err) || !assert.NotNil(t, exchangedSession) {
+		return
+	}
+
 	assert.Equal(t, session.UserID, exchangedSession.UserID)
 	assert.NotEmpty(t, idToken)
 	assert.NotEmpty(t, accessToken)
@@ -1157,6 +1210,7 @@ func assertIssueWithImpliedOfflineAccess(t *testing.T, fixture idpTokenTestFixtu
 	assert.Equal(t, []string{"openid", "profile", "offline_access"}, filteredScopes)
 
 	session := testOIDCSession(filteredScopes, fixture.fixedTime)
+	expectUserTokenEpoch(fixture.mock, session.UserID)
 	expectFixedRefreshTokenStore(fixture.mock)
 
 	_, _, refreshToken, _, err := fixture.idp.IssueTokens(fixture.ctx, session)
@@ -1180,7 +1234,7 @@ func assertValidateTokenHeuristic(t *testing.T, fixture idpTokenTestFixture) {
 	assert.NoError(t, fixture.mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")
 }
 
-func TestValidateTokenOpaqueUsesSingleRedisLookup(t *testing.T) {
+func TestValidateTokenOpaqueUsesSingleSessionLookup(t *testing.T) {
 	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
 		Issuer: testIssuer,
 	})
@@ -1191,12 +1245,14 @@ func TestValidateTokenOpaqueUsesSingleRedisLookup(t *testing.T) {
 		UserID:            testUserID,
 		Scopes:            []string{"openid", "profile"},
 		AccessTokenClaims: map[string]any{"role": "reader"},
+		DynamicUserEpoch:  "0",
 	}
 
 	sessionData, err := json.Marshal(session)
 	assert.NoError(t, err)
 
 	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
+	expectUserTokenEpoch(mock, testUserID)
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.NoError(t, err)
@@ -1204,7 +1260,7 @@ func TestValidateTokenOpaqueUsesSingleRedisLookup(t *testing.T) {
 	assert.Equal(t, testClientID, claims[claimAudience])
 	assert.Equal(t, testScopeClaim, claims[claimScope])
 	assert.Equal(t, "reader", claims["role"])
-	assert.NoError(t, mock.ExpectationsWereMet(), "opaque token validation must use the session loaded by the first Redis lookup")
+	assert.NoError(t, mock.ExpectationsWereMet(), "opaque token validation must not reload the stored session")
 }
 
 func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T) {
@@ -1225,6 +1281,7 @@ func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T
 		Scopes:               []string{definitions.ScopeOpenID},
 		AccessTokenIssuedAt:  issuedAt,
 		AccessTokenExpiresAt: issuedAt.Add(5 * time.Minute),
+		DynamicUserEpoch:     "0",
 	}
 	sessionData, err := json.Marshal(session)
 	assert.NoError(t, err)
@@ -1251,6 +1308,7 @@ func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T
 	assert.NoError(t, err)
 
 	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID).SetVal(string(recordData))
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
@@ -1270,10 +1328,11 @@ func TestValidateTokenOpaqueFailsClosedWhenDynamicClientUnavailable(t *testing.T
 		},
 	})
 	tokenString := "na_at_dynamic-unavailable"
-	sessionData, err := json.Marshal(&OIDCSession{ClientID: clientID, UserID: testUserID, Scopes: []string{definitions.ScopeOpenID}})
+	sessionData, err := json.Marshal(&OIDCSession{ClientID: clientID, UserID: testUserID, Scopes: []string{definitions.ScopeOpenID}, DynamicUserEpoch: "0"})
 	assert.NoError(t, err)
 
 	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID).SetErr(errors.New("redis unavailable"))
 
 	_, err = idp.ValidateToken(t.Context(), tokenString)
@@ -1308,6 +1367,7 @@ func TestValidateTokenJWTResolvesRedisKeyByKID(t *testing.T) {
 	tokenString := signedTestAccessToken(t, kid, pemData)
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
@@ -1327,6 +1387,7 @@ func TestValidateTokenJWTRejectsDeniedTokenAfterSignatureValidation(t *testing.T
 	tokenString := signedTestAccessToken(t, kid, pemData)
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).SetVal("1")
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
@@ -1334,6 +1395,45 @@ func TestValidateTokenJWTRejectsDeniedTokenAfterSignatureValidation(t *testing.T
 	assert.Nil(t, claims)
 	assert.Contains(t, err.Error(), "revoked")
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTokenJWTRejectsDenylistBackendFailure(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "denylist-error-key"
+	pemData := generateTestKey()
+	tokenString := signedTestAccessToken(t, kid, pemData)
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
+	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).SetErr(errors.New("redis unavailable"))
+
+	claims, err := idp.ValidateToken(t.Context(), tokenString)
+	assert.Error(t, err)
+	assert.Nil(t, claims)
+	assert.Contains(t, err.Error(), "revocation")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestExchangeRefreshTokenRejectsDenylistWriteFailure(t *testing.T) {
+	fixture := newIDPTokenTestFixture(t)
+	session := testRefreshOIDCSession("header.payload.signature", fixture.fixedTime)
+	refreshToken := "denylist-write-failure"
+	sessionData, err := json.Marshal(session)
+	assert.NoError(t, err)
+	expectStaticRefreshTokenConsume(fixture.mock, refreshToken, string(sessionData))
+	fixture.mock.ExpectSet(testDeniedAccessTokenKey(session.AccessToken), "1", 2*time.Hour).SetErr(errors.New("redis unavailable"))
+
+	exchanged, _, accessToken, newRefreshToken, _, err := fixture.idp.ExchangeRefreshToken(fixture.ctx, refreshToken, testClientID)
+	assert.Error(t, err)
+	assert.Nil(t, exchanged)
+	assert.Empty(t, accessToken)
+	assert.Empty(t, newRefreshToken)
+	assert.Contains(t, err.Error(), "invalidate previous access token")
+	assert.NoError(t, fixture.mock.ExpectationsWereMet())
 }
 
 func TestIssueIDTokenReservedClaimsRemainCanonical(t *testing.T) {
@@ -1378,16 +1478,18 @@ func TestValidateTokenForUserInfoRequiresOpenIDScope(t *testing.T) {
 	kid := "userinfo-no-openid"
 	pemData := generateTestKey()
 	tokenString := signedTestTokenWithClaims(t, kid, pemData, jwt.MapClaims{
-		claimIssuer:                testIssuer,
-		claimSubject:               testUserID,
-		claimAudience:              testClientID,
-		claimIssuedAt:              time.Now().Add(-time.Minute).Unix(),
-		claimExpires:               time.Now().Add(time.Hour).Unix(),
-		claimScope:                 definitions.ScopeProfile,
-		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+		claimIssuer:                     testIssuer,
+		claimSubject:                    testUserID,
+		claimAudience:                   testClientID,
+		claimIssuedAt:                   time.Now().Add(-time.Minute).Unix(),
+		claimExpires:                    time.Now().Add(time.Hour).Unix(),
+		claimScope:                      definitions.ScopeProfile,
+		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
+		definitions.ClaimUserTokenEpoch: "0",
 	})
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
 
 	claims, err := idp.ValidateTokenForUserInfo(t.Context(), tokenString)
@@ -1407,6 +1509,7 @@ func TestValidateTokenForUserInfoAcceptsOpenIDScope(t *testing.T) {
 	tokenString := signedTestAccessToken(t, kid, pemData)
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
 
 	claims, err := idp.ValidateTokenForUserInfo(t.Context(), tokenString)
@@ -1435,6 +1538,7 @@ func TestValidateTokenEmitsDiagnosticChildSpans(t *testing.T) {
 	tokenString := signedTestAccessToken(t, kid, pemData)
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
 	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
 
 	_, err := idp.ValidateToken(t.Context(), tokenString)
@@ -1529,6 +1633,7 @@ func TestNauthilusIDP_ClientCredentialsResourceTokenParity(t *testing.T) {
 		for _, resource := range resources {
 			t.Run(tokenType+"_"+resource.name, func(t *testing.T) {
 				idpInst, mock, capture := newClientCredentialsTokenTypeTestIDP(t, tokenType)
+				expectUserTokenEpoch(mock, "cc-client")
 
 				if tokenType == accessTokenTypeOpaque {
 					expectOpaqueClientCredentialsTokenStore(mock, capture)
@@ -1556,6 +1661,7 @@ func TestNauthilusIDP_ClientCredentialsResourceTokenParity(t *testing.T) {
 
 func TestNauthilusIDP_ClientCredentialsScopesDetachedBeforeOpaquePersistence(t *testing.T) {
 	idpInst, mock, capture := newClientCredentialsTokenTypeTestIDP(t, accessTokenTypeOpaque)
+	expectUserTokenEpoch(mock, "cc-client")
 	expectOpaqueClientCredentialsTokenStore(mock, capture)
 
 	tokenGen := &blockingTokenGenerator{
@@ -1615,7 +1721,7 @@ func newClientCredentialsTestIDP() *NauthilusIDP {
 }
 
 // newClientCredentialsTokenTypeTestIDP builds an IDP with observable Redis persistence.
-func newClientCredentialsTokenTypeTestIDP(t *testing.T, tokenType string) (*NauthilusIDP, redismock.ClientMock, *redisSetValueCapture) {
+func newClientCredentialsTokenTypeTestIDP(t *testing.T, tokenType string) (*NauthilusIDP, redismock.ClientMock, *redisSessionValueCapture) {
 	t.Helper()
 
 	cfg := &mockIdpConfig{
@@ -1629,7 +1735,7 @@ func newClientCredentialsTokenTypeTestIDP(t *testing.T, tokenType string) (*Naut
 	cfg.oidc.Clients[0].AccessTokenType = tokenType
 
 	db, mock := redismock.NewClientMock()
-	capture := &redisSetValueCapture{}
+	capture := &redisSessionValueCapture{}
 
 	redisClient := rediscli.NewTestClient(db)
 	idpInst := NewNauthilusIDP(&deps.Deps{Cfg: cfg, Redis: redisClient})
@@ -1708,20 +1814,26 @@ func assertClientCredentialsTokenClaims(t *testing.T, idpInst *NauthilusIDP, acc
 }
 
 // expectOpaqueClientCredentialsTokenStore requires and captures the complete token-session write pipeline.
-func expectOpaqueClientCredentialsTokenStore(mock redismock.ClientMock, capture *redisSetValueCapture) {
+func expectOpaqueClientCredentialsTokenStore(mock redismock.ClientMock, capture *redisSessionValueCapture) {
 	accessToken := definitions.OIDCTokenPrefixAccessToken + fixedClientCredentialsTokenBody
-	userKey := testUserAccessTokensKey("cc-client")
+	reference := testAccessTokenReference(accessToken)
+	keys := []string{testAccessTokenKey(accessToken), testUserAccessTokensKey("cc-client"), testUserTokenEpochKey("cc-client")}
 
-	mock.CustomMatch(capture.Match).ExpectSet(testAccessTokenKey(accessToken), "captured-session", time.Hour).SetVal("OK")
-	mock.ExpectSAdd(userKey, accessToken).SetVal(1)
-	expectUserTokenIndexTTL(mock, userKey, time.Hour)
+	mock.CustomMatch(capture.Match).ExpectEval(
+		dynamicTrackedStoreScript,
+		keys,
+		"captured-session",
+		time.Hour.Milliseconds(),
+		reference,
+		"0",
+	).SetVal(int64(1))
 }
 
 // expectClientCredentialsTokenValidation configures exact JWT denial or opaque reload reads.
 func expectClientCredentialsTokenValidation(
 	t *testing.T,
 	mock redismock.ClientMock,
-	capture *redisSetValueCapture,
+	capture *redisSessionValueCapture,
 	tokenType string,
 	accessToken string,
 	count int,
@@ -1737,12 +1849,14 @@ func expectClientCredentialsTokenValidation(
 
 		for range count {
 			mock.ExpectGet(testAccessTokenKey(accessToken)).SetVal(storedSession)
+			expectUserTokenEpoch(mock, "cc-client")
 		}
 
 		return
 	}
 
 	for range count {
+		expectUserTokenEpoch(mock, "cc-client")
 		mock.ExpectGet(testDeniedAccessTokenKey(accessToken)).RedisNil()
 	}
 }

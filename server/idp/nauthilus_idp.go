@@ -291,14 +291,14 @@ func (n *NauthilusIDP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 		if err := n.validateDynamicSessionPolicy(client, session); err != nil {
 			return "", "", "", 0, err
 		}
-
-		epoch, err := n.storage.DynamicUserEpoch(ctx, session.UserID)
-		if err != nil {
-			return "", "", "", 0, fmt.Errorf("load dynamic token revocation epoch: %w", err)
-		}
-
-		session.DynamicUserEpoch = epoch
 	}
+
+	epoch, err := n.storage.DynamicUserEpoch(ctx, session.UserID)
+	if err != nil {
+		return "", "", "", 0, fmt.Errorf("load token revocation epoch: %w", err)
+	}
+
+	session.DynamicUserEpoch = epoch
 
 	return n.issueTokensForClient(ctx, client, session, "")
 }
@@ -555,6 +555,13 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 		ServiceToken:        true,
 	}
 
+	epoch, err := n.storage.DynamicUserEpoch(ctx, session.UserID)
+	if err != nil {
+		return "", 0, fmt.Errorf("load token revocation epoch: %w", err)
+	}
+
+	session.DynamicUserEpoch = epoch
+
 	// Access Token
 	tokenIssuer := NewTokenIssuer(issuer, signer, session, n.storage, n.tokenGen)
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIDP().OIDC.GetAccessTokenType())
@@ -603,12 +610,17 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 
 	rotateRefreshTokens := client.GetRevokeRefreshToken(n.deps.Cfg.GetIDP().OIDC.GetRevokeRefreshToken())
 
+	consumedSession, consumeErr := n.storage.ConsumeRefreshToken(ctx, refreshToken, session)
+	if consumeErr != nil {
+		return nil, "", "", "", 0, fmt.Errorf("%w: %v", ErrInvalidRefreshToken, consumeErr)
+	}
+
+	session = consumedSession
+
 	// Invalidate the access token that was last bound to this refresh token
 	// session before issuing the replacement access token.
-	n.invalidateOldAccessToken(ctx, session, clientID)
-
-	if rotateRefreshTokens {
-		_ = n.storage.DeleteRefreshToken(ctx, refreshToken)
+	if err := n.invalidateOldAccessToken(ctx, session, clientID); err != nil {
+		return nil, "", "", "", 0, fmt.Errorf("invalidate previous access token: %w", err)
 	}
 
 	// Clear the old access token reference before issuing new tokens.
@@ -651,7 +663,10 @@ func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshT
 		return nil, "", "", "", 0, fmt.Errorf("%w: %v", ErrInvalidRefreshToken, err)
 	}
 
-	n.invalidateOldAccessToken(ctx, session, clientID)
+	if err := n.invalidateOldAccessToken(ctx, session, clientID); err != nil {
+		return nil, "", "", "", 0, fmt.Errorf("invalidate previous access token: %w", err)
+	}
+
 	session.AccessToken = ""
 
 	idToken, accessToken, expiresIn, err := n.issueIDAndAccessTokens(ctx, client, session)
@@ -690,25 +705,23 @@ func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshT
 // invalidateOldAccessToken removes the previous access token that was linked
 // to the refresh token session. For opaque tokens it deletes the Redis entry;
 // for JWT tokens it adds the token to a denylist with the remaining lifetime.
-func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, clientID string) {
+func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, clientID string) error {
 	oldAccessToken := session.AccessToken
 
 	if oldAccessToken == "" {
-		return
+		return nil
 	}
 
 	// Opaque tokens do not contain dots; JWT tokens always do.
 	if !strings.Contains(oldAccessToken, ".") {
-		_ = n.storage.DeleteAccessToken(ctx, oldAccessToken)
-
-		return
+		return n.storage.DeleteAccessToken(ctx, oldAccessToken)
 	}
 
 	// JWT token: add to denylist with the client's access token lifetime
 	// as a conservative upper bound for the remaining validity.
 	client, ok := n.FindClient(clientID)
 	if !ok {
-		return
+		return fmt.Errorf("client not found")
 	}
 
 	ttl := client.AccessTokenLifetime
@@ -717,7 +730,7 @@ func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OI
 		ttl = n.deps.Cfg.GetIDP().OIDC.GetDefaultAccessTokenLifetime()
 	}
 
-	_ = n.storage.DenyJWTAccessToken(ctx, oldAccessToken, ttl)
+	return n.storage.DenyJWTAccessToken(ctx, oldAccessToken, ttl)
 }
 
 // IssueLogoutToken generates a logout token for the given client and user.
@@ -785,20 +798,13 @@ func (n *NauthilusIDP) ValidateToken(ctx context.Context, tokenString string) (j
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		denyCtx, denySpan := n.tracer.Start(ctx, "idp.validate_token.jwt.denylist")
+		if claims[definitions.ClaimTokenType] == definitions.TokenTypeAccessToken {
+			if err := n.validateJWTAccessTokenState(ctx, tokenString, claims); err != nil {
+				sp.RecordError(err)
 
-		denied := n.storage.IsJWTAccessTokenDenied(denyCtx, tokenString)
-
-		if denied {
-			err := fmt.Errorf("access token has been revoked")
-			denySpan.RecordError(err)
-			denySpan.End()
-			sp.RecordError(err)
-
-			return nil, err
+				return nil, err
+			}
 		}
-
-		denySpan.End()
 
 		if sub, ok := claims["sub"].(string); ok {
 			sp.SetAttributes(attribute.String("sub", sub))
@@ -808,6 +814,58 @@ func (n *NauthilusIDP) ValidateToken(ctx context.Context, tokenString string) (j
 	}
 
 	return nil, fmt.Errorf("invalid token")
+}
+
+// validateJWTAccessTokenState enforces user-wide revocation and the explicit denylist.
+func (n *NauthilusIDP) validateJWTAccessTokenState(ctx context.Context, tokenString string, claims jwt.MapClaims) error {
+	if err := n.validateAccessTokenUserEpoch(ctx, claims); err != nil {
+		return err
+	}
+
+	denyCtx, denySpan := n.tracer.Start(ctx, "idp.validate_token.jwt.denylist")
+	defer denySpan.End()
+
+	denied, err := n.storage.IsJWTAccessTokenDenied(denyCtx, tokenString)
+	if err != nil {
+		denySpan.RecordError(err)
+
+		return fmt.Errorf("validate access token revocation: %w", err)
+	}
+
+	if denied {
+		err := fmt.Errorf("access token has been revoked")
+		denySpan.RecordError(err)
+
+		return err
+	}
+
+	return nil
+}
+
+// validateAccessTokenUserEpoch rejects access tokens issued before a user-wide revocation.
+func (n *NauthilusIDP) validateAccessTokenUserEpoch(ctx context.Context, claims jwt.MapClaims) error {
+	tokenType, _ := claims[definitions.ClaimTokenType].(string)
+	if tokenType != definitions.TokenTypeAccessToken {
+		return nil
+	}
+
+	subject, subjectOK := claims[oidcClaimSubject].(string)
+
+	epoch, epochOK := claims[definitions.ClaimUserTokenEpoch].(string)
+	if !subjectOK || subject == "" || !epochOK || epoch == "" {
+		return fmt.Errorf("access token revocation epoch is missing")
+	}
+
+	currentEpoch, err := n.storage.DynamicUserEpoch(ctx, subject)
+	if err != nil {
+		return fmt.Errorf("load access token revocation epoch: %w", err)
+	}
+
+	if currentEpoch != epoch {
+		return fmt.Errorf("access token has been revoked")
+	}
+
+	return nil
 }
 
 // ValidateTokenForUserInfo validates an access token and returns IDTokenClaims suitable for the UserInfo endpoint.

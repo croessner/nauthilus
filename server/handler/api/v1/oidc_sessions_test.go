@@ -68,8 +68,8 @@ func TestOIDCSessionsAPI_ListSessionsRequiresBackchannelAuth(t *testing.T) {
 
 func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 	const (
-		userID       = "user1"
-		sessionToken = "opaque-session-reference"
+		userID           = "user1"
+		sessionReference = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	)
 
 	storage, mock := newOIDCSessionsRedisStorage(t)
@@ -80,11 +80,12 @@ func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 	))
 
 	session := &idp.OIDCSession{
-		ClientID:    "client-a",
-		UserID:      userID,
-		Username:    "alice",
-		DisplayName: "Alice Example",
-		Scopes:      []string{"openid"},
+		ClientID:         "client-a",
+		UserID:           userID,
+		Username:         "alice",
+		DisplayName:      "Alice Example",
+		Scopes:           []string{"openid"},
+		DynamicUserEpoch: "0",
 	}
 
 	sessionData, err := json.Marshal(session)
@@ -92,9 +93,9 @@ func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 		t.Fatalf("marshal OIDC session: %v", err)
 	}
 
-	mock.ExpectSMembers("test:oidc:user_access_tokens:" + userID).SetVal([]string{sessionToken})
-	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + userID).SetVal(nil)
-	mock.ExpectGet("test:oidc:access_token:" + sessionToken).SetVal(string(sessionData))
+	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + userID).SetVal([]string{sessionReference})
+	mock.ExpectGet("test:oidc:dcr:{dynamic}:access_token:" + sessionReference).SetVal(string(sessionData))
+	mock.ExpectGet("test:oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID).RedisNil()
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/sessions/"+userID, nil)
@@ -103,7 +104,7 @@ func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	assert.Equal(t, http.StatusOK, response.Code)
-	assert.NotContains(t, response.Body.String(), sessionToken)
+	assert.NotContains(t, response.Body.String(), sessionReference)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -147,10 +148,9 @@ func TestOIDCSessionsAPI_DeleteSessionDoesNotCrossUserBoundary(t *testing.T) {
 		definitions.ScopeSecurity,
 	))
 
-	managementIDSum := sha256.Sum256([]byte(sessionToken))
+	managementIDSum := sha256.Sum256([]byte("dynamic\x1f" + sessionToken))
 	managementID := hex.EncodeToString(managementIDSum[:])
 
-	mock.ExpectSMembers("test:oidc:user_access_tokens:" + pathUserID).SetVal(nil)
 	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + pathUserID).SetVal(nil)
 
 	response := httptest.NewRecorder()
