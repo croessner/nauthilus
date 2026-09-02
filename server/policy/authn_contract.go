@@ -145,6 +145,7 @@ var authnBuiltinProviderIdentities = map[string]string{
 	"tls_encryption":       AuthnProviderTLSEncryption,
 	"relay_domains":        AuthnProviderRelayDomains,
 	"rbl":                  AuthnProviderRBL,
+	"backend_order":        AuthnProviderBackend,
 	"ldap_backend":         AuthnProviderLDAPBackend,
 	"lua_backend":          AuthnProviderLuaBackend,
 	"plugin_backend_order": AuthnProviderPluginBackendOrder,
@@ -217,6 +218,7 @@ func AuthnProviderObserveSafety(use string) (defaultSafe bool, allowsAssertion b
 		return true, false, true
 	case AuthnProviderBruteForce,
 		AuthnProviderRBL,
+		AuthnProviderBackend,
 		AuthnProviderLDAPBackend,
 		AuthnProviderAccount:
 		return false, false, true

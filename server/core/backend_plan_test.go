@@ -155,6 +155,17 @@ func backendExecutionPlanPositivePasswordCacheDisabledCases() []backendExecution
 			usedBackend: definitions.BackendPlugin,
 		},
 		{
+			name: "disabled for process-local test backend",
+			plan: backendExecutionPlan{
+				positions: map[definitions.Backend]int{
+					definitions.BackendCache: 0,
+					definitions.BackendTest:  1,
+				},
+				hasPositivePasswordCache: true,
+			},
+			usedBackend: definitions.BackendTest,
+		},
+		{
 			name: "disabled for backend missing from plan",
 			plan: backendExecutionPlan{
 				positions: map[definitions.Backend]int{

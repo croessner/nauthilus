@@ -3105,8 +3105,12 @@ type backendExecutionPlan struct {
 	hasPositivePasswordCache bool
 }
 
+// positivePasswordCacheEnabled limits Redis password caching to compatible persistent backends.
 func (p backendExecutionPlan) positivePasswordCacheEnabled(usedBackend definitions.Backend) bool {
-	if !p.hasPositivePasswordCache || usedBackend == definitions.BackendRemote || usedBackend == definitions.BackendPlugin {
+	if !p.hasPositivePasswordCache ||
+		usedBackend == definitions.BackendRemote ||
+		usedBackend == definitions.BackendPlugin ||
+		usedBackend == definitions.BackendTest {
 		return false
 	}
 

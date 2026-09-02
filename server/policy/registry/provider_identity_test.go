@@ -70,6 +70,7 @@ func TestBuiltinAuthnProviderUseIdentitiesResolveExactly(t *testing.T) {
 		policy.AuthnProviderTLSEncryption,
 		policy.AuthnProviderRelayDomains,
 		policy.AuthnProviderRBL,
+		policy.AuthnProviderBackend,
 		policy.AuthnProviderLDAPBackend,
 		policy.AuthnProviderLuaBackend,
 		policy.AuthnProviderPluginBackendOrder,

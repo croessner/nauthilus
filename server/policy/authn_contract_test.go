@@ -20,6 +20,7 @@ func TestPolicyMigrationAuthnProviderObserveSafetyDefaults(t *testing.T) {
 		{use: AuthnProviderTLSEncryption, defaultSafe: true, known: true},
 		{use: AuthnProviderRelayDomains, defaultSafe: true, known: true},
 		{use: AuthnProviderRBL, known: true},
+		{use: AuthnProviderBackend, known: true},
 		{use: AuthnNamespace + "/lua_environment_risk", allowsAssertion: true, known: true},
 		{use: AuthnNamespace + "/plugin.example.environment", allowsAssertion: true, known: true},
 		{use: AuthnProviderLDAPBackend, known: true},
@@ -64,6 +65,22 @@ func TestPolicyMigrationBuiltinProviderIdentitiesRemainExact(t *testing.T) {
 
 	if IsAuthnBuiltinProviderIdentity(AuthnNamespace + "/builtin/missing") {
 		t.Fatal("unknown builtin provider identity was accepted")
+	}
+}
+
+func TestPolicyMigrationBackendOrderProviderIsOperatorResolvable(t *testing.T) {
+	got, exists := AuthnBuiltinProviderIdentity("backend_order")
+	if !exists || got != AuthnProviderBackend {
+		t.Fatalf(
+			"AuthnBuiltinProviderIdentity(backend_order) = %q, %t; want %q, true",
+			got,
+			exists,
+			AuthnProviderBackend,
+		)
+	}
+
+	if !IsAuthnBuiltinProviderIdentity(AuthnProviderBackend) {
+		t.Fatalf("IsAuthnBuiltinProviderIdentity(%q) = false", AuthnProviderBackend)
 	}
 }
 
