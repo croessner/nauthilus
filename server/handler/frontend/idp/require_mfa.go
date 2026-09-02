@@ -448,7 +448,8 @@ func (h *FrontendHandler) startCanonicalMFAAssuranceStepUp(
 // canonicalStateWriteStatus preserves stale-state conflicts without masking storage failures.
 func canonicalStateWriteStatus(err error) int {
 	if errors.Is(err, sessionstate.ErrRevisionConflict) || errors.Is(err, sessionstate.ErrRevoked) ||
-		errors.Is(err, sessionstate.ErrNotFound) {
+		errors.Is(err, sessionstate.ErrNotFound) || errors.Is(err, sessionstate.ErrParentMissing) ||
+		errors.Is(err, sessionstate.ErrBindingMismatch) || errors.Is(err, sessionstate.ErrExpired) {
 		return http.StatusConflict
 	}
 

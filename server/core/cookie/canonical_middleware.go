@@ -20,6 +20,8 @@ const (
 	CanonicalProtocolEntry CanonicalMode = iota + 1
 	// CanonicalSelfServiceEntry may create a fresh anonymous anchor for the bounded MFA portal entry.
 	CanonicalSelfServiceEntry
+	// CanonicalLogoutEntry accepts an absent or rejected envelope so logout remains idempotent.
+	CanonicalLogoutEntry
 	// CanonicalContinuation requires an already valid canonical anchor and never reconstructs state.
 	CanonicalContinuation
 )
@@ -43,6 +45,12 @@ func CanonicalMiddleware(runtime *CanonicalRuntime, mode CanonicalMode) gin.Hand
 
 		runtime.PurgeBrowser(ctx.Writer)
 
+		if mayContinueWithoutCanonicalSession(mode, err) {
+			ctx.Next()
+
+			return
+		}
+
 		if !mayCreateCanonicalSession(mode, err) {
 			ctx.AbortWithStatus(http.StatusConflict)
 
@@ -59,6 +67,11 @@ func CanonicalMiddleware(runtime *CanonicalRuntime, mode CanonicalMode) gin.Hand
 		ctx.Set(canonicalSessionContextKey, session)
 		ctx.Next()
 	}
+}
+
+// mayContinueWithoutCanonicalSession restricts sessionless handling to logout requests.
+func mayContinueWithoutCanonicalSession(mode CanonicalMode, err error) bool {
+	return mode == CanonicalLogoutEntry && errors.Is(err, ErrEnvelopeRejected)
 }
 
 // mayCreateCanonicalSession restricts fresh anchors to explicit entry modes and rejected envelopes.

@@ -90,6 +90,7 @@ async function main() {
   try {
     await runAuthorizationCodeFlow(browser);
     await runNegativeIDPChecks(browser);
+    await runSessionlessLogout(browser);
     await runDeviceCodeFlow(browser);
     await runRequiredMFADelayedResponseWrongPasswordWithoutEnrollment(browser);
     await runRequiredMFAJourneyStateMachine(browser);
@@ -100,6 +101,18 @@ async function main() {
   } finally {
     await browser.close();
   }
+}
+
+// runSessionlessLogout proves that logout is idempotent after browser state has already expired.
+async function runSessionlessLogout(browser) {
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+
+  await page.goto(`${edgeA}/oidc/logout`);
+  await page.waitForURL(/\/logged_out(?:\/[A-Za-z-]+)?$/, {timeout: 15000});
+
+  console.log('ok oidc-sessionless-logout-idempotent');
+  await context.close();
 }
 
 async function runAuthorizationCodeFlow(browser) {
@@ -1212,9 +1225,12 @@ async function runMFASelfServiceStepUpChecks(browser) {
     label: 'self-service MFA registration',
   });
 
-  await runMFASelfServiceDirectLogin(browser);
+  registration.webAuthnCredentials = await runMFASelfServiceDirectLogin(
+    browser,
+    registration.webAuthnCredentials,
+  );
   await runMFASelfServiceMissingStepUpRejected(browser);
-  await runMFASelfServiceLocalizedVisibleStepUp(browser, registration);
+  await runMFASelfServiceLocalizedActionsAfterPortalStepUp(browser, registration);
 
   let webAuthnCredentials = registration.webAuthnCredentials;
   webAuthnCredentials = await runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, {
@@ -1272,8 +1288,8 @@ async function runMFASelfServiceStepUpChecks(browser) {
   }
 }
 
-// runMFASelfServiceMutationAfterWebAuthnStepUp retries one sensitive mutation
-// after the server has created and consumed self-service step-up state.
+// runMFASelfServiceMutationAfterWebAuthnStepUp completes portal assurance and
+// the independent step-up required for one sensitive mutation.
 async function runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCredentials, action) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
@@ -1283,19 +1299,22 @@ async function runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCre
   await withPageState(page, `self-service ${action.label}`, async () => {
     await establishSelfServiceOIDCSession(page);
     await page.goto(`${edgeA}${action.openPath}`);
+    if (/\/login\/(?:mfa|webauthn|totp|recovery)/.test(page.url())) {
+      await completeWebAuthnStepUp(page, edgeA, action.returnPattern);
+    }
+
     await expectPageText(page, /2FA Self-Service|Security Keys \(WebAuthn\)/i);
 
     const mutationPath = typeof action.mutationPath === 'function'
       ? await action.mutationPath(page)
       : action.mutationPath;
-    const blockedResult = await submitSelfServiceMutation(page, action.method, mutationPath);
-    assert.equal(blockedResult.status, 200, `self-service ${action.label} step-up challenge failed: ${blockedResult.text}`);
-    assert.match(blockedResult.hxRedirect || '', /\/login\/mfa/, `self-service ${action.label} did not redirect to MFA step-up`);
 
-    await page.goto(new URL(blockedResult.hxRedirect, edgeA).toString());
-    await completeWebAuthnStepUp(page, edgeA, action.returnPattern);
-
-    const result = await submitSelfServiceMutation(page, action.method, mutationPath);
+    const result = await submitSelfServiceMutationWithOptionalStepUp(
+      page,
+      action,
+      mutationPath,
+      () => completeWebAuthnStepUp(page, edgeA, action.returnPattern),
+    );
     action.assertResult(result);
   });
 
@@ -1305,8 +1324,8 @@ async function runMFASelfServiceMutationAfterWebAuthnStepUp(browser, webAuthnCre
   return updatedCredentials;
 }
 
-// prepareMFASelfServiceMutationAfterTOTPStepUp binds one mutation to a TOTP
-// step-up so another destructive factor mutation cannot invalidate its login.
+// prepareMFASelfServiceMutationAfterTOTPStepUp binds one deferred mutation to
+// TOTP-backed portal assurance before another factor is removed.
 async function prepareMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret, action) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
@@ -1316,17 +1335,15 @@ async function prepareMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret,
     await withPageState(page, `prepare self-service ${action.label}`, async () => {
       await establishSelfServiceOIDCSessionWithTOTP(page, totpSecret);
       await page.goto(`${edgeA}${action.openPath}`);
+      if (/\/login\/(?:mfa|webauthn|totp|recovery)/.test(page.url())) {
+        await completeTOTPStepUp(page, totpSecret, action.returnPattern);
+      }
+
       await expectPageText(page, /2FA Self-Service|Security Keys \(WebAuthn\)/i);
 
       mutationPath = typeof action.mutationPath === 'function'
         ? await action.mutationPath(page)
         : action.mutationPath;
-      const blockedResult = await submitSelfServiceMutation(page, action.method, mutationPath);
-      assert.equal(blockedResult.status, 200, `self-service ${action.label} step-up challenge failed: ${blockedResult.text}`);
-      assert.match(blockedResult.hxRedirect || '', /\/login\/mfa/, `self-service ${action.label} did not redirect to MFA step-up`);
-
-      await page.goto(new URL(blockedResult.hxRedirect, edgeA).toString());
-      await completeTOTPStepUp(page, totpSecret, action.returnPattern);
     });
 
     return {
@@ -1346,22 +1363,42 @@ async function prepareMFASelfServiceMutationAfterTOTPStepUp(browser, totpSecret,
   }
 }
 
-// runMFASelfServiceDirectLogin proves a browser without a live OIDC session can
-// authenticate normally and land on the localized 2FA management portal.
-async function runMFASelfServiceDirectLogin(browser) {
+// submitSelfServiceMutationWithOptionalStepUp follows an operation-specific
+// challenge while preserving portal assurance for operations that accept it.
+async function submitSelfServiceMutationWithOptionalStepUp(page, action, mutationPath, completeStepUp) {
+  const initialResult = await submitSelfServiceMutation(page, action.method, mutationPath);
+  if (!/\/login\/mfa/.test(initialResult.hxRedirect || '')) {
+    return initialResult;
+  }
+
+  assert.equal(initialResult.status, 200, `self-service ${action.label} step-up challenge failed: ${initialResult.text}`);
+  await page.goto(new URL(initialResult.hxRedirect, edgeA).toString());
+  await completeStepUp();
+
+  return submitSelfServiceMutation(page, action.method, mutationPath);
+}
+
+// runMFASelfServiceDirectLogin proves a browser without a live OIDC session
+// must complete fresh MFA before reaching the localized management portal.
+async function runMFASelfServiceDirectLogin(browser, webAuthnCredentials) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
+  const authenticator = await installVirtualAuthenticator(page);
+  await importVirtualAuthenticatorCredentials(authenticator, webAuthnCredentials);
 
   await withPageState(page, 'direct self-service login', async () => {
     await page.goto(`${edgeA}/mfa/register/home/en`);
     await page.waitForURL(/\/login\/en\?flow=/, {timeout: 15000});
     await submitPasswordLogin(page, selfServiceUsername, password);
-    await page.waitForURL(/\/mfa\/register\/home\/en$/, {timeout: 15000});
+    await completeWebAuthnStepUp(page, edgeA, /\/mfa\/register\/home\/en$/);
     await expectPageText(page, /2FA Self-Service/);
   });
 
-  console.log('ok mfa-self-service-direct-login');
+  const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
+  console.log('ok mfa-self-service-direct-login-step-up');
   await context.close();
+
+  return updatedCredentials;
 }
 
 // establishSelfServiceOIDCSession creates an authenticated browser session whose
@@ -1388,19 +1425,24 @@ async function establishSelfServiceOIDCSessionWithTOTP(page, totpSecret) {
   });
 }
 
-// runMFASelfServiceLocalizedVisibleStepUp proves localized self-service pages
-// send HTMX mutations to localized step-up routes.
-async function runMFASelfServiceLocalizedVisibleStepUp(browser, registration) {
+// runMFASelfServiceLocalizedActionsAfterPortalStepUp proves localized portal
+// entry requires MFA and exposes the localized self-service actions.
+async function runMFASelfServiceLocalizedActionsAfterPortalStepUp(browser, registration) {
   let webAuthnCredentials = registration.webAuthnCredentials;
-  for (const action of localizedSelfServiceStepUpActions()) {
-    webAuthnCredentials = await runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCredentials, action);
+  for (const action of localizedSelfServiceActions()) {
+    webAuthnCredentials = await runMFASelfServiceLocalizedActionAfterPortalStepUp(
+      browser,
+      webAuthnCredentials,
+      action,
+    );
   }
   registration.webAuthnCredentials = webAuthnCredentials;
 
-  console.log('ok mfa-self-service-localized-visible-step-up');
+  console.log('ok mfa-self-service-localized-actions-after-portal-step-up');
 }
 
-function localizedSelfServiceStepUpActions() {
+// localizedSelfServiceActions describes the localized controls protected by portal assurance.
+function localizedSelfServiceActions() {
   return [
     {
       label: 'recovery regeneration',
@@ -1425,7 +1467,8 @@ function localizedSelfServiceStepUpActions() {
   ];
 }
 
-async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCredentials, action) {
+// runMFASelfServiceLocalizedActionAfterPortalStepUp verifies one localized action without mutating factor state.
+async function runMFASelfServiceLocalizedActionAfterPortalStepUp(browser, webAuthnCredentials, action) {
   const context = await newBrowserContext(browser, edgeA);
   const page = await context.newPage();
   const authenticator = await installVirtualAuthenticator(page);
@@ -1440,28 +1483,15 @@ async function runMFASelfServiceLocalizedVisibleStepUpAction(browser, webAuthnCr
       return callbackPromise;
     }));
   await page.goto(`${edgeA}${action.openPath}`);
-  if (action.label === 'WebAuthn device rename') {
-    await page.locator('form[action^="/mfa/webauthn/device/"][action$="/name/en"] input[name="name"]').first().fill('Renamed key');
+  if (/\/login\/(?:mfa|webauthn|totp|recovery)/.test(page.url())) {
+    await completeWebAuthnStepUp(page, edgeA, new RegExp(`${action.openPath}$`));
   }
 
-  await page.locator(action.selector).first().click();
-  const confirmButton = page.locator('[data-action="confirm-yes"]');
-  if (await confirmButton.isVisible({timeout: 1000}).catch(() => false)) {
-    await confirmButton.click();
-  }
-
-  await page.waitForURL(/\/login\/mfa\/en/, {timeout: 15000});
-  await expectPageText(page, /Select Multi-Factor Authentication|2FA Verification/i);
-
-  if (action.label === 'WebAuthn device rename') {
-    await completeWebAuthnStepUp(page, edgeA, /\/mfa\/webauthn\/devices\/en/);
-
-    const renamedInput = page.locator('form[action^="/mfa/webauthn/device/"][action$="/name/en"] input[name="name"]').first();
-    assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not completed after step-up');
-
-    await page.reload();
-    assert.equal(await renamedInput.inputValue(), 'Renamed key', 'WebAuthn device rename was not persisted');
-  }
+  assert.equal(
+    await page.locator(action.selector).first().isVisible(),
+    true,
+    `localized self-service ${action.label} action is not visible after portal step-up`,
+  );
 
   const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
 

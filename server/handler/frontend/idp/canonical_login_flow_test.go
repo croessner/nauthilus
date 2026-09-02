@@ -236,6 +236,9 @@ func TestCanonicalStateWriteStatusPreservesConflictSemantics(t *testing.T) {
 		{name: "revision conflict", err: sessionstate.ErrRevisionConflict, want: http.StatusConflict},
 		{name: "revoked", err: sessionstate.ErrRevoked, want: http.StatusConflict},
 		{name: "missing stale state", err: sessionstate.ErrNotFound, want: http.StatusConflict},
+		{name: "missing stale parent", err: sessionstate.ErrParentMissing, want: http.StatusConflict},
+		{name: "stale binding", err: sessionstate.ErrBindingMismatch, want: http.StatusConflict},
+		{name: "expired stale state", err: sessionstate.ErrExpired, want: http.StatusConflict},
 		{name: "storage failure", err: errors.New("storage unavailable"), want: http.StatusServiceUnavailable},
 	}
 

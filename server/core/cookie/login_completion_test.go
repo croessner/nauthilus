@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,17 +20,33 @@ import (
 )
 
 type loginCompletionGenerator struct {
-	handles []sessionstate.Handle
-	next    int
+	handles  []sessionstate.Handle
+	barrier  chan struct{}
+	arrivals chan struct{}
+	mu       sync.Mutex
+	next     int
 }
 
 func (g *loginCompletionGenerator) NewHandle() (sessionstate.Handle, error) {
+	g.mu.Lock()
+
 	if g.next >= len(g.handles) {
+		g.mu.Unlock()
+
 		return "", errors.New("no test handle available")
 	}
 
 	handle := g.handles[g.next]
 	g.next++
+	barrier := g.barrier
+	arrivals := g.arrivals
+	g.mu.Unlock()
+
+	if barrier != nil {
+		arrivals <- struct{}{}
+
+		<-barrier
+	}
 
 	return handle, nil
 }
@@ -220,6 +237,54 @@ func TestLoginCompletionStaleRotationLoserReturnsConflict(t *testing.T) {
 		context.Background(), httptest.NewRecorder(), fixture.input(0),
 	); !errors.Is(err, sessionstate.ErrRevisionConflict) {
 		t.Fatalf("stale completion error = %v, want %v", err, sessionstate.ErrRevisionConflict)
+	}
+}
+
+func TestLoginCompletionParallelRotationLoserReturnsConflict(t *testing.T) {
+	t.Parallel()
+
+	fixture := newLoginCompletionFixture(t)
+	seedLoginCompletionProtocolFlows(t, fixture)
+	fixture.refreshSession(t)
+
+	generator := fixture.runtime.generator.(*loginCompletionGenerator)
+	generator.handles = append(generator.handles, sessionstate.Handle(strings.Repeat("C", 43)))
+	generator.barrier = make(chan struct{})
+	generator.arrivals = make(chan struct{}, 2)
+
+	results := make(chan error, 2)
+
+	for range 2 {
+		concurrent := *fixture.session
+
+		go func() {
+			_, err := concurrent.CompleteLogin(
+				context.Background(), httptest.NewRecorder(), fixture.input(0),
+			)
+			results <- err
+		}()
+	}
+
+	<-generator.arrivals
+	<-generator.arrivals
+	close(generator.barrier)
+
+	var successCount, conflictCount int
+
+	for range 2 {
+		err := <-results
+		switch {
+		case err == nil:
+			successCount++
+		case errors.Is(err, sessionstate.ErrRevisionConflict):
+			conflictCount++
+		default:
+			t.Fatalf("parallel completion error = %v, want revision conflict", err)
+		}
+	}
+
+	if successCount != 1 || conflictCount != 1 {
+		t.Fatalf("parallel completions: success=%d conflict=%d", successCount, conflictCount)
 	}
 }
 

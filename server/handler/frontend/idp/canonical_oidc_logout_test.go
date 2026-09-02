@@ -73,6 +73,28 @@ func TestOIDCLogoutCanonicalUsesTypedIndexRevokesAndIgnoresLegacyManager(t *test
 	}
 }
 
+func TestOIDCLogoutCanonicalWithoutBrowserSessionIsIdempotent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runtime, _, _ := seedCanonicalIDPFlow(t, nil)
+	handler, _ := newCanonicalOIDCLogoutTestHandler(t)
+	router := canonicalOIDCLogoutTestRouter(runtime, nil, handler.LogoutCanonical)
+	request := httptest.NewRequest(http.MethodGet, "/oidc/logout", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/logged_out" {
+		t.Fatalf(
+			"canonical idempotent logout response = %d %q, want logged-out redirect",
+			response.Code,
+			response.Header().Get("Location"),
+		)
+	}
+
+	assertCanonicalBrowserPurge(t, response)
+}
+
 func TestOIDCLogoutCanonicalPurgesBrowserWhenTokenRevocationFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -167,7 +189,7 @@ func canonicalOIDCLogoutTestRouter(
 		})
 	}
 
-	router.GET("/oidc/logout", cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation), handler)
+	router.GET("/oidc/logout", cookie.CanonicalMiddleware(runtime, cookie.CanonicalLogoutEntry), handler)
 
 	return router
 }
@@ -186,6 +208,16 @@ func assertCanonicalOIDCLogoutRevoked(
 	if _, err := runtime.Open(context.Background(), request); !errors.Is(err, cookie.ErrEnvelopeRejected) {
 		t.Fatalf("canonical logout revoked session open error = %v, want envelope rejected", err)
 	}
+
+	cookies := response.Result().Cookies()
+	if len(cookies) != 2 || cookies[0].MaxAge >= 0 || cookies[1].MaxAge >= 0 {
+		t.Fatalf("canonical logout browser purge = %#v", cookies)
+	}
+}
+
+// assertCanonicalBrowserPurge verifies that an idempotent logout clears both browser representations.
+func assertCanonicalBrowserPurge(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
 
 	cookies := response.Result().Cookies()
 	if len(cookies) != 2 || cookies[0].MaxAge >= 0 || cookies[1].MaxAge >= 0 {

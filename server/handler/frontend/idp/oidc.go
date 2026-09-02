@@ -231,6 +231,7 @@ func (h *OIDCHandler) Register(router gin.IRouter, runtime *cookie.CanonicalRunt
 		h.deps.Cfg, h.deps.Logger, h.deps.LangManager, !h.deps.Env.GetDevMode(),
 	)
 	protocolEntryMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalProtocolEntry)
+	logoutEntryMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalLogoutEntry)
 	continuationMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
@@ -261,8 +262,8 @@ func (h *OIDCHandler) Register(router gin.IRouter, runtime *cookie.CanonicalRunt
 	router.GET(frontendDeviceConsentPath+"/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentGETCanonical)
 	router.POST(frontendDeviceConsentPath, securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentPOSTCanonical)
 	router.POST(frontendDeviceConsentPath+"/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.DeviceConsentPOSTCanonical)
-	router.GET("/oidc/logout", securityMW, continuationMW, h.LogoutCanonical)
-	router.GET("/logout", securityMW, continuationMW, h.LogoutCanonical)
+	router.GET("/oidc/logout", securityMW, logoutEntryMW, h.LogoutCanonical)
+	router.GET("/logout", securityMW, logoutEntryMW, h.LogoutCanonical)
 	router.GET("/oidc/consent", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentGETCanonical)
 	router.GET("/oidc/consent/:languageTag", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentGETCanonical)
 	router.POST("/oidc/consent", securityMW, continuationMW, csrfMW, i18nMW, h.ConsentPOSTCanonical)
@@ -1844,46 +1845,49 @@ func (h *OIDCHandler) LogoutCanonical(ctx *gin.Context) {
 	h.logIncomingOIDCFlowRequest(ctx, "logout", "", "")
 	defer h.logCompletedOIDCFlowRequest(ctx, "logout", "", "")
 
-	session := cookie.GetCanonicalSession(ctx)
-	if session == nil {
-		ctx.Status(http.StatusConflict)
-
-		return
-	}
-
-	logout, err := session.OIDCLogoutContext(ctx.Request.Context())
-	if err != nil {
-		_ = session.Revoke(ctx.Request.Context(), ctx.Writer)
-		ctx.JSON(http.StatusConflict, gin.H{definitions.LogKeyError: oidcErrorInvalidRequest})
-
-		return
-	}
-
 	request := readOIDCLogoutRequest(ctx)
-	identitySession := oidcLogoutSession{
-		account:      logout.Identity.Account,
-		uniqueUserID: logout.Identity.Reference,
-		userID:       oidcLogoutUserID(logout.Identity.Account, logout.Identity.Reference),
+	session := cookie.GetCanonicalSession(ctx)
+	identitySession := oidcLogoutSession{}
+	clientIDs := make([]string, 0)
+
+	if session != nil {
+		logout, err := session.OIDCLogoutContext(ctx.Request.Context())
+		if err != nil {
+			_ = revokeCanonicalLogoutSession(ctx, session)
+			ctx.JSON(http.StatusConflict, gin.H{definitions.LogKeyError: oidcErrorInvalidRequest})
+
+			return
+		}
+
+		identitySession = oidcLogoutSession{
+			account:      logout.Identity.Account,
+			uniqueUserID: logout.Identity.Reference,
+			userID:       oidcLogoutUserID(logout.Identity.Account, logout.Identity.Reference),
+		}
+		clientIDs = logout.ClientIDs
 	}
 
 	client, err := h.applyCanonicalOIDCLogoutIDTokenHint(ctx, request, &identitySession)
 	if err != nil {
-		_ = session.Revoke(ctx.Request.Context(), ctx.Writer)
+		_ = revokeCanonicalLogoutSession(ctx, session)
 		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidRequest})
 
 		return
 	}
 
+	if client != nil && len(clientIDs) == 0 {
+		clientIDs = append(clientIDs, client.ClientID)
+	}
+
 	if identitySession.userID != "" {
 		if err = h.storage.FlushUserTokens(ctx.Request.Context(), identitySession.userID); err != nil {
-			_ = session.Revoke(ctx.Request.Context(), ctx.Writer)
+			_ = revokeCanonicalLogoutSession(ctx, session)
 			ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
 			return
 		}
 	}
 
-	clientIDs := logout.ClientIDs
 	frontChannelTasks := h.oidcFrontChannelLogoutTasks(ctx, clientIDs, identitySession.userID)
 	frontChannelTasks = append(
 		frontChannelTasks,
@@ -1891,7 +1895,7 @@ func (h *OIDCHandler) LogoutCanonical(ctx *gin.Context) {
 	)
 	logoutTarget := h.oidcLogoutTarget(client, clientIDs, request)
 
-	if err = session.Revoke(ctx.Request.Context(), ctx.Writer); err != nil {
+	if err = revokeCanonicalLogoutSession(ctx, session); err != nil {
 		ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: oidcErrorServerError})
 
 		return
@@ -1904,6 +1908,15 @@ func (h *OIDCHandler) LogoutCanonical(ctx *gin.Context) {
 	}
 
 	ctx.Redirect(http.StatusFound, logoutTarget)
+}
+
+// revokeCanonicalLogoutSession revokes a loaded session and treats an absent session as already logged out.
+func revokeCanonicalLogoutSession(ctx *gin.Context, session *cookie.CanonicalSession) error {
+	if session == nil {
+		return nil
+	}
+
+	return session.Revoke(ctx.Request.Context(), ctx.Writer)
 }
 
 func (h *OIDCHandler) doBackChannelLogout(clientID, userID, logoutURI string) {

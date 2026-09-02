@@ -1434,7 +1434,16 @@ func (h *FrontendHandler) storeSuccessfulPostLoginSession(
 		RememberTTL: time.Duration(credentials.rememberMeTTL) * time.Second,
 	})
 	if err != nil {
-		ctx.AbortWithStatus(canonicalStateWriteStatus(err))
+		status := canonicalStateWriteStatus(err)
+		if h != nil && h.deps != nil && h.deps.Logger != nil {
+			h.deps.Logger.Error(
+				"Canonical login completion failed",
+				definitions.LogKeyError, err,
+				"http_status", status,
+			)
+		}
+
+		ctx.AbortWithStatus(status)
 
 		return false
 	}

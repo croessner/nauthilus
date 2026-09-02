@@ -233,7 +233,18 @@ func TestOIDCRegisterCanonicalBindsExplicitBrowserModesWithoutLegacyFailurePage(
 	}
 
 	assertCanonicalContinuationRejectsAbsentEnvelope(t, router, "/oidc/consent")
-	assertCanonicalContinuationRejectsAbsentEnvelope(t, router, "/oidc/logout")
+
+	logoutRequest := httptest.NewRequest(http.MethodGet, "/oidc/logout", nil)
+	logoutResponse := httptest.NewRecorder()
+	router.ServeHTTP(logoutResponse, logoutRequest)
+
+	if logoutResponse.Code != http.StatusFound || logoutResponse.Header().Get("Location") != "/logged_out" {
+		t.Fatalf(
+			"canonical idempotent logout = %d %q, want logged-out redirect",
+			logoutResponse.Code,
+			logoutResponse.Header().Get("Location"),
+		)
+	}
 
 	request := httptest.NewRequest(http.MethodGet, "/oidc/authorize", nil)
 	response := httptest.NewRecorder()
