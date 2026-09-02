@@ -559,6 +559,7 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
 	deps := &handlerdeps.Deps{
 		Cfg:            runtime.cfg,
+		CfgProvider:    runtime.store.cfgProvider,
 		Env:            runtime.env,
 		Logger:         runtime.logger,
 		Redis:          runtime.store.redisClient,
@@ -619,6 +620,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 	return func(e *gin.Engine) {
 		deps := &handlerdeps.Deps{
 			Cfg:            runtime.cfg,
+			CfgProvider:    runtime.store.cfgProvider,
 			Env:            runtime.env,
 			Logger:         runtime.logger,
 			Redis:          runtime.store.redisClient,

@@ -55,6 +55,21 @@ func TestProductionCompositionOwnsOneDecisionAndAuthApplicationAuthority(t *test
 	}
 }
 
+func TestHTTPHandlerDependenciesCarryTheActiveConfigProvider(t *testing.T) {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "server.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse server composition root: %v", err)
+	}
+
+	functions := compositionFunctions(parsed)
+	for _, owner := range []string{"frontendHandlerDeps", "buildBackchannelSetupCallback"} {
+		function := requireCompositionFunction(t, functions, owner)
+		if got := countSelectorReferences(function, "runtime", "cfgProvider"); got != 1 {
+			t.Errorf("%s active config provider references = %d, want 1", owner, got)
+		}
+	}
+}
+
 func TestProductionDecisionServiceConstructorHasOneCompositionOwner(t *testing.T) {
 	owners := productionDecisionServiceConstructorOwners(t)
 
