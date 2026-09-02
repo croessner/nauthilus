@@ -83,6 +83,7 @@ const (
 	defaultSLORateLimitBurst     = 20
 	sloMaxInboundMessageBytes    = 512 * 1024
 	sloMaxInboundBodyBytes       = 1024 * 1024
+	sloMaxRelayStateBytes        = 80
 	samlAttributeTypeString      = "xs:string"
 )
 
@@ -499,21 +500,58 @@ func (h *SAMLHandler) Register(router gin.IRouter, runtime *cookie.CanonicalRunt
 
 	securityMW := securityheaders.New(securityheaders.MiddlewareConfig{Config: h.deps.Cfg}).Handler()
 	protocolEntryMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalProtocolEntry)
-	sloCheckpointMW := canonicalSAMLSLOMiddleware(runtime)
+	sloAdmissionMW := h.sloAdmissionMiddleware()
+	sloCheckpointMW := h.canonicalSAMLSLOMiddleware(runtime)
 
 	router.GET("/saml/metadata", securityMW, h.Metadata)
 	router.GET(frontendSAMLSSOPath, securityMW, protocolEntryMW, h.SSOCanonical)
-	router.GET(frontendSAMLLogoutPath, securityMW, sloCheckpointMW, h.SLOCanonical)
-	router.POST(frontendSAMLLogoutPath, securityMW, sloCheckpointMW, h.SLOCanonical)
+	router.GET(frontendSAMLLogoutPath, securityMW, sloAdmissionMW, sloCheckpointMW, h.SLOCanonical)
+	router.POST(frontendSAMLLogoutPath, securityMW, sloAdmissionMW, sloCheckpointMW, h.SLOCanonical)
+}
+
+const (
+	sloAdmissionContextKey = "saml_slo_admitted"
+	sloMessageContextKey   = "saml_slo_message"
+)
+
+// sloAdmissionMiddleware applies cheap abuse controls before protocol parsing.
+func (h *SAMLHandler) sloAdmissionMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		binding := sloBindingFromHTTPMethod(ctx.Request.Method)
+
+		clientIP := util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
+		if !h.allowSLORequest(clientIP) {
+			h.rejectRateLimitedSLO(ctx, binding, "", clientIP)
+			ctx.Abort()
+
+			return
+		}
+
+		if ctx.Request.Method == http.MethodPost && ctx.Request.Body != nil {
+			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, sloMaxInboundBodyBytes)
+		}
+
+		ctx.Set(sloAdmissionContextKey, true)
+		ctx.Next()
+	}
 }
 
 // canonicalSAMLSLOMiddleware admits requests as fresh entries and responses only as bound continuations.
-func canonicalSAMLSLOMiddleware(runtime *cookie.CanonicalRuntime) gin.HandlerFunc {
+func (h *SAMLHandler) canonicalSAMLSLOMiddleware(runtime *cookie.CanonicalRuntime) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		mode := cookie.CanonicalContinuation
 
 		message, err := routeSLOInboundMessage(ctx.Request)
-		if err == nil && message.MessageType == sloMessageTypeRequest {
+		if err != nil {
+			h.rejectInvalidSLOPayload(ctx, sloBindingFromHTTPMethod(ctx.Request.Method), "", err)
+			ctx.Abort()
+
+			return
+		}
+
+		ctx.Set(sloMessageContextKey, message)
+
+		if message.MessageType == sloMessageTypeRequest {
 			mode = cookie.CanonicalProtocolEntry
 		}
 
@@ -707,28 +745,37 @@ func (h *SAMLHandler) SLO(ctx *gin.Context) {
 		return
 	}
 
-	clientIP := util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
-	if !h.allowSLORequest(clientIP) {
-		h.rejectRateLimitedSLO(ctx, binding, messageType, clientIP)
+	if admitted, _ := ctx.Get(sloAdmissionContextKey); admitted != true {
+		clientIP := util.RequestClientIPWithConfig(ctx, h.deps.Cfg, h.deps.Logger)
+		if !h.allowSLORequest(clientIP) {
+			h.rejectRateLimitedSLO(ctx, binding, messageType, clientIP)
 
-		return
+			return
+		}
+
+		if ctx.Request.Method == http.MethodPost && ctx.Request.Body != nil {
+			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, sloMaxInboundBodyBytes)
+		}
 	}
 
-	if ctx.Request.Method == http.MethodPost && ctx.Request.Body != nil {
-		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, sloMaxInboundBodyBytes)
+	message, exists := ctx.Get(sloMessageContextKey)
+
+	inbound, ok := message.(*sloInboundMessage)
+	if !exists || !ok {
+		var err error
+
+		inbound, err = routeSLOInboundMessage(ctx.Request)
+		if err != nil {
+			h.rejectInvalidSLOPayload(ctx, binding, messageType, err)
+
+			return
+		}
 	}
 
-	message, err := routeSLOInboundMessage(ctx.Request)
-	if err != nil {
-		h.rejectInvalidSLOPayload(ctx, binding, messageType, err)
+	binding = inbound.Binding
+	messageType = inbound.MessageType
 
-		return
-	}
-
-	binding = message.Binding
-	messageType = message.MessageType
-
-	h.dispatchSLOMessage(ctx, message, binding, messageType)
+	h.dispatchSLOMessage(ctx, inbound, binding, messageType)
 }
 
 // logSLORequest records the incoming SLO handler entry.
@@ -888,6 +935,10 @@ func validateSingleSLOParam(values url.Values, key string) (string, error) {
 
 	if (key == "SAMLRequest" || key == "SAMLResponse") && len(entries[0]) > sloMaxInboundMessageBytes {
 		return "", fmt.Errorf("%w: parameter %s exceeds %d bytes", errSLOPayloadTooLarge, key, sloMaxInboundMessageBytes)
+	}
+
+	if key == "RelayState" && len(entries[0]) > sloMaxRelayStateBytes {
+		return "", fmt.Errorf("%w: parameter %s exceeds %d bytes", errSLOPayloadTooLarge, key, sloMaxRelayStateBytes)
 	}
 
 	value := strings.TrimSpace(entries[0])

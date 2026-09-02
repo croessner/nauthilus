@@ -327,7 +327,14 @@ func (h *OIDCHandler) handleDeviceCodePollStatus(ctx *gin.Context, deviceCode st
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorAccessDenied})
 
 	case idp.DeviceCodeStatusAuthorized:
-		h.issueDeviceCodeTokens(ctx, deviceCode, request, client)
+		claimed, err := h.deviceStore.ClaimAuthorizedDeviceCode(ctx.Request.Context(), deviceCode, client.ClientID)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidGrant})
+
+			return
+		}
+
+		h.issueDeviceCodeTokens(ctx, deviceCode, claimed, client)
 
 	default:
 		util.DebugModuleWithCfg(
@@ -426,8 +433,6 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 		return
 	}
 
-	// Clean up the device code
-	_ = h.deviceStore.DeleteDeviceCode(ctx.Request.Context(), deviceCode)
 	h.sendTokenResponse(ctx, request.ClientID, definitions.OIDCGrantTypeDeviceCode, &tokenResponse{
 		idToken:      idToken,
 		accessToken:  accessToken,

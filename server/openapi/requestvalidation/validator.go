@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/openapi"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers"
@@ -97,6 +98,10 @@ func (validator *Validator) Validate(req *http.Request) error {
 
 	validationReq, err := validator.cloneRequestForValidation(req)
 	if err != nil {
+		if errors.Is(err, util.ErrRequestBodyTooLarge) {
+			return fmt.Errorf("%s OpenAPI request contract: prepare request: %w", validator.name, err)
+		}
+
 		return validator.sanitizeError(req, fmt.Errorf("prepare request: %w", err))
 	}
 
@@ -329,8 +334,14 @@ func readAndRestoreBody(req *http.Request) ([]byte, error) {
 		return nil, nil
 	}
 
-	body, err := io.ReadAll(req.Body)
+	if req.ContentLength > util.DefaultHTTPRequestBodyLimit {
+		return nil, util.ErrRequestBodyTooLarge
+	}
+
+	body, err := util.ReadBoundedRequestBody(req.Body, util.DefaultHTTPRequestBodyLimit)
 	if err != nil {
+		_ = req.Body.Close()
+
 		return nil, err
 	}
 

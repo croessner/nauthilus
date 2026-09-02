@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,83 @@ func TestValidateSingleSLOParam_RejectsOversizedPayload(t *testing.T) {
 	_, err := validateSingleSLOParam(values, "SAMLRequest")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, errSLOPayloadTooLarge)
+}
+
+func TestValidateSingleSLOParam_RejectsOversizedRelayState(t *testing.T) {
+	boundary := strings.Repeat("a", sloMaxRelayStateBytes)
+	value, err := validateSingleSLOParam(url.Values{"RelayState": {boundary}}, "RelayState")
+	assert.NoError(t, err)
+	assert.Equal(t, boundary, value)
+
+	values := url.Values{
+		"RelayState": {strings.Repeat("a", sloMaxRelayStateBytes+1)},
+	}
+
+	_, err = validateSingleSLOParam(values, "RelayState")
+	assert.ErrorIs(t, err, errSLOPayloadTooLarge)
+}
+
+func TestSAMLSLOAdmissionBoundsBodyBeforeCheckpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := NewSAMLHandler(&deps.Deps{Cfg: &mockSAMLCfg{}}, nil)
+	router := gin.New()
+	router.POST(
+		frontendSAMLLogoutPath,
+		handler.sloAdmissionMiddleware(),
+		handler.canonicalSAMLSLOMiddleware(nil),
+		func(ctx *gin.Context) { ctx.Status(http.StatusNoContent) },
+	)
+
+	for _, contentLength := range []int64{int64(sloMaxInboundBodyBytes + 1), -1} {
+		body := bytes.Repeat([]byte("a"), sloMaxInboundBodyBytes+1)
+		request := httptest.NewRequest(http.MethodPost, frontendSAMLLogoutPath, bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.ContentLength = contentLength
+		response := httptest.NewRecorder()
+
+		router.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+		assert.Contains(t, response.Body.String(), "Invalid SAML SLO payload")
+	}
+}
+
+func TestSAMLSLOAdmissionRejectsRateLimitBeforeReadingBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := NewSAMLHandler(&deps.Deps{Cfg: &mockSAMLCfg{}}, nil)
+	handler.sloRateLimiter = limit.NewIPRateLimiter(limit.Rate(0.01), 1)
+	router := gin.New()
+	router.POST(frontendSAMLLogoutPath, handler.sloAdmissionMiddleware(), func(ctx *gin.Context) {
+		ctx.Status(http.StatusNoContent)
+	})
+
+	first := httptest.NewRequest(http.MethodPost, frontendSAMLLogoutPath, strings.NewReader("SAMLRequest=opaque"))
+	first.RemoteAddr = "203.0.113.21:12345"
+	firstResponse := httptest.NewRecorder()
+	router.ServeHTTP(firstResponse, first)
+
+	body := &countingSLOReader{reader: strings.NewReader("SAMLRequest=opaque")}
+	second := httptest.NewRequest(http.MethodPost, frontendSAMLLogoutPath, body)
+	second.RemoteAddr = first.RemoteAddr
+	secondResponse := httptest.NewRecorder()
+	router.ServeHTTP(secondResponse, second)
+
+	assert.Equal(t, http.StatusTooManyRequests, secondResponse.Code)
+	assert.Zero(t, body.reads)
+}
+
+type countingSLOReader struct {
+	reader *strings.Reader
+	reads  int
+}
+
+// Read records admission-layer request-body reads.
+func (r *countingSLOReader) Read(buffer []byte) (int, error) {
+	r.reads++
+
+	return r.reader.Read(buffer)
 }
 
 func TestSAMLHandler_SLO_RateLimitAbuseGuard(t *testing.T) {

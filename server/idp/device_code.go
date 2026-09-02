@@ -118,8 +118,68 @@ type DeviceCodeStore interface {
 	// UpdateDeviceCode updates the stored device code request.
 	UpdateDeviceCode(ctx context.Context, deviceCode string, request *DeviceCodeRequest) error
 
+	// ClaimAuthorizedDeviceCode atomically consumes an authorized request for one client.
+	ClaimAuthorizedDeviceCode(ctx context.Context, deviceCode string, clientID string) (*DeviceCodeRequest, error)
+
 	// DeleteDeviceCode removes a device code from storage.
 	DeleteDeviceCode(ctx context.Context, deviceCode string) error
+}
+
+// ClaimAuthorizedDeviceCode atomically consumes an authorized request for its bound client.
+func (s *RedisDeviceCodeStore) ClaimAuthorizedDeviceCode(
+	ctx context.Context,
+	deviceCode string,
+	clientID string,
+) (*DeviceCodeRequest, error) {
+	if deviceCode == "" || clientID == "" {
+		return nil, ErrDeviceCodeConflict
+	}
+
+	deviceKey := s.deviceCodeKey(deviceCode)
+	handle := s.redis.GetWriteHandle()
+
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	var claimed *DeviceCodeRequest
+
+	err := handle.Watch(writeCtx, func(tx *redis.Tx) error {
+		encoded, err := redisDeviceCodeString(writeCtx, tx, deviceKey)
+		if err != nil {
+			return err
+		}
+
+		request, err := s.decodeDeviceCodeRequest(encoded)
+		if err != nil {
+			return err
+		}
+
+		if request.ClientID != clientID || request.Status != DeviceCodeStatusAuthorized ||
+			!request.VerificationLocked || time.Now().After(request.ExpiresAt) {
+			return ErrDeviceCodeConflict
+		}
+
+		if _, err = tx.TxPipelined(writeCtx, func(pipe redis.Pipeliner) error {
+			pipe.Del(writeCtx, deviceKey)
+
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		claimed = request
+
+		return nil
+	}, deviceKey)
+	if errors.Is(err, redis.TxFailedErr) {
+		err = ErrDeviceCodeConflict
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("claim authorized device code: %w", err)
+	}
+
+	return claimed, nil
 }
 
 // UserCodeGenerator defines the interface for generating user-facing codes.

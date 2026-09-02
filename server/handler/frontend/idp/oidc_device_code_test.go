@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,10 @@ func (n *noopDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, _ *d
 	return nil
 }
 
+func (n *noopDeviceCodeStore) ClaimAuthorizedDeviceCode(_ context.Context, _ string, _ string) (*devicecode.DeviceCodeRequest, error) {
+	return nil, nil
+}
+
 func (n *noopDeviceCodeStore) DeleteDeviceCode(_ context.Context, _ string) error {
 	return nil
 }
@@ -79,6 +84,10 @@ func (s *countingDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, 
 	s.updatedRequests = append(s.updatedRequests, request)
 
 	return nil
+}
+
+func (s *countingDeviceCodeStore) ClaimAuthorizedDeviceCode(_ context.Context, _ string, _ string) (*devicecode.DeviceCodeRequest, error) {
+	return nil, nil
 }
 
 // DeleteDeviceCode is unused by allocation tests and is a no-op.
@@ -285,6 +294,82 @@ func TestIssueDeviceCodeTokens_RejectsMissingPersistedClaims(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "server_error")
+}
+
+func TestAuthorizedDeviceCodeConcurrentPollsIssueOneTokenResponse(t *testing.T) {
+	handler, client := newTestDeviceCodeOIDCHandler(t)
+	server := miniredis.RunT(t)
+	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
+
+	t.Cleanup(func() { _ = handle.Close() })
+
+	const deviceCodeValue = "concurrent-authorized-device-code"
+
+	store := devicecode.NewRedisDeviceCodeStore(rediscli.NewTestClient(handle), "test:")
+	request := &devicecode.DeviceCodeRequest{
+		ClientID:           client.ClientID,
+		Scopes:             []string{definitions.ScopeOpenID},
+		Status:             devicecode.DeviceCodeStatusAuthorized,
+		IDTokenClaims:      map[string]any{"sub": "user-123"},
+		AccessTokenClaims:  map[string]any{"sub": "user-123"},
+		ExpiresAt:          time.Now().Add(10 * time.Minute),
+		VerificationLocked: true,
+	}
+	request.StoreUserSnapshot(backend.NewUser("alice", "Alice Example", "user-123"))
+
+	if err := store.StoreDeviceCode(t.Context(), deviceCodeValue, request, 10*time.Minute); err != nil {
+		t.Fatalf("store authorized device code: %v", err)
+	}
+
+	handler.deviceStore = store
+	statuses := concurrentAuthorizedDevicePollStatuses(handler, &client, request, deviceCodeValue)
+	successes := 0
+
+	for status := range statuses {
+		if status == http.StatusOK {
+			successes++
+		}
+	}
+
+	if successes != 1 {
+		t.Fatalf("successful token responses = %d, want 1", successes)
+	}
+}
+
+// concurrentAuthorizedDevicePollStatuses releases two token polls from one barrier.
+func concurrentAuthorizedDevicePollStatuses(
+	handler *OIDCHandler,
+	client *config.OIDCClient,
+	request *devicecode.DeviceCodeRequest,
+	deviceCodeValue string,
+) <-chan int {
+	var waitGroup sync.WaitGroup
+
+	start := make(chan struct{})
+	statuses := make(chan int, 2)
+
+	for range 2 {
+		waitGroup.Add(1)
+
+		go func() {
+			defer waitGroup.Done()
+
+			<-start
+
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/oidc/token", nil)
+			handler.handleDeviceCodePollStatus(ctx, deviceCodeValue, request, client)
+
+			statuses <- response.Code
+		}()
+	}
+
+	close(start)
+	waitGroup.Wait()
+	close(statuses)
+
+	return statuses
 }
 
 func TestIssueDeviceCodeTokens_UsesPersistedClaimsFromDeviceRequest(t *testing.T) {

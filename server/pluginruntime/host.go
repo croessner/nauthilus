@@ -527,11 +527,23 @@ func (h *Host) SetDebugRegistry(registry *pluginregistry.Registry) {
 
 // moduleHost returns a host facade bound to one configured plugin module instance.
 func (h *Host) moduleHost(moduleName string) pluginapi.Host {
+	return h.moduleHostWithCapabilities(moduleName, nil)
+}
+
+// moduleHostWithCapabilities returns a module facade bound to detached grants.
+func (h *Host) moduleHostWithCapabilities(
+	moduleName string,
+	capabilities []pluginapi.Capability,
+) pluginapi.Host {
 	if h == nil {
-		return NewHost().moduleHost(moduleName)
+		return NewHost().moduleHostWithCapabilities(moduleName, capabilities)
 	}
 
-	return moduleBoundHost{base: h, moduleName: moduleName}
+	return moduleBoundHost{
+		base:         h,
+		moduleName:   moduleName,
+		capabilities: slices.Clone(capabilities),
+	}
 }
 
 // setModuleCompatibility binds restart-only allowlists only to artifacts with verified signer provenance.
@@ -581,8 +593,9 @@ func (h *Host) debugGateOrNil() *pluginDebugGate {
 }
 
 type moduleBoundHost struct {
-	base       *Host
-	moduleName string
+	base         *Host
+	moduleName   string
+	capabilities []pluginapi.Capability
 }
 
 // ServiceContext returns the shared host service context.
@@ -640,7 +653,12 @@ func (h moduleBoundHost) HTTP(scope string) pluginapi.HTTPClient {
 
 // Mail returns a module-bound host-managed mail facade.
 func (h moduleBoundHost) Mail(scope string) pluginapi.Mailer {
-	return h.base.mailFacade(scope, h.Logger(scope))
+	return NewMailFacade(
+		scope,
+		MailFacadeSender(h.base.mailSender),
+		MailFacadeLogger(h.Logger(scope)),
+		MailFacadeAuthorized(slices.Contains(h.capabilities, pluginapi.CapabilityMail)),
+	)
 }
 
 // ConnectionTargets returns the shared connection-target facade.

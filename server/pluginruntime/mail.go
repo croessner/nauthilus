@@ -41,15 +41,18 @@ const (
 var (
 	errInvalidMailRequest = errors.New("invalid plugin mail request")
 	errMailSendFailed     = errors.New("plugin mail send failed")
+	// ErrMailCapabilityDenied reports a module mail call without an immutable grant.
+	ErrMailCapabilityDenied = errors.New("plugin mail capability denied")
 )
 
 var _ pluginapi.Mailer = (*MailFacade)(nil)
 
 // MailFacade sends plugin mail through the host-owned SMTP/LMTP implementation.
 type MailFacade struct {
-	sender smtp.Client
-	logger pluginapi.Logger
-	scope  string
+	sender     smtp.Client
+	logger     pluginapi.Logger
+	scope      string
+	authorized bool
 }
 
 // MailFacadeOption customizes a host-managed mail facade.
@@ -58,14 +61,22 @@ type MailFacadeOption func(*MailFacade)
 // NewMailFacade returns a scoped host mail facade.
 func NewMailFacade(scope string, options ...MailFacadeOption) *MailFacade {
 	facade := &MailFacade{
-		sender: &smtp.EmailClient{},
-		scope:  scope,
+		sender:     &smtp.EmailClient{},
+		scope:      scope,
+		authorized: true,
 	}
 	for _, option := range options {
 		option(facade)
 	}
 
 	return facade
+}
+
+// MailFacadeAuthorized binds the facade to an immutable module capability decision.
+func MailFacadeAuthorized(authorized bool) MailFacadeOption {
+	return func(facade *MailFacade) {
+		facade.authorized = authorized
+	}
 }
 
 // MailFacadeSender configures the SMTP/LMTP sender used by the facade.
@@ -94,6 +105,10 @@ func (f *MailFacade) Send(ctx context.Context, message pluginapi.MailMessage) er
 
 	if f == nil {
 		f = NewMailFacade("")
+	}
+
+	if !f.authorized {
+		return ErrMailCapabilityDenied
 	}
 
 	prepared, err := f.prepareMessage(message)

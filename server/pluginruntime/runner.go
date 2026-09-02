@@ -294,6 +294,11 @@ func (r *Runner) ModuleCapabilities(moduleName string) []pluginapi.Capability {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	return r.moduleCapabilitiesLocked(moduleName)
+}
+
+// moduleCapabilitiesLocked clones capabilities while the caller owns the runner lock.
+func (r *Runner) moduleCapabilitiesLocked(moduleName string) []pluginapi.Capability {
 	index, ok := r.moduleIndex[moduleName]
 	if !ok {
 		return nil
@@ -546,8 +551,10 @@ func (r *Runner) readyComponent(qualifiedName string, kind pluginregistry.Compon
 
 // moduleHost returns a host facade bound to one configured plugin module when supported.
 func (r *Runner) moduleHost(moduleName string) pluginapi.Host {
-	if binder, ok := r.host.(interface{ moduleHost(string) pluginapi.Host }); ok {
-		return binder.moduleHost(moduleName)
+	if binder, ok := r.host.(interface {
+		moduleHostWithCapabilities(string, []pluginapi.Capability) pluginapi.Host
+	}); ok {
+		return binder.moduleHostWithCapabilities(moduleName, r.moduleCapabilitiesLocked(moduleName))
 	}
 
 	return r.host

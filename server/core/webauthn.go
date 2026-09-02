@@ -20,8 +20,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -89,7 +89,13 @@ func beginWebAuthnLoginOptions(user *backend.User) (*protocol.CredentialAssertio
 
 // parseRegistrationFinishResponse parses the registration finish payload and optional device name.
 func parseRegistrationFinishResponse(ctx *gin.Context) (string, *protocol.ParsedCredentialCreationData, bool) {
-	requestBody, err := io.ReadAll(ctx.Request.Body)
+	requestBody, err := util.ReadBoundedRequestBody(ctx.Request.Body, util.DefaultHTTPRequestBodyLimit)
+	if errors.Is(err, util.ErrRequestBodyTooLarge) {
+		ctx.AbortWithStatus(http.StatusRequestEntityTooLarge)
+
+		return "", nil, false
+	}
+
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, err.Error())
 

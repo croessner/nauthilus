@@ -132,6 +132,28 @@ func TestMiddlewareSkipsUnselectedOperations(t *testing.T) {
 	}
 }
 
+func TestMiddlewareRejectsOversizedSelectedRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(newTestMiddleware(t, config.OpenAPIValidationOperationFlushUserCache, nil))
+	router.DELETE("/api/v1/cache/flush", func(_ *gin.Context) {
+		t.Fatal("handler should not run after oversized request rejection")
+	})
+
+	body := strings.Repeat("a", 1<<20+1)
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/cache/flush", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.ContentLength = -1
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
 func newTestMiddleware(t *testing.T, operation string, logs *bytes.Buffer) gin.HandlerFunc {
 	t.Helper()
 

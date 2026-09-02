@@ -6,6 +6,7 @@ package idp
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +55,67 @@ func TestRedisDeviceCodeStoreClaimsAndCompletesExactlyOnce(t *testing.T) {
 
 	if err = store.CompleteClaimedDeviceCode(context.Background(), deviceCode, claimed); err == nil {
 		t.Fatal("replayed device-code completion unexpectedly succeeded")
+	}
+}
+
+func TestRedisDeviceCodeStoreClaimsAuthorizedDeviceCodeOnce(t *testing.T) {
+	server := miniredis.RunT(t)
+	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
+
+	t.Cleanup(func() { _ = handle.Close() })
+
+	const (
+		prefix     = "test:"
+		deviceCode = "authorized-device-code"
+		clientID   = "device-client"
+	)
+
+	store := NewRedisDeviceCodeStore(rediscli.NewTestClient(handle), prefix)
+	request := testDeviceCodeRequest([]string{"openid"}, "ABCD-EFGH", 10*time.Minute)
+	request.ClientID = clientID
+	request.Status = DeviceCodeStatusAuthorized
+	request.VerificationLocked = true
+
+	if err := store.StoreDeviceCode(t.Context(), deviceCode, request, 10*time.Minute); err != nil {
+		t.Fatalf("store authorized device code: %v", err)
+	}
+
+	var waitGroup sync.WaitGroup
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+
+	for range 2 {
+		waitGroup.Add(1)
+
+		go func() {
+			defer waitGroup.Done()
+
+			<-start
+
+			_, err := store.ClaimAuthorizedDeviceCode(context.Background(), deviceCode, clientID)
+			results <- err
+		}()
+	}
+
+	close(start)
+	waitGroup.Wait()
+	close(results)
+
+	successes := 0
+
+	for err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+
+	if successes != 1 {
+		t.Fatalf("successful claims = %d, want 1", successes)
+	}
+
+	if server.Exists(prefix + "oidc:device_code:" + deviceCode) {
+		t.Fatal("authorized device code remains after claim")
 	}
 }
 

@@ -94,6 +94,51 @@ func TestHostMailFacadeRejectsInvalidScope(t *testing.T) {
 	}
 }
 
+func TestModuleBoundHostMailRequiresDetachedCapability(t *testing.T) {
+	tests := []struct {
+		name         string
+		capabilities []pluginapi.Capability
+		wantAllowed  bool
+	}{
+		{name: "denied by default"},
+		{name: "explicitly granted", capabilities: []pluginapi.Capability{pluginapi.CapabilityMail}, wantAllowed: true},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			sender := &recordingMailSender{}
+			host := NewHost(WithMailSender(sender))
+			moduleHost := host.moduleHostWithCapabilities("mail_module", testCase.capabilities)
+			mailer := moduleHost.Mail(mailTestScope)
+
+			if len(testCase.capabilities) > 0 {
+				testCase.capabilities[0] = pluginapi.CapabilityCredentials
+			}
+
+			err := mailer.Send(context.Background(), newMailTestMessage())
+			if testCase.wantAllowed {
+				if err != nil {
+					t.Fatalf("Send() error = %v", err)
+				}
+
+				if sender.calls != 1 {
+					t.Fatalf("sender calls = %d, want 1", sender.calls)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, ErrMailCapabilityDenied) {
+				t.Fatalf("Send() error = %v, want ErrMailCapabilityDenied", err)
+			}
+
+			if sender.calls != 0 {
+				t.Fatalf("sender calls = %d, want 0", sender.calls)
+			}
+		})
+	}
+}
+
 func TestHostMailFacadeRejectsInvalidMessageBeforeSending(t *testing.T) {
 	tests := []struct {
 		mutate func(*pluginapi.MailMessage)

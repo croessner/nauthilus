@@ -708,6 +708,16 @@ func (s *canonicalDeviceStoreFixture) UpdateDeviceCode(context.Context, string, 
 	return nil
 }
 
+func (s *canonicalDeviceStoreFixture) ClaimAuthorizedDeviceCode(
+	context.Context,
+	string,
+	string,
+) (*domainidp.DeviceCodeRequest, error) {
+	request := *s.request
+
+	return &request, nil
+}
+
 func (s *canonicalDeviceStoreFixture) DeleteDeviceCode(context.Context, string) error { return nil }
 
 var _ domainidp.DeviceCodeStore = (*canonicalDeviceStoreFixture)(nil)
