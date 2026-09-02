@@ -49,7 +49,7 @@ func (*AuthnRequestRuntime) Capture(
 
 	requestContext := ctx
 	if input.Detached {
-		requestContext = context.WithoutCancel(ctx)
+		requestContext = context.Background()
 	}
 
 	capture := core.AuthnNativeCapture{
