@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	flowdomain "github.com/croessner/nauthilus/v4/server/idp/flow"
@@ -19,6 +20,38 @@ import (
 	"github.com/croessner/nauthilus/v4/server/sessionstate"
 	"github.com/gin-gonic/gin"
 )
+
+func TestFilterCanonicalMFAAvailabilityHidesMethodsBelowRequestedLevel(t *testing.T) {
+	t.Parallel()
+
+	availability := filterCanonicalMFAAvailability(mfaAvailability{
+		haveTOTP: true, haveWebAuthn: true, haveRecoveryCodes: true,
+	}, []string{
+		definitions.MFAMethodTOTP,
+		definitions.MFAMethodWebAuthn,
+		definitions.MFAMethodRecoveryCodes,
+	}, 3, config.DefaultMFAPolicyLevels())
+
+	if availability.haveTOTP || !availability.haveWebAuthn || availability.haveRecoveryCodes || availability.count != 1 {
+		t.Fatalf("level 3 MFA availability = %#v, want WebAuthn only", availability)
+	}
+}
+
+func TestFilterCanonicalMFAAvailabilityHonorsPolicyLevelOverrides(t *testing.T) {
+	t.Parallel()
+
+	availability := filterCanonicalMFAAvailability(mfaAvailability{
+		haveTOTP: true, haveWebAuthn: true, haveRecoveryCodes: true,
+	}, nil, 3, map[string]int{
+		definitions.MFAMethodTOTP:          3,
+		definitions.MFAMethodWebAuthn:      2,
+		definitions.MFAMethodRecoveryCodes: 1,
+	})
+
+	if !availability.haveTOTP || availability.haveWebAuthn || availability.haveRecoveryCodes || availability.count != 1 {
+		t.Fatalf("overridden level 3 MFA availability = %#v, want TOTP only", availability)
+	}
+}
 
 func TestCanonicalMFASelectionRejectsMissingCanonicalSession(t *testing.T) {
 	t.Parallel()
@@ -129,6 +162,33 @@ func TestLoginMFASelectUsesCanonicalStepUpTicket(t *testing.T) {
 	if writer.Code != http.StatusFound || writer.Header().Get("Location") != want {
 		t.Fatalf("canonical MFA select redirect = %d %q, want %d %q",
 			writer.Code, writer.Header().Get("Location"), http.StatusFound, want)
+	}
+
+	insufficientHandle := sessionstate.Handle("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+
+	session = openCanonicalFixture(t, runtime, browserCookie)
+	if err := mfastate.NewAggregate(session.Stores, session.Handle, 10*time.Minute).BeginStepUp(
+		context.Background(),
+		&sessionstate.StepUpRecord{
+			Record: sessionstate.Record{Handle: insufficientHandle}, Session: session.Handle,
+			Flow: sessionstate.Handle(flowID), RequestedLevel: 3,
+			SupportedMethods: []string{definitions.MFAMethodTOTP}, Scope: "oidc:client-a",
+		},
+	); err != nil {
+		t.Fatalf("seed insufficient typed step-up: %v", err)
+	}
+
+	insufficientRequest := httptest.NewRequest(
+		http.MethodGet, "/login/mfa?flow="+string(insufficientHandle), nil,
+	)
+	insufficientRequest.AddCookie(browserCookie)
+
+	insufficientWriter := httptest.NewRecorder()
+	router.ServeHTTP(insufficientWriter, insufficientRequest)
+
+	if insufficientWriter.Code != http.StatusConflict {
+		t.Fatalf("insufficient canonical MFA select status = %d, want %d",
+			insufficientWriter.Code, http.StatusConflict)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -41,6 +42,15 @@ type canonicalMFASelectionState struct {
 	stepUp       sessionstate.Versioned[sessionstate.StepUpRecord]
 	availability mfaAvailability
 	failLatched  bool
+}
+
+// canonicalGlobalMFAMethodLevels returns the effective global policy or the built-in compatibility baseline.
+func (h *FrontendHandler) canonicalGlobalMFAMethodLevels() map[string]int {
+	if h == nil || h.deps == nil || h.deps.Cfg == nil || h.deps.Cfg.GetIDP() == nil {
+		return config.DefaultMFAPolicyLevels()
+	}
+
+	return h.deps.Cfg.GetIDP().GetMFAPolicyLevels()
 }
 
 func canonicalMFABoundFlow(selection canonicalMFASelectionState) sessionstate.Handle {
@@ -225,7 +235,7 @@ func (h *FrontendHandler) canonicalMFASelection(ctx *gin.Context) (canonicalMFAS
 			haveTOTP:          slices.Contains(stepUp.Value.SupportedMethods, definitions.MFAMethodTOTP),
 			haveWebAuthn:      slices.Contains(stepUp.Value.SupportedMethods, definitions.MFAMethodWebAuthn),
 			haveRecoveryCodes: slices.Contains(stepUp.Value.SupportedMethods, definitions.MFAMethodRecoveryCodes),
-		}, stepUp.Value.SupportedMethods)
+		}, stepUp.Value.SupportedMethods, stepUp.Value.RequestedLevel, stepUp.Value.MethodLevels)
 
 		return canonicalMFASelectionState{
 			session: session, identity: identity, backendRef: backendRef, parent: parent,
@@ -255,11 +265,13 @@ func (h *FrontendHandler) canonicalMFASelection(ctx *gin.Context) (canonicalMFAS
 		return canonicalMFASelectionState{}, fmt.Errorf("canonical MFA selection: availability: %w", err)
 	}
 
-	availability = filterCanonicalMFAAvailability(availability, stepUp.Value.SupportedMethods)
+	availability = filterCanonicalMFAAvailability(
+		availability, stepUp.Value.SupportedMethods, stepUp.Value.RequestedLevel, stepUp.Value.MethodLevels,
+	)
 
 	return canonicalMFASelectionState{
 		session: session, identity: identity, backendRef: backendRef, parent: parent,
-		stepUp: stepUp, availability: filterCanonicalMFAAvailability(availability, stepUp.Value.SupportedMethods),
+		stepUp: stepUp, availability: availability,
 	}, nil
 }
 
@@ -350,13 +362,29 @@ func canonicalRemoteMFABackendRef(session *cookie.CanonicalSession) core.RemoteB
 	}
 }
 
-func filterCanonicalMFAAvailability(availability mfaAvailability, supported []string) mfaAvailability {
+// filterCanonicalMFAAvailability keeps only enrolled methods allowed to satisfy the bound step-up policy.
+func filterCanonicalMFAAvailability(
+	availability mfaAvailability,
+	supported []string,
+	requestedLevel int,
+	methodLevels map[string]int,
+) mfaAvailability {
+	if len(methodLevels) == 0 {
+		methodLevels = config.DefaultMFAPolicyLevels()
+	}
+
 	if len(supported) > 0 {
 		availability.haveTOTP = availability.haveTOTP && slices.Contains(supported, definitions.MFAMethodTOTP)
 		availability.haveWebAuthn = availability.haveWebAuthn && slices.Contains(supported, definitions.MFAMethodWebAuthn)
 		availability.haveRecoveryCodes = availability.haveRecoveryCodes &&
 			slices.Contains(supported, definitions.MFAMethodRecoveryCodes)
 	}
+
+	availability.haveTOTP = availability.haveTOTP && methodLevels[definitions.MFAMethodTOTP] >= requestedLevel
+	availability.haveWebAuthn = availability.haveWebAuthn &&
+		methodLevels[definitions.MFAMethodWebAuthn] >= requestedLevel
+	availability.haveRecoveryCodes = availability.haveRecoveryCodes &&
+		methodLevels[definitions.MFAMethodRecoveryCodes] >= requestedLevel
 
 	availability.count = countMFAAvailability(availability)
 

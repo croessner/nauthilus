@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -36,6 +37,7 @@ import (
 type canonicalMFAPolicy struct {
 	required      []string
 	supported     []string
+	levels        map[string]int
 	scope         string
 	requiredLevel int
 }
@@ -74,6 +76,7 @@ func (h *FrontendHandler) canonicalFlowMFAPolicy(
 		return canonicalMFAPolicy{
 			required:  append([]string(nil), client.GetRequireMFA()...),
 			supported: append([]string(nil), client.GetSupportedMFA()...),
+			levels:    client.GetMFAPolicyLevels(h.deps.Cfg.GetIDP().GetMFAPolicyLevels()),
 			scope:     oidcMFAAssuranceScope(clientID), requiredLevel: client.GetRequiredMFALevel(),
 		}, true
 
@@ -91,6 +94,7 @@ func (h *FrontendHandler) canonicalFlowMFAPolicy(
 		return canonicalMFAPolicy{
 			required:  append([]string(nil), sp.GetRequireMFA()...),
 			supported: append([]string(nil), sp.GetSupportedMFA()...),
+			levels:    sp.GetMFAPolicyLevels(h.deps.Cfg.GetIDP().GetMFAPolicyLevels()),
 			scope:     samlMFAAssuranceScope(entityID), requiredLevel: sp.GetRequiredMFALevel(),
 		}, true
 	default:
@@ -98,7 +102,7 @@ func (h *FrontendHandler) canonicalFlowMFAPolicy(
 	}
 }
 
-// canonicalSessionSatisfiesMFAPolicy checks one live typed assurance without browser-state fallback.
+// canonicalSessionSatisfiesMFAPolicy checks challenge support, strength, and scope independently from enrollment rules.
 func canonicalSessionSatisfiesMFAPolicy(
 	session *cookie.CanonicalSession,
 	policy canonicalMFAPolicy,
@@ -113,7 +117,7 @@ func canonicalSessionSatisfiesMFAPolicy(
 		return false
 	}
 
-	if len(policy.required) > 0 && !slices.Contains(policy.required, assurance.Method) {
+	if len(policy.supported) > 0 && !slices.Contains(policy.supported, assurance.Method) {
 		return false
 	}
 
@@ -428,10 +432,16 @@ func (h *FrontendHandler) startCanonicalMFAAssuranceStepUp(
 		return false
 	}
 
+	methodLevels := policy.levels
+	if len(methodLevels) == 0 {
+		methodLevels = h.canonicalGlobalMFAMethodLevels()
+	}
+
 	record := &sessionstate.StepUpRecord{
 		Record: sessionstate.Record{Handle: handle}, Session: session.Handle,
 		Flow: sessionstate.Handle(state.FlowID), RequestedLevel: max(policy.requiredLevel, 1),
-		SupportedMethods: append([]string(nil), policy.supported...), Scope: policy.scope,
+		SupportedMethods: append([]string(nil), policy.supported...), MethodLevels: maps.Clone(methodLevels),
+		Scope: policy.scope,
 	}
 	if err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalStepUpTTL).
 		BeginStepUp(ctx.Request.Context(), record); err != nil {

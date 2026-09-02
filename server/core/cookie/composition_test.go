@@ -111,7 +111,8 @@ func TestCanonicalSessionCompletesStepUpAndAssuranceAtomicallyOnce(t *testing.T)
 		context.Background(),
 		&sessionstate.StepUpRecord{
 			Record: sessionstate.Record{Handle: handle}, Session: session.Handle, Flow: flowHandle,
-			RequestedLevel: 2, SupportedMethods: []string{definitions.MFAMethodTOTP}, Scope: "oidc:client-a",
+			RequestedLevel: 2, SupportedMethods: []string{definitions.MFAMethodTOTP},
+			MethodLevels: map[string]int{definitions.MFAMethodTOTP: 3}, Scope: "oidc:client-a",
 		},
 	); err != nil {
 		t.Fatalf("begin step-up: %v", err)
@@ -132,7 +133,7 @@ func TestCanonicalSessionCompletesStepUpAndAssuranceAtomicallyOnce(t *testing.T)
 	}
 
 	assurance, ok := session.Assurance(now)
-	if !ok || assurance.Level != 2 || assurance.Method != definitions.MFAMethodTOTP || assurance.Scope != "oidc:client-a" {
+	if !ok || assurance.Level != 3 || assurance.Method != definitions.MFAMethodTOTP || assurance.Scope != "oidc:client-a" {
 		t.Fatalf("completed assurance = %#v, ok = %t", assurance, ok)
 	}
 

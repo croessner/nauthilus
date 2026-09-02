@@ -1153,6 +1153,15 @@ async function runRequiredMFAFlows(browser) {
     'oidc-delayed-response-webauthn-login',
   );
   updatedWebAuthnCredentials = delayedWebAuthnLogin.webAuthnCredentials;
+  const requiredEnrollmentWebAuthnLogin = await runWebAuthnLogin(
+    browser,
+    requiredMFAJourneyClient,
+    mfaUsername,
+    updatedWebAuthnCredentials,
+    'Required-enrollment WebAuthn login',
+    'oidc-required-enrollment-webauthn-login',
+  );
+  updatedWebAuthnCredentials = requiredEnrollmentWebAuthnLogin.webAuthnCredentials;
   await runMasterUserTOTPLogin(browser, mfaClient, masterMFA.totpSecret, 'oidc-master-user-totp-login');
   await runMasterUserTOTPLogin(
     browser,

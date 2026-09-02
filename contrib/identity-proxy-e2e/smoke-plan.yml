@@ -106,6 +106,7 @@ scenarios:
   - oidc-totp-login
   - oidc-delayed-response-totp-login
   - oidc-delayed-response-webauthn-login
+  - oidc-required-enrollment-webauthn-login
   - oidc-recovery-code-login
   - oidc-delayed-response-recovery-code-login
   - recovery-code-generation-consumption

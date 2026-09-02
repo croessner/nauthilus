@@ -80,7 +80,8 @@ func (h *FrontendHandler) requireCanonicalSelfServiceAssurance(
 	}
 
 	handle, err := beginCanonicalSelfServiceStepUp(
-		ctx, session, mfaSelfServiceActionPortalEntry, supportedMethods, "", "",
+		ctx, session, mfaSelfServiceActionPortalEntry, supportedMethods,
+		h.canonicalGlobalMFAMethodLevels(), "", "",
 	)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)

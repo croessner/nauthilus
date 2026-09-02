@@ -299,6 +299,7 @@ func mfaSmokePlanScenarios() []string {
 		"recovery-code-generation-consumption",
 		"oidc-recovery-code-login",
 		"oidc-delayed-response-recovery-code-login",
+		"oidc-required-enrollment-webauthn-login",
 		"webauthn-registration-login",
 		"authority-webauthn-sign-count",
 		"mfa-self-service-missing-step-up-rejected",

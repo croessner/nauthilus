@@ -142,6 +142,16 @@ func (s *CanonicalSession) prepareStepUpCompletion(
 		return stepUpCompletionUpdate{}, sessionstate.ErrBindingMismatch
 	}
 
+	assuranceLevel := stepUp.RequestedLevel
+	if len(stepUp.MethodLevels) > 0 {
+		methodLevel, ok := stepUp.MethodLevels[method]
+		if !ok || methodLevel < stepUp.RequestedLevel {
+			return stepUpCompletionUpdate{}, sessionstate.ErrBindingMismatch
+		}
+
+		assuranceLevel = methodLevel
+	}
+
 	now := s.clock.Now().UTC()
 
 	freshUntil := now.Add(freshness)
@@ -158,7 +168,7 @@ func (s *CanonicalSession) prepareStepUpCompletion(
 
 	anchor := s.Anchor.Value
 	anchor.Assurance = sessionstate.AssuranceSummary{
-		Level: stepUp.RequestedLevel, Method: method, Scope: stepUp.Scope,
+		Level: assuranceLevel, Method: method, Scope: stepUp.Scope,
 		ProvenAt: now, ExpiresAt: freshUntil,
 	}
 	stepUp.ProofMethod = method
@@ -170,7 +180,7 @@ func (s *CanonicalSession) prepareStepUpCompletion(
 		anchor: anchor, stepUp: stepUp, anchorTTL: anchorTTL, stepUpTTL: stepUpTTL,
 		completion: StepUpCompletion{
 			Handle: stepUp.Handle, Flow: stepUp.Flow, SelfServiceOperation: selfServiceOperation,
-			Method: method, Scope: stepUp.Scope, Level: stepUp.RequestedLevel,
+			Method: method, Scope: stepUp.Scope, Level: assuranceLevel,
 			ProvenAt: now, FreshUntil: freshUntil,
 		},
 	}, nil

@@ -276,6 +276,7 @@ type StepUpRecord struct {
 	SelfServiceDeviceName    string
 	RequestedLevel           int
 	SupportedMethods         []string
+	MethodLevels             map[string]int
 	ProofMethod              string
 	CompletedAt              time.Time
 	FreshUntil               time.Time

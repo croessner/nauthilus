@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	stderrors "errors"
+	"maps"
 	"net/http"
 	"path"
 	"slices"
@@ -1283,7 +1284,7 @@ func (h *FrontendHandler) handleCanonicalPostLoginAuthFailure(
 		haveTOTP:          slices.Contains(authentication.availableMethods, definitions.MFAMethodTOTP),
 		haveWebAuthn:      slices.Contains(authentication.availableMethods, definitions.MFAMethodWebAuthn),
 		haveRecoveryCodes: slices.Contains(authentication.availableMethods, definitions.MFAMethodRecoveryCodes),
-	}, policy.supported)
+	}, policy.supported, max(policy.requiredLevel, 1), policy.levels)
 	if availability.count == 0 {
 		h.renderDetailedPostLoginFailure(ctx, flowContext, err)
 
@@ -1341,7 +1342,7 @@ func (h *FrontendHandler) startCanonicalFailLatchedStepUp(
 			Account: user.Name, Subject: user.ID, DisplayName: user.DisplayName, Protocol: flowContext.protocol,
 		},
 		RequestedLevel: max(policy.requiredLevel, 1), Scope: policy.scope,
-		SupportedMethods: canonicalAvailabilityMethods(availability),
+		SupportedMethods: canonicalAvailabilityMethods(availability), MethodLevels: maps.Clone(policy.levels),
 	}
 	if !authentication.mfaBackendRef.IsZero() {
 		record.PendingBackendAffinity = sessionstate.BackendAffinitySummary{
@@ -1620,6 +1621,12 @@ func (h *FrontendHandler) hasRecoveryCodes(user *backend.User) bool {
 func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	selection, err := h.canonicalMFASelection(ctx)
 	if err != nil {
+		ctx.AbortWithStatus(http.StatusConflict)
+
+		return
+	}
+
+	if selection.availability.count == 0 {
 		ctx.AbortWithStatus(http.StatusConflict)
 
 		return

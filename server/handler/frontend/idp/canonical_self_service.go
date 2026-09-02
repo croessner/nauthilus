@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -75,7 +76,7 @@ func (h *FrontendHandler) authorizeCanonicalSelfServiceMutation(
 	}
 
 	handle, err := beginCanonicalSelfServiceStepUp(
-		ctx, session, target.action, supportedMethods, credentialID, deviceName,
+		ctx, session, target.action, supportedMethods, h.canonicalGlobalMFAMethodLevels(), credentialID, deviceName,
 	)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
@@ -97,6 +98,7 @@ func beginCanonicalSelfServiceStepUp(
 	session *cookie.CanonicalSession,
 	operation string,
 	supportedMethods []string,
+	methodLevels map[string]int,
 	credentialID string,
 	deviceName string,
 ) (sessionstate.Handle, error) {
@@ -109,7 +111,8 @@ func beginCanonicalSelfServiceStepUp(
 		Record: sessionstate.Record{Handle: handle}, Session: session.Handle,
 		SelfServiceOperation: operation, RequestedLevel: 1,
 		SelfServiceCredentialID: credentialID, SelfServiceDeviceName: deviceName,
-		SupportedMethods: append([]string(nil), supportedMethods...), Scope: canonicalSelfServiceAssuranceScope,
+		SupportedMethods: append([]string(nil), supportedMethods...), MethodLevels: maps.Clone(methodLevels),
+		Scope: canonicalSelfServiceAssuranceScope,
 	}
 	err = mfastate.NewAggregate(session.Stores, session.Handle, canonicalStepUpTTL).
 		BeginStepUp(ctx.Request.Context(), record)
@@ -149,7 +152,7 @@ func (h *FrontendHandler) authorizeCanonicalSelfServiceCaller(
 		return false
 	}
 
-	availability = filterCanonicalMFAAvailability(availability, nil)
+	availability = filterCanonicalMFAAvailability(availability, nil, 1, h.canonicalGlobalMFAMethodLevels())
 
 	supported := canonicalSelfServiceSupportedMethods(availability)
 	if len(supported) == 0 {

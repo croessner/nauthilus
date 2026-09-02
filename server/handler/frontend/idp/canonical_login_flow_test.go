@@ -304,7 +304,8 @@ func TestCanonicalFlowMFAPolicyUsesOnlyTypedProtocolIdentifiers(t *testing.T) {
 			}
 
 			if policy.scope != test.wantScope || policy.requiredLevel != test.wantLevel ||
-				len(policy.required) != 1 || policy.required[0] != test.want {
+				len(policy.required) != 1 || policy.required[0] != test.want ||
+				policy.levels[test.want] != test.wantLevel {
 				t.Fatalf("canonical policy = %#v", policy)
 			}
 		})
@@ -338,12 +339,13 @@ func TestCanonicalSessionMFAPolicyRequiresLiveMatchingAssurance(t *testing.T) {
 		t.Fatal("live unscoped canonical assurance did not satisfy SSO policy")
 	}
 
-	policy.required = []string{definitions.MFAMethodWebAuthn}
+	policy.supported = []string{definitions.MFAMethodWebAuthn}
 	if canonicalSessionSatisfiesMFAPolicy(session, policy, now) {
-		t.Fatal("wrong canonical MFA method satisfied policy")
+		t.Fatal("unsupported canonical MFA method satisfied policy")
 	}
 
 	policy.required = nil
+	policy.supported = nil
 
 	policy.requiredLevel = 3
 	if canonicalSessionSatisfiesMFAPolicy(session, policy, now) {
@@ -353,6 +355,35 @@ func TestCanonicalSessionMFAPolicyRequiresLiveMatchingAssurance(t *testing.T) {
 	policy.requiredLevel = 2
 	if canonicalSessionSatisfiesMFAPolicy(session, policy, now.Add(6*time.Minute)) {
 		t.Fatal("expired canonical assurance satisfied policy")
+	}
+}
+
+func TestCanonicalSessionMFAPolicyAcceptsSupportedHigherAssuranceMethod(t *testing.T) {
+	t.Parallel()
+
+	runtime, browserCookie, _ := seedCanonicalLoginFlow(t)
+	authenticateCanonicalFixture(t, runtime, browserCookie)
+	session := openCanonicalFixture(t, runtime, browserCookie)
+	now := session.EvaluationTime()
+
+	if err := session.CommitAssurance(context.Background(), cookie.SessionAssurance{
+		Level: 3, Method: definitions.MFAMethodWebAuthn, Scope: "oidc:client-a",
+		ProvenAt: now, ExpiresAt: now.Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("commit canonical WebAuthn assurance: %v", err)
+	}
+
+	policy := canonicalMFAPolicy{
+		required: []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+		supported: []string{
+			definitions.MFAMethodTOTP,
+			definitions.MFAMethodWebAuthn,
+			definitions.MFAMethodRecoveryCodes,
+		},
+		scope: "oidc:client-a", requiredLevel: 2,
+	}
+	if !canonicalSessionSatisfiesMFAPolicy(session, policy, now) {
+		t.Fatal("supported WebAuthn level 3 assurance did not satisfy level 2 policy")
 	}
 }
 
@@ -403,7 +434,8 @@ func TestCanonicalMFAStepUpPersistsTypedParentBindingBeforeRedirect(t *testing.T
 
 	loaded, err := mfastate.NewAggregate(session.Stores, session.Handle, 0).LoadStepUp(context.Background(), handle)
 	if err != nil || loaded.Value.Flow != sessionstate.Handle(flowID) || loaded.Value.Scope != "oidc:client-a" ||
-		loaded.Value.RequestedLevel != 2 || len(loaded.Value.SupportedMethods) != 2 {
+		loaded.Value.RequestedLevel != 2 || len(loaded.Value.SupportedMethods) != 2 ||
+		loaded.Value.MethodLevels[definitions.MFAMethodWebAuthn] != 3 {
 		t.Fatalf("typed step-up = %#v, err = %v", loaded, err)
 	}
 }
@@ -426,6 +458,18 @@ func TestCanonicalExistingLoginSessionDecisionOrdersPolicyWithoutLegacyFallback(
 			name: "sufficient assurance resumes typed flow", required: []string{definitions.MFAMethodTOTP},
 			assurance: &cookie.SessionAssurance{
 				Level: 1, Method: definitions.MFAMethodTOTP, Scope: "oidc:client-a",
+			},
+			wantLocationPart: "/oidc/authorize", resolverMustRun: true,
+		},
+		{
+			name: "supported WebAuthn assurance resumes flow with required enrollment",
+			required: []string{
+				definitions.MFAMethodTOTP,
+				definitions.MFAMethodRecoveryCodes,
+			},
+			requiredMFALevel: 2,
+			assurance: &cookie.SessionAssurance{
+				Level: 3, Method: definitions.MFAMethodWebAuthn, Scope: "oidc:client-a",
 			},
 			wantLocationPart: "/oidc/authorize", resolverMustRun: true,
 		},

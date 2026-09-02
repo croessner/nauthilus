@@ -26,7 +26,7 @@ func TestCanonicalFailLatchedWebAuthnProofTerminatesWithoutAuthentication(t *tes
 	t.Parallel()
 
 	runtime, browserCookie, flowID, stepUp := seedCanonicalFailLatchedMFA(
-		t, definitions.MFAMethodWebAuthn,
+		t, definitions.MFAMethodWebAuthn, 2,
 	)
 	handler := newLoginMFAViewHandler()
 	finishCalls := 0
@@ -80,7 +80,7 @@ func TestCanonicalFailLatchedRecoveryProofTerminatesWithoutAuthentication(t *tes
 	t.Parallel()
 
 	runtime, browserCookie, flowID, stepUp := seedCanonicalFailLatchedMFA(
-		t, definitions.MFAMethodRecoveryCodes,
+		t, definitions.MFAMethodRecoveryCodes, 1,
 	)
 	handler := newLoginMFAViewHandler()
 	verifyCalls := 0
@@ -129,10 +129,49 @@ func TestCanonicalFailLatchedRecoveryProofTerminatesWithoutAuthentication(t *tes
 	}
 }
 
+func TestCanonicalFailLatchedRecoveryProofRejectsInsufficientAssuranceLevel(t *testing.T) {
+	t.Parallel()
+
+	runtime, browserCookie, _, stepUp := seedCanonicalFailLatchedMFA(
+		t, definitions.MFAMethodRecoveryCodes, 2,
+	)
+	handler := newLoginMFAViewHandler()
+	verifyCalls := 0
+	handler.canonicalRecoveryVerifier = func(
+		_ *gin.Context,
+		_ canonicalMFASelectionState,
+		_ string,
+	) (bool, error) {
+		verifyCalls++
+
+		return true, nil
+	}
+	router := gin.New()
+	router.POST(
+		"/login/recovery",
+		cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation),
+		handler.PostLoginRecovery,
+	)
+
+	form := url.Values{"flow": {string(stepUp)}, "code": {"recovery-good"}}
+	request := httptest.NewRequest(http.MethodPost, "/login/recovery", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.AddCookie(browserCookie)
+
+	writer := httptest.NewRecorder()
+	router.ServeHTTP(writer, request)
+
+	if writer.Code != http.StatusConflict || verifyCalls != 0 {
+		t.Fatalf("insufficient recovery proof = status %d calls %d, want %d/0",
+			writer.Code, verifyCalls, http.StatusConflict)
+	}
+}
+
 // seedCanonicalFailLatchedMFA creates one unauthenticated delayed-response challenge.
 func seedCanonicalFailLatchedMFA(
 	t *testing.T,
 	method string,
+	requestedLevel int,
 ) (*cookie.CanonicalRuntime, *http.Cookie, string, sessionstate.Handle) {
 	t.Helper()
 
@@ -153,7 +192,7 @@ func seedCanonicalFailLatchedMFA(
 		PendingIdentity: sessionstate.IdentitySummary{
 			Account: "alice", Subject: "identity-42", DisplayName: "Alice", Protocol: "oidc",
 		},
-		RequestedLevel: 2, SupportedMethods: []string{method}, Scope: "oidc:client-a",
+		RequestedLevel: requestedLevel, SupportedMethods: []string{method}, Scope: "oidc:client-a",
 	}
 	if err = mfastate.NewAggregate(session.Stores, session.Handle, 10*time.Minute).
 		BeginStepUp(context.Background(), record); err != nil {
