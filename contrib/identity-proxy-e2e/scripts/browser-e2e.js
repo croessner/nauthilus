@@ -2347,22 +2347,22 @@ async function runSAMLAttackFailures() {
 
   await expectTextResponse(
     `${edgeAAPI}/saml/slo`,
-    409,
-    /^$/,
+    400,
+    /missing SAMLRequest\/SAMLResponse payload/i,
     'saml-slo-missing-payload-rejected',
   );
 
   await expectTextResponse(
     `${edgeAAPI}/saml/slo?SAMLRequest=req&SAMLResponse=res`,
-    409,
-    /^$/,
+    400,
+    /SAMLRequest and SAMLResponse must not be present together/i,
     'saml-slo-ambiguous-payload-rejected',
   );
 
   await expectTextResponse(
     `${edgeAAPI}/saml/slo?SAMLRequest=req&SAMLRequest=req2`,
-    409,
-    /^$/,
+    400,
+    /parameter SAMLRequest is duplicated/i,
     'saml-slo-duplicate-request-rejected',
   );
 }
