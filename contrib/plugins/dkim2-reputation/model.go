@@ -15,6 +15,9 @@ type verifierProjection struct {
 	chain                 []verifierHop
 	verificationState     string
 	authenticationState   string
+	scope                 string
+	historicalContent     string
+	historicalSignatures  string
 	custodyStructure      string
 	disposition           string
 	doNotModifyState      string

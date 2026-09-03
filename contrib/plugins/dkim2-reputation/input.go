@@ -27,6 +27,7 @@ const (
 	factScope                = "resource.dkim2.scope"
 	factHistoricalContent    = "resource.dkim2.historical_content"
 	factHistoricalSignatures = "resource.dkim2.historical_signatures"
+	factCustodyStructure     = "resource.dkim2.custody_structure"
 	factReplayClass          = "resource.dkim2.replay_class"
 	factLocalPolicyMode      = "resource.dkim2.local_policy_mode"
 	factLocalPolicyVerdict   = "resource.dkim2.local_policy_verdict"
@@ -44,12 +45,19 @@ const (
 	fieldMessageInstance     = "message_instance"
 	fieldHopBinding          = "hop_binding"
 	custodyOrigin            = "origin"
+	custodyOrdinary          = "ordinary"
+	custodyNextDomain        = "next_domain"
 	custodyTerminal          = "terminal_next_domain"
 	custodyLinksEvaluated    = "nd_links_evaluated"
+	custodyNotPresent        = "not_present"
+	custodyTerminalRequires  = "terminal_nd_requires_oob"
+	scopeCurrent             = "current"
+	scopeChain               = "chain"
 	recipeBodyAbsent         = "absent"
 	historyMatched           = "matched"
 	stateUnavailable         = "unavailable"
 	stateComplete            = "complete"
+	statePartial             = "partial"
 	stateExploded            = "exploded"
 	stateIndeterminate       = "indeterminate"
 	stateNotEvaluated        = "not_evaluated"
@@ -62,6 +70,14 @@ const (
 )
 
 var exactTarget = pluginapi.DecisionTargetSelector{Namespace: providerNamespace, Action: "accept-message-instance"}
+
+var projectionScopes = []string{scopeCurrent, scopeChain}
+
+var historicalContentStates = []string{stateNotEvaluated, stateComplete, statePartial}
+
+var historicalSignatureStates = []string{stateNotEvaluated, stateComplete}
+
+var custodyStructures = []string{stateNotEvaluated, custodyNotPresent, custodyLinksEvaluated, custodyTerminalRequires}
 
 var doNotModifyStates = []string{stateNotRequested, stateIndeterminate, stateNotEvaluated}
 
@@ -82,7 +98,7 @@ var requiredResourceFacts = []string{
 	factScope,
 	factHistoricalContent,
 	factHistoricalSignatures,
-	"resource.dkim2.custody_structure",
+	factCustodyStructure,
 	"resource.dkim2.target_sequence",
 	"resource.dkim2.target_message_instance",
 	"resource.dkim2.claimed_hop_count",
@@ -244,15 +260,16 @@ func validateAggregateFacts(facts map[string]pluginapi.DecisionFactView) error {
 		{id: factProjectionSchema, value: projectionSchema},
 		{id: factDraft, value: draftVersion},
 		{id: factBindingAlgorithm, value: "sha-256"},
-		{id: factScope, value: "chain"},
-		{id: factHistoricalContent, value: stateComplete},
-		{id: factHistoricalSignatures, value: stateComplete},
 	}
 	if err := validateExactFacts(facts, exact); err != nil {
 		return err
 	}
 
 	enums := []enumFactSpecification{
+		{id: factScope, allowed: projectionScopes},
+		{id: factHistoricalContent, allowed: historicalContentStates},
+		{id: factHistoricalSignatures, allowed: historicalSignatureStates},
+		{id: factCustodyStructure, allowed: custodyStructures},
 		{id: factReplayClass, allowed: []string{"not_checked", "disabled", "first_seen", stateExploded, "replayed", stateIndeterminate}},
 		{id: factLocalPolicyMode, allowed: []string{"strict", "permissive", "testing"}},
 		{id: factLocalPolicyVerdict, allowed: []string{verdictAccept, verdictContinue, verdictReject, "tempfail"}},
@@ -323,7 +340,26 @@ func decodeAggregateValues(facts map[string]pluginapi.DecisionFactView) (verifie
 		return verifierProjection{}, err
 	}
 
-	projection.custodyStructure, err = requireStringIn(facts, "resource.dkim2.custody_structure", "not_present", custodyLinksEvaluated, "terminal_nd_requires_oob")
+	projection.scope, err = requireStringIn(facts, factScope, projectionScopes...)
+	if err != nil {
+		return verifierProjection{}, err
+	}
+
+	projection.historicalContent, err = requireStringIn(facts, factHistoricalContent, historicalContentStates...)
+	if err != nil {
+		return verifierProjection{}, err
+	}
+
+	projection.historicalSignatures, err = requireStringIn(facts, factHistoricalSignatures, historicalSignatureStates...)
+	if err != nil {
+		return verifierProjection{}, err
+	}
+
+	projection.custodyStructure, err = requireStringIn(
+		facts,
+		factCustodyStructure,
+		custodyStructures...,
+	)
 	if err != nil {
 		return verifierProjection{}, err
 	}
@@ -371,20 +407,12 @@ func validateAggregateCoherence(projection verifierProjection) error {
 		return fmt.Errorf("chain count or target does not match aggregate facts")
 	}
 
-	if projection.custodyStructure == "terminal_nd_requires_oob" && last.custodyTransition != custodyTerminal {
-		return fmt.Errorf("terminal custody aggregate does not match final hop")
+	if err := validateProjectionMode(projection); err != nil {
+		return err
 	}
 
-	if projection.custodyStructure == custodyLinksEvaluated && last.custodyTransition == custodyTerminal {
-		return fmt.Errorf("ordinary custody aggregate contains a terminal final hop")
-	}
-
-	if projection.custodyStructure == "not_present" && (len(projection.chain) != 1 || last.custodyTransition != custodyOrigin) {
-		return fmt.Errorf("absent custody requires one origin record")
-	}
-
-	if projection.custodyStructure == custodyLinksEvaluated && len(projection.chain) < 2 {
-		return fmt.Errorf("evaluated custody links require multiple records")
+	if err := validateCustodyStructure(projection); err != nil {
+		return err
 	}
 
 	if err := validateAggregateProtectionStates(projection); err != nil {
@@ -398,8 +426,119 @@ func validateAggregateCoherence(projection verifierProjection) error {
 	return nil
 }
 
+// validateProjectionMode correlates aggregate evaluation states with the requested history scope.
+func validateProjectionMode(projection verifierProjection) error {
+	switch projection.scope {
+	case scopeCurrent:
+		return validateCurrentProjectionMode(projection)
+	case scopeChain:
+		return validateChainProjectionMode(projection)
+	default:
+		return fmt.Errorf("unsupported projection scope")
+	}
+}
+
+// validateCurrentProjectionMode enforces the single-hop non-historical PASS envelope.
+func validateCurrentProjectionMode(projection verifierProjection) error {
+	if len(projection.chain) != 1 {
+		return fmt.Errorf("current scope requires exactly one record")
+	}
+
+	if projection.historicalContent != stateNotEvaluated ||
+		projection.historicalSignatures != stateNotEvaluated ||
+		projection.custodyStructure != custodyNotPresent {
+		return fmt.Errorf("current scope requires non-evaluated history and absent custody")
+	}
+
+	if projection.doNotModifyState != stateNotEvaluated || projection.doNotExplodeState != stateNotEvaluated {
+		return fmt.Errorf("current scope requires non-evaluated protection aggregates")
+	}
+
+	return nil
+}
+
+// validateChainProjectionMode enforces complete historical and aggregate evaluation.
+func validateChainProjectionMode(projection verifierProjection) error {
+	if projection.historicalContent != stateComplete || projection.historicalSignatures != stateComplete {
+		return fmt.Errorf("chain scope requires complete history aggregates")
+	}
+
+	if projection.custodyStructure == stateNotEvaluated {
+		return fmt.Errorf("chain scope requires evaluated custody structure")
+	}
+
+	if projection.doNotModifyState == stateNotEvaluated || projection.doNotExplodeState == stateNotEvaluated {
+		return fmt.Errorf("chain scope requires evaluated protection aggregates")
+	}
+
+	return nil
+}
+
+type custodyTransitionSummary struct {
+	terminalCount int
+	hasNextDomain bool
+	lastTerminal  bool
+}
+
+// summarizeCustodyTransitions captures the facts needed to validate the aggregate custody state.
+func summarizeCustodyTransitions(chain []verifierHop) custodyTransitionSummary {
+	summary := custodyTransitionSummary{
+		lastTerminal: chain[len(chain)-1].custodyTransition == custodyTerminal,
+	}
+
+	for _, hop := range chain {
+		summary.hasNextDomain = summary.hasNextDomain || hop.custodyTransition == custodyNextDomain
+		if hop.custodyTransition == custodyTerminal {
+			summary.terminalCount++
+		}
+	}
+
+	return summary
+}
+
+// terminalPlacementValid reports whether at most one terminal transition occurs and it is final.
+func (s custodyTransitionSummary) terminalPlacementValid() bool {
+	return s.terminalCount <= 1 && (s.terminalCount == 1) == s.lastTerminal
+}
+
+// validateCustodyStructure correlates aggregate custody with authenticated transition records.
+func validateCustodyStructure(projection verifierProjection) error {
+	if projection.scope == scopeCurrent {
+		return nil
+	}
+
+	summary := summarizeCustodyTransitions(projection.chain)
+
+	if !summary.terminalPlacementValid() {
+		return fmt.Errorf("terminal custody transition must be the final hop")
+	}
+
+	switch projection.custodyStructure {
+	case custodyNotPresent:
+		if summary.hasNextDomain || summary.terminalCount > 0 {
+			return fmt.Errorf("absent custody aggregate contains a next-domain transition")
+		}
+	case custodyLinksEvaluated:
+		if !summary.hasNextDomain || summary.terminalCount > 0 {
+			return fmt.Errorf("evaluated custody links require a non-terminal next-domain transition")
+		}
+	case custodyTerminalRequires:
+		if !summary.lastTerminal {
+			return fmt.Errorf("terminal custody aggregate does not match final hop")
+		}
+	default:
+		return fmt.Errorf("unsupported custody aggregate")
+	}
+
+	return nil
+}
+
 // validateAggregateProtectionStates correlates chain requests with their aggregate evaluation states.
 func validateAggregateProtectionStates(projection verifierProjection) error {
+	if projection.scope == scopeCurrent {
+		return nil
+	}
+
 	modifyRequested := slices.ContainsFunc(projection.chain, func(hop verifierHop) bool { return hop.doNotModify })
 	explodeRequested := slices.ContainsFunc(projection.chain, func(hop verifierHop) bool { return hop.doNotExplode })
 
@@ -583,7 +722,7 @@ func decodeVerifierHop(record pluginapi.DecisionRecord) (verifierHop, error) {
 		return verifierHop{}, err
 	}
 
-	custody, err := recordStringIn(fields, "custody_transition", custodyOrigin, "ordinary", "next_domain", custodyTerminal)
+	custody, err := recordStringIn(fields, "custody_transition", custodyOrigin, custodyOrdinary, custodyNextDomain, custodyTerminal)
 	if err != nil {
 		return verifierHop{}, err
 	}

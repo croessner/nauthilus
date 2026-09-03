@@ -23,11 +23,21 @@ exact closed adapter vocabulary `no action`, `accept`, `add header`,
 `discard`. It is pre-Policy context and never represents the final Milter
 action.
 
-The provider requires a complete `dkim2.verifier-projection.v1` chain and validates its exact closed record shape,
-canonical domains and SMTP peer address, contiguous sequence, aggregate counts and target, Recipe coherence, sorted
-string collections, and producer-compatible projection and bound-hop SHA-256 frames. Contract violations return the
-generic `invalid_input` provider class. Raw messages, header values, addresses, keys, signatures, and Recipe payloads
-never enter plugin configuration or output.
+The provider accepts both modes of the closed `dkim2.verifier-projection.v1` contract. A successful `current`
+projection contains exactly one origin record, reports content history, signature history, and protection evaluation as
+`not_evaluated`, and reports the established absence of next-domain custody as `not_present`. A `chain` projection
+carries complete content and signature history plus evaluated custody and protection aggregates. In either
+mode, the provider validates the exact closed record shape, canonical domains and SMTP peer address, contiguous
+sequence, aggregate counts and target, Recipe coherence, sorted string collections, and producer-compatible projection
+and bound-hop SHA-256 frames. Contract violations return the generic `invalid_input` provider class. Raw messages,
+header values, addresses, keys, signatures, and Recipe payloads never enter plugin configuration or output.
+
+For complete chains, `custody_structure=not_present` means that no record contains a `next_domain` or
+`terminal_next_domain` transition; it does not limit the chain to a single hop. Ordinary transitions may therefore
+follow the origin. `nd_links_evaluated` requires at least one non-terminal `next_domain` transition, while
+`terminal_nd_requires_oob` requires exactly one terminal transition in the final record. A complete chain without
+authenticated protection flags reports `not_requested`; `not_evaluated` protection states are reserved for the
+`current` mode.
 
 `environment.rspamd.smtp_client_ip` is the current SMTP peer observed by Rspamd through `task:get_from_ip()`. It is not
 historical DKIM2-hop evidence. The provider therefore applies `allowed_client_cidrs` and peer-reputation violations only

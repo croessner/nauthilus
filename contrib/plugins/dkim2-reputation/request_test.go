@@ -106,33 +106,69 @@ func testChainValueWithFlags(
 ) pluginapi.DecisionValue {
 	t.Helper()
 
+	return testChainValue(t, []verifierHop{{
+		signerDomain: "relay.example", signatureAlgorithms: []string{"ed25519-sha256"}, hopBinding: hopBinding,
+		recipeDigest: recipeDigest, signatureState: "pass", custodyTransition: custodyOrigin, recipeMode: "unchanged",
+		recipeBodyMode: recipeBodyAbsent, changeClasses: []string{}, affectedHeaders: []string{},
+		historyHeaderState: historyMatched, historyBodyState: historyMatched,
+		bodyAvailability: "known", sequence: 1, messageInstance: 1, doNotModify: doNotModify,
+		doNotExplode: doNotExplode,
+	}})
+}
+
+// testChainValue constructs an exact wire record list from binding-valid semantic hops.
+func testChainValue(t *testing.T, hops []verifierHop) pluginapi.DecisionValue {
+	t.Helper()
+
+	records := make([]pluginapi.DecisionRecord, 0, len(hops))
+	for _, hop := range hops {
+		records = append(records, testChainRecord(t, hop))
+	}
+
+	list, err := pluginapi.NewDecisionRecordList(records)
+	if err != nil {
+		t.Fatalf("NewDecisionRecordList() error = %v", err)
+	}
+
+	value, err := pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{Records: &list})
+	if err != nil {
+		t.Fatalf("NewDecisionValue(records) error = %v", err)
+	}
+
+	return value
+}
+
+// testChainRecord maps one semantic hop into the exact public record contract.
+func testChainRecord(t *testing.T, hop verifierHop) pluginapi.DecisionRecord {
+	t.Helper()
+
 	fields := []struct {
 		name  string
 		value pluginapi.DecisionValue
 	}{
-		{"sequence", testIntegerValue(t, 1)},
-		{"message_instance", testIntegerValue(t, 1)},
-		{"hop_binding", testBytesValue(t, hopBinding)},
-		{"signer_domain", testStringValue(t, "relay.example")},
-		{"signature_algorithms", testStringsValue(t, []string{"ed25519-sha256"})},
-		{"signature_state", testStringValue(t, "pass")},
-		{"custody_transition", testStringValue(t, "origin")},
-		{"do_not_modify", testBooleanValue(t, doNotModify)},
-		{"do_not_explode", testBooleanValue(t, doNotExplode)},
-		{"feedback", testBooleanValue(t, false)},
-		{"feed_here", testBooleanValue(t, false)},
-		{"exploded", testBooleanValue(t, false)},
-		{"recipe_mode", testStringValue(t, "unchanged")},
-		{"recipe_has_header_changes", testBooleanValue(t, false)},
-		{"recipe_body_mode", testStringValue(t, "absent")},
-		{"recipe_digest", testBytesValue(t, recipeDigest)},
-		{"change_classes", testStringsValue(t, []string{})},
-		{"affected_headers", testStringsValue(t, []string{})},
-		{"history_header_state", testStringValue(t, "matched")},
-		{"history_body_state", testStringValue(t, "matched")},
-		{"body_availability", testStringValue(t, "known")},
-		{"change_count", testIntegerValue(t, 0)},
-		{"affected_header_count", testIntegerValue(t, 0)},
+		{"sequence", testIntegerValue(t, hop.sequence)},
+		{"message_instance", testIntegerValue(t, hop.messageInstance)},
+		{"hop_binding", testBytesValue(t, hop.hopBinding)},
+		{"signer_domain", testStringValue(t, hop.signerDomain)},
+		{"signature_algorithms", testStringsValue(t, hop.signatureAlgorithms)},
+		{"signature_state", testStringValue(t, hop.signatureState)},
+		{"custody_transition", testStringValue(t, hop.custodyTransition)},
+		{"do_not_modify", testBooleanValue(t, hop.doNotModify)},
+		{"do_not_explode", testBooleanValue(t, hop.doNotExplode)},
+		{"feedback", testBooleanValue(t, hop.feedback)},
+		{"feed_here", testBooleanValue(t, hop.feedHere)},
+		{"exploded", testBooleanValue(t, hop.exploded)},
+		{"recipe_mode", testStringValue(t, hop.recipeMode)},
+		{"recipe_has_header_changes", testBooleanValue(t, hop.recipeHasHeaders)},
+		{"recipe_body_mode", testStringValue(t, hop.recipeBodyMode)},
+		{"recipe_digest", testBytesValue(t, hop.recipeDigest)},
+		{"change_classes", testStringsValue(t, hop.changeClasses)},
+		{"affected_headers", testStringsValue(t, hop.affectedHeaders)},
+		{"history_header_state", testStringValue(t, hop.historyHeaderState)},
+		{"history_body_state", testStringValue(t, hop.historyBodyState)},
+		{"body_availability", testStringValue(t, hop.bodyAvailability)},
+		{"change_count", testIntegerValue(t, hop.changeCount)},
+		{"affected_header_count", testIntegerValue(t, hop.affectedHeaderCount)},
 	}
 
 	recordFields := make([]pluginapi.DecisionRecordField, 0, len(fields))
@@ -155,17 +191,7 @@ func testChainValueWithFlags(
 		t.Fatalf("NewDecisionRecord() error = %v", err)
 	}
 
-	list, err := pluginapi.NewDecisionRecordList([]pluginapi.DecisionRecord{record})
-	if err != nil {
-		t.Fatalf("NewDecisionRecordList() error = %v", err)
-	}
-
-	value, err := pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{Records: &list})
-	if err != nil {
-		t.Fatalf("NewDecisionValue(records) error = %v", err)
-	}
-
-	return value
+	return record
 }
 
 // testProjectionBindingsWithFlags returns producer-compatible bindings for explicit protection flags.
