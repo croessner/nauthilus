@@ -15,23 +15,30 @@ use the exact target and projection identity below and reject unknown fields.
   defined
 - Diagnostics disabled for the production caller
 
-An applicable scan has a strictly validated projection with complete
-verification `PASS`, `scope=chain`, and existing DKIM2
-`local_policy_verdict`/`disposition` in `accept|continue`, plus replay class
-`first_seen|exploded`. The normal filter enforces verifier
+An applicable scan has a strictly validated projection with verification
+`PASS`, either a single-hop `current` scope or complete `chain` scope, existing
+DKIM2 `local_policy_verdict`/`disposition` in `accept|continue`, and replay class
+`first_seen|exploded`. A valid current projection reports historical content,
+historical signatures, and both protection aggregates as `not_evaluated`, with
+custody `not_present`. A valid chain projection reports complete historical
+content and signatures plus evaluated custody and protection aggregates. The
+normal filter enforces verifier
 FAIL/PERMERROR/TEMPERROR, non-permittable replay state, reject, tempfail, and
 `out_of_band_required` without calling Nauthilus. Required-provider failure is
 therefore a failure while assessing an otherwise applicable PASS, never an
 encoding of an upstream DKIM2 temporary result.
 
-The complete producer-golden-backed wire request is stored in
+The complete-chain producer-golden-backed wire request is stored in
 `server/docs/policy-layer/dkim2_rspamd_policy_request_v1.example.json`. Its
 projection, Recipe, and hop-binding values are copied coherently from the DKIM2
 producer golden vector `testdata/reference/verifier-projection-v1-binding.json`;
 the Nauthilus plugin keeps a byte-for-byte copy in
 `contrib/plugins/dkim2-reputation/testdata`. A cross-artifact test must decode
 this tracked request through generic admission and the real native provider
-`Collect` path. JSON syntax validation alone is not contract evidence.
+`Collect` path. The same cross-artifact boundary also exercises the valid
+current-mode aggregate envelope over the binding-valid one-hop projection and
+requires a final Policy permit. JSON syntax validation alone is not contract
+evidence.
 
 ## Provenance model
 

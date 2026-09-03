@@ -40,6 +40,7 @@ type dkim2AssessmentState struct {
 type dkim2RuntimeCase struct {
 	name            string
 	verification    string
+	factOverrides   map[string]string
 	providerFacts   []providedFact
 	wantRule        string
 	wantEffect      decision.Effect
@@ -73,6 +74,18 @@ func dkim2ReferenceRuntimeCases(t *testing.T, assessmentSchema registry.FactSche
 		},
 		{
 			name: "strict PASS permits a complete acceptable assessment", verification: "PASS",
+			providerFacts: dkim2ReferenceAssessmentFact(t, assessmentSchema, true),
+			wantEffect:    decision.EffectPermit, wantRule: "permit_strict_pass", wantProviderRun: true,
+		},
+		{
+			name: "strict PASS permits an acceptable current projection", verification: "PASS",
+			factOverrides: map[string]string{
+				"resource.dkim2.scope":                 "current",
+				"resource.dkim2.historical_content":    "not_evaluated",
+				"resource.dkim2.historical_signatures": "not_evaluated",
+				"resource.dkim2.do_not_modify_state":   "not_evaluated",
+				"resource.dkim2.do_not_explode_state":  "not_evaluated",
+			},
 			providerFacts: dkim2ReferenceAssessmentFact(t, assessmentSchema, true),
 			wantEffect:    decision.EffectPermit, wantRule: "permit_strict_pass", wantProviderRun: true,
 		},
@@ -116,7 +129,7 @@ func assertDKIM2RuntimeCase(
 	assertDKIM2ReferenceProviderFacts(t, schema, test.providerFacts)
 
 	provider := &countingFactProvider{facts: test.providerFacts, err: test.providerErr}
-	outcome := evaluateDKIM2Reference(t, catalog, target, provider, test.verification)
+	outcome := evaluateDKIM2Reference(t, catalog, target, provider, test.verification, test.factOverrides)
 	wantCalls := 0
 
 	if test.wantProviderRun {
@@ -200,6 +213,7 @@ func evaluateDKIM2Reference(
 	target decision.Target,
 	provider *countingFactProvider,
 	verificationState string,
+	factOverrides map[string]string,
 ) runtimeEvaluation {
 	t.Helper()
 
@@ -230,6 +244,10 @@ func evaluateDKIM2Reference(
 		"resource.dkim2.disposition":           "continue",
 		"environment.rspamd.smtp_client_ip":    dkim2TestSMTPPeerIP,
 	}
+	for id, value := range factOverrides {
+		overrides[id] = value
+	}
+
 	facts := dkim2ReferenceCallerFacts(t, compiled.Schema().Facts(), overrides)
 
 	request, err := decision.NewDecisionRequest(decision.DecisionRequestInput{

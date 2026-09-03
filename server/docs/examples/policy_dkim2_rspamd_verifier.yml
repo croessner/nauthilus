@@ -1,9 +1,9 @@
 # DKIM2 verification remains verifier-owned. Rspamd transports the sealed
 # projection and supplies current SMTP observations; the native assessor owns
 # the correlated assessed_chain result. Replace the credential placeholders.
-# Rspamd calls this target only for complete PASS/chain results whose existing
-# local verdict and disposition are accept or continue. Existing reject and
-# tempfail outcomes remain in the normal filter and never enter Policy.
+# Rspamd calls this target only for validated PASS/current or PASS/chain results
+# whose existing local verdict and disposition are accept or continue. Existing
+# reject and tempfail outcomes remain in the normal filter and never enter Policy.
 # This is the isolated Policy section of the server configuration. Build and
 # load the `dkim2_reputation` native module with the operator-owned reputation
 # snapshot documented in contrib/plugins/dkim2-reputation/README.md before
@@ -313,10 +313,19 @@ policy:
                 all:
                   - {attribute: resource.dkim2.verification_state, eq: PASS}
                   - {attribute: resource.dkim2.authentication_state, eq: PASS}
-                  - {attribute: resource.dkim2.scope, eq: chain}
-                  - {attribute: resource.dkim2.historical_content, eq: complete}
-                  - {attribute: resource.dkim2.historical_signatures, eq: complete}
-                  - {attribute: resource.dkim2.custody_structure, in: [not_present, nd_links_evaluated]}
+                  - any:
+                      - all:
+                          - {attribute: resource.dkim2.scope, eq: current}
+                          - {attribute: resource.dkim2.historical_content, eq: not_evaluated}
+                          - {attribute: resource.dkim2.historical_signatures, eq: not_evaluated}
+                          - {attribute: resource.dkim2.custody_structure, eq: not_present}
+                          - {attribute: resource.dkim2.do_not_modify_state, eq: not_evaluated}
+                          - {attribute: resource.dkim2.do_not_explode_state, eq: not_evaluated}
+                      - all:
+                          - {attribute: resource.dkim2.scope, eq: chain}
+                          - {attribute: resource.dkim2.historical_content, eq: complete}
+                          - {attribute: resource.dkim2.historical_signatures, eq: complete}
+                          - {attribute: resource.dkim2.custody_structure, in: [not_present, nd_links_evaluated]}
                   - {attribute: resource.dkim2.replay_class, in: [first_seen, exploded]}
                   - {attribute: resource.dkim2.local_policy_verdict, in: [accept, continue]}
                   - {attribute: resource.dkim2.disposition, in: [accept, continue]}
@@ -370,7 +379,7 @@ policy:
                           - smtp_peer_reputation_unknown
                           - terminal_oob_required
                           - upstream_nonpermittable
-              then: {decision: permit, reason: dkim2_chain_permitted}
+              then: {decision: permit, reason: dkim2_projection_permitted}
   targets:
     - namespace: dkim2
       action: accept-message-instance

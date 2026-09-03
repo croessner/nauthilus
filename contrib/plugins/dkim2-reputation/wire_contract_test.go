@@ -89,8 +89,26 @@ func TestTrackedPolicyRequestPassesAdmissionAndNativeProvider(t *testing.T) {
 }
 
 func TestTrackedPolicyRequestReceivesPermitFromDecisionService(t *testing.T) {
+	tests := []struct {
+		name    string
+		request func(*testing.T) management.PolicyDecisionRequest
+	}{
+		{name: "complete chain", request: readTrackedPolicyRequest},
+		{name: "current projection", request: readTrackedCurrentPolicyRequest},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertTrackedPolicyPermit(t, test.request(t))
+		})
+	}
+}
+
+// assertTrackedPolicyPermit exercises admission, the native provider, and the shipped policy as one decision path.
+func assertTrackedPolicyPermit(t *testing.T, dto management.PolicyDecisionRequest) {
+	t.Helper()
+
 	ctx := context.Background()
-	dto := readTrackedPolicyRequest(t)
 	service, store := trackedPolicyDecisionService(ctx, t)
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -122,6 +140,28 @@ func TestTrackedPolicyRequestReceivesPermitFromDecisionService(t *testing.T) {
 			response.Effect(), response.Policy().Rule(), response.Status().Code(),
 		)
 	}
+}
+
+// readTrackedCurrentPolicyRequest derives the producer-golden-backed current-mode request.
+func readTrackedCurrentPolicyRequest(t *testing.T) management.PolicyDecisionRequest {
+	t.Helper()
+
+	dto := readTrackedPolicyRequest(t)
+	replacements := map[string]string{
+		"dkim2.scope":                 scopeCurrent,
+		"dkim2.historical_content":    stateNotEvaluated,
+		"dkim2.historical_signatures": stateNotEvaluated,
+		"dkim2.do_not_modify_state":   stateNotEvaluated,
+		"dkim2.do_not_explode_state":  stateNotEvaluated,
+	}
+
+	for name, replacement := range replacements {
+		value := (*dto.Resource.Attributes)[name]
+		value.String = &replacement
+		(*dto.Resource.Attributes)[name] = value
+	}
+
+	return dto
 }
 
 // trackedPolicyDecisionService builds one sealed generation with the actual native provider and real admission.

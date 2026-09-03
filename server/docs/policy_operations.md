@@ -187,9 +187,9 @@ The versioned contract is
 [DKIM2 Rspamd verifier Policy contract](policy-layer/dkim2_rspamd_policy_contract.md),
 with a tracked wire example and an executable operator configuration beside it.
 The Rspamd normal filter owns DKIM2 verification and invokes Policy only for a
-complete applicable PASS/chain result whose existing local disposition is
-`accept` or `continue`. Existing reject or temporary-failure results never enter
-Policy and cannot be widened.
+validated applicable PASS/current or PASS/chain result whose existing local
+disposition is `accept` or `continue`. Existing reject or temporary-failure
+results never enter Policy and cannot be widened.
 
 Rspamd sends local nested keys (`dkim2.*` resource attributes and `rspamd.*`
 environment attributes); admission normalizes them to qualified facts. The
