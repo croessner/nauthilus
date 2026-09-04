@@ -2,6 +2,8 @@ module github.com/croessner/nauthilus/v4
 
 go 1.27
 
+toolchain go1.27.0
+
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/andybalholm/brotli v1.2.2
