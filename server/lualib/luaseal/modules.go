@@ -754,6 +754,7 @@ func PreparePolicyProfile(state *lua.LState, modules *Modules, profile PolicyPro
 	global := state.NewTable()
 	state.Replace(lua.GlobalsIndex, global)
 	state.Env = global
+	detachLoadedModuleCache(state)
 	openPolicyLibrary(state, lua.OpenPackage)
 	openPolicyLibrary(state, lua.OpenBase)
 	openPolicyLibrary(state, lua.OpenTable)
@@ -773,6 +774,17 @@ func PreparePolicyProfile(state *lua.LState, modules *Modules, profile PolicyPro
 	state.SetField(registry, policyProfileRegistryKey, lua.LNumber(profile))
 
 	return nil
+}
+
+// detachLoadedModuleCache replaces the registry module cache before the standard library is reopened.
+//
+// gopher-lua registers every reopened library through the registry "_LOADED" table. When the
+// globals table has just been replaced, that cache still belongs to the previous request and
+// would receive the new "package" module, chaining every retired globals table to its successor
+// and keeping all of them reachable from long-lived preload closures. A fresh cache breaks the
+// chain so retired request environments become garbage.
+func detachLoadedModuleCache(state *lua.LState) {
+	state.SetField(state.Get(lua.RegistryIndex), "_LOADED", state.NewTable())
 }
 
 // policyPreloadBaseline captures the host-installed preload functions before scripts can mutate them.
