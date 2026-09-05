@@ -126,6 +126,7 @@ already nested below `resource.attributes`.
 | `resource.dkim2.do_not_explode_state` | closed enum | Daemon evaluation of authenticated `donotexplode`: `not_requested`, `violated`, `indeterminate`, or `not_evaluated`. |
 | `resource.dkim2.dns_testing_effective` | boolean | Whether authenticated DNS testing policy affected the daemon decision. |
 | `resource.dkim2.disposition` | enum | Closed disposition already selected by `dkim2d`; Nauthilus cannot widen it. |
+| `resource.dkim2.received_dsn_propagation` | closed enum, optional | Propagation class of a received delivery-status notification: `not_applicable`, `eligible`, `terminal_origin`, `not_failure`, `forbidden_null_previous_sender`, `unsupported_chain`, `not_reconstructable`, or `not_evaluated`. The verifier sends it only for notifications that carry a received-DSN projection, so the fact is not required. |
 
 The existing `/v1/process` response already supplies most aggregate values.
 The projection schema, projection binding, claimed hop count, and complete hop

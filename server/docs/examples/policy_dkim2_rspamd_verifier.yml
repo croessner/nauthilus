@@ -64,6 +64,7 @@ policy:
           - dkim2.dns_testing_effective
           - dkim2.disposition
           - dkim2.chain
+          - dkim2.received_dsn_propagation
         # These keys are relative to environment.attributes on the wire.
         allowed_environment_attributes:
           - rspamd.scan_action_before_policy
@@ -117,6 +118,7 @@ policy:
                   - {attribute: resource.dkim2.do_not_explode_state, category: resource, type: string, allowed_sources: [caller], max_length: 32, required: true}
                   - {attribute: resource.dkim2.dns_testing_effective, category: resource, type: boolean, allowed_sources: [caller], required: true}
                   - {attribute: resource.dkim2.disposition, category: resource, type: string, allowed_sources: [caller], max_length: 16, required: true}
+                  - {attribute: resource.dkim2.received_dsn_propagation, category: resource, type: string, allowed_sources: [caller], max_length: 30, required: false}
                   - attribute: resource.dkim2.chain
                     category: resource
                     type: records
