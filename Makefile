@@ -178,10 +178,15 @@ policy-check: ## Validate mandatory policy documents and text markers
 makefile-package-scope-check: ## Verify package-wide Make targets exclude vendor and builds do not mutate sources
 	python3 scripts/test_makefile_package_scope.py
 
+.PHONY: check-go-toolchain-contract
+check-go-toolchain-contract: ## Verify exact Go declarations and experiment propagation
+	sh scripts/check-go-toolchain-contract.sh
+	python3 scripts/test_go_toolchain_contract.py
+
 release-contract-check: ## Verify release-major and public protobuf compatibility guard contracts
 	python3 scripts/test_release_contracts.py
 
-guardrails: sync-prompts-check policy-check makefile-package-scope-check release-contract-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
+guardrails: sync-prompts-check policy-check makefile-package-scope-check check-go-toolchain-contract release-contract-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) not found. Install it and rerun make guardrails"; exit 1; }
 	@$(GOLANGCI_LINT) version | grep -Eq 'version $(GOLANGCI_LINT_VERSION)([[:space:]]|$$)' || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required"; $(GOLANGCI_LINT) version; exit 1; }
 	$(GOLANGCI_LINT) run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
