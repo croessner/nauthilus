@@ -1,0 +1,187 @@
+# Independent evidence admission example. Configure real mounted host keys and
+# a dedicated caller credential. The catalog values are calibration examples.
+# This target remains deny-by-default until the storage effect is configured.
+plugins:
+  opaque_identifier_tagger:
+    scopes:
+      - scope: reputation-subject
+        active: {version: current, secret_ref: {file: /run/secrets/reputation-subject-key}}
+      - scope: reputation-manifest
+        active: {version: allocation, secret_ref: {file: /run/secrets/reputation-manifest-key}}
+  modules:
+    - name: reputation
+      type: go
+      path: /usr/lib/nauthilus/plugins/reputation.so
+      config:
+        state_schema: reputation-state.v1
+        model_id: baseline-test
+        subject_scope: reputation-subject
+        manifest_scope: reputation-manifest
+        retention: 2160h
+        event_manifest_ttl: 49h
+        subject_seen_ttl: 49h
+        maximum_retry_horizon: 24h
+        maximum_source_classes: 8
+        maximum_new_subjects_per_source_hour: 1000
+        source_class_caps:
+          mail_filter: {risk: 40, trust: 40, samples: 100}
+        profiles:
+          fast: {half_life: 6h}
+          operational: {half_life: 168h}
+          baseline: {half_life: 720h}
+        score: {alpha: 2, saturation: 20, temperature: 1.5}
+        network_subjects: {ipv4_prefix: 24, ipv6_prefix: 64}
+        account_normalization: exact
+        services: [worker]
+        sources:
+          scan:
+            source_policy_id: scan-test-v1
+            binding: {kind: api_caller, caller_principal: ScanWriter}
+            source_class: mail_filter
+            allowed_signals: [scan.clean]
+            allowed_subjects: {smtp_peer: [ip]}
+            derived_subjects: {smtp_peer: [network]}
+            maximum_subjects: 8
+            maximum_lateness: 24h
+            future_clock_skew: 2m
+            allow_magnitude: true
+            requests_per_second: 10
+            max_concurrency: 2
+        signals:
+          scan.clean:
+            direction: trust
+            weight: 0.25
+            magnitude: optional
+            magnitude_range: [0.0, 1.0]
+            subject_roles: {smtp_peer: {ip: 1.0, network: 0.35}}
+            source_classes: [mail_filter]
+            evidence_origin: external_pre_policy
+            authoritative: false
+            max_event_age: 24h
+            profiles: [fast, operational, baseline]
+policy:
+  api:
+    enabled: true
+    http: {enabled: true}
+    limits:
+      provider_timeout: 500ms
+      evaluation_timeout: 2s
+      max_request_bytes: 32768
+      max_facts: 32
+      max_string_bytes: 1024
+      max_list_items: 32
+      max_value_bytes: 32768
+      per_client_concurrency: 2
+      per_client_requests_per_second: 10
+    clients:
+      - principal: ScanWriter
+        authentication_kinds: [basic]
+        authentication:
+          basic: {username: ScanWriter, password: '${POLICY_REPUTATION_PASSWORD}'}
+        targets: [{namespace: reputation, actions: [observe]}]
+        allowed_schemas: [reputation/observe/v1]
+        allowed_resource_attributes:
+          - reputation.event_id
+          - reputation.observed_at
+          - reputation.signal
+          - reputation.magnitude
+          - reputation.subjects
+          - reputation.correlation_id
+        max_request_bytes: 32768
+        max_facts: 6
+        max_concurrency: 2
+        requests_per_second: 10
+        diagnostics: false
+  namespaces:
+    reputation:
+      schema_contributions:
+        static:
+          observe:
+            versions:
+              v1:
+                facts:
+                  - {attribute: resource.reputation.event_id, category: resource, type: string, allowed_sources: [caller], max_length: 128, required: true}
+                  - {attribute: resource.reputation.observed_at, category: resource, type: timestamp, allowed_sources: [caller], required: true}
+                  - {attribute: resource.reputation.signal, category: resource, type: string, allowed_sources: [caller], max_length: 64, required: true}
+                  - {attribute: resource.reputation.magnitude, category: resource, type: double, allowed_sources: [caller]}
+                  - {attribute: resource.reputation.correlation_id, category: resource, type: string, allowed_sources: [caller], max_length: 128}
+                  - attribute: resource.reputation.subjects
+                    category: resource
+                    type: records
+                    allowed_sources: [caller]
+                    required: true
+                    record_schema:
+                      id: observation_subjects
+                      version: v1
+                      min_records: 1
+                      max_records: 8
+                      max_fields: 3
+                      max_aggregate_bytes: 8192
+                      fields:
+                        - {name: role, type: string, max_length: 64, required: true, provider_visibility: [reputation/plugin.reputation.observation_context]}
+                        - {name: kind, type: string, max_length: 16, required: true, provider_visibility: [reputation/plugin.reputation.observation_context]}
+                        - {name: value, type: string, max_length: 512, required: true, provider_visibility: [reputation/plugin.reputation.observation_context]}
+                  - {attribute: plugin.reputation.observation_valid, category: resource, type: boolean, allowed_sources: [plugin]}
+                  - {attribute: plugin.reputation.observation_learning_eligible, category: resource, type: boolean, allowed_sources: [plugin]}
+                  - {attribute: plugin.reputation.observation_reason, category: resource, type: string, allowed_sources: [plugin], max_length: 32}
+                  - {attribute: plugin.reputation.observation_source_class, category: resource, type: string, allowed_sources: [plugin], max_length: 64}
+                  - {attribute: plugin.reputation.observation_evidence_origin, category: resource, type: string, allowed_sources: [plugin], max_length: 32}
+                  - {attribute: plugin.reputation.observation_subject_kinds, category: resource, type: strings, allowed_sources: [plugin], max_length: 16, max_items: 6}
+                  - attribute: plugin.reputation.admitted_subjects
+                    category: resource
+                    type: records
+                    allowed_sources: [plugin]
+                    record_schema:
+                      id: admitted_subjects
+                      version: v1
+                      min_records: 0
+                      max_records: 24
+                      max_fields: 5
+                      max_aggregate_bytes: 32768
+                      fields:
+                        - {name: role, type: string, max_length: 64, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
+                        - {name: kind, type: string, max_length: 16, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
+                        - {name: value, type: string, max_length: 512, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
+                        - {name: subject_tag, type: string, max_length: 128, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
+                        - {name: weight, type: double, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
+      providers:
+        observation_context:
+          kind: native
+          module: reputation
+          targets: [{action: observe}]
+          produced_facts:
+            - plugin.reputation.observation_valid
+            - plugin.reputation.observation_learning_eligible
+            - plugin.reputation.observation_reason
+            - plugin.reputation.observation_source_class
+            - plugin.reputation.observation_evidence_origin
+            - plugin.reputation.observation_subject_kinds
+            - plugin.reputation.admitted_subjects
+          failure: indeterminate
+          timeout: 400ms
+          diagnostics: {public_id: independent-observation}
+      domain_plans:
+        observation:
+          checkpoints:
+            final_decision:
+              providers:
+                - {name: observation_context, use: reputation/observation_context}
+      policy_sets:
+        observation:
+          visibility: private
+          rules:
+            - name: reject_invalid_observation
+              checkpoint: final_decision
+              if: {attribute: plugin.reputation.observation_valid, eq: false}
+              then: {decision: deny, reason: invalid_observation}
+  targets:
+    - namespace: reputation
+      action: observe
+      schema: reputation/observe/v1
+      mode: enforce
+      domain_plan: reputation/observation
+      default_policy: reputation/observation
+      no_match: deny
+      timeouts: {evaluation: 2s, provider_default: 500ms}
+      plans:
+        final_decision: {policy_sets: [reputation/observation]}

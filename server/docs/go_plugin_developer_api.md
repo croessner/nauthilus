@@ -1622,3 +1622,14 @@ Mounted keys are sealed with the configuration candidate. Key references and mat
 changes require a process restart. Rotation behavior of stored state belongs to the consuming plugin.
 Native artifacts must be rebuilt with the host; `BuildInfo.ArtifactIdentity` records the coherent build
 identity, which is diagnostic rather than an ABI stability promise.
+
+### Host startup authorization view
+
+`Host.Config()` includes a credential-free `policy_admission` projection with
+`enabled` and `clients`. Each client contains `principal`, exact `targets`,
+`schemas`, effective `max_concurrency`, `requests_per_second`, and `diagnostics`.
+The projection uses the same limit resolver as the Policy transport. It exposes
+no authentication material or Policy source. Modules may use it for startup
+cross-checks, but runtime authority still comes from host-authenticated request
+views. On a module-bound Host, `host_context.module_name` is always the actual
+configured module instance; a configuration entry cannot override it.

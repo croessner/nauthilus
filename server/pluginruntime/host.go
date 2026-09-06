@@ -692,9 +692,16 @@ func (h moduleBoundHost) LDAP() pluginapi.LDAP {
 	return h.base.LDAP()
 }
 
-// Config returns the shared host config view.
+// Config binds startup context to the actual module while preserving the read-only host-wide snapshot.
 func (h moduleBoundHost) Config() pluginapi.ConfigView {
-	return h.base.Config()
+	values := make(map[string]any)
+	if err := h.base.Config().Decode(&values); err != nil {
+		return pluginregistry.NewConfigView(nil)
+	}
+
+	values["host_context"] = map[string]any{"module_name": h.moduleName}
+
+	return pluginregistry.NewConfigView(values)
 }
 
 // Go starts a supervised worker with module-bound logging.

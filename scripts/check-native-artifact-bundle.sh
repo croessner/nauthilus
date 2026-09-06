@@ -9,14 +9,16 @@ bundle_dir=$(mktemp -d)
 trap 'rm -rf "$bundle_dir"' EXIT HUP INT TERM
 native_flags=$(go run -mod=vendor ./scripts/native_artifact_fingerprint)
 go build -mod=vendor -trimpath -ldflags "$native_flags" -o "$bundle_dir/check" ./server/pluginloader/testdata/nativebundle
-for component in sample geoip dkim2-reputation; do
+set --
+for component in sample geoip dkim2-reputation reputation; do
   case "$component" in
     sample) package=./pluginapi/v1/testdata/sampleplugin ;;
     *) package=./contrib/plugins/$component ;;
   esac
   go build -mod=vendor -trimpath -ldflags "$native_flags" -buildmode=plugin -o "$bundle_dir/$component.so" "$package"
+  set -- "$@" "$bundle_dir/$component.so"
 done
-"$bundle_dir/check" "$bundle_dir/sample.so" "$bundle_dir/geoip.so" "$bundle_dir/dkim2-reputation.so"
+"$bundle_dir/check" "$@"
 
 # Real negative controls must fail before their native factory can be opened.
 stale_flags="-X github.com/croessner/nauthilus/v4/pluginapi/v1.nativeArtifactIdentity=nauthilus-native-artifact-v1:0000000000000000000000000000000000000000000000000000000000000000:end-native-artifact"

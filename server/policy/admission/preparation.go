@@ -339,22 +339,22 @@ func validateGlobalLimits(limits Limits) error {
 
 // effectiveLimits inherits zero profile values and rejects broader profile overrides.
 func effectiveLimits(profile Limits, global Limits) (Limits, error) {
-	requestBytes, err := effectiveLimit(profile.MaxRequestBytes, global.MaxRequestBytes)
+	requestBytes, err := ResolveLimit(profile.MaxRequestBytes, global.MaxRequestBytes)
 	if err != nil {
 		return Limits{}, err
 	}
 
-	facts, err := effectiveLimit(profile.MaxFacts, global.MaxFacts)
+	facts, err := ResolveLimit(profile.MaxFacts, global.MaxFacts)
 	if err != nil {
 		return Limits{}, err
 	}
 
-	concurrency, err := effectiveLimit(profile.MaxConcurrency, global.MaxConcurrency)
+	concurrency, err := ResolveLimit(profile.MaxConcurrency, global.MaxConcurrency)
 	if err != nil {
 		return Limits{}, err
 	}
 
-	requestRate, err := effectiveLimit(profile.RequestsPerSecond, global.RequestsPerSecond)
+	requestRate, err := ResolveLimit(profile.RequestsPerSecond, global.RequestsPerSecond)
 	if err != nil {
 		return Limits{}, err
 	}
@@ -367,8 +367,8 @@ func effectiveLimits(profile Limits, global Limits) (Limits, error) {
 	}, nil
 }
 
-// effectiveLimit returns one inherited finite bound.
-func effectiveLimit(profile int, global int) (int, error) {
+// ResolveLimit returns one inherited finite bound and rejects broader profile overrides.
+func ResolveLimit(profile int, global int) (int, error) {
 	if profile < 0 || profile > global {
 		return 0, configurationError("profile admission limit is invalid or broader than its global limit")
 	}

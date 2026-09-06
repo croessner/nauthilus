@@ -1029,7 +1029,7 @@ func runtimePluginConfigView(cfg config.File) pluginapi.ConfigView {
 	return pluginregistry.NewConfigView(values)
 }
 
-// runtimePluginConfigMap materializes non-policy process settings without exposing raw Viper state.
+// runtimePluginConfigMap materializes process settings and safe admission metadata without Policy code or credentials.
 func runtimePluginConfigMap(cfg config.File) (map[string]any, error) {
 	if cfg == nil {
 		return nil, nil
@@ -1050,6 +1050,7 @@ func runtimePluginConfigMap(cfg config.File) (map[string]any, error) {
 	}
 
 	delete(values, runtimePluginPolicyConfigKey)
+	values["policy_admission"] = runtimePluginAdmissionMap(cfg.GetPolicy().API)
 
 	return values, nil
 }
