@@ -1068,20 +1068,29 @@ function assertNoRequiredMFAJourneyFlow(enrollmentKey) {
     'required MFA journey must consume its typed enrollment record');
 }
 
-function readRequiredMFAEnrollmentKeys() {
+// fixtureRedis executes commands only against this harness's isolated Compose Redis services.
+function fixtureRedis(service, ...args) {
   const root = path.join(__dirname, '..');
-  const composeFile = path.join(root, 'docker-compose.yml');
-  const composeArgs = ['compose', '--project-directory', root, '-f', composeFile, 'exec', '-T', 'edge-redis'];
-  const keysRaw = execFileSync('docker', [
-    ...composeArgs,
-    'redis-cli',
-    '--raw',
-    '--scan',
-    '--pattern',
-    'edge::browser-session:*:required_mfa_enrollment:*',
+  return execFileSync('docker', [
+    'compose', '--project-directory', root, '-f', path.join(root, 'docker-compose.yml'),
+    'exec', '-T', service, 'redis-cli', '--raw', ...args,
   ], {encoding: 'utf8'});
+}
 
-  return keysRaw.split('\n').map((value) => value.trim()).filter(Boolean);
+function readRequiredMFAEnrollmentKeys() {
+  return fixtureRedis('edge-redis', '--scan', '--pattern', 'edge::browser-session:*:required_mfa_enrollment:*')
+    .split('\n').map((value) => value.trim()).filter(Boolean);
+}
+
+// resetFixtureCodeBudgets isolates independent test matrices while retaining recovery-code consumption state.
+function resetFixtureCodeBudgets() {
+  for (const service of ['edge-redis', 'authority-redis']) {
+    const keys = fixtureRedis(service, '--scan', '--pattern', '*mfa:attempt:*')
+      .split('\n').map((value) => value.trim()).filter(Boolean);
+    if (keys.length > 0) {
+      fixtureRedis(service, 'DEL', ...keys);
+    }
+  }
 }
 
 // runRequiredMFAFlows exercises required MFA enrollment and all browser-visible MFA login variants.
@@ -1223,6 +1232,7 @@ async function runRequiredMFAFlows(browser) {
     reuseOK: 'oidc-master-user-recovery-code-reuse-rejected',
   });
   await runMFASelfServiceStepUpChecks(browser);
+  await runMFACodeBudgetExhaustion(browser);
 
   return updatedWebAuthnCredentials;
 }
@@ -2024,6 +2034,7 @@ async function runInvalidRecoveryCode(browser, options = {}) {
 
 // runRecoveryCodeMatrix covers normal and delayed recovery-code logins for one principal.
 async function runRecoveryCodeMatrix(browser, profile) {
+  resetFixtureCodeBudgets();
   assertRecoveryCodes(profile.label, profile.codes, 3);
   await runInvalidRecoveryCode(browser, {
     user: profile.login,
@@ -2067,6 +2078,40 @@ async function runRecoveryCodeMatrix(browser, profile) {
     label: `${profile.label} recovery-code reuse check`,
     okName: profile.reuseOK,
   });
+}
+
+// runMFACodeBudgetExhaustion proves new challenges and switching code methods cannot reset the identity budget.
+async function runMFACodeBudgetExhaustion(browser) {
+  resetFixtureCodeBudgets();
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    await runInvalidRecoveryCode(browser, {
+      user: mfaUsername,
+      okName: `mfa-budget-recovery-attempt-${attempt}`,
+    });
+  }
+
+  const context = await newBrowserContext(browser, edgeA);
+  const page = await context.newPage();
+  try {
+    await withPageState(page, 'MFA shared code budget', async () =>
+      withCallbackServer('MFA shared code budget', async (redirectURI) => {
+        await startMFAChallenge(page, redirectURI, {user: mfaUsername});
+        if (!/\/login\/totp/.test(page.url())) {
+          await selectMFAChallenge(page, 'totp');
+        }
+        const pendingResponse = page.waitForResponse((response) =>
+          response.url().includes('/login/totp') && response.request().method() === 'POST');
+        await page.fill('input[name="code"]', '000000');
+        await page.click('button[type="submit"]');
+        const response = await pendingResponse;
+        assert.equal(response.status(), 429, 'TOTP must share the exhausted recovery identity budget');
+        assert.equal(response.headers()['retry-after'], '300');
+      }));
+    console.log('ok mfa-code-budget-shared-across-challenges-and-methods');
+  } finally {
+    await context.close();
+    resetFixtureCodeBudgets();
+  }
 }
 
 // assertRecoveryCodes validates that a registration produced enough unique one-time codes for the matrix.
