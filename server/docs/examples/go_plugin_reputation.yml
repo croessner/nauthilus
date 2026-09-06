@@ -23,6 +23,8 @@ plugins:
         maximum_retry_horizon: 24h
         maximum_source_classes: 8
         maximum_new_subjects_per_source_hour: 1000
+        maximum_event_manifests_per_source: 10000
+        maximum_seen_events_per_subject: 10000
         source_class_caps:
           mail_filter: {risk: 40, trust: 40, samples: 100}
         profiles:

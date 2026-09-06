@@ -2,6 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/go-redis/redismock/v9"
+	"sort"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -50,7 +55,15 @@ func TestPluginStartCrossChecksExactPrincipalGrant(t *testing.T) {
 
 			raw := testAdmissionMap()
 			tt.mutate(raw)
-			host := pluginruntime.NewHost(pluginruntime.WithConfig(pluginregistry.NewConfigView(raw)), pluginruntime.WithOpaqueIdentifierTagger(testTagger(t)))
+
+			tagger := manifestTestTagger(t, false)
+
+			options := []pluginruntime.HostOption{pluginruntime.WithConfig(pluginregistry.NewConfigView(raw)), pluginruntime.WithOpaqueIdentifierTagger(tagger)}
+			if tt.valid {
+				options = append(options, pluginruntime.WithRedis(testStartupRedis(t, plugin.config, tagger)))
+			}
+
+			host := pluginruntime.NewHost(options...)
 
 			err := plugin.Start(context.Background(), host)
 			if (err == nil) != tt.valid {
@@ -63,4 +76,50 @@ func TestPluginStartCrossChecksExactPrincipalGrant(t *testing.T) {
 // admissionClient selects only the disposable fixture principal entry.
 func admissionClient(raw map[string]any) map[string]any {
 	return raw["policy_admission"].(map[string]any)["clients"].([]any)[0].(map[string]any)
+}
+
+// TestPluginStartRequiresReputationRedis prevents a fact-only ready state when the durable model owner is unavailable.
+func TestPluginStartRequiresReputationRedis(t *testing.T) {
+	plugin := NewPlugin()
+	plugin.config = testConfig(t)
+	host := pluginruntime.NewHost(pluginruntime.WithConfig(pluginregistry.NewConfigView(testAdmissionMap())), pluginruntime.WithOpaqueIdentifierTagger(manifestTestTagger(t, false)))
+	requireError(t, plugin.Start(context.Background(), host))
+}
+
+// testStartupRedis expects durable model activation and every fenced shard before a successful module start.
+func testStartupRedis(t *testing.T, cfg *configuration, tagger pluginapi.OpaqueIdentifierTagger) pluginapi.Redis {
+	t.Helper()
+
+	client, mock := redismock.NewClientMock()
+
+	t.Cleanup(func() { requireNoError(t, mock.ExpectationsWereMet()); _ = client.Close() })
+
+	facade := pluginruntime.NewRedisFacade(rediscli.NewTestClient(client))
+	owner, err := newStateOwner(cfg, tagger, facade)
+	requireNoError(t, err)
+
+	sources := reputationScripts()
+
+	names := make([]string, 0, len(sources))
+	for name := range sources {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		mock.ExpectScriptLoad(sources[name]).SetVal(name)
+	}
+
+	metadata, err := json.Marshal(owner.metadataRequest("activate"))
+	requireNoError(t, err)
+	mock.ExpectEvalSha(scriptMetadata, owner.keys.metadata(), string(metadata)).SetVal([]any{"active", ""})
+	control, err := json.Marshal(controlRequest{Operation: "activate", Schema: manifestSchema, Identity: owner.identity})
+	requireNoError(t, err)
+
+	for shard := range manifestShardCount {
+		mock.ExpectEvalSha(scriptControl, []string{owner.keys.control(shard)}, string(control)).SetVal([]any{"active"})
+	}
+
+	return facade
 }

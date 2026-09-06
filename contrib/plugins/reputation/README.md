@@ -1,8 +1,11 @@
-# Reputation evidence admission
+# Reputation evidence admission and storage
 
 This native plugin compiles an explicit source and signal catalog before it
 accepts independent evidence. The core remains protocol-neutral. The current
-observation provider validates evidence without writing Redis state.
+observation provider validates evidence. Startup also registers the immutable
+model and fenced allocation shards through the host Redis facade. The provider
+does not yet invoke ingestion; the storage owner is prepared for the observation
+effect integration.
 
 The complete [operator example](../../../server/docs/examples/go_plugin_reputation.yml)
 is the configuration authority for the admission tests. Its values are
@@ -67,3 +70,66 @@ repository root, followed by `make guardrails` for the full project gate.
 The tests cover strict decoding, source identities and grants, temporal and
 measurement bounds, canonical duplicates, exact ASN attribution, protected
 records, and a correlated non-mail workflow extraction.
+
+## Bounded durable ingestion
+
+The storage owner uses only the host primary connection, prefix builder and
+named script registry. All keys for each atomic operation share one Cluster
+hash slot. No replica reads or ambient Redis singleton participate. Immutable
+model fingerprints cover ingestion semantics, including normalization, source
+and signal policy, profile half-lives, caps, subject scope and retention.
+Changing these semantics requires a new model ID. One optional shadow model has
+separate accumulators and deduplication; it cannot replace the active model.
+Read-time score transforms do not change the ingestion fingerprint.
+
+A dedicated, stable manifest-scope HMAC binds the source-policy ID and producer
+local event ID to one of 16 fixed allocation shards. Before any subject write,
+Redis atomically creates or compares a bounded immutable manifest. Its canonical
+payload binds the exact timestamp, magnitude, source class and origin, model
+fingerprints, contribution dimensions and complete sorted opaque subject plan.
+Neither raw subjects nor event IDs are retained. Different payloads sharing an
+event allocation fail before subject mutation. Redis time controls first
+admission. An exact retry may resume its frozen plan until manifest expiry,
+even after the first-admission lateness window; retries never extend expiry.
+The observation endpoint must preserve this retry distinction when its storage
+effect is connected.
+
+Subject writes atomically decay profile/source-class masses, apply bounded
+contributions and record the manifest-bound seen tag. Delayed evidence is
+discounted from its observation time as well as existing mass from its update
+time. Every model and subject deduplicates independently. Partial fan-out and
+lost acknowledgments can therefore resume without double counting. Malformed
+state, missing live deduplication state, unsupported schemas and numerical
+corruption fail closed without repairing or resetting evidence.
+
+Required event-manifest and subject-seen cardinality limits bound storage.
+Per-source event and new-subject quotas divide their total budget over the fixed
+shards; their sum never exceeds the configured total. This is conservative:
+one subject observed in several shards can consume several quota entries, and
+an uneven distribution can exhaust one shard before the total is reached.
+Mass, samples, source classes and expanded subjects are bounded independently.
+Manifest and seen retention cover lateness plus the retry horizon; seen
+retention is at least manifest retention, and both fit within state retention.
+
+## Identifier rotation and allocation drain
+
+Subject-key rotation permits active and previous plans. A newer writer can
+reproduce the previous manifest byte-for-byte; an older writer cannot accept a
+new plan it cannot reproduce. Both generations use the same allocation key.
+
+The manifest scope accepts exactly one key version. Replacing that key requires
+an explicit allocation drain: fence all shards, record completion using Redis
+time, wait the largest registered manifest retention, increment
+`allocation_drain_generation`, and restart writers coherently with the new key.
+Startup cannot skip this durable fence or reopen an older generation. Partial
+shard activation can resume after restart, but readiness is published only when
+all shards are active. Ordinary plugin shutdown only stops its local writer;
+it does not drain other writers. The management integration must own the
+explicit drain operation.
+
+Run `GOEXPERIMENT=runtimesecret make reputation-redis-check` for the dedicated
+integration gate. It starts and reaps only test-owned Redis/Valkey processes:
+a socket-only primary and a three-node loopback Cluster. Tests include real Lua
+execution, time/expiry, quotas, malformed state, concurrent allocations and
+rotation, lost requests/acknowledgments, partial fan-out, allocation drain and
+host-managed `NOSCRIPT` recovery. No production Redis endpoint is accepted.

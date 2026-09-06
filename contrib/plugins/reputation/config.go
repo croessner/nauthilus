@@ -27,6 +27,10 @@ const (
 )
 
 type rawConfig struct {
+	ShadowModel                     *shadowModelConfig       `mapstructure:"shadow_model"`
+	AllocationDrainGeneration       int                      `mapstructure:"allocation_drain_generation"`
+	MaximumEventManifestsPerSource  int                      `mapstructure:"maximum_event_manifests_per_source"`
+	MaximumSeenEventsPerSubject     int                      `mapstructure:"maximum_seen_events_per_subject"`
 	TargetBindings                  []targetBindingConfig    `mapstructure:"target_bindings"`
 	Sources                         map[string]sourceConfig  `mapstructure:"sources"`
 	Signals                         map[string]signalConfig  `mapstructure:"signals"`
@@ -70,6 +74,7 @@ type profileConfig struct {
 }
 
 type configuration struct {
+	shadow          *configuration
 	bindings        map[pluginapi.DecisionTargetSelector]targetBindingConfig
 	raw             rawConfig
 	apiSources      map[string]*sourcePolicy
@@ -94,6 +99,11 @@ func decodeConfig(view pluginapi.ConfigView) (*configuration, error) {
 		return nil, errConfiguration
 	}
 
+	return compileConfiguration(raw)
+}
+
+// compileConfiguration centralizes validation for both active and explicitly derived shadow snapshots.
+func compileConfiguration(raw rawConfig) (*configuration, error) {
 	cfg := &configuration{raw: raw}
 	if err := cfg.validateModel(); err != nil {
 		return nil, err
@@ -111,6 +121,10 @@ func decodeConfig(view pluginapi.ConfigView) (*configuration, error) {
 		return nil, err
 	}
 
+	if err := cfg.compileShadow(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 
@@ -125,6 +139,10 @@ func (c *configuration) validateModel() error {
 
 	if err := validateNormalizationAndScore(r); err != nil {
 		return err
+	}
+
+	if !validStateCardinality(r) {
+		return errConfiguration
 	}
 
 	if err := c.validateRetention(); err != nil {
@@ -152,7 +170,7 @@ func (c *configuration) validateRetention() error {
 		*binding.target = value
 	}
 
-	if c.manifestTTL > c.retention || c.seenTTL > c.retention || c.retryHorizon > c.manifestTTL {
+	if c.manifestTTL > c.retention || c.seenTTL > c.retention || c.retryHorizon > c.manifestTTL || c.seenTTL < c.manifestTTL {
 		return errConfiguration
 	}
 
@@ -258,4 +276,10 @@ func validateClassCaps(caps map[string]sourceCap) error {
 	}
 
 	return nil
+}
+
+// validStateCardinality requires explicit finite event-history ceilings in addition to transport limits.
+func validStateCardinality(raw rawConfig) bool {
+	return raw.AllocationDrainGeneration >= 0 && raw.AllocationDrainGeneration <= 1000000 && raw.MaximumEventManifestsPerSource >= manifestShardCount && raw.MaximumEventManifestsPerSource <= 100000 &&
+		raw.MaximumSeenEventsPerSubject >= 1 && raw.MaximumSeenEventsPerSubject <= 100000
 }

@@ -191,32 +191,51 @@ func TestRedisScriptFacadeUploadsAndRunsByName(t *testing.T) {
 	}
 }
 
+// TestRedisScriptFacadeRecoversNoScriptOnce bounds both successful recovery and persistent script-cache failure.
 func TestRedisScriptFacadeRecoversNoScriptOnce(t *testing.T) {
-	db, mock := redismock.NewClientMock()
-	facade := NewRedisFacade(rediscli.NewTestClient(db))
-	ctx := context.Background()
+	for _, persistent := range []bool{false, true} {
+		name := "recovered"
+		if persistent {
+			name = "persistent"
+		}
 
-	mock.ExpectScriptLoad("return 1").SetVal("sha-old")
+		t.Run(name, func(t *testing.T) {
+			const source = "return 1"
 
-	if _, err := facade.Scripts().Upload(ctx, "recover_script", "return 1"); err != nil {
-		t.Fatalf("Upload() error = %v", err)
-	}
+			db, mock := redismock.NewClientMock()
+			facade := NewRedisFacade(rediscli.NewTestClient(db))
+			ctx := context.Background()
+			noScript := facadeRedisMockError("NOSCRIPT No matching script. Please use EVAL.")
 
-	mock.ExpectEvalSha("sha-old", []string{facadeRedisKey}).SetErr(facadeRedisMockError("NOSCRIPT No matching script. Please use EVAL."))
-	mock.ExpectScriptLoad("return 1").SetVal("sha-new")
-	mock.ExpectEvalSha("sha-new", []string{facadeRedisKey}).SetVal(int64(1))
+			mock.ExpectScriptLoad(source).SetVal("sha-old")
 
-	result, err := facade.Scripts().Run(ctx, "recover_script", []string{facadeRedisKey})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+			if _, err := facade.Scripts().Upload(ctx, "recover_script", source); err != nil {
+				t.Fatal(err)
+			}
 
-	if result != int64(1) {
-		t.Fatalf("Run() result = %#v, want 1", result)
-	}
+			mock.ExpectEvalSha("sha-old", []string{facadeRedisKey}).SetErr(noScript)
+			mock.ExpectScriptLoad(source).SetVal("sha-new")
 
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("Redis expectations were not met: %v", err)
+			replay := mock.ExpectEvalSha("sha-new", []string{facadeRedisKey})
+			if persistent {
+				replay.SetErr(noScript)
+			} else {
+				replay.SetVal(int64(1))
+			}
+
+			result, err := facade.Scripts().Run(ctx, "recover_script", []string{facadeRedisKey})
+			if persistent {
+				if err != noScript {
+					t.Fatalf("persistent NOSCRIPT error was replaced: %v", err)
+				}
+			} else if err != nil || result != int64(1) {
+				t.Fatalf("recovered result/error = %v/%v", result, err)
+			}
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

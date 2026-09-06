@@ -173,3 +173,23 @@ func TestSourceDirectASNRequiresAuthoritativeExternalFeed(t *testing.T) {
 	_, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireError(t, err)
 }
+
+// TestConfigStateCardinalityRequiresExplicitBounds prevents admitted producers from allocating unbounded history.
+func TestConfigStateCardinalityRequiresExplicitBounds(t *testing.T) {
+	for _, field := range []string{"maximum_event_manifests_per_source", "maximum_seen_events_per_subject"} {
+		t.Run(field, func(t *testing.T) {
+			raw := testConfigMap(t)
+			delete(raw, field)
+			_, err := decodeConfig(pluginregistry.NewConfigView(raw))
+			requireError(t, err)
+		})
+	}
+}
+
+// TestConfigSeenRetentionCoversManifestRetries prevents a valid manifest from outliving its deduplication contract.
+func TestConfigSeenRetentionCoversManifestRetries(t *testing.T) {
+	raw := testConfigMap(t)
+	raw["subject_seen_ttl"] = "48h30m"
+	_, err := decodeConfig(pluginregistry.NewConfigView(raw))
+	requireError(t, err)
+}

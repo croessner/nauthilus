@@ -192,3 +192,7 @@ guardrails: sync-prompts-check policy-check makefile-package-scope-check check-g
 	@$(GOLANGCI_LINT) version | grep -Eq 'version $(GOLANGCI_LINT_VERSION)([[:space:]]|$$)' || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required"; $(GOLANGCI_LINT) version; exit 1; }
 	$(GOLANGCI_LINT) run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
 	go test -short $(GO_PACKAGES)
+
+.PHONY: reputation-redis-check
+reputation-redis-check:
+	sh scripts/check-reputation-redis.sh

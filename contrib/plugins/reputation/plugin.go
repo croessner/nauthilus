@@ -13,6 +13,7 @@ var observeTarget = pluginapi.DecisionTargetSelector{Namespace: pluginName, Acti
 
 // Plugin owns immutable admission semantics and process-bound opaque services.
 type Plugin struct {
+	state      *stateOwner
 	config     *configuration
 	tagger     pluginapi.OpaqueIdentifierTagger
 	registered map[executionKey]struct{}
@@ -66,7 +67,7 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	return nil
 }
 
-// Start admits the module only after exact caller and actual registered callback cross-checks.
+// Start admits the module only after source cross-checks and durable model/allocation activation.
 func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -88,18 +89,31 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 		return err
 	}
 
-	if _, err := tagger.Tag(ctx, pluginapi.OpaqueIdentifierInput{Scope: p.config.raw.SubjectScope, Kind: "probe", Value: "startup"}); err != nil {
+	if _, err := tagger.Tag(ctx, pluginapi.OpaqueIdentifierInput{Scope: p.config.raw.SubjectScope, Kind: taggerProbe, Value: "startup"}); err != nil {
 		return err
 	}
 
+	state, err := newStateOwner(p.config, tagger, host.Redis())
+	if err != nil {
+		return err
+	}
+
+	if err := state.start(ctx); err != nil {
+		return err
+	}
+
+	p.state = state
 	p.tagger = tagger
 
 	return nil
 }
 
-// Stop removes readiness; no observation state or workers exist at this boundary.
+// Stop removes local readiness without quiescing independent writers or altering durable state.
 func (p *Plugin) Stop(context.Context) error {
 	p.mu.Lock()
+	if p.state != nil {
+		p.state.ready.Store(false)
+	}
 	p.tagger = nil
 	p.mu.Unlock()
 
