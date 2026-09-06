@@ -43,6 +43,9 @@ var (
 type ExpressionKind string
 
 const (
+	// ExpressionKindRecordField evaluates one schema-owned field of a bound record.
+	ExpressionKindRecordField ExpressionKind = "record_field"
+
 	// ExpressionKindAttribute identifies one exact typed fact predicate.
 	ExpressionKindAttribute ExpressionKind = "attribute"
 
@@ -194,6 +197,10 @@ func NewPolicyExpression(input PolicyExpressionInput) (PolicyExpression, error) 
 		expression.factKind = inferredFactKind(expression.operator, expression.values)
 	}
 
+	if expression.kind == ExpressionKindRecordField {
+		expression.factKind = expression.recordFieldKind
+	}
+
 	if expression.kind == ExpressionKindRecordQuantifier {
 		expression.factKind = decision.ValueKindRecords
 	}
@@ -329,8 +336,12 @@ func (e PolicyExpression) validate(depth int, state *expressionValidationState) 
 		return e.validateAttribute(state)
 	}
 
+	if e.kind == ExpressionKindRecordField {
+		return e.validateRecordField()
+	}
+
 	if e.kind == ExpressionKindRecordQuantifier {
-		return e.validateRecordQuantifier(state)
+		return e.validateRecordQuantifier(depth, state)
 	}
 
 	if err := e.validateLogical(); err != nil {
@@ -411,12 +422,10 @@ func (e PolicyExpression) validateAttribute(state *expressionValidationState) er
 	return nil
 }
 
-// validateRecordQuantifier enforces one flat record-local predicate without child state.
-func (e PolicyExpression) validateRecordQuantifier(state *expressionValidationState) error {
-	if !identifier.Fact(e.factID) || e.factKind != decision.ValueKindRecords ||
-		!identifier.Action(e.recordField) || !e.recordFieldKind.IsValid() ||
-		e.recordFieldKind == decision.ValueKindRecords || !e.quantifier.IsValid() || len(e.children) != 0 {
-		return invalidExpression(e.factID, "record quantifiers require one exact records fact and one non-recursive local field")
+// validateRecordQuantifier bounds one local tree and prevents external or nested references.
+func (e PolicyExpression) validateRecordQuantifier(depth int, state *expressionValidationState) error {
+	if !e.recordQuantifierShapeValid() {
+		return invalidExpression(e.factID, "record quantifiers require one records fact and one local expression tree")
 	}
 
 	if state.facts == nil {
@@ -428,14 +437,47 @@ func (e PolicyExpression) validateRecordQuantifier(state *expressionValidationSt
 	}
 
 	state.facts[e.factID] = decision.ValueKindRecords
-	leaf := e
-	leaf.kind = ExpressionKindAttribute
-	leaf.factKind = e.recordFieldKind
-	leaf.recordField = ""
-	leaf.recordFieldKind = ""
-	leaf.quantifier = ""
+	if !e.children[0].recordLocal() {
+		return invalidExpression(e.factID, "record tree contains a non-local expression")
+	}
 
-	return validateExpressionOperands(leaf)
+	return e.children[0].validate(depth+1, state)
+}
+
+// recordQuantifierShapeValid separates container shape from recursive field validation.
+func (e PolicyExpression) recordQuantifierShapeValid() bool {
+	return identifier.Fact(e.factID) && e.factKind == decision.ValueKindRecords &&
+		e.quantifier.IsValid() && len(e.children) == 1 && e.recordField == "" &&
+		e.recordFieldKind == "" && e.operator == "" && e.reference == "" && len(e.values) == 0
+}
+
+// recordLocal proves that a subtree refers only to fields of its bound record.
+func (e PolicyExpression) recordLocal() bool {
+	switch e.kind {
+	case ExpressionKindRecordField:
+		return true
+	case ExpressionKindAll, ExpressionKindAny, ExpressionKindNot:
+		for _, child := range e.children {
+			if !child.recordLocal() {
+				return false
+			}
+		}
+
+		return true
+	default:
+		return false
+	}
+}
+
+// validateRecordField reuses the closed scalar operator contract without a top-level fact.
+func (e PolicyExpression) validateRecordField() error {
+	if !identifier.Action(e.recordField) || !e.recordFieldKind.IsValid() ||
+		e.recordFieldKind == decision.ValueKindRecords || e.factKind != e.recordFieldKind ||
+		e.factID != "" || e.quantifier != "" || len(e.children) != 0 {
+		return invalidExpression(e.recordField, "record field requires one non-recursive local value")
+	}
+
+	return validateExpressionOperands(e)
 }
 
 // logicalFieldsEmpty reports whether a logical node carries no leaf-only state.

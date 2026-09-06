@@ -238,8 +238,7 @@ policy:
                 records:
                   attribute: plugin.dkim2_reputation.assessed_chain
                   quantifier: any
-                  field: assessment_complete
-                  where: {eq: false}
+                  where: {field: assessment_complete, eq: false}
               then: {decision: deny, reason: dkim2_assessment_incomplete}
             - name: deny_reputation_assessment
               checkpoint: final_decision
@@ -249,13 +248,11 @@ policy:
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: any
-                      field: signer_reputation
-                      where: {in: [blocked, unknown]}
+                      where: {field: signer_reputation, in: [blocked, unknown]}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: any
-                      field: smtp_peer_reputation
-                      where: {in: [blocked, unknown]}
+                      where: {field: smtp_peer_reputation, in: [blocked, unknown]}
               then: {decision: deny, reason: dkim2_reputation_denied}
             - name: deny_contract_or_recipe_assessment
               checkpoint: final_decision
@@ -265,13 +262,11 @@ policy:
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: any
-                      field: contract_state
-                      where: {in: [missing, peer_mismatch]}
+                      where: {field: contract_state, in: [missing, peer_mismatch]}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: any
-                      field: recipe_authorization
-                      where: {in: [denied, uncontracted]}
+                      where: {field: recipe_authorization, in: [denied, uncontracted]}
               then: {decision: deny, reason: dkim2_contract_or_recipe_denied}
             - name: deny_assessment_violation
               checkpoint: final_decision
@@ -280,8 +275,8 @@ policy:
                 records:
                   attribute: plugin.dkim2_reputation.assessed_chain
                   quantifier: any
-                  field: violation_classes
                   where:
+                    field: violation_classes
                     contains_any:
                       - authentication_not_pass
                       - body_unavailable
@@ -305,8 +300,7 @@ policy:
                 records:
                   attribute: plugin.dkim2_reputation.assessed_chain
                   quantifier: any
-                  field: acceptable
-                  where: {eq: false}
+                  where: {field: acceptable, eq: false}
               then: {decision: deny, reason: dkim2_assessment_denied}
             - name: permit_strict_pass
               checkpoint: final_decision
@@ -334,38 +328,32 @@ policy:
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: assessment_complete
-                      where: {eq: true}
+                      where: {field: assessment_complete, eq: true}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: acceptable
-                      where: {eq: true}
+                      where: {field: acceptable, eq: true}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: signer_reputation
-                      where: {in: [trusted, neutral]}
+                      where: {field: signer_reputation, in: [trusted, neutral]}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: smtp_peer_reputation
-                      where: {in: [trusted, neutral]}
+                      where: {field: smtp_peer_reputation, in: [trusted, neutral]}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: contract_state
-                      where: {eq: matched}
+                      where: {field: contract_state, eq: matched}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: recipe_authorization
-                      where: {eq: permitted}
+                      where: {field: recipe_authorization, eq: permitted}
                   - records:
                       attribute: plugin.dkim2_reputation.assessed_chain
                       quantifier: all
-                      field: violation_classes
                       where:
+                        field: violation_classes
                         contains_none:
                           - authentication_not_pass
                           - body_unavailable

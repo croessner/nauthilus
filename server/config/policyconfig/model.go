@@ -356,6 +356,7 @@ type ConditionConfig struct {
 	Records          *RecordConditionConfig `mapstructure:"records"`
 	Always           *bool                  `mapstructure:"always"`
 	Attribute        string                 `mapstructure:"attribute"`
+	Field            string                 `mapstructure:"field"`
 	Detail           string                 `mapstructure:"detail"`
 	Matches          string                 `mapstructure:"matches"`
 	CIDRContains     string                 `mapstructure:"cidr_contains"`
@@ -378,11 +379,10 @@ type ConditionConfig struct {
 	Any              []ConditionConfig      `mapstructure:"any"`
 }
 
-// RecordConditionConfig declares one flat predicate over one exact records fact.
+// RecordConditionConfig declares one composite predicate over one exact records fact.
 type RecordConditionConfig struct {
 	Attribute  string          `mapstructure:"attribute"`
 	Quantifier string          `mapstructure:"quantifier"`
-	Field      string          `mapstructure:"field"`
 	Where      ConditionConfig `mapstructure:"where"`
 }
 

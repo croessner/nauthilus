@@ -1121,6 +1121,10 @@ func validateRecordExpressionFields(
 	expression registry.PolicyExpression,
 	facts map[string]registry.FactSchema,
 ) error {
+	if expression.Kind() == registry.ExpressionKindRecordField {
+		return fmt.Errorf("record field %s requires a records quantifier", expression.RecordField())
+	}
+
 	if expression.Kind() == registry.ExpressionKindRecordQuantifier {
 		fact, exists := facts[expression.FactID()]
 		if !exists || fact.Kind() != decision.ValueKindRecords {
@@ -1132,14 +1136,30 @@ func validateRecordExpressionFields(
 			return fmt.Errorf("fact %s has no closed record schema", expression.FactID())
 		}
 
-		field, exists := recordSchema.LookupField(expression.RecordField())
-		if !exists || !field.ExpressionVisible() || field.Kind() != expression.RecordFieldKind() {
-			return fmt.Errorf("fact %s field %s is absent, hidden, or has an incompatible kind", expression.FactID(), expression.RecordField())
-		}
+		return validateLocalRecordFields(expression.Children()[0], recordSchema)
 	}
 
 	for _, child := range expression.Children() {
 		if err := validateRecordExpressionFields(child, facts); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateLocalRecordFields binds each leaf to the same visible record schema.
+func validateLocalRecordFields(expression registry.PolicyExpression, schema registry.RecordSchema) error {
+	if expression.Kind() == registry.ExpressionKindRecordField {
+		field, exists := schema.LookupField(expression.RecordField())
+		if !exists || !field.ExpressionVisible() ||
+			(expression.Operator() != registry.ExpressionOperatorExists && field.Kind() != expression.RecordFieldKind()) {
+			return fmt.Errorf("record field %s is absent, hidden, or has an incompatible kind", expression.RecordField())
+		}
+	}
+
+	for _, child := range expression.Children() {
+		if err := validateLocalRecordFields(child, schema); err != nil {
 			return err
 		}
 	}

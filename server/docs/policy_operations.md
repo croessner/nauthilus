@@ -10,10 +10,33 @@ wire authorities.
 
 Each request evaluates exactly one resource against one qualified target and
 one schema version. A list or record-list value is structured fact data inside
-that resource; it is not a batch of requests. Record predicates select a field
-and apply the configured `any` or `all` quantifier to the bounded records.
-Empty, missing, malformed, and schema-incompatible collections do not become a
-vacuous permit.
+that resource; it is not a batch of requests. A record predicate evaluates its
+complete `where` tree against each record before applying `any`, `all`, or
+`none`. All children therefore refer to the same record:
+
+```yaml
+records:
+  attribute: resource.approvals
+  quantifier: any
+  where:
+    all:
+      - {field: department, eq: engineering}
+      - {field: approved, eq: true}
+```
+
+Inside `where`, only `all`, `any`, `not`, and schema-visible static `field`
+predicates are allowed. Leaves use the existing typed operators and compatible
+condition-set references. Nested quantifiers, external facts, empty logical
+groups, hidden fields, and mixed expression forms fail compilation. The former
+outer `records.field` syntax is rejected. Record quantifiers are supported in
+Policy rules; host scheduler guards reject them because their tri-state
+missing-fact execution contract does not support record evaluation. Expressions retain the 16-level,
+256-node, and 64-child limits.
+
+A missing records fact makes every quantifier false. A present empty collection
+makes `any` false and `all`/`none` true. Permit-sensitive collections must declare
+`min_records: 1` and providers must supply complete schema-valid evidence to
+prevent a vacuous permit.
 
 Policy credentials are separate from management and backchannel credentials:
 

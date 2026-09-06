@@ -169,6 +169,7 @@ func canonicalSchedulerGuardExpression(
 		Kind: expression.Kind(), FactID: factID, FactKind: expression.FactKind(),
 		Operator: expression.Operator(), Reference: expression.Reference(),
 		Values: expression.Values(), Children: children,
+		RecordField: expression.RecordField(), RecordFieldKind: expression.RecordFieldKind(), Quantifier: expression.Quantifier(),
 	})
 }
 

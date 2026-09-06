@@ -1634,6 +1634,10 @@ func validatePolicyRule(namespace string, rule PolicyRuleConfig, path string) er
 
 // validateCondition requires one unambiguous logical or attribute expression.
 func validateCondition(condition ConditionConfig, path string) error {
+	if condition.Field != "" {
+		return invalid(path+".field", "field is allowed only inside records.where")
+	}
+
 	if condition.Records != nil {
 		return validateRecordCondition(condition, path)
 	}
@@ -1667,11 +1671,7 @@ func validateRecordCondition(condition ConditionConfig, path string) error {
 		return invalid(path+".records.quantifier", "must be any, all, or none")
 	}
 
-	if !validAction(records.Field) {
-		return invalid(path+".records.field", "must be one static canonical local field name")
-	}
-
-	return validateRecordWhere(records.Where, path+".records.where")
+	return validateRecordWhere(records.Where, path+".records.where", 1)
 }
 
 // recordConditionHasMixedForm reports whether an outer record condition carries another expression form.
@@ -1685,15 +1685,48 @@ func validRecordQuantifier(value string) bool {
 	return value == keywordAny || value == keywordAll || value == keywordNone
 }
 
-// validateRecordWhere requires exactly one flat record-local attribute operator.
-func validateRecordWhere(where ConditionConfig, path string) error {
-	if where.Records != nil || len(presentLogicalForms(where)) > 0 || where.Attribute != "" || where.Detail != "" {
-		return invalid(path, "must be one flat record-local attribute operator")
+// validateRecordWhere validates bounded logical composition over static local fields.
+func validateRecordWhere(where ConditionConfig, path string, depth int) error {
+	if depth > 16 || where.Records != nil || where.Attribute != "" || where.Detail != "" || where.Always != nil {
+		return invalid(path, "requires a bounded record-local expression without external facts")
 	}
 
+	forms := presentLogicalForms(where)
 	operators := presentAttributeOperators(where)
-	if len(operators) != 1 {
-		return invalid(path, "must declare exactly one record-local operator")
+	if len(forms) == 0 {
+		if !validAction(where.Field) || len(operators) != 1 {
+			return invalid(path, "requires one static field and exactly one operator")
+		}
+
+		return nil
+	}
+
+	if len(forms) != 1 || where.Field != "" || len(operators) != 0 {
+		return invalid(path, "logical record expressions cannot carry field operators")
+	}
+
+	return validateRecordLogicalChildren(where, path+"."+forms[0], depth)
+}
+
+// validateRecordLogicalChildren validates the bounded children of one local logical form.
+func validateRecordLogicalChildren(where ConditionConfig, path string, depth int) error {
+	children := where.All
+	if where.Any != nil {
+		children = where.Any
+	}
+
+	if where.Not != nil {
+		children = []ConditionConfig{*where.Not}
+	}
+
+	if len(children) == 0 || len(children) > 64 {
+		return invalid(path, "logical record expressions require bounded non-empty children")
+	}
+
+	for index, child := range children {
+		if err := validateRecordWhere(child, fmt.Sprintf("%s[%d]", path, index), depth+1); err != nil {
+			return err
+		}
 	}
 
 	return nil

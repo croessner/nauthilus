@@ -43,25 +43,55 @@ func normalizeExpression(path string, configured policyconfig.ConditionConfig) (
 	}
 }
 
-// normalizeRecordExpression maps one flat record-local predicate without introducing a child expression.
-func normalizeRecordExpression(
-	path string,
-	configured policyconfig.RecordConditionConfig,
-) (registry.PolicyExpression, error) {
-	where := configured.Where
-	where.Attribute = "record.field"
-
-	leaf, err := normalizeAttributeExpression(path+".where", where)
+// normalizeRecordExpression binds one complete child tree to an exact records fact.
+func normalizeRecordExpression(path string, configured policyconfig.RecordConditionConfig) (registry.PolicyExpression, error) {
+	child, err := normalizeRecordWhere(path+".where", configured.Where)
 	if err != nil {
 		return registry.PolicyExpression{}, err
 	}
 
 	return newExpression(path, registry.PolicyExpressionInput{
 		Kind: registry.ExpressionKindRecordQuantifier, FactID: configured.Attribute,
-		FactKind: decision.ValueKindRecords, Operator: leaf.Operator(), Reference: leaf.Reference(), Values: leaf.Values(),
-		RecordField: configured.Field, RecordFieldKind: leaf.FactKind(),
-		Quantifier: registry.RecordQuantifier(configured.Quantifier),
+		Quantifier: registry.RecordQuantifier(configured.Quantifier), Children: []registry.PolicyExpression{child},
 	})
+}
+
+// normalizeRecordWhere reuses scalar operator normalization for record-local leaves.
+func normalizeRecordWhere(path string, configured policyconfig.ConditionConfig) (registry.PolicyExpression, error) {
+	if configured.Field != "" {
+		configured.Attribute = "record.field"
+
+		leaf, err := normalizeAttributeExpression(path, configured)
+		if err != nil {
+			return registry.PolicyExpression{}, err
+		}
+
+		return newExpression(path, registry.PolicyExpressionInput{
+			Kind: registry.ExpressionKindRecordField, RecordField: configured.Field, RecordFieldKind: leaf.FactKind(),
+			FactKind: leaf.FactKind(), Operator: leaf.Operator(), Reference: leaf.Reference(), Values: leaf.Values(),
+		})
+	}
+
+	kind, configs := registry.ExpressionKindAll, configured.All
+	if configured.Any != nil {
+		kind, configs = registry.ExpressionKindAny, configured.Any
+	}
+
+	if configured.Not != nil {
+		kind, configs = registry.ExpressionKindNot, []policyconfig.ConditionConfig{*configured.Not}
+	}
+
+	children := make([]registry.PolicyExpression, 0, len(configs))
+	for index, child := range configs {
+		normalized, err := normalizeRecordWhere(fmt.Sprintf("%s.%s[%d]", path, kind, index), child)
+		if err != nil {
+			return registry.PolicyExpression{}, err
+		}
+
+		children = append(children, normalized)
+	}
+
+	return newExpression(path, registry.PolicyExpressionInput{Kind: kind, Children: children})
 }
 
 // normalizeExpressionChildren constructs one ordered all/any node.

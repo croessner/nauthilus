@@ -271,7 +271,7 @@ func NewSchedulerGuardDefinition(input SchedulerGuardDefinitionInput) (Scheduler
 		onMissingAttribute = schedulerGuardOnMissingRun
 	}
 
-	if input.Path == "" || !identifier.Action(input.Name) || !input.Expression.Valid() ||
+	if input.Path == "" || !identifier.Action(input.Name) || !input.Expression.Valid() || !schedulerExpressionSupported(input.Expression) ||
 		onMissingAttribute != schedulerGuardOnMissingRun {
 		return SchedulerGuardDefinition{}, newValidationError(
 			ErrInvalidSchedulerGuard,
@@ -285,6 +285,21 @@ func NewSchedulerGuardDefinition(input SchedulerGuardDefinitionInput) (Scheduler
 		expression: input.Expression.clone(), path: input.Path,
 		name: input.Name, onMissingAttribute: onMissingAttribute,
 	}, nil
+}
+
+// schedulerExpressionSupported keeps unsupported record predicates out of tri-state host guards.
+func schedulerExpressionSupported(expression PolicyExpression) bool {
+	if expression.Kind() == ExpressionKindRecordQuantifier || expression.Kind() == ExpressionKindRecordField {
+		return false
+	}
+
+	for _, child := range expression.Children() {
+		if !schedulerExpressionSupported(child) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // Path returns the configuration-owned guard source path.

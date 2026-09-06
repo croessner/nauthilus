@@ -227,7 +227,7 @@ acceptable state. A future OOB authorization mechanism requires its own native
 provider contract and policy change.
 
 `smtp_peer_reputation` repeats one request-wide current-peer assessment in each
-correlated record so flat record-local predicates remain self-contained. It is
+correlated record so record-local predicates remain self-contained. It is
 not evidence about the SMTP IP of a historical hop. The provider may enforce
 allowed peer CIDRs only for the target/current hop identified by
 `target_sequence` and `target_message_instance`; it must never attribute the

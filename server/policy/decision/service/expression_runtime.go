@@ -196,7 +196,7 @@ func (r *checkpointRuntime) expressionMatches(
 	}
 }
 
-// recordExpressionMatches applies one flat predicate with explicit missing and empty semantics.
+// recordExpressionMatches applies one complete local tree with explicit missing and empty semantics.
 func (r *checkpointRuntime) recordExpressionMatches(
 	namespace string,
 	expression registry.PolicyExpression,
@@ -214,9 +214,10 @@ func (r *checkpointRuntime) recordExpressionMatches(
 
 	matched := 0
 	allRecords := records.Records()
+	where := expression.Children()[0]
 
 	for _, record := range allRecords {
-		if r.recordLocalPredicateMatches(namespace, expression, record) {
+		if r.recordLocalExpressionMatches(namespace, where, record) {
 			matched++
 		}
 	}
@@ -228,6 +229,28 @@ func (r *checkpointRuntime) recordExpressionMatches(
 		return matched == len(allRecords)
 	case registry.RecordQuantifierNone:
 		return matched == 0
+	default:
+		return false
+	}
+}
+
+// recordLocalExpressionMatches evaluates every logical child against the same immutable record.
+func (r *checkpointRuntime) recordLocalExpressionMatches(namespace string, expression registry.PolicyExpression, record decision.Record) bool {
+	switch expression.Kind() {
+	case registry.ExpressionKindRecordField:
+		return r.recordLocalPredicateMatches(namespace, expression, record)
+	case registry.ExpressionKindNot:
+		return !r.recordLocalExpressionMatches(namespace, expression.Children()[0], record)
+	case registry.ExpressionKindAll, registry.ExpressionKindAny:
+		wantAll := expression.Kind() == registry.ExpressionKindAll
+		for _, child := range expression.Children() {
+			matched := r.recordLocalExpressionMatches(namespace, child, record)
+			if matched != wantAll {
+				return matched
+			}
+		}
+
+		return wantAll
 	default:
 		return false
 	}
@@ -250,6 +273,12 @@ func (r *checkpointRuntime) recordLocalPredicateMatches(
 
 			break
 		}
+	}
+
+	if expression.Operator() == registry.ExpressionOperatorExists {
+		expected, _ := expression.Values()[0].Boolean()
+
+		return found == expected
 	}
 
 	if !found || fieldValue.Kind() != expression.RecordFieldKind() {

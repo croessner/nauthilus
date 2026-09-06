@@ -49,8 +49,7 @@ const recordCollectionPolicyFixture = `policy:
                 records:
                   attribute: resource.chain
                   quantifier: any
-                  field: result
-                  where: {eq: pass}
+                  where: {field: result, eq: pass}
               then: {decision: permit}
   targets:
     - namespace: mail
@@ -64,6 +63,7 @@ const recordCollectionPolicyFixture = `policy:
           policy_sets: [mail/default]
 `
 
+// TestPolicyRecordSchemaAndQuantifierCompileTogether binds canonical fields to their schema.
 func TestPolicyRecordSchemaAndQuantifierCompileTogether(t *testing.T) {
 	document, err := policyconfig.Decode("yaml", strings.NewReader(recordCollectionPolicyFixture))
 	if err != nil {
@@ -96,11 +96,12 @@ func TestPolicyRecordSchemaAndQuantifierCompileTogether(t *testing.T) {
 
 	expression := set.Rules()[0].Expression()
 	if expression.Kind() != registry.ExpressionKindRecordQuantifier ||
-		expression.Quantifier() != registry.RecordQuantifierAny || expression.RecordField() != "result" {
+		expression.Quantifier() != registry.RecordQuantifierAny || expression.Children()[0].RecordField() != "result" {
 		t.Fatalf("compiled record expression = %#v", expression)
 	}
 }
 
+// TestPolicyRecordQuantifierRejectsDynamicAndNestedPaths rejects unsafe field paths.
 func TestPolicyRecordQuantifierRejectsDynamicAndNestedPaths(t *testing.T) {
 	for name, replacement := range map[string]string{
 		"dynamic field":     "field: ${field}",
@@ -121,6 +122,7 @@ func TestPolicyRecordQuantifierRejectsDynamicAndNestedPaths(t *testing.T) {
 	}
 }
 
+// TestPolicyRecordQuantifierCompilerRejectsUnknownHiddenAndWronglyTypedFields enforces schema visibility and types.
 func TestPolicyRecordQuantifierCompilerRejectsUnknownHiddenAndWronglyTypedFields(t *testing.T) {
 	for name, fixture := range map[string]string{
 		"unknown field": strings.Replace(recordCollectionPolicyFixture, "field: result", "field: unknown", 1),
@@ -130,7 +132,7 @@ func TestPolicyRecordQuantifierCompilerRejectsUnknownHiddenAndWronglyTypedFields
 			"name: result, type: string, max_length: 16, expression_visible: false",
 			1,
 		),
-		"wrong field type": strings.Replace(recordCollectionPolicyFixture, "where: {eq: pass}", "where: {eq: 1}", 1),
+		"wrong field type": strings.Replace(recordCollectionPolicyFixture, "where: {field: result, eq: pass}", "where: {field: result, eq: 1}", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			document, err := policyconfig.Decode("yaml", strings.NewReader(fixture))

@@ -265,6 +265,14 @@ func validateCandidateExpression(
 	conditionSets map[string][]decision.Value,
 	timeWindows map[string]policyruntime.CompiledTimeWindow,
 ) error {
+	if expression.Kind() == registry.ExpressionKindRecordField {
+		if expression.Reference() == "" {
+			return nil
+		}
+
+		return validateCandidateExpressionReference(namespace, expression.Reference(), expression.RecordFieldKind(), conditionSets, timeWindows)
+	}
+
 	if expression.Kind() != registry.ExpressionKindAttribute {
 		return validateCandidateExpressionChildren(namespace, expression.Children(), schema, conditionSets, timeWindows)
 	}
@@ -289,7 +297,7 @@ func validateCandidateExpression(
 		return nil
 	}
 
-	return validateCandidateExpressionReference(namespace, reference, fact, conditionSets, timeWindows)
+	return validateCandidateExpressionReference(namespace, reference, fact.Kind(), conditionSets, timeWindows)
 }
 
 // validateCandidateExpressionChildren recursively validates each composite expression child.
@@ -313,7 +321,7 @@ func validateCandidateExpressionChildren(
 func validateCandidateExpressionReference(
 	namespace string,
 	reference string,
-	fact registry.FactSchema,
+	kind decision.ValueKind,
 	conditionSets map[string][]decision.Value,
 	timeWindows map[string]policyruntime.CompiledTimeWindow,
 ) error {
@@ -332,7 +340,7 @@ func validateCandidateExpressionReference(
 	}
 
 	for _, value := range values {
-		if value.Kind() != fact.Kind() {
+		if value.Kind() != kind {
 			return fmt.Errorf("condition-set reference %s has the wrong value kind", reference)
 		}
 	}
