@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/v3/server/core"
 	"github.com/croessner/nauthilus/v3/server/core/cookie"
 	"github.com/croessner/nauthilus/v3/server/definitions"
 	identityprovider "github.com/croessner/nauthilus/v3/server/idp"
@@ -18,6 +19,28 @@ import (
 	"github.com/croessner/nauthilus/v3/server/rediscli"
 	"github.com/redis/go-redis/v9"
 )
+
+// TestMFABudgetIdentityFromAccountAttribute covers legacy LDAP sessions without a cached account name.
+func TestMFABudgetIdentityFromAccountAttribute(t *testing.T) {
+	for _, stableID := range []string{"", "factor-stable-id"} {
+		t.Run("stable-id="+stableID, func(t *testing.T) {
+			auth := &core.AuthState{}
+			auth.Runtime.AccountField = "uid"
+			auth.SetAttributeValues("uid", []any{"canonical-factor"})
+
+			identity, err := mfaBackendBudgetIdentity(&UserBackendData{AuthState: auth, UniqueUserID: stableID})
+
+			want := stableID
+			if want == "" {
+				want = "canonical-factor"
+			}
+
+			if err != nil || identity != want {
+				t.Fatalf("identity = %q, error = %v; want %q", identity, err, want)
+			}
+		})
+	}
+}
 
 // configureMFAAttemptTestStorage supplies isolated real script semantics for browser verification tests.
 func configureMFAAttemptTestStorage(t *testing.T, handler *FrontendHandler) {

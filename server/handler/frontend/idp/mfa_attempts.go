@@ -48,7 +48,12 @@ func (h *FrontendHandler) mfaCodeBudgetIdentity(ctx *gin.Context, session *mfaSe
 		return "", err
 	}
 
-	if data == nil || data.AuthState == nil || data.AuthState.Runtime.AccountName == "" {
+	return mfaBackendBudgetIdentity(data)
+}
+
+// mfaBackendBudgetIdentity selects a resolved factor's stable ID or canonical account.
+func mfaBackendBudgetIdentity(data *UserBackendData) (string, error) {
+	if data == nil || data.AuthState == nil || data.AuthState.GetAccount() == "" {
 		return "", errors.New("MFA factor identity unavailable")
 	}
 
@@ -56,5 +61,5 @@ func (h *FrontendHandler) mfaCodeBudgetIdentity(ctx *gin.Context, session *mfaSe
 		return data.UniqueUserID, nil
 	}
 
-	return data.AuthState.Runtime.AccountName, nil
+	return data.AuthState.GetAccount(), nil
 }

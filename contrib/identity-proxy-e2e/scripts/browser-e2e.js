@@ -1121,7 +1121,7 @@ async function runMFACodeBudgetExhaustion(browser) {
       withCallbackServer('MFA shared code budget', async (redirectURI) => {
         await startMFAChallenge(page, redirectURI, {user: mfaUsername});
         if (!/\/login\/totp/.test(page.url())) {
-          await selectMFAChallenge(page, 'totp');
+          await page.goto(`${edgeA}/login/totp`);
         }
         const pendingResponse = page.waitForResponse((response) =>
           response.url().includes('/login/totp') && response.request().method() === 'POST');
