@@ -12,7 +12,7 @@ func TestPluginAdmissionProjectionExcludesCredentials(t *testing.T) {
 		Clients: []policyconfig.ClientProfileConfig{{Principal: "Writer", MaxConcurrency: 2,
 			Authentication: policyconfig.ClientAuthenticationConfig{Basic: &policyconfig.BasicAuthenticationConfig{Username: "private-user", Password: secret.New("private-password")}},
 			Targets:        []policyconfig.ClientTargetConfig{{Namespace: "workflow", Actions: []string{"submit"}}}, AllowedSchemas: []string{"workflow/submit/v1"}}}}
-	result := runtimePluginAdmissionMap(api)
+	result := runtimePluginAdmissionMap(policyconfig.PolicyConfig{API: api})
 	clients := result["clients"].([]any)
 
 	client := clients[0].(map[string]any)

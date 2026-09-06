@@ -254,13 +254,9 @@ func (s Snapshot) HIBPHashInfo() string {
 	return StringValue(s.Map(KeyHaveIBeenPwned)[FieldHashInfo])
 }
 
-// GeoIPReputation returns exchange reputation data or policy-fact fallback data.
+// GeoIPReputation returns explicitly supplied historical analytics data without removed Policy-fact fallbacks.
 func (s Snapshot) GeoIPReputation() map[string]any {
-	if values := s.Map(KeyGeoIPReputation); len(values) > 0 {
-		return values
-	}
-
-	return cloneMap(s.facts[FeatureGeoIPReputation])
+	return s.Map(KeyGeoIPReputation)
 }
 
 // DecisionSources returns deterministic, deduplicated analytics source names.
@@ -451,10 +447,6 @@ func (s Snapshot) addPolicyFactSources(collector *sourceCollector) {
 
 	if Truthy(s.facts[FeatureAccountProtection]["active"]) {
 		collector.add(FeatureAccountProtection)
-	}
-
-	if reputationDecisionTriggersSource(s.facts[FeatureGeoIPReputation]) {
-		collector.add(FeatureGeoIPReputation)
 	}
 }
 

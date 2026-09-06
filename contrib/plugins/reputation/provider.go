@@ -27,14 +27,17 @@ func (observationProvider) Descriptor() pluginapi.DecisionFactProviderDescriptor
 	return pluginapi.DecisionFactProviderDescriptor{Namespace: pluginName, Name: componentObservation, Targets: []pluginapi.DecisionTargetSelector{observeTarget}, Outputs: outputs, Timeout: time.Second}
 }
 
-// Collect validates source-owned pre-policy evidence without storage or final-outcome inference.
+// Collect validates source-owned evidence with a non-mutating manifest probe before Policy may select storage.
 func (p observationProvider) Collect(ctx context.Context, request pluginapi.DecisionFactRequest) (pluginapi.DecisionFactResult, error) {
 	if p.plugin == nil || request.Target() != observeTarget {
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassInvalidInput}, nil
 	}
 
-	cfg, tagger := p.plugin.snapshot()
-	if cfg == nil || tagger == nil {
+	p.plugin.mu.RLock()
+	state := p.plugin.state
+	p.plugin.mu.RUnlock()
+
+	if state == nil || !state.ready.Load() {
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassUnavailable}, nil
 	}
 
@@ -43,7 +46,7 @@ func (p observationProvider) Collect(ctx context.Context, request pluginapi.Deci
 		return observationResult(admittedObservation{}, reasonInput)
 	}
 
-	admitted, reason, err := cfg.admitObservation(ctx, cfg.sourceForCaller(request.Caller()), input, time.Now().UTC(), tagger, nil)
+	admitted, reason, err := state.admitForPolicy(ctx, state.config.sourceForCaller(request.Caller()), input, nil)
 	if err != nil {
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassUnavailable}, nil
 	}

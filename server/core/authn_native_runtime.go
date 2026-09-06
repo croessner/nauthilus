@@ -128,6 +128,8 @@ func (e *authnCandidateExecution) PrepareAuthnNativePostAction(
 		return nil, err
 	}
 
+	request.BackendOutcome = e.backendOutcome
+
 	if err = effectsupervisor.ValidateBoundedValue(request, effectsupervisor.DefaultWorkBounds()); err != nil {
 		return nil, err
 	}

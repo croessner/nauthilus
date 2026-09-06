@@ -1,6 +1,7 @@
 package main
 
 const (
+	fieldPrimary         = "primary"
 	componentObservation = "observation_context"
 	directionRisk        = "risk"
 	directionTrust       = "trust"

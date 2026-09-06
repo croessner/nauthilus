@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	reasonConflict  = "event_conflict"
 	reasonValid     = "valid"
 	reasonSource    = "source_unbound"
 	reasonSignal    = "signal_invalid"
@@ -36,6 +37,7 @@ type observationInput struct {
 }
 
 type admittedSubject struct {
+	primary bool
 	subjectInput
 	tag    string
 	weight float64
@@ -53,14 +55,29 @@ type asnResolver interface {
 	lookupASN(context.Context, string, string) (string, error)
 }
 
-// admitObservation validates all security boundaries before producing any effect-visible subject plan.
+// admitObservation retains strict first-admission time validation for independent host observations.
 func (c *configuration) admitObservation(ctx context.Context, source *sourcePolicy, input observationInput, now time.Time,
+	tagger pluginapi.OpaqueIdentifierTagger, resolver asnResolver) (admittedObservation, string, error) {
+	admitted, reason, err := c.admitCandidate(ctx, source, input, tagger, resolver)
+	if err != nil || reason != reasonValid {
+		return admitted, reason, err
+	}
+
+	if !validObservationTime(source, admitted.signal, input.observedAt, now) {
+		return admittedObservation{}, reasonTime, nil
+	}
+
+	return admitted, reasonValid, nil
+}
+
+// admitCandidate validates contribution semantics before the owner distinguishes a new event from an immutable retry.
+func (c *configuration) admitCandidate(ctx context.Context, source *sourcePolicy, input observationInput,
 	tagger pluginapi.OpaqueIdentifierTagger, resolver asnResolver) (admittedObservation, string, error) {
 	if err := ctx.Err(); err != nil {
 		return admittedObservation{}, reasonInput, err
 	}
 
-	signal, reason := c.validateObservation(source, input, now)
+	signal, reason := c.validateObservationEvidence(source, input)
 	if reason != reasonValid {
 		return admittedObservation{}, reason, nil
 	}
@@ -77,8 +94,8 @@ func (c *configuration) admitObservation(ctx context.Context, source *sourcePoli
 	return admittedObservation{subjects: subjects, source: source, signal: signal, input: input}, reasonValid, nil
 }
 
-// validateObservation enforces the closed event catalog, temporal window and source measurement capabilities.
-func (c *configuration) validateObservation(source *sourcePolicy, input observationInput, now time.Time) (*signalPolicy, string) {
+// validateObservationEvidence enforces the closed catalog and source measurement capabilities independently of retry timing.
+func (c *configuration) validateObservationEvidence(source *sourcePolicy, input observationInput) (*signalPolicy, string) {
 	if source == nil {
 		return nil, reasonSource
 	}
@@ -91,10 +108,6 @@ func (c *configuration) validateObservation(source *sourcePolicy, input observat
 	if signal == nil || !slices.Contains(source.config.AllowedSignals, input.signal) ||
 		!compatibleOrigin(source.config.Binding.Kind, signal.config.EvidenceOrigin) {
 		return nil, reasonSignal
-	}
-
-	if !validObservationTime(source, signal, input.observedAt, now) {
-		return nil, reasonTime
 	}
 
 	if !validMagnitude(source, signal, input.magnitude) {
@@ -143,7 +156,7 @@ func (c *configuration) admitSubjects(ctx context.Context, source *sourcePolicy,
 			return nil, reasonSubject, err
 		}
 
-		for _, value := range expanded {
+		for index, value := range expanded {
 			multiplier, exists := signal.config.SubjectRoles[value.role][value.kind]
 			if !exists {
 				return nil, reasonSubject, nil
@@ -161,7 +174,7 @@ func (c *configuration) admitSubjects(ctx context.Context, source *sourcePolicy,
 
 			seen[key] = struct{}{}
 
-			result = append(result, admittedSubject{subjectInput: value, tag: tag.String(), weight: signal.config.Weight * multiplier})
+			result = append(result, admittedSubject{primary: index == 0, subjectInput: value, tag: tag.String(), weight: signal.config.Weight * multiplier})
 		}
 	}
 

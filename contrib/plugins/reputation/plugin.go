@@ -13,11 +13,12 @@ var observeTarget = pluginapi.DecisionTargetSelector{Namespace: pluginName, Acti
 
 // Plugin owns immutable admission semantics and process-bound opaque services.
 type Plugin struct {
-	state      *stateOwner
-	config     *configuration
-	tagger     pluginapi.OpaqueIdentifierTagger
-	registered map[executionKey]struct{}
-	mu         sync.RWMutex
+	learningCounter pluginapi.Counter
+	state           *stateOwner
+	config          *configuration
+	tagger          pluginapi.OpaqueIdentifierTagger
+	registered      map[executionKey]struct{}
+	mu              sync.RWMutex
 }
 
 var _ pluginapi.Plugin = (*Plugin)(nil)
@@ -29,13 +30,13 @@ func NewPlugin() *Plugin { return &Plugin{registered: make(map[executionKey]stru
 // NauthilusPlugin exposes the native loader factory.
 func NauthilusPlugin() (pluginapi.Plugin, error) { return NewPlugin(), nil }
 
-// Metadata declares the exact native artifact contract and fact-only capability.
+// Metadata declares the coherent native artifact and explicitly Policy-selected fact/effect capabilities.
 func (*Plugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{Build: pluginapi.BuildInfo{ArtifactIdentity: pluginapi.NativeArtifactIdentity()}, Name: pluginName, Version: "0.1.0", APIVersion: pluginapi.APIVersion,
-		Description: "Configuration-bound independent evidence admission and reputation.", Features: []pluginapi.Feature{"decision_fact_provider"}}
+		Description: "Configuration-bound independent evidence admission and reputation.", Features: []pluginapi.Feature{"decision_fact_provider", "decision_effect_provider", extensionPostAction}}
 }
 
-// Register validates the complete catalog before exposing one observation fact provider.
+// Register validates the complete catalog before exposing observation, assessment and selected storage capabilities.
 func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	if registrar == nil {
 		return errConfiguration
@@ -62,7 +63,15 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
+	if err := decisionRegistrar.RegisterDecisionEffectProvider(observationStorageProvider{plugin: p}); err != nil {
+		return err
+	}
+
 	if err := p.registerAssessments(decisionRegistrar, cfg); err != nil {
+		return err
+	}
+
+	if err := p.registerAuthentication(registrar, cfg); err != nil {
 		return err
 	}
 
@@ -97,6 +106,10 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 		return err
 	}
 
+	if err := p.initializeLearningMetrics(host); err != nil {
+		return err
+	}
+
 	state, err := newStateOwner(p.config, tagger, host.Redis())
 	if err != nil {
 		return err
@@ -118,16 +131,9 @@ func (p *Plugin) Stop(context.Context) error {
 	if p.state != nil {
 		p.state.ready.Store(false)
 	}
+
 	p.tagger = nil
 	p.mu.Unlock()
 
 	return nil
-}
-
-// snapshot returns the immutable process configuration and service facade under one readiness lock.
-func (p *Plugin) snapshot() (*configuration, pluginapi.OpaqueIdentifierTagger) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	return p.config, p.tagger
 }

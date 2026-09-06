@@ -7,6 +7,7 @@ import (
 )
 
 type admissionSnapshot struct {
+	Targets []admissionTargetConfig `mapstructure:"targets"`
 	Clients []admissionClientConfig `mapstructure:"clients"`
 	Enabled bool                    `mapstructure:"enabled"`
 }
@@ -30,6 +31,10 @@ func (c *configuration) validateStartup(view pluginapi.ConfigView, registered ma
 		var admission admissionSnapshot
 		if err := view.Sub("policy_admission").Decode(&admission); err != nil || !admission.Enabled {
 			return errConfiguration
+		}
+
+		if err := validateObservationTarget(admission); err != nil {
+			return err
 		}
 
 		if err := c.validateAdmission(admission); err != nil {
@@ -78,4 +83,35 @@ func validAdmissionGrant(profile admissionClientConfig, source *sourcePolicy) bo
 		(len(profile.Schemas) == 0 || slices.Contains(profile.Schemas, "reputation/observe/v1")) && !profile.Diagnostics &&
 		profile.MaxConcurrency >= 1 && profile.MaxConcurrency <= source.config.MaxConcurrency &&
 		profile.RequestsPerSecond >= 1 && profile.RequestsPerSecond <= source.config.RequestsPerSecond
+}
+
+// admissionTargetConfig contains only the host's exact activation contract, never Policy expressions or credentials.
+type admissionTargetConfig struct {
+	Target  string `mapstructure:"target"`
+	Schema  string `mapstructure:"schema"`
+	Mode    string `mapstructure:"mode"`
+	NoMatch string `mapstructure:"no_match"`
+}
+
+// validateObservationTarget prevents a producer endpoint from silently skipping its selected storage effects.
+func validateObservationTarget(snapshot admissionSnapshot) error {
+	matches := 0
+
+	for _, target := range snapshot.Targets {
+		if target.Target != "reputation/observe" {
+			continue
+		}
+
+		matches++
+
+		if target.Schema != "reputation/observe/v1" || target.Mode != "enforce" || target.NoMatch != "deny" {
+			return errConfiguration
+		}
+	}
+
+	if matches != 1 {
+		return errConfiguration
+	}
+
+	return nil
 }

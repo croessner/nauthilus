@@ -13,11 +13,7 @@ import (
 func testConfigMap(t *testing.T) map[string]any {
 	t.Helper()
 
-	content, err := os.ReadFile("../../../server/docs/examples/go_plugin_reputation.yml")
-	requireNoError(t, err)
-
-	var raw map[string]any
-	requireNoError(t, yaml.Unmarshal(content, &raw))
+	raw := testYAMLMap(t, "../../../server/docs/examples/go_plugin_reputation.yml")
 
 	return raw["plugins"].(map[string]any)["modules"].([]any)[0].(map[string]any)["config"].(map[string]any)
 }
@@ -192,4 +188,17 @@ func TestConfigSeenRetentionCoversManifestRetries(t *testing.T) {
 	raw["subject_seen_ttl"] = "48h30m"
 	_, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireError(t, err)
+}
+
+// testYAMLMap reads shared operator examples as the authoritative test catalog.
+func testYAMLMap(t *testing.T, path string) map[string]any {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	requireNoError(t, err)
+
+	var raw map[string]any
+	requireNoError(t, yaml.Unmarshal(content, &raw))
+
+	return raw
 }

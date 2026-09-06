@@ -26,12 +26,12 @@ func assessmentRecord(subject extractedSubject, tuple assessmentTuple) (pluginap
 	}
 
 	inputs := []outputInput{
-		{name: fieldRole, input: pluginapi.DecisionValueInput{String: &subject.role}},
-		{name: fieldKind, input: pluginapi.DecisionValueInput{String: &subject.kind}},
-		{name: assessmentFieldState, input: pluginapi.DecisionValueInput{String: &tuple.State}},
-		{name: assessmentFieldProfile, input: pluginapi.DecisionValueInput{String: &tuple.Profile}},
-		{name: assessmentFieldBand, input: pluginapi.DecisionValueInput{String: &tuple.Band}},
-		{name: assessmentFieldOverride, input: pluginapi.DecisionValueInput{String: &tuple.Override}},
+		stringOutput(fieldRole, subject.role),
+		stringOutput(fieldKind, subject.kind),
+		stringOutput(assessmentFieldState, tuple.State),
+		stringOutput(assessmentFieldProfile, tuple.Profile),
+		stringOutput(assessmentFieldBand, tuple.Band),
+		stringOutput(assessmentFieldOverride, tuple.Override),
 	}
 	if d := tuple.Details; d != nil {
 		diversity := int64(d.Diversity)

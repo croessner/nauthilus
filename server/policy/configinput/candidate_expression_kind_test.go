@@ -18,7 +18,7 @@ import (
 func TestCandidateExpressionAcceptsCompatibleNumericKinds(t *testing.T) {
 	expression := candidateAttributeExpression(t, decision.ValueKindInteger)
 	schema := map[string]registry.FactSchema{
-		"plugin.subject.geoip_reputation.preexisting_samples": candidateFactSchema(
+		"plugin.subject.activity.sample_count": candidateFactSchema(
 			t,
 			decision.ValueKindDouble,
 		),
@@ -34,7 +34,7 @@ func TestCandidateExpressionAcceptsCompatibleNumericKinds(t *testing.T) {
 func TestCandidateExpressionRejectsIncompatibleKinds(t *testing.T) {
 	expression := candidateAttributeExpression(t, decision.ValueKindString)
 	schema := map[string]registry.FactSchema{
-		"plugin.subject.geoip_reputation.preexisting_samples": candidateFactSchema(
+		"plugin.subject.activity.sample_count": candidateFactSchema(
 			t,
 			decision.ValueKindDouble,
 		),
@@ -72,7 +72,7 @@ func candidateAttributeExpression(t *testing.T, kind decision.ValueKind) registr
 
 	expression, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{
 		Kind:     registry.ExpressionKindAttribute,
-		FactID:   "plugin.subject.geoip_reputation.preexisting_samples",
+		FactID:   "plugin.subject.activity.sample_count",
 		FactKind: kind,
 		Operator: operator,
 		Values:   []decision.Value{value},
@@ -89,7 +89,7 @@ func candidateFactSchema(t *testing.T, kind decision.ValueKind) registry.FactSch
 	t.Helper()
 
 	fact, err := registry.NewFactSchema(registry.FactSchemaInput{
-		ID:             "plugin.subject.geoip_reputation.preexisting_samples",
+		ID:             "plugin.subject.activity.sample_count",
 		AllowedSources: []decision.FactSource{decision.FactSourcePlugin},
 		Category:       decision.FactCategoryEnvironment,
 		Kind:           kind,

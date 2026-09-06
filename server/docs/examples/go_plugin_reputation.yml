@@ -1,6 +1,6 @@
 # Independent evidence admission example. Configure real mounted host keys and
 # a dedicated caller credential. The catalog values are calibration examples.
-# This target remains deny-by-default until the storage effect is configured.
+# The exact synchronous storage effect is selected only after valid admission.
 plugins:
   opaque_identifier_tagger:
     scopes:
@@ -152,12 +152,13 @@ policy:
                       version: v1
                       min_records: 0
                       max_records: 24
-                      max_fields: 5
+                      max_fields: 6
                       max_aggregate_bytes: 32768
                       fields:
                         - {name: role, type: string, max_length: 64, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
                         - {name: kind, type: string, max_length: 16, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
                         - {name: value, type: string, max_length: 512, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
+                        - {name: primary, type: boolean, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
                         - {name: subject_tag, type: string, max_length: 128, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
                         - {name: weight, type: double, required: true, provider_visibility: [reputation/plugin.reputation.storage]}
       providers:
@@ -176,6 +177,21 @@ policy:
           failure: indeterminate
           timeout: 400ms
           diagnostics: {public_id: independent-observation}
+        storage:
+          kind: native
+          module: reputation
+          targets: [{action: observe}]
+          executions: [host_sync]
+          failure: indeterminate
+          timeout: 400ms
+          diagnostics: {public_id: independent-storage}
+      effects:
+        store_observation:
+          kind: obligation
+          provider: reputation/plugin.reputation.storage
+          targets: [{action: observe}]
+          execution: host_sync
+          diagnostics: {public_id: store-independent-observation}
       domain_plans:
         observation:
           checkpoints:
@@ -190,6 +206,17 @@ policy:
               checkpoint: final_decision
               if: {attribute: plugin.reputation.observation_valid, eq: false}
               then: {decision: deny, reason: invalid_observation}
+            - name: store_valid_independent_observation
+              checkpoint: final_decision
+              if:
+                all:
+                  - {attribute: plugin.reputation.observation_valid, eq: true}
+                  - {attribute: plugin.reputation.observation_learning_eligible, eq: true}
+              then:
+                decision: permit
+                reason: observation_accepted
+                obligations:
+                  - id: reputation/store_observation
   targets:
     - namespace: reputation
       action: observe

@@ -73,6 +73,11 @@ func (s *stateOwner) admitManifest(ctx context.Context, request manifestRequest)
 		return manifestPayload{}, 0, err
 	}
 
+	return decodeManifestAdmission(response, request)
+}
+
+// decodeManifestAdmission accepts only one complete selected local candidate and its bounded Redis expiry.
+func decodeManifestAdmission(response []any, request manifestRequest) (manifestPayload, float64, error) {
 	if len(response) != 3 || response[0] != storageAdmitted {
 		return manifestPayload{}, 0, errStateUnavailable
 	}

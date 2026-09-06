@@ -295,7 +295,7 @@ func TestRepresentativeRowFieldsMatchLuaNamesAndValues(t *testing.T) { //nolint:
 	}
 }
 
-func TestDecisionSourcesIncludeGeoIPReputationSignal(t *testing.T) {
+func TestDecisionSourcesIgnoreRemovedReputationFacts(t *testing.T) {
 	cases := []struct {
 		runtimeValues map[string]any
 		facts         []pluginapi.PolicyFact
@@ -322,7 +322,12 @@ func TestDecisionSourcesIncludeGeoIPReputationSignal(t *testing.T) {
 				facts:         testCase.facts,
 			})
 
-			assertStringField(t, row, "decision_sources", exchange.FeatureGeoIPReputation)
+			expected := exchange.FeatureGeoIPReputation
+			if len(testCase.facts) > 0 {
+				expected = ""
+			}
+
+			assertStringField(t, row, "decision_sources", expected)
 		})
 	}
 }

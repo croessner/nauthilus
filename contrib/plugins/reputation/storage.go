@@ -189,7 +189,7 @@ func (s *stateOwner) run(ctx context.Context, name string, keys []string, reques
 // storageStatusError preserves the closed state-machine outcomes without Redis keys or evidence in errors.
 func storageStatusError(status string) error {
 	switch status {
-	case storageOverrideRead, storageOverrideMissing, storageOverrideWritten, storageOverrideDeleted, storageSnapshot, storageActive, "draining", storageAdmitted, storageApplied, storageDuplicate:
+	case assessmentMissing, storageOverrideRead, storageOverrideMissing, storageOverrideWritten, storageOverrideDeleted, storageSnapshot, storageActive, "draining", storageAdmitted, storageApplied, storageDuplicate:
 		return nil
 	case "override_conflict":
 		return errOverrideConflict

@@ -27,6 +27,7 @@ const (
 )
 
 type rawConfig struct {
+	AuthLearning                    *authLearningConfig      `mapstructure:"auth_learning"`
 	Bands                           bandConfig               `mapstructure:"bands"`
 	ShadowModel                     *shadowModelConfig       `mapstructure:"shadow_model"`
 	AllocationDrainGeneration       int                      `mapstructure:"allocation_drain_generation"`
@@ -115,6 +116,10 @@ func compileConfiguration(raw rawConfig) (*configuration, error) {
 	}
 
 	if err := cfg.compileSources(); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.validateAuthLearning(); err != nil {
 		return nil, err
 	}
 

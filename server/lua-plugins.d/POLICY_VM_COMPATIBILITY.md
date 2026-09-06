@@ -48,7 +48,6 @@ The status values below are normative for the checked-in callbacks:
 | `subject/account_centric_monitoring.lua` | reference-only | Requires Redis scripts/writes and ambient tuning values. |
 | `subject/account_protection_mode.lua` | reference-only | Requires Redis/cache writes and response mutation from the subject stage. |
 | `subject/geoip.lua` | reference-only | Requires arbitrary outbound HTTP and cache writes; use the generation-owned native GeoIP provider where applicable. |
-| `subject/geoip_reputation.lua` | reference-only | Requires a Redis write pipeline and ambient tuning values. |
 | `subject/idp_policy.lua` | supported | Uses request-local IdP facts and registered policy attributes only. |
 | `subject/monitoring.lua` | reference-only | Requires Redis writes, a backend target, and ambient configuration. |
 | `subject/soft_delay.lua` | reference-only | Requires Redis/cache writes and ambient tuning values. |

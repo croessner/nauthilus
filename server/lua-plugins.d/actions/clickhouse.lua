@@ -157,21 +157,6 @@ function nauthilus_call_action(request)
         return policy_facts[namespace][key]
     end
 
-    -- reputation_from_runtime_or_facts keeps ClickHouse writes resilient when
-    -- subject runtime details are absent but policy facts were emitted.
-    local function reputation_from_runtime_or_facts()
-        if type(rt) == "table" and type(rt.geoip_reputation) == "table" then
-            return rt.geoip_reputation, to_string(rt.geoip_reputation.source)
-        end
-
-        local reputation_facts = policy_facts.geoip_reputation
-        if type(reputation_facts) ~= "table" or nauthilus_util.table_length(reputation_facts) == 0 then
-            return nil, ""
-        end
-
-        return reputation_facts, "policy_facts"
-    end
-
     local function add_decision_source(name)
         if not nauthilus_util.exists_in_table(decision_sources_from_ctx, name) then
             table.insert(decision_sources_from_ctx, name)
@@ -309,35 +294,6 @@ function nauthilus_call_action(request)
             end
         end
 
-        -- Reputation details if present. Producers are intentionally separate
-        -- from GeoIP enrichment so policy can decide on explicit scores.
-        local reputation_score
-        local reputation_positive_score
-        local reputation_negative_score
-        local reputation_ip_score
-        local reputation_asn_score
-        local reputation_country_score
-        local reputation_asn_country_score
-        local reputation_samples
-        local reputation_source = ""
-        local reputation_decision = ""
-        local reputation, reputation_default_source = reputation_from_runtime_or_facts()
-        if reputation then
-            reputation_score = to_float(reputation.score)
-            reputation_positive_score = to_float(reputation.positive_score)
-            reputation_negative_score = to_float(reputation.negative_score)
-            reputation_ip_score = to_float(reputation.ip_score)
-            reputation_asn_score = to_float(reputation.asn_score)
-            reputation_country_score = to_float(reputation.country_score)
-            reputation_asn_country_score = to_float(reputation.asn_country_score)
-            reputation_samples = to_uint(reputation.samples)
-            reputation_source = reputation_default_source
-            if reputation.source ~= nil then
-                reputation_source = to_string(reputation.source)
-            end
-            reputation_decision = to_string(reputation.decision)
-        end
-
         -- Global pattern details if present
         local gp_attempts
         local gp_unique_ips
@@ -416,16 +372,6 @@ function nauthilus_call_action(request)
             geoip_asn_country = geoip_asn_country,
             geoip_asn_allocated = geoip_asn_allocated,
             geoip_asn_status = geoip_asn_status,
-            reputation_score = reputation_score,
-            reputation_positive_score = reputation_positive_score,
-            reputation_negative_score = reputation_negative_score,
-            reputation_ip_score = reputation_ip_score,
-            reputation_asn_score = reputation_asn_score,
-            reputation_country_score = reputation_country_score,
-            reputation_asn_country_score = reputation_asn_country_score,
-            reputation_samples = reputation_samples,
-            reputation_source = reputation_source,
-            reputation_decision = reputation_decision,
             gp_attempts = gp_attempts,
             gp_unique_ips = gp_unique_ips,
             gp_unique_users = gp_unique_users,

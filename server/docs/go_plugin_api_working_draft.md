@@ -1419,6 +1419,15 @@ observability, panic recovery, and shutdown coordination. Post-action enqueueing
 `ObligationTarget` execution. `PostActionRequest` carries policy arguments as `ArgsView` and receives the same
 decision-context facts as obligation requests.
 
+`PostActionRequest.BackendOutcome` separately carries immutable host-captured
+credential evidence: stable host event ID, normalized backend account, capture
+time and the closed `authenticated` or `bad_credentials` status. The zero view
+means no independent backend result was observed. The host captures this view
+before subject patches and final Policy selection; later runtime flags cannot
+rewrite it. Lookup-only requests do not create this evidence. Reputation
+learning additionally excludes health checks and uses exact host execution
+identity, never a caller principal or final Policy denial, to select its source.
+
 The plan executes native and Lua post-action steps in final-obligation order. `PostActionEnqueueResult.RuntimeDelta`
 values are validated with the same JSON/CBOR-compatible runtime value rules as other plugin deltas, merged into the
 detached plan runtime, and made visible only to later post-action steps in that same plan. Invalid deltas fail the plan

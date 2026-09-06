@@ -55,6 +55,7 @@ type manifestCandidate struct {
 }
 
 type manifestRequest struct {
+	Operation          string              `json:"operation"`
 	Candidates         []manifestCandidate `json:"candidates"`
 	AllocationTag      string              `json:"allocation_tag"`
 	SourceTag          string              `json:"source_tag"`

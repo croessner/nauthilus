@@ -1,13 +1,10 @@
 package main
 
 import (
-	"regexp"
 	"strings"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
-
-var factPattern = regexp.MustCompile(`^(subject|resource|environment|plugin)\.[a-z][a-z0-9_.-]{0,126}$`)
 
 type targetBindingConfig struct {
 	Component       string            `mapstructure:"component"`
@@ -97,7 +94,7 @@ func (c *configuration) compileExtractors() error {
 
 // validateExtractor rejects dynamic selectors, nested traversal and undeclared subject spaces.
 func validateExtractor(extractor extractorConfig) error {
-	if !factPattern.MatchString(extractor.Attribute) || !identifierPattern.MatchString(extractor.Role) || !subjectKind(extractor.Kind) {
+	if !validExtractorAttribute(extractor.Attribute) || !identifierPattern.MatchString(extractor.Role) || !subjectKind(extractor.Kind) {
 		return errConfiguration
 	}
 
@@ -227,4 +224,18 @@ func (c *configuration) extractedValue(extractor extractorConfig, value pluginap
 	}
 
 	return extractedSubject{subjectInput: subjectInput{role: extractor.Role, kind: extractor.Kind, value: canonical}, correlation: correlation}, nil
+}
+
+// validExtractorAttribute reuses the public canonical fact contract without hard-coding target-specific namespaces.
+func validExtractorAttribute(attribute string) bool {
+	scalar := false
+
+	value, err := pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{Boolean: &scalar})
+	if err != nil {
+		return false
+	}
+
+	_, err = pluginapi.NewDecisionFactView(pluginapi.DecisionFactViewInput{ID: attribute, Category: pluginapi.DecisionFactCategoryResource, Value: value})
+
+	return err == nil
 }

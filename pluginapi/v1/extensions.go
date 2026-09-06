@@ -138,6 +138,7 @@ type ObligationTarget interface {
 // PostActionRequest is passed to asynchronous post-action enqueue targets.
 type PostActionRequest struct {
 	executionIdentity ExecutionIdentityView
+	BackendOutcome    BackendOutcomeView
 	Snapshot          RequestSnapshot
 	Runtime           RuntimeContext
 	Credentials       CredentialProvider

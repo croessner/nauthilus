@@ -6,7 +6,8 @@ import (
 )
 
 // runtimePluginAdmissionMap exposes authorization metadata without Policy code or authentication material.
-func runtimePluginAdmissionMap(api policyconfig.APIConfig) map[string]any {
+func runtimePluginAdmissionMap(policy policyconfig.PolicyConfig) map[string]any {
+	api := policy.API
 	clients := make([]any, 0, len(api.Clients))
 	for _, profile := range api.Clients {
 		targets := make([]any, 0, len(profile.Targets))
@@ -28,7 +29,12 @@ func runtimePluginAdmissionMap(api policyconfig.APIConfig) map[string]any {
 		})
 	}
 
-	return map[string]any{"enabled": api.Enabled, "clients": clients}
+	targets := make([]any, 0, len(policy.Targets))
+	for _, target := range policy.Targets {
+		targets = append(targets, map[string]any{"target": target.Namespace + "/" + target.Action, "schema": target.Schema, "mode": target.Mode, "no_match": target.NoMatch})
+	}
+
+	return map[string]any{"enabled": api.Enabled, "clients": clients, "targets": targets}
 }
 
 // runtimePluginAdmissionLimit shares the transport's authoritative limit resolver and fails closed on invalid profiles.

@@ -99,7 +99,7 @@ func TestDecisionSourcesAreDeterministicAndDeduplicated(t *testing.T) {
 	}
 }
 
-func TestDecisionSourcesIncludeGeoIPReputationFromStandardAndFacts(t *testing.T) {
+func TestDecisionSourcesIgnoreRemovedReputationFacts(t *testing.T) {
 	cases := []struct {
 		values map[string]any
 		facts  []pluginapi.PolicyFact
@@ -130,7 +130,11 @@ func TestDecisionSourcesIncludeGeoIPReputationFromStandardAndFacts(t *testing.T)
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			got := NewSnapshotFromValues(testCase.values, testCase.facts).DecisionSources()
+
 			want := []string{FeatureGeoIPReputation}
+			if len(testCase.facts) > 0 {
+				want = nil
+			}
 
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("DecisionSources() = %#v, want %#v", got, want)

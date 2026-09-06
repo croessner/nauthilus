@@ -207,3 +207,53 @@ Management writes the active slot only; rotation requires explicit copies and
 readback verification. The operator-facing authenticated management surface
 owns authorization and is connected separately. This module adds no management
 HTTP route or implicit external authority.
+
+## Observation storage and authentication learning
+
+The `reputation/observe/v1` target executes in `enforce` mode with
+`no_match: deny`. Its context provider performs read-only admission, including
+an immutable-manifest probe for exact late retries. Only a selected
+`reputation/store_observation` obligation may allocate or update state.
+The registered `storage` effect executes synchronously, declares idempotent
+replay over `resource.reputation.event_id`, and reconstructs only the protected
+primary subject roots. It rechecks the caller binding, catalog, timestamps,
+canonical subjects, opaque tags and weights before writing. A caller's raw
+subject collection cannot broaden this plan. Duplicate requests are ordinary
+successful decisions; a lost write acknowledgement remains an unknown,
+replay-safe outcome. No new feedback endpoint is exposed.
+
+Authentication uses the optional `auth_learning` catalog in
+[the authentication example](../../../server/docs/examples/reputation_authentication_catalog.yml).
+Merge its explicit keys into the module configuration and assign a new model
+identity when changing attribution. The exact internal binding is
+`reputation/learn_outcome/post_action/enqueue/authn/authenticate`; it has no API
+principal fallback. Its signal mapping participates in the model fingerprint.
+Success contributes low trust to the verified account and client IP/network.
+Bad credentials contribute low risk only to IP/network. Neither signal spreads
+to ASN; account-risk and authoritative abuse require separate evidence sources.
+
+Select `authn/plugin.reputation.assessment` before the current backend outcome
+is learned. The example binds the host's canonical
+`nauthilus.request.client.ip` fact and publishes `auth_subjects` plus its three
+profile collections. Generic extractors accept canonical admitted fact names;
+the captured Policy schema and provider visibility remain their authority.
+Select `authn/plugin.reputation.learn_outcome` as a host post-action only on
+independent backend-result rules at `auth_decision`. Do not attach it to a
+reputation-denial rule. Consumers initially remain observational until the
+operator's enforcement scenarios have been calibrated.
+
+The host freezes `BackendOutcomeView` immediately after verified or cached
+credential results, before native subject patches and final Policy decisions.
+Its event identity is the host request GUID, its time is the capture time, and
+its account is the original normalized backend account. The learner never
+reads final authentication flags, caller facts, passwords or password hashes.
+Pre-backend denials, lookup-only requests and health checks do not learn.
+Post-action failures remain observable without changing the selected auth
+response. The removed Lua writer, registry facts, ambient tuning and analytics
+fact fallback have no runtime replacement alias. Historical native analytics
+payloads can still be archived; they do not provide assessment or learning.
+
+The host-owned `learning_total` counter has only `channel` and `result` labels.
+Channels are `external` and `authentication`; results are `applied`, `duplicate`,
+`partial`, `rejected`, `unavailable` or `skipped`. No event identity, subject,
+principal, raw payload or contribution detail appears in these labels.

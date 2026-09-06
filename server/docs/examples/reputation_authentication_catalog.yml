@@ -1,0 +1,58 @@
+# Merge these explicit catalog keys into the reputation module configuration.
+# Keep model/key/retention/score settings from go_plugin_reputation.yml and use a
+# new model_id when changing attribution. This fragment replaces the example
+# source and signal maps; combine real production catalogs intentionally.
+config:
+  auth_learning:
+    success_signal: auth.success
+    bad_credentials_signal: auth.bad_credentials
+  source_class_caps:
+    authentication: {risk: 20, trust: 20, samples: 100}
+  target_bindings:
+    - target: authn/authenticate
+      component: assessment
+      output_fact: auth_subjects
+      decision_profile: operational
+      subjects:
+        - {attribute: nauthilus.request.client.ip, role: auth_client, kind: ip}
+  sources:
+    authentication:
+      source_policy_id: authentication-backend-v1
+      binding:
+        kind: host_execution
+        module: reputation
+        component: learn_outcome
+        extension_point: post_action
+        operation: enqueue
+        targets: [authn/authenticate]
+      source_class: authentication
+      allowed_signals: [auth.success, auth.bad_credentials]
+      allowed_subjects: {auth_client: [ip], auth_account: [account]}
+      derived_subjects: {auth_client: [network]}
+      maximum_subjects: 2
+      maximum_lateness: 10m
+      future_clock_skew: 0s
+      allow_magnitude: false
+      requests_per_second: 10
+      max_concurrency: 2
+  signals:
+    auth.success:
+      direction: trust
+      weight: 0.20
+      magnitude: forbidden
+      subject_roles: {auth_client: {ip: 1.0, network: 0.25}, auth_account: {account: 1.0}}
+      source_classes: [authentication]
+      evidence_origin: host_backend_outcome
+      authoritative: false
+      max_event_age: 10m
+      profiles: [fast, operational, baseline]
+    auth.bad_credentials:
+      direction: risk
+      weight: 0.20
+      magnitude: forbidden
+      subject_roles: {auth_client: {ip: 1.0, network: 0.25}}
+      source_classes: [authentication]
+      evidence_origin: host_backend_outcome
+      authoritative: false
+      max_event_age: 10m
+      profiles: [fast, operational, baseline]

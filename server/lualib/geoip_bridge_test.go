@@ -18,6 +18,7 @@ package lualib
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	luajson "github.com/vadv/gopher-lua-libs/json"
@@ -120,7 +121,8 @@ func TestClickHouseActionUsesNativeGeoIPBridgeValues(t *testing.T) {
 	assertClickHouseGeoIPRow(t, readLastClickHouseRow(t, L))
 }
 
-func TestClickHouseActionUsesGeoIPReputationPolicyFacts(t *testing.T) {
+// TestClickHouseActionIgnoresRemovedReputationFacts prevents legacy scores from surviving the native writer cutover.
+func TestClickHouseActionIgnoresRemovedReputationFacts(t *testing.T) {
 	L := newGeoIPBridgeTestState(t)
 	defer L.Close()
 
@@ -162,16 +164,11 @@ nauthilus_call_action(request)
 	}
 
 	row := readLastClickHouseRow(t, L)
-	assertRowValue(t, row, "reputation_score", 0.625)
-	assertRowValue(t, row, "reputation_positive_score", 0.91)
-	assertRowValue(t, row, "reputation_negative_score", 0.12)
-	assertRowValue(t, row, "reputation_ip_score", 0.73)
-	assertRowValue(t, row, "reputation_asn_score", 0.54)
-	assertRowValue(t, row, "reputation_country_score", 0.31)
-	assertRowValue(t, row, "reputation_asn_country_score", 0.27)
-	assertRowValue(t, row, "reputation_samples", float64(57))
-	assertRowValue(t, row, "reputation_source", "policy_facts")
-	assertRowValue(t, row, "reputation_decision", "suspicious")
+	for key := range row {
+		if strings.HasPrefix(key, "reputation_") {
+			t.Fatalf("removed reputation field %s exported", key)
+		}
+	}
 }
 
 func newGeoIPBridgeTestState(t *testing.T) *lua.LState {
@@ -429,16 +426,6 @@ func assertClickHouseGeoIPRow(t *testing.T, row map[string]any) {
 	assertRowValue(t, row, "geoip_asn_country", "DE")
 	assertRowValue(t, row, "geoip_asn_allocated", "2024-01-01")
 	assertRowValue(t, row, "geoip_asn_status", "allocated")
-	assertRowValue(t, row, "reputation_score", 0.375)
-	assertRowValue(t, row, "reputation_positive_score", 0.82)
-	assertRowValue(t, row, "reputation_negative_score", 0.14)
-	assertRowValue(t, row, "reputation_ip_score", 0.71)
-	assertRowValue(t, row, "reputation_asn_score", 0.48)
-	assertRowValue(t, row, "reputation_country_score", 0.22)
-	assertRowValue(t, row, "reputation_asn_country_score", 0.19)
-	assertRowValue(t, row, "reputation_samples", float64(42))
-	assertRowValue(t, row, "reputation_source", "redis")
-	assertRowValue(t, row, "reputation_decision", "suspicious")
 }
 
 func assertLuaString(t *testing.T, value lua.LValue, want string) {

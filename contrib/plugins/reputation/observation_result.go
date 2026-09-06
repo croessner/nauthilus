@@ -45,9 +45,9 @@ func observationResult(admitted admittedObservation, reason string) (pluginapi.D
 	return factOutputs([]outputInput{
 		{name: outputValid, input: pluginapi.DecisionValueInput{Boolean: &valid}},
 		{name: outputEligible, input: pluginapi.DecisionValueInput{Boolean: &valid}},
-		{name: outputReason, input: pluginapi.DecisionValueInput{String: &reason}},
-		{name: outputSourceClass, input: pluginapi.DecisionValueInput{String: &class}},
-		{name: outputOrigin, input: pluginapi.DecisionValueInput{String: &origin}},
+		stringOutput(outputReason, reason),
+		stringOutput(outputSourceClass, class),
+		stringOutput(outputOrigin, origin),
 		{name: outputKinds, input: pluginapi.DecisionValueInput{Strings: kinds}},
 		{name: outputSubjects, input: pluginapi.DecisionValueInput{Records: &list}},
 	})
@@ -71,10 +71,11 @@ func factOutputs(inputs []outputInput) (pluginapi.DecisionFactResult, error) {
 // admittedSubjectRecord contains only the validator-owned canonical plan for the selected effect.
 func admittedSubjectRecord(subject admittedSubject) (pluginapi.DecisionRecord, error) {
 	return recordInputs([]outputInput{
-		{name: fieldRole, input: pluginapi.DecisionValueInput{String: &subject.role}},
-		{name: fieldKind, input: pluginapi.DecisionValueInput{String: &subject.kind}},
-		{name: fieldValue, input: pluginapi.DecisionValueInput{String: &subject.value}},
-		{name: fieldSubjectTag, input: pluginapi.DecisionValueInput{String: &subject.tag}},
+		{name: fieldPrimary, input: pluginapi.DecisionValueInput{Boolean: &subject.primary}},
+		stringOutput(fieldRole, subject.role),
+		stringOutput(fieldKind, subject.kind),
+		stringOutput(fieldValue, subject.value),
+		stringOutput(fieldSubjectTag, subject.tag),
 		{name: fieldWeight, input: pluginapi.DecisionValueInput{Double: &subject.weight}},
 	})
 }
@@ -102,4 +103,9 @@ func recordInputs(inputs []outputInput) (pluginapi.DecisionRecord, error) {
 	}
 
 	return pluginapi.NewDecisionRecord(fields)
+}
+
+// stringOutput centralizes the shared scalar field contract for observation and assessment records.
+func stringOutput(name, value string) outputInput {
+	return outputInput{name: name, input: pluginapi.DecisionValueInput{String: &value}}
 }

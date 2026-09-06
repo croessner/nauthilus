@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
@@ -52,6 +54,7 @@ type authnCandidateExecution struct {
 	executeEffect  func(report.EffectRequest) effectsupervisor.Result
 	auth           *AuthState
 	backendResult  *PassDBResult
+	backendOutcome pluginapi.BackendOutcomeView
 	ginCtx         *gin.Context
 	capture        *CaptureResponseWriter
 	selected       map[string]*report.FinalDecision
@@ -531,6 +534,7 @@ func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecuti
 	}
 
 	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultOK, result, nil)
+	e.captureBackendOutcome(result, result.Account)
 	e.backendResult = result
 	e.backendPlan = plan
 	e.backendAccount = result.Account
@@ -583,6 +587,7 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 	result *PassDBResult,
 	accountName string,
 ) {
+	e.captureBackendOutcome(result, accountName)
 	e.auth.loadBruteForceHistories(e.ginCtx, accountName)
 	e.auth.applyBackendResult(e.ginCtx, result)
 	e.auth.storePositiveBackendAuthentication(e.ginCtx, result)
@@ -595,6 +600,25 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 		e.authResult = definitions.AuthResultOK
 	} else {
 		e.authResult = definitions.AuthResultFail
+	}
+}
+
+// captureBackendOutcome freezes independent credential evidence before mutable subject processing.
+// Missing host metadata disables learning without changing the authentication result.
+func (e *authnCandidateExecution) captureBackendOutcome(result *PassDBResult, account string) {
+	if e == nil || e.auth == nil || result == nil || e.backendOutcome.Observed() ||
+		e.auth.Request.NoAuth || e.auth.Request.ListAccounts {
+		return
+	}
+
+	status := pluginapi.BackendOutcomeBadCredentials
+	if result.Authenticated {
+		status = pluginapi.BackendOutcomeAuthenticated
+	}
+
+	outcome, err := pluginapi.NewBackendOutcomeView(e.auth.Runtime.GUID, account, status, time.Now())
+	if err == nil {
+		e.backendOutcome = outcome
 	}
 }
 

@@ -30,6 +30,7 @@ type modelDefinition struct {
 }
 
 type ingestionSemantics struct {
+	AuthLearning         *authLearningConfig     `json:"auth_learning,omitempty"`
 	SubjectScope         string                  `json:"subject_scope"`
 	MaximumManifests     int                     `json:"maximum_manifests"`
 	MaximumSeen          int                     `json:"maximum_seen"`
@@ -64,7 +65,7 @@ func compileModel(cfg *configuration) (*modelDefinition, error) {
 
 // canonicalIngestionSemantics detaches and orders all accumulator, attribution and admission dimensions.
 func canonicalIngestionSemantics(cfg *configuration) ingestionSemantics {
-	value := ingestionSemantics{SubjectScope: cfg.raw.SubjectScope, MaximumManifests: cfg.raw.MaximumEventManifestsPerSource, MaximumSeen: cfg.raw.MaximumSeenEventsPerSubject, Schema: cfg.raw.StateSchema, AccountNormalization: cfg.raw.AccountNormalization, Network: cfg.raw.NetworkSubjects,
+	value := ingestionSemantics{AuthLearning: cfg.raw.AuthLearning, SubjectScope: cfg.raw.SubjectScope, MaximumManifests: cfg.raw.MaximumEventManifestsPerSource, MaximumSeen: cfg.raw.MaximumSeenEventsPerSubject, Schema: cfg.raw.StateSchema, AccountNormalization: cfg.raw.AccountNormalization, Network: cfg.raw.NetworkSubjects,
 		Retention: cfg.retention, ManifestTTL: cfg.manifestTTL, SeenTTL: cfg.seenTTL, RetryHorizon: cfg.retryHorizon, NewSubjectsPerHour: cfg.raw.MaximumNewSubjectsPerSourceHour,
 		Services: slices.Clone(cfg.raw.Services), Sources: make(map[string]sourceConfig), Signals: make(map[string]signalConfig)}
 	sort.Strings(value.Services)

@@ -17,6 +17,7 @@ import (
 // testAdmissionMap builds a credential-free host admission snapshot with exact target grants.
 func testAdmissionMap() map[string]any {
 	return map[string]any{"host_context": map[string]any{"module_name": "reputation"}, "policy_admission": map[string]any{
+		"targets": []any{map[string]any{"target": "reputation/observe", "schema": "reputation/observe/v1", "mode": "enforce", "no_match": "deny"}},
 		"enabled": true, "clients": []any{map[string]any{"principal": "ScanWriter", "targets": []any{"reputation/observe"}, "schemas": []any{"reputation/observe/v1"}, "max_concurrency": 2, "requests_per_second": 10, "diagnostics": false}},
 	}}
 }
@@ -49,8 +50,8 @@ func TestPluginStartCrossChecksExactPrincipalGrant(t *testing.T) {
 			requireNoError(t, plugin.Register(registrar))
 			requireNoError(t, registrar.Commit())
 
-			if len(registry.DecisionFactProviders()) != 1 || len(registry.DecisionEffectProviders()) != 0 {
-				t.Fatal("unexpected provider or premature effect registration")
+			if len(registry.DecisionFactProviders()) != 1 || len(registry.DecisionEffectProviders()) != 1 {
+				t.Fatal("unexpected observation capability registration")
 			}
 
 			raw := testAdmissionMap()
@@ -122,4 +123,23 @@ func testStartupRedis(t *testing.T, cfg *configuration, tagger pluginapi.OpaqueI
 	}
 
 	return facade
+}
+
+// TestObservationTargetMustExecuteStorage rejects silent observe-mode no-ops and permissive no-match defaults before startup.
+func TestObservationTargetMustExecuteStorage(t *testing.T) {
+	cases := []struct {
+		mode, noMatch, schema string
+		valid                 bool
+	}{
+		{"enforce", "deny", "reputation/observe/v1", true},
+		{"observe", "deny", "reputation/observe/v1", false},
+		{"enforce", "not_applicable", "reputation/observe/v1", false},
+		{"enforce", "deny", "reputation/observe/v2", false},
+	}
+	for _, tt := range cases {
+		snapshot := admissionSnapshot{Targets: []admissionTargetConfig{{Target: "reputation/observe", Mode: tt.mode, NoMatch: tt.noMatch, Schema: tt.schema}}}
+		if (validateObservationTarget(snapshot) == nil) != tt.valid {
+			t.Fatal("observation execution contract not enforced")
+		}
+	}
 }

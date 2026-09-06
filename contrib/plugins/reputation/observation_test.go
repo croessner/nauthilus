@@ -161,8 +161,8 @@ func testObservationFacts(t *testing.T, input observationInput) []pluginapi.Deci
 	return facts
 }
 
-// TestObservationProviderEmitsOnlySafeSummariesAndAdmittedRecords covers the actual immutable callback path.
-func TestObservationProviderEmitsOnlySafeSummariesAndAdmittedRecords(t *testing.T) {
+// TestObservationProviderRequiresReadyStorage prevents eligibility without a reliable immutable-manifest probe.
+func TestObservationProviderRequiresReadyStorage(t *testing.T) {
 	plugin := NewPlugin()
 	plugin.config = testConfig(t)
 	plugin.tagger = testTagger(t)
@@ -179,20 +179,8 @@ func TestObservationProviderEmitsOnlySafeSummariesAndAdmittedRecords(t *testing.
 	requireNoError(t, err)
 	requireNoError(t, pluginapi.ValidateDecisionFactResult(provider.Descriptor(), result))
 
-	for _, fact := range result.Facts {
-		if fact.Name == "observation_valid" {
-			valid, ok := fact.Value.Boolean()
-			if !ok || !valid {
-				t.Fatal("valid independent observation rejected")
-			}
-		}
-
-		if fact.Name == "admitted_subjects" {
-			records, ok := fact.Value.Records()
-			if !ok || len(records.Records()) != 2 {
-				t.Fatal("missing expanded admitted subject plan")
-			}
-		}
+	if result.ErrorClass != pluginapi.DecisionErrorClassUnavailable || len(result.Facts) != 0 {
+		t.Fatal("unready manifest dependency produced learning eligibility")
 	}
 }
 

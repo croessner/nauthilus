@@ -29,6 +29,8 @@ if existing_type ~= 'none' then
     return {'admitted', match, tostring(existing.expires)}
 end
 
+if request.operation == 'probe' then return {'not_found'} end
+
 if not bounded(request.observed_at, 0, now + request.future_skew) or
    now - request.observed_at > request.lateness then return {'event_time'} end
 if not bounded(request.retention, 1, 31536000) then return {'invalid_state'} end

@@ -1050,7 +1050,7 @@ func runtimePluginConfigMap(cfg config.File) (map[string]any, error) {
 	}
 
 	delete(values, runtimePluginPolicyConfigKey)
-	values["policy_admission"] = runtimePluginAdmissionMap(cfg.GetPolicy().API)
+	values["policy_admission"] = runtimePluginAdmissionMap(cfg.GetPolicy())
 
 	return values, nil
 }
