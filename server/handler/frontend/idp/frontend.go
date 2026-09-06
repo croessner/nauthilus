@@ -2169,6 +2169,10 @@ func (h *FrontendHandler) PostLoginRecovery(ctx *gin.Context) {
 		return
 	}
 
+	if !h.admitMFACode(ctx, sess) {
+		return
+	}
+
 	success, err := h.mfa.UseRecoveryCode(ctx, sess.factorUser, code, userBackendFromMFASession(sess.mgr))
 	if err != nil {
 		h.deps.Logger.Error("Failed to use recovery code", "error", err)
@@ -2523,6 +2527,10 @@ func (h *FrontendHandler) PostLoginTOTP(ctx *gin.Context) {
 	if !h.isMFAMethodSupported(sess.mgr, definitions.MFAMethodTOTP) {
 		ctx.Redirect(http.StatusFound, h.getMFASelectPath(ctx))
 
+		return
+	}
+
+	if !h.admitMFACode(ctx, sess) {
 		return
 	}
 

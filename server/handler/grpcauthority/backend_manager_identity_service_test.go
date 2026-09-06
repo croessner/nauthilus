@@ -264,7 +264,7 @@ func TestAuthorityRequestedAttributeReleaseReportsDeniedAndMissingSafely(t *test
 func TestBackendManagerIdentityServiceConsumesRecoveryCodeOnce(t *testing.T) {
 	backendName := "authority-recovery-consume-once"
 	username := "consume-once@example.test"
-	deps := core.AuthDeps{}
+	deps := authorityCodeBudgetTestDeps(t)
 
 	seedAuthorityMFATestUser(t, deps, backendName, username, "", []string{
 		authorityMFATestRecoveryCodeA,

@@ -377,19 +377,33 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(_ context.Context
 	return changedMFAResult(input.Backend), nil
 }
 
-func (s *backendManagerIdentityService) VerifyTOTP(_ context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
+// consumeMFAAttempt resolves the admitted backend identity before reserving code-verification capacity.
+func (s *backendManagerIdentityService) consumeMFAAttempt(ctx context.Context, auth *core.AuthState, manager core.BackendManager) error {
+	result, err := manager.PassDB(auth)
+	if err != nil {
+		return err
+	}
+
+	if result != nil {
+		applyPassDBResult(auth, result)
+	}
+
+	identity := auth.GetUniqueUserID()
+	if identity == "" {
+		identity = auth.Runtime.AccountName
+	}
+
+	return core.ConsumeMFAAttempt(ctx, s.authDeps, identity)
+}
+
+func (s *backendManagerIdentityService) VerifyTOTP(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	auth, manager, err := s.authAndManager(input)
 	if err != nil {
 		return nil, err
 	}
 
-	passDBResult, passErr := manager.PassDB(auth)
-	if passErr != nil {
-		return nil, passErr
-	}
-
-	if passDBResult != nil {
-		applyPassDBResult(auth, passDBResult)
+	if err := s.consumeMFAAttempt(ctx, auth, manager); err != nil {
+		return nil, err
 	}
 
 	err = core.ValidateTOTPCode(input.Code, auth.GetTOTPSecret(), s.authDeps)
@@ -452,10 +466,12 @@ func (s *backendManagerIdentityService) GenerateRecoveryCodes(_ context.Context,
 }
 
 func (s *backendManagerIdentityService) UseRecoveryCode(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
-	_ = ctx
-
 	auth, manager, err := s.authAndManager(input)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.consumeMFAAttempt(ctx, auth, manager); err != nil {
 		return nil, err
 	}
 
@@ -466,15 +482,6 @@ func (s *backendManagerIdentityService) UseRecoveryCode(ctx context.Context, inp
 		}
 
 		return recoveryUseResult(input.Backend, valid, remaining), nil
-	}
-
-	passDBResult, passErr := manager.PassDB(auth)
-	if passErr != nil {
-		return nil, passErr
-	}
-
-	if passDBResult != nil {
-		applyPassDBResult(auth, passDBResult)
 	}
 
 	valid, remaining, err := consumeRecoveryCodeFallback(auth, manager, input.Code)
