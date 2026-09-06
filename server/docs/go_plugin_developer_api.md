@@ -1277,7 +1277,7 @@ OpenTelemetry trace context but does not inherit request cancellation; the worke
 runtime lifetime shuts down. `PostActionRequest.Args` and
 `PostActionRequest.Facts` use the same policy decision context as obligations. `PostActionRequest.Credentials` exposes
 request credentials only when the module requested and was granted the `credentials` capability, and
-`PostActionRequest.PasswordHash` carries the host-owned lowercase 64-hex SHA-256 password hash when a password was present.
+`PostActionRequest.PasswordHash` carries the host-owned lowercase 64-hex SHA-256 password hash only when a password was present and the selected module explicitly requires the operator-allowed `password_hash` capability. This capability does not grant raw credential access; `credentials` does not implicitly grant digest export. Reputation learning requests receive neither form of password material. Existing native ClickHouse configurations must explicitly allow `password_hash` before registration.
 The bundled Lua and native ClickHouse row builders validate this full value and export only its first eight lowercase
 hex characters for their established analytics schema; no other post-action surface receives that short export.
 Post-action results report post-decision diagnostics only; they do not emit additional policy facts into the

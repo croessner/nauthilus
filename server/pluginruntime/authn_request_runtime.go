@@ -9,6 +9,7 @@ package pluginruntime
 
 import (
 	"context"
+	"slices"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	pluginpassword "github.com/croessner/nauthilus/v4/pluginapi/v1/password"
@@ -61,7 +62,7 @@ func (*AuthnRequestRuntime) Capture(
 		),
 		Snapshot: NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg())),
 	}
-	if input.Detached {
+	if input.Detached && slices.Contains(input.Capabilities, pluginapi.CapabilityPasswordHash) {
 		capture.PasswordHash = authnPostActionPasswordHash(auth)
 	}
 

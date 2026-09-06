@@ -66,12 +66,13 @@ func NewPlugin() *Plugin {
 // Metadata returns the public plugin identity and API contract.
 func (p *Plugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{
-		Build:       pluginapi.BuildInfo{ArtifactIdentity: pluginapi.NativeArtifactIdentity()},
-		Name:        pluginName,
-		Version:     pluginVersion,
-		APIVersion:  pluginapi.APIVersion,
-		Description: "ClickHouse JSONEachRow native post-action plugin.",
-		DocsURL:     docsURL,
+		Build:        pluginapi.BuildInfo{ArtifactIdentity: pluginapi.NativeArtifactIdentity()},
+		Name:         pluginName,
+		Version:      pluginVersion,
+		APIVersion:   pluginapi.APIVersion,
+		Description:  "ClickHouse JSONEachRow native post-action plugin.",
+		Capabilities: []pluginapi.Capability{pluginapi.CapabilityPasswordHash},
+		DocsURL:      docsURL,
 		Features: []pluginapi.Feature{
 			"post_action",
 			"clickhouse_json_each_row",
@@ -86,6 +87,10 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	if registrar == nil {
 		return fmt.Errorf("registrar is nil")
+	}
+
+	if err := registrar.RequireCapability(pluginapi.CapabilityPasswordHash); err != nil {
+		return err
 	}
 
 	config, err := decodeModuleConfig(registrar.Config())

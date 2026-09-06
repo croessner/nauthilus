@@ -141,6 +141,7 @@ func TestRegistrar_RejectsReservedDebugModuleName(t *testing.T) {
 func TestRegistrar_RejectsDisallowedCapability(t *testing.T) {
 	for _, capability := range []pluginapi.Capability{
 		pluginapi.CapabilityCredentials,
+		pluginapi.CapabilityPasswordHash,
 		pluginapi.CapabilityMail,
 	} {
 		t.Run(string(capability), func(t *testing.T) {
@@ -157,6 +158,7 @@ func TestRegistrar_RejectsDisallowedCapability(t *testing.T) {
 func TestRegistrar_RecordsAllowedCapability(t *testing.T) {
 	for _, capability := range []pluginapi.Capability{
 		pluginapi.CapabilityCredentials,
+		pluginapi.CapabilityPasswordHash,
 		pluginapi.CapabilityMail,
 	} {
 		t.Run(string(capability), func(t *testing.T) {

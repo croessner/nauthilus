@@ -1911,7 +1911,7 @@ rules. Those concerns are useful when isolation is required, but they are not th
   provide human-facing documentation pointers, but descriptors remain the machine-readable runtime truth.
 - Module configuration may set `allow_capabilities`. When present, the registrar rejects capability requests not listed
   for that module instance; when absent, host defaults apply.
-- Sensitive capabilities are default-deny when `allow_capabilities` is absent. `credentials` and host-managed `mail`
+- Sensitive capabilities are default-deny when `allow_capabilities` is absent. `credentials`, `password_hash`, and host-managed `mail`
   require explicit allowance when requested; ordinary logging, metrics, and tracing facades are available without
   capability gates.
 - `ConfigView` is a read-only, format-neutral view over the plugin-owned `config` block with dot-path helpers, exact

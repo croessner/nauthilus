@@ -798,7 +798,8 @@ func validateDebugModuleDefinition(moduleName string, definition pluginapi.Debug
 
 // sensitiveCapability reports whether a capability is default-deny without an allowlist.
 func sensitiveCapability(capability pluginapi.Capability) bool {
-	return capability == pluginapi.CapabilityCredentials || capability == pluginapi.CapabilityMail
+	return capability == pluginapi.CapabilityCredentials || capability == pluginapi.CapabilityMail ||
+		capability == pluginapi.CapabilityPasswordHash
 }
 
 // newHookAuthorizations validates and copies operator-owned hook authorization metadata.

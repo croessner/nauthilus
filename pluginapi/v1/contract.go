@@ -24,6 +24,9 @@ const (
 	// CapabilityCredentials allows a module instance to access request-scoped credentials.
 	CapabilityCredentials Capability = "credentials"
 
+	// CapabilityPasswordHash allows detached post-actions to receive a password-derived digest without raw credentials.
+	CapabilityPasswordHash Capability = "password_hash"
+
 	// CapabilityMail allows a module instance to send mail through the host mail facade.
 	CapabilityMail Capability = "mail"
 )

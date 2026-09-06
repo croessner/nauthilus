@@ -20,6 +20,7 @@ plugins:
         public_key_file: /usr/share/nauthilus/plugin-keys/build-2026.pub
   modules:
     - name: clickhouse
+      allow_capabilities: [password_hash]
       type: go
       path: /usr/local/lib/nauthilus/plugins/clickhouse.so
       signature: minisign:/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig

@@ -701,10 +701,11 @@ func hasDebugSelector(debugModules []pluginregistry.DebugModule, selector string
 // testModule returns a native ClickHouse plugin module config for tests.
 func testModule(pluginConfig map[string]any) config.PluginModule {
 	return config.PluginModule{
-		Config: pluginConfig,
-		Name:   pluginName,
-		Type:   config.PluginModuleTypeGo,
-		Path:   "/plugins/clickhouse.so",
+		Config:            pluginConfig,
+		Name:              pluginName,
+		Type:              config.PluginModuleTypeGo,
+		Path:              "/plugins/clickhouse.so",
+		AllowCapabilities: []pluginapi.Capability{pluginapi.CapabilityPasswordHash},
 	}
 }
 

@@ -45,3 +45,36 @@ func TestAuthnRequestRuntimeDetachedCaptureIsBoundedIndependentlyOfRequestContex
 }
 
 type detachedCaptureContextKey int
+
+func TestAuthnRequestRuntimeDetachedPasswordMaterialRequiresCapability(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		capabilities    []pluginapi.Capability
+		wantHash        bool
+		wantCredentials bool
+	}{
+		{name: "reputation without credentials"},
+		{name: "hash only", capabilities: []pluginapi.Capability{pluginapi.CapabilityPasswordHash}, wantHash: true},
+		{name: "credentials only", capabilities: []pluginapi.Capability{pluginapi.CapabilityCredentials}, wantCredentials: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			auth := &core.AuthState{}
+			auth.Request.Password = secret.New("learning-boundary-password")
+
+			capture, err := NewAuthnRequestRuntime().Capture(context.Background(), core.AuthnNativeCaptureInput{
+				Auth: auth, Capabilities: test.capabilities, Detached: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if (capture.PasswordHash != "") != test.wantHash {
+				t.Errorf("password hash presence = %v, want %v", capture.PasswordHash != "", test.wantHash)
+			}
+
+			if _, available := capture.Credentials.Password(context.Background()); available != test.wantCredentials {
+				t.Errorf("credential access = %v, want %v", available, test.wantCredentials)
+			}
+		})
+	}
+}
