@@ -72,7 +72,8 @@ func (samplePlugin) Metadata() pluginapi.Metadata {
 			pluginapi.CapabilityMail,
 		},
 		Build: pluginapi.BuildInfo{
-			GoVersion: "test",
+			ArtifactIdentity: pluginapi.NativeArtifactIdentity(),
+			GoVersion:        "test",
 		},
 	}
 }

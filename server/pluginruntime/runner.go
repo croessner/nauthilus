@@ -699,6 +699,7 @@ func clonePluginSection(plugins *config.PluginsSection) *config.PluginsSection {
 	}
 
 	cloned := &config.PluginsSection{
+		OpaqueIdentifierTagger: plugins.OpaqueIdentifierTagger.Clone(),
 		Trust: config.PluginTrustSection{
 			Signers: append([]config.PluginTrustSigner(nil), plugins.Trust.Signers...),
 		},

@@ -3868,6 +3868,12 @@ func (f *FileSettings) handleFile(reader *viper.Viper) (err error) {
 		return err
 	}
 
+	if err = validateSealedOpaqueIdentifierKeys(f, artifacts); err != nil {
+		artifacts.Release()
+
+		return err
+	}
+
 	if err = validateSealedIdentityAuthorityArtifacts(f, artifacts); err != nil {
 		artifacts.Release()
 

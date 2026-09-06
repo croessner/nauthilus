@@ -1596,3 +1596,29 @@ Before shipping a plugin:
   handoff values.
 - Test direct plugin behavior and at least one `.so` load path.
 - Build with the same Go toolchain, module graph, and `GOEXPERIMENT=runtimesecret` setting as Nauthilus.
+
+
+## Opaque identifier tagging
+
+Version 4 requires `Host.OpaqueIdentifierTagger() (OpaqueIdentifierTagger, error)` on every host.
+An unconfigured service returns `ErrOpaqueIdentifierTaggerUnavailable`; there is no unkeyed or
+optional-interface fallback. Plugins receive no secret bytes and must not place tagging keys in their
+module configuration.
+
+The facade accepts `OpaqueIdentifierInput{Scope, Kind, Value}`. Scopes and kinds are canonical lower-case
+ASCII labels of at most 64 bytes; values are non-empty valid UTF-8 of at most 65536 bytes. Scope admission
+is exact. `Tag` uses the active key. `TagVersion` requires an explicit admitted version of at most
+32 bytes. `Candidates` explicitly returns active and optional previous tags in that order. Unknown
+scopes/versions fail rather than falling back.
+
+Tags use HMAC-SHA-256 with 32-byte host keys. The authenticated frame begins with
+`nauthilus.opaque_identifier.v1` plus a NUL byte, followed by version, scope, kind, and value, each
+prefixed by its four-byte big-endian byte length. The immutable string format is
+`hmac-sha256-v1:<version>:<unpadded-base64url-authenticator>`. Scope, kind, and value are therefore
+separate cryptographic domains. The tagger performs no identifier normalization, storage, scoring,
+or interpretation of rotation candidates.
+
+Mounted keys are sealed with the configuration candidate. Key references and material are process-owned;
+changes require a process restart. Rotation behavior of stored state belongs to the consuming plugin.
+Native artifacts must be rebuilt with the host; `BuildInfo.ArtifactIdentity` records the coherent build
+identity, which is diagnostic rather than an ABI stability promise.

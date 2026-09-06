@@ -472,8 +472,12 @@ func (l *Loader) logRegistered(instance ModuleInstance) {
 
 type stdlibOpener struct{}
 
-// Open delegates to the Go standard library plugin loader.
+// Open checks the host build identity before delegating to the Go runtime ABI verifier.
 func (stdlibOpener) Open(path string) (PluginHandle, error) {
+	if err := VerifyNativeArtifactCompatibility(path); err != nil {
+		return nil, err
+	}
+
 	plugin, err := stdplugin.Open(path)
 	if err != nil {
 		return nil, err

@@ -60,10 +60,11 @@ var (
 
 // PluginsSection configures native plugin artifact provenance and module instances.
 type PluginsSection struct {
-	Trust              PluginTrustSection `mapstructure:"trust" validate:"omitempty"`
-	AllowedDirs        []string           `mapstructure:"allowed_dirs" validate:"omitempty,dive"`
-	Modules            []PluginModule     `mapstructure:"modules" validate:"omitempty,dive"`
-	VerificationPolicy string             `mapstructure:"verification_policy" validate:"omitempty"`
+	OpaqueIdentifierTagger *OpaqueIdentifierTaggerConfig `mapstructure:"opaque_identifier_tagger" validate:"omitempty"`
+	Trust                  PluginTrustSection            `mapstructure:"trust" validate:"omitempty"`
+	AllowedDirs            []string                      `mapstructure:"allowed_dirs" validate:"omitempty,dive"`
+	Modules                []PluginModule                `mapstructure:"modules" validate:"omitempty,dive"`
+	VerificationPolicy     string                        `mapstructure:"verification_policy" validate:"omitempty"`
 }
 
 // PluginTrustSection contains trusted signing identities for plugin artifacts.
@@ -243,6 +244,10 @@ type pluginConfigValidator struct {
 func (v *pluginConfigValidator) validate() error {
 	if v.plugins == nil {
 		return nil
+	}
+
+	if err := ValidateOpaqueIdentifierTaggerConfig(v.plugins.OpaqueIdentifierTagger); err != nil {
+		return err
 	}
 
 	v.applyDefaults()

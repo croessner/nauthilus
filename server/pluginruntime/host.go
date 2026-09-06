@@ -51,6 +51,7 @@ type Host struct {
 	config            pluginapi.ConfigView
 	redis             pluginapi.Redis
 	helpers           pluginapi.DeterministicHelpers
+	opaqueTagger      pluginapi.OpaqueIdentifierTagger
 	ldap              pluginapi.LDAP
 	backendServers    pluginapi.BackendServers
 	connectionTargets pluginapi.ConnectionTargets
@@ -828,3 +829,22 @@ type noopSummary struct{}
 
 // Observe records no summary value.
 func (noopSummary) Observe(context.Context, float64, ...pluginapi.LabelValue) {}
+
+// WithOpaqueIdentifierTagger installs the host-owned keyed identifier service.
+func WithOpaqueIdentifierTagger(tagger pluginapi.OpaqueIdentifierTagger) HostOption {
+	return func(host *Host) { host.opaqueTagger = tagger }
+}
+
+// OpaqueIdentifierTagger returns the required service or an explicit unavailable contract error.
+func (h *Host) OpaqueIdentifierTagger() (pluginapi.OpaqueIdentifierTagger, error) {
+	if h == nil || nilDecisionDependency(h.opaqueTagger) {
+		return nil, pluginapi.ErrOpaqueIdentifierTaggerUnavailable
+	}
+
+	return h.opaqueTagger, nil
+}
+
+// OpaqueIdentifierTagger delegates to the same host-owned service without exposing key material.
+func (h moduleBoundHost) OpaqueIdentifierTagger() (pluginapi.OpaqueIdentifierTagger, error) {
+	return h.base.OpaqueIdentifierTagger()
+}

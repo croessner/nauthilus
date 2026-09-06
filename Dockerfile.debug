@@ -19,11 +19,13 @@ ENV CGO_ENABLED=1
 ENV GOEXPERIMENT=runtimesecret
 RUN apk add --no-cache build-base git
 
-RUN cd server && go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -trimpath -ldflags="-X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/v4/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/v4/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
-RUN mkdir -p /usr/local/lib/nauthilus/plugins && \
+RUN NATIVE_ARTIFACT_LDFLAGS="$(go run -mod=vendor ./scripts/native_artifact_fingerprint -tags="netgo ${BUILD_TAGS}")" && \
+    cd server && go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -trimpath -ldflags="${NATIVE_ARTIFACT_LDFLAGS} -X main.buildTime=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=dev-dbg -X github.com/croessner/nauthilus/v4/server/config.nauthilusConfDir=${NAUTHILUS_CONF_DIR} -X github.com/croessner/nauthilus/v4/server/config.nauthilusPluginsDir=${NAUTHILUS_PLUGINS_DIR}" -o nauthilus .
+RUN NATIVE_ARTIFACT_LDFLAGS="$(go run -mod=vendor ./scripts/native_artifact_fingerprint -tags="netgo ${BUILD_TAGS}")" && \
+    mkdir -p /usr/local/lib/nauthilus/plugins && \
     for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
       cd /usr/app/contrib/plugins/${plugin} && \
-      go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -o /usr/local/lib/nauthilus/plugins/${plugin}.so .; \
+      go build -mod=vendor -tags="netgo ${BUILD_TAGS}" -buildmode=plugin -trimpath -ldflags="${NATIVE_ARTIFACT_LDFLAGS}" -o /usr/local/lib/nauthilus/plugins/${plugin}.so .; \
     done
 
 RUN --mount=type=secret,id=plugin_signing_private_key \

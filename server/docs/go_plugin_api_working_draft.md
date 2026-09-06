@@ -330,6 +330,7 @@ Plugins should receive a single `Host` facade instead of importing internal pack
 
 ```go
 type Host interface {
+    OpaqueIdentifierTagger() (OpaqueIdentifierTagger, error)
     ServiceContext() context.Context
     Logger(scope string) Logger
     Tracer(scope string) Tracer
@@ -2207,3 +2208,13 @@ The first externally useful result should be the GeoIP/ASN reference module beca
 config, lifecycle, worker behavior, policy facts, runtime deltas, metrics, tracing, and reload without requiring password
 or MFA semantics. Backend and subject integration should follow once the loader, registry, lifecycle, and host facades
 are stable.
+
+
+### Required opaque identifier service
+
+The implemented version 4 contract includes the required host-owned `OpaqueIdentifierTagger` service,
+explicit per-effect `unsafe|idempotent` replay declarations, and immutable `ExecutionIdentityView`
+on state-changing callbacks. The exact implemented contracts and keyed framing are documented in
+[the developer API](go_plugin_developer_api.md#opaque-identifier-tagging). There is no optional legacy
+host interface or unkeyed tagging fallback. Mounted key references and native artifact changes require
+coherent rebuild/restart rather than configuration-only replacement.

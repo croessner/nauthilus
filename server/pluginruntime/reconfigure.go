@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
@@ -136,6 +137,10 @@ func (r *Runner) commitReconfiguredModules(reconfigured map[string]config.Plugin
 func restartOnlyPluginChange(current *config.PluginsSection, next *config.PluginsSection) bool {
 	current = clonePluginSection(current)
 	next = clonePluginSection(next)
+
+	if !reflect.DeepEqual(current.OpaqueIdentifierTagger, next.OpaqueIdentifierTagger) {
+		return true
+	}
 
 	if current.VerificationPolicy != next.VerificationPolicy {
 		return true

@@ -73,6 +73,7 @@ func NewPlugin() *Plugin {
 // Metadata returns the public plugin identity and API contract.
 func (p *Plugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{
+		Build:       pluginapi.BuildInfo{ArtifactIdentity: pluginapi.NativeArtifactIdentity()},
 		Name:        pluginName,
 		Version:     pluginVersion,
 		APIVersion:  pluginapi.APIVersion,

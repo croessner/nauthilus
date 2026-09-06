@@ -807,15 +807,14 @@ func setRuntimeRedisDefaults(p *runtimeLifecycleParams) {
 
 // startRuntimePluginRunner starts the native plugin runtime with the production host.
 func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, pluginState *pluginloader.State) (*pluginruntime.Runner, error) {
+	host, err := newRuntimePluginHost(p.Ctx, p.Store.logger, cfg, p.Store.redisClient, priorityqueue.LDAPQueue)
+	if err != nil {
+		return nil, err
+	}
+
 	pluginRunner := pluginruntime.NewRunner(
 		pluginState,
-		pluginruntime.WithHost(newRuntimePluginHost(
-			p.Ctx,
-			p.Store.logger,
-			cfg,
-			p.Store.redisClient,
-			priorityqueue.LDAPQueue,
-		)),
+		pluginruntime.WithHost(host),
 		pluginruntime.WithObserver(pluginruntime.NewOperationalObserver(
 			p.Store.logger,
 			pluginruntime.WithOperationalObserverDebugConfig(cfg, pluginState.Registry()),
@@ -983,13 +982,19 @@ func newRuntimePluginHost(
 	cfg config.File,
 	redisClient rediscli.Client,
 	ldapQueue pluginruntime.LDAPQueue,
-) *pluginruntime.Host {
+) (*pluginruntime.Host, error) {
+	tagger, err := pluginruntime.OpaqueIdentifierTaggerFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	redisPrefix := ""
 	if cfg != nil {
 		redisPrefix = cfg.GetServer().GetRedis().GetPrefix()
 	}
 
 	options := []pluginruntime.HostOption{
+		pluginruntime.WithOpaqueIdentifierTagger(tagger),
 		pluginruntime.WithServiceContext(ctx),
 		pluginruntime.WithLogger(logger),
 		pluginruntime.WithConfig(runtimePluginConfigView(cfg)),
@@ -1011,7 +1016,7 @@ func newRuntimePluginHost(
 		)))
 	}
 
-	return pluginruntime.NewHost(options...)
+	return pluginruntime.NewHost(options...), nil
 }
 
 // runtimePluginConfigView converts the loaded config snapshot into a read-only plugin API view.

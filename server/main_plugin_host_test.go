@@ -38,13 +38,17 @@ func TestRuntimePluginHostProvidesProductionFacades(t *testing.T) {
 	queue := priorityqueue.NewLDAPRequestQueue(logger)
 
 	cfg := loadRuntimePluginHostConfig(t)
-	host := newRuntimePluginHost(
+	host, err := newRuntimePluginHost(
 		context.Background(),
 		logger,
 		cfg,
 		redisClient,
 		queue,
 	)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if host.Redis() == nil {
 		t.Fatal("Redis facade is nil")

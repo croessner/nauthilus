@@ -49,7 +49,8 @@ msan:
 	go test -msan -short $(GO_PACKAGES)
 
 build: vet $(OUTPUT)
-	go build -mod=vendor -trimpath -v -ldflags "-X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT) $(CONFIG_EXPANSION_LDFLAGS)" -o $(OUTPUT) ./server
+	NATIVE_ARTIFACT_LDFLAGS="$$(go run -mod=vendor ./scripts/native_artifact_fingerprint)" && \
+	go build -mod=vendor -trimpath -v -ldflags "$$NATIVE_ARTIFACT_LDFLAGS -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') -X main.version=$(GIT_TAG)-$(GIT_COMMIT) $(CONFIG_EXPANSION_LDFLAGS)" -o $(OUTPUT) ./server
 
 build-client: $(CLIENT_OUTPUT)
 	go build -mod=vendor -trimpath -v -o $(CLIENT_OUTPUT) ./client

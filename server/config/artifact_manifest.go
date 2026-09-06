@@ -380,7 +380,7 @@ func artifactRequiredPluginPaths(plugins *PluginsSection) []string {
 		return nil
 	}
 
-	paths := make([]string, 0, len(plugins.Trust.Signers)+(2*len(plugins.Modules)))
+	paths := plugins.OpaqueIdentifierTagger.SecretFiles()
 	for _, signer := range plugins.Trust.Signers {
 		paths = append(paths, signer.PublicKeyFile)
 	}

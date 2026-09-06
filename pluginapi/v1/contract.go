@@ -33,10 +33,11 @@ type Feature string
 
 // BuildInfo describes diagnostic build metadata for a plugin artifact.
 type BuildInfo struct {
-	BuildTags []string
-	GoVersion string
-	GitCommit string
-	BuildTime string
+	ArtifactIdentity string
+	BuildTags        []string
+	GoVersion        string
+	GitCommit        string
+	BuildTime        string
 }
 
 // Metadata describes the plugin product before instance registration.
@@ -122,6 +123,7 @@ type Host interface {
 	BackendServers() BackendServers
 	Redis() Redis
 	Cache(scope string) (Cache, error)
+	OpaqueIdentifierTagger() (OpaqueIdentifierTagger, error)
 	Helpers() DeterministicHelpers
 	LDAP() LDAP
 	Config() ConfigView

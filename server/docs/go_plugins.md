@@ -14,7 +14,9 @@ Build plugins as a `main` package with `-buildmode=plugin` and the same Go toolc
 shared dependency versions used by the Nauthilus binary:
 
 ```sh
-GOEXPERIMENT=runtimesecret go build -buildmode=plugin -o build/geoip.so ./contrib/plugins/geoip
+GOEXPERIMENT=runtimesecret make build
+make -C contrib/plugins/geoip build
+sh scripts/check-native-artifact-bundle.sh
 ```
 
 The plugin must export this factory:
@@ -25,6 +27,23 @@ func NauthilusPlugin() (pluginapi.Plugin, error)
 
 Nauthilus calls the factory once for each configured module instance, then validates `Metadata().APIVersion` against the
 host-supported `pluginapi/v1` value.
+
+The Makefiles and container builds embed a shared fingerprint of compiler settings, source files,
+dependency locks, and Go-embedded resources. Unmarked host/plugin builds cannot pass native preflight.
+A plugin with a different or mixed build identity is rejected before `plugin.Open`; Go subsequently
+checks its own package ABI hashes. Detached signatures authenticate artifact provenance separately,
+and configured SHA-256 checksums still bind exact bytes. Keep `signature_required` for production.
+The disposable bundle check builds a probe plus sample, GeoIP, and DKIM2 fixtures without publishing
+or starting plugin services.
+
+Build the server and every plugin from one unchanged source snapshot with the same toolchain and tags.
+The fingerprint includes the target OS and architecture, C/C++ compiler commands, and CGO flags.
+Container builds set the target environment before calculating the identity. The identity is a build
+coherence check and supplements Go's own ABI checks; it does not attest external compiler binaries.
+Sign the resulting plugins and record checksums only after the build. Publish server, plugins,
+signatures, and configuration as one immutable bundle; restart the process to activate it. Retain the
+previous complete bundle and configuration for rollback. Never mix old plugin files into a new image
+or attempt to replace Go code through SIGHUP/SIGUSR1.
 
 ## Configuration
 
@@ -707,3 +726,33 @@ Migration notes:
   HIBP HTTP lookup, after the positive Redis count is written. The native plugin deliberately does not run the Lua
   `nauthilus_send_mail_hash` script because that script returns `send_email` while `haveibeenpwnd.lua` checks
   `send_mail`; native duplicate suppression uses a direct Redis `HSETNX` on the `send_mail` hash field instead.
+
+
+## Host-owned opaque identifier keys
+
+Configure the required service outside module-owned YAML. Each generic scope has an active key and,
+only during rotation, an explicit previous key. Files contain exactly 32 raw random bytes; inline key
+material, empty files, and invalid references fail configuration validation. No generated defaults exist.
+
+```yaml
+plugins:
+  opaque_identifier_tagger:
+    scopes:
+      - scope: workflow
+        active:
+          version: current
+          secret_ref:
+            file: /run/secrets/workflow-current
+        previous:
+          version: previous
+          secret_ref:
+            file: /run/secrets/workflow-previous
+```
+
+Use separate scopes and key files for independently managed identifier purposes. Configuration dumps
+contain references rather than key bytes. Keys are captured in the sealed artifact snapshot, and
+same-path key replacement also requires restart. New writes use the active key only; consumers must
+explicitly request previous-version candidates. During rotation, retain both keys until all consumer
+retention and replay windows have elapsed and any operator overrides have been migrated and verified.
+Rollback must retain the complete matching key references and bundle; removing a still-needed previous
+key can make existing state unavailable.
