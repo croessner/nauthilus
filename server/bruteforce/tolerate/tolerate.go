@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -199,6 +200,7 @@ func (t *tolerateImpl) effectiveRedis() rediscli.Client {
 	return t.deps.redis
 }
 
+// SetCustomTolerations replaces the list with a manager-owned copy.
 func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 	// Trace configuration update (service-scoped)
 	tr := monittrace.New("nauthilus/tolerate")
@@ -224,9 +226,10 @@ func (t *tolerateImpl) SetCustomTolerations(tolerations []config.Tolerate) {
 
 	defer t.mu.Unlock()
 
-	t.customTolerates = tolerations
+	t.customTolerates = slices.Clone(tolerations)
 }
 
+// SetCustomToleration atomically inserts or replaces one address-specific tolerance.
 func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8, tolerateTTL time.Duration) {
 	tr := monittrace.New("nauthilus/tolerate")
 	ctx, sp := tr.Start(svcctx.Get(), "tolerate.set_one",
@@ -251,30 +254,19 @@ func (t *tolerateImpl) SetCustomToleration(ipAddress string, pctTolerated uint8,
 		TolerateTTL:     tolerateTTL,
 	}
 
-	newTolerations := make([]config.Tolerate, 0)
+	defer t.mu.Unlock()
 
-	if len(t.customTolerates) == 0 {
-		newTolerations = append(newTolerations, toleration)
-	}
-
-	for index, currentToleration := range t.customTolerates {
-		if currentToleration.IPAddress != toleration.IPAddress {
-			newTolerations = append(newTolerations, currentToleration)
-
-			continue
+	for index := range t.customTolerates {
+		if t.customTolerates[index].IPAddress == ipAddress {
+			t.customTolerates[index] = toleration
+			return
 		}
-
-		newTolerations = append(newTolerations, toleration)
-		newTolerations = append(newTolerations, t.customTolerates[index+1:]...)
-
-		break
 	}
 
-	t.mu.Unlock()
-
-	t.SetCustomTolerations(newTolerations)
+	t.customTolerates = append(t.customTolerates, toleration)
 }
 
+// DeleteCustomToleration removes one address without racing concurrent updates.
 func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
 	tr := monittrace.New("nauthilus/tolerate")
 	ctx, sp := tr.Start(svcctx.Get(), "tolerate.delete",
@@ -301,17 +293,17 @@ func (t *tolerateImpl) DeleteCustomToleration(ipAddress string) {
 		}
 	}
 
+	t.customTolerates = newTolerations
 	t.mu.Unlock()
-
-	t.SetCustomTolerations(newTolerations)
 }
 
+// GetCustomTolerations returns an independent snapshot safe to read after releasing the lock.
 func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
 	t.mu.Lock()
 
 	defer t.mu.Unlock()
 
-	return t.customTolerates
+	return slices.Clone(t.customTolerates)
 }
 
 func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, username string, authenticated bool) {
@@ -806,11 +798,11 @@ func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
 	return network.Contains(cmpAddress)
 }
 
-// NewTolerateWithDeps provides the exported NewTolerateWithDeps function.
+// NewTolerateWithDeps constructs a manager with its own mutable tolerance snapshot.
 func NewTolerateWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client, pctTolerated uint8) Tolerate {
 	t := &tolerateImpl{
 		pctTolerated:    pctTolerated,
-		customTolerates: cfg.GetBruteForce().GetCustomTolerations(),
+		customTolerates: slices.Clone(cfg.GetBruteForce().GetCustomTolerations()),
 		mu:              sync.Mutex{},
 		deps: tolerateDeps{
 			cfg:    cfg,

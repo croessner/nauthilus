@@ -128,7 +128,7 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	defer func() {
-		a.recordPolicyBruteForce(ctx, blockClientIP)
+		a.recordPolicyBruteForce(ctx, blockClientIP && !a.Runtime.BruteForceError)
 	}()
 
 	bfCfg := cfg.GetBruteForce()
@@ -167,6 +167,10 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 
 	bm := a.newBruteForceBucketManager(ctx)
 	a.cacheBruteForceRWPDecision(ctx, bm)
+
+	if a.Runtime.BruteForceError {
+		return true
+	}
 
 	triggered, ruleTriggered := a.runBruteForceRuleCheck(ctx, tr, bm, rules)
 
@@ -223,7 +227,8 @@ func (a *AuthState) runBruteForceRuleCheck(
 ) (bool, bool) {
 	eval, abort := a.evaluateBruteForceRules(ctx, tr, bm, rules)
 	if abort {
-		return false, false
+		a.Runtime.BruteForceError = true
+		return true, false
 	}
 
 	if !eval.alreadyTriggered && !eval.ruleTriggered {
@@ -235,6 +240,10 @@ func (a *AuthState) runBruteForceRuleCheck(
 	triggered := bm.ProcessBruteForce(eval.ruleTriggered, eval.alreadyTriggered, &eval.rules[eval.ruleNumber], eval.network, eval.message, func() {
 		a.applyTriggeredBruteForceRuntime(bm)
 	})
+	if bm.GetBruteForceError() != nil {
+		a.Runtime.BruteForceError = true
+		return true, eval.ruleTriggered
+	}
 	a.storeBruteForceRuntimeHints(ctx, eval)
 
 	if triggered || eval.alreadyTriggered {
@@ -356,19 +365,7 @@ func (a *AuthState) markBruteForceWhitelist(value string) {
 
 // newBruteForceBucketManager builds the bucket manager with request identity attributes.
 func (a *AuthState) newBruteForceBucketManager(ctx *gin.Context) bruteforce.BucketManager {
-	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
-		Cfg:    a.Cfg(),
-		Logger: a.Logger(),
-		Redis:  a.Redis(),
-	})
-
-	if a.Request.Protocol != nil && a.Request.Protocol.Get() != "" {
-		bm = bm.WithProtocol(a.Request.Protocol.Get())
-	}
-
-	if a.Request.OIDCCID != "" {
-		bm = bm.WithOIDCCID(a.Request.OIDCCID)
-	}
+	bm := a.newBruteForceRequestBucketManager(ctx)
 
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 
@@ -380,6 +377,8 @@ func (a *AuthState) cacheBruteForceRWPDecision(ctx *gin.Context, bm bruteforce.B
 	if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err == nil {
 		ctx.Set(definitions.CtxRWPResultKey, needEnforce)
 		a.Runtime.BFRWP = !needEnforce
+	} else {
+		a.Runtime.BruteForceError = true
 	}
 }
 
@@ -591,16 +590,16 @@ func bruteForceBucketFactsRepeat(facts []bruteforce.BucketPolicyFact) bool {
 // commitRWPIfAllowed commits the RWP sliding window write unless an environment control rejected the request
 // without learning being active for that environment control. In that case, the password was never verified,
 // so recording it in the RWP window would be incorrect.
-func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager, learningSource string) {
+func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager, learningSource string) (bool, error) {
 	if ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
 		bfCfg := a.cfg().GetBruteForce()
 
 		if !bruteForceLearningEnabled(bfCfg, learningSource, a.Runtime.EnvironmentName) {
-			return
+			return false, nil
 		}
 	}
 
-	bm.CommitRWPSlidingWindow()
+	return bm.CommitRWPSlidingWindow()
 }
 
 // bruteForceLearningEnabled checks the configured feature and concrete environment aliases.
@@ -666,13 +665,17 @@ func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSou
 	matchedPeriod := a.matchedBruteForceUpdatePeriod(uspan)
 	bm := a.newBruteForceUpdateBucketManager(ctx)
 
-	bm, enforceBuckets := a.shouldEnforceBruteForceBucketUpdate(ctx, bm)
+	// The commit classifies the confirmed failure atomically; precheck hints are not authoritative.
+	repeated, err := a.commitRWPIfAllowed(ctx, bm, learningSource)
+	if err != nil {
+		a.Runtime.BruteForceError = true
+	}
 
-	// Commit the RWP sliding window write only if the rejection is genuine
-	// (not caused by an environment control like RBL that never verified the password).
-	a.commitRWPIfAllowed(ctx, bm, learningSource)
+	a.Runtime.BFRWP = repeated && err == nil
+	ctx.Set(definitions.CtxRWPResultKey, !a.Runtime.BFRWP)
 
-	if !enforceBuckets {
+	if a.Runtime.BFRWP {
+		a.activateRWPAllowance(bm)
 		return
 	}
 
@@ -706,26 +709,22 @@ func (a *AuthState) matchedBruteForceUpdatePeriod(span trace.Span) time.Duration
 	return matchedPeriod
 }
 
-// newBruteForceUpdateBucketManager builds the bucket manager used for failed-login updates.
-func (a *AuthState) newBruteForceUpdateBucketManager(ctx *gin.Context) bruteforce.BucketManager {
-	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
-		Cfg:      a.Cfg(),
-		Logger:   a.Logger(),
-		Redis:    a.Redis(),
-		Tolerate: a.deps.Tolerate,
-	})
-
-	if a.Request.Protocol != nil && a.Request.Protocol.Get() != "" {
+// newBruteForceRequestBucketManager shares request context and dependencies between reads and writes.
+func (a *AuthState) newBruteForceRequestBucketManager(ctx *gin.Context) bruteforce.BucketManager {
+	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{Cfg: a.Cfg(), Logger: a.Logger(), Redis: a.Redis(), Tolerate: a.deps.Tolerate})
+	if a.Request.Protocol != nil {
 		bm = bm.WithProtocol(a.Request.Protocol.Get())
 	}
-
 	if a.Request.OIDCCID != "" {
 		bm = bm.WithOIDCCID(a.Request.OIDCCID)
 	}
 
-	return bm.WithUsername(a.Request.Username).
-		WithPassword(a.Request.Password).
-		WithAccountName(a.bruteForceUpdateAccountName(ctx))
+	return bm.WithUsername(a.Request.Username).WithPassword(a.Request.Password)
+}
+
+// newBruteForceUpdateBucketManager resolves the post-authentication account for failed-result accounting.
+func (a *AuthState) newBruteForceUpdateBucketManager(ctx *gin.Context) bruteforce.BucketManager {
+	return a.newBruteForceRequestBucketManager(ctx).WithAccountName(a.bruteForceUpdateAccountName(ctx))
 }
 
 // bruteForceUpdateAccountName resolves account name without Redis when local state already knows it.
@@ -740,45 +739,6 @@ func (a *AuthState) bruteForceUpdateAccountName(ctx *gin.Context) string {
 	}
 
 	return backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
-}
-
-// shouldEnforceBruteForceBucketUpdate decides whether to increase bucket counters.
-func (a *AuthState) shouldEnforceBruteForceBucketUpdate(ctx *gin.Context, bm bruteforce.BucketManager) (bruteforce.BucketManager, bool) {
-	if cached, exists := ctx.Get(definitions.CtxRWPResultKey); exists {
-		if enforce, ok := cached.(bool); ok {
-			bm = bm.WithRWPDecision(enforce)
-
-			return bm, a.handleCachedRWPEnforcement(bm, enforce)
-		}
-
-		return bm, true
-	}
-
-	needEnforce, err := bm.ShouldEnforceBucketUpdate()
-	if err != nil {
-		return bm, false
-	}
-
-	if !needEnforce {
-		bm = bm.WithRWPDecision(false)
-
-		ctx.Set(definitions.CtxRWPResultKey, false)
-
-		return bm, a.activateRWPAllowance(bm)
-	}
-
-	ctx.Set(definitions.CtxRWPResultKey, true)
-
-	return bm, true
-}
-
-// handleCachedRWPEnforcement applies the cached repeating-wrong-password decision.
-func (a *AuthState) handleCachedRWPEnforcement(bm bruteforce.BucketManager, enforce bool) bool {
-	if enforce {
-		return true
-	}
-
-	return a.activateRWPAllowance(bm)
 }
 
 // activateRWPAllowance records a confirmed failed request that must not increase brute-force buckets.

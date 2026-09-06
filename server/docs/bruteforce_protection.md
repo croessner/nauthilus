@@ -91,19 +91,10 @@ flowchart TD
     U_PROTO -- Yes --> U_WL{IP Whitelisted?}
     U_WL -- Yes --> U_DONE
     U_WL -- No --> U_BM[Create BucketManager]
-    U_BM --> U_CTX{RWP Result in Context?}
-
-subgraph RWP_Decision [RWP Enforcement Decision]
-U_CTX -- Yes --> U_CTX_VAL{Enforce?}
-U_CTX_VAL -- No / RWP --> U_SKIP[Commit RWP hash and process PW_HIST — do NOT increase buckets]
-U_CTX_VAL -- Yes --> U_UPDATE
-U_CTX -- No --> U_FRESH[Fallback: ShouldEnforceBucketUpdate]
-U_FRESH --> U_FRESH_VAL{Enforce?}
-U_FRESH_VAL -- No / RWP --> U_CACHE_FALSE[Store result in Context]
-U_CACHE_FALSE --> U_SKIP
-U_FRESH_VAL -- Yes --> U_CACHE_TRUE[Store result in Context]
-U_CACHE_TRUE --> U_UPDATE
-end
+    U_BM --> U_COMMIT[Atomically classify and commit failed hash]
+    U_COMMIT --> U_REPEAT{Previously recorded repeat?}
+    U_REPEAT -- Yes --> U_SKIP[Process password history without bucket increment]
+    U_REPEAT -- No or storage error --> U_UPDATE
 
 U_UPDATE[Loop: Save Bucket Counters]
 U_UPDATE --> U_RULE_LOOP
@@ -112,10 +103,7 @@ subgraph Bucket_Update [Per-Rule Counter Update]
 U_RULE_LOOP[For each matching rule] --> U_PERIOD{Period >= matched?}
 U_PERIOD -- Yes --> U_SAVE[SaveBruteForceBucketCounterToRedis]
 U_PERIOD -- No --> U_NEXT[Next Rule]
-U_SAVE --> U_FLOOR{Bucket < RWP Floor?}
-U_FLOOR -- Yes --> U_CATCHUP[Catch-up: raise to floor − 1 first]
-U_CATCHUP --> U_INC[Normal +1 increment]
-U_FLOOR -- No --> U_INC
+U_SAVE --> U_INC[Normal +1 increment]
 U_INC --> U_NEXT
 end
 
@@ -160,7 +148,7 @@ through normal brute-force enforcement.
 
 * **Data Structure:** Redis Sorted Set `bf:rwp:allow:<scoped_ip>:<account>`.
 * **Configuration:**
-    * `brute_force.rwp_allowed_unique_hashes`: The number of distinct wrong password hashes tolerated within the
+    * `brute_force.rwp_allowed_unique_hashes`: The maximum number of remembered wrong password hashes within the
       window (default: 3).
     * `brute_force.rwp_window`: The sliding window duration (default: 15 minutes).
 * **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (read-only) and `RWPSlidingWindowCommit` (write).
@@ -169,17 +157,14 @@ through normal brute-force enforcement.
   authentication failure, `UpdateBruteForceBucketsCounter` logs the active allowance and commits the hash even when
   bucket increments are skipped. Environment-control rejections (e.g., RBL), where the password was never verified,
   do not commit unless `bruteforce.learning` explicitly includes the triggering control.
-  The scripts allow a certain number of unique failed password hashes within a sliding window. If a hash is repeated,
-  its timestamp is updated on commit, keeping it "fresh" and avoiding eviction. If the number of unique hashes in
-  the window exceeds the threshold, the request is no longer "allowed" under RWP grace and must undergo full
-  brute-force enforcement.
-* **RWP Catch-Up Floor:** When RWP protection ends and enforcement begins, the bucket counters are typically still at
-  value 1 (from the very first request before RWP kicked in). To compensate, the `SlidingWindowCounter` Lua script
-  accepts an optional `rwp_floor` parameter (ARGV[11]). If the current counter is below this floor, it is raised to
-  `floor − 1` before the normal `+1` increment, so the bucket lands exactly at the RWP threshold. This ensures that
-  `FailedRequests` reflects the true total number of failed attempts, not just those after RWP grace expired. The
-  floor check is self-healing: once the counter reaches the floor, the condition `counter < floor` is false and the
-  catch-up never fires again.
+  Only a hash already recorded for this account and scoped IP qualifies as a repeat. Every newly encountered
+  failed password increments the matching aggregate buckets, including the first failure for a known account.
+  The commit atomically classifies the hash against current Redis state, then records it. A pre-authentication
+  observation cannot exempt a distinct failure after another request changes that state. Repeated hashes refresh
+  their timestamps; the configured hash count bounds retained history, not free password guesses.
+  The former catch-up floor is disabled because distinct failures are counted from their first occurrence.
+* **Unavailable protection:** Redis failures during the pre-authentication check produce a temporary authentication
+  failure and the policy error fact. An unavailable repeat check never grants an allowance.
 
 ## 4. Sequence Diagram
 
@@ -217,8 +202,8 @@ sequenceDiagram
     BM-->>C: Blocked
     Note over C, R: Post-Auth update (on auth failure)
     C ->> BM: UpdateBruteForceBucketsCounter()
-    BM ->> Ctx: Get(CtxRWPResultKey)
-    Ctx -->> BM: true (enforce)
+    BM ->> R: EVAL (RWPSlidingWindowCommit)
+    R -->> BM: distinct failure (enforce)
     BM ->> R: EVAL (SlidingWindowCounter, increment=1)
     R -->> BM: OK
 ```
@@ -292,3 +277,9 @@ brute_force:
   up most `bf:*` keys associated with their IPs via `prepareRedisUserKeys` in `server/core/rest.go`.
 * **Affected Accounts:** The `affected_accounts` SET intentionally has no TTL. It preserves the signal path for
   accounts that were targeted by brute-force attacks. Clean up only via the Flush API or administrative intervention.
+
+## Redis time precision
+
+Bucket periods use whole seconds, rounded to the nearest second with a minimum of one second. Bucket keys,
+window weighting and retention use this same effective period. Counter storage lasts for two effective windows,
+including positive subsecond configuration values. RWP windows round retention up to whole seconds.
