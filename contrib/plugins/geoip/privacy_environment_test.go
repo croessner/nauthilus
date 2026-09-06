@@ -41,7 +41,7 @@ func TestPrivacyDecisionOutputContract(t *testing.T) {
 		factIsSharedEgress:           pluginapi.DecisionValueKindBoolean,
 	}
 
-	outputs := (geoIPDecisionFactProvider{}).Descriptor().Outputs
+	outputs := (testDecisionProvider(t, nil)).Descriptor().Outputs
 	for name, kind := range want {
 		output, found := findDecisionOutput(outputs, name)
 		if !found {
@@ -56,7 +56,8 @@ func TestPrivacyDecisionOutputContract(t *testing.T) {
 
 func TestGenericProviderRejectsEnvironmentOnlyPublicLogConfig(t *testing.T) {
 	_, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
-		"database_path": testDatabasePath(t, "geoip.json"),
+		"decision_bindings": testDecisionBindings(),
+		"database_path":     testDatabasePath(t, "geoip.json"),
 		"privacy_intelligence": map[string]any{
 			"public_log_fields": true,
 		},

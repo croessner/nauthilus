@@ -49,6 +49,11 @@ func TestDecisionProviderRegistrationStagesAndOwnsDescriptors(t *testing.T) {
 	registry := NewRegistry()
 	registrar := registry.NewRegistrar(config.PluginModule{Name: testRegistryModuleGeoIP})
 	descriptor := validNativeFactProviderDescriptor()
+	descriptor.Inputs = []pluginapi.DecisionFactInputDescriptor{{
+		ID: "resource.peers", Category: pluginapi.DecisionFactCategoryResource,
+		Kind:   pluginapi.DecisionValueKindRecords,
+		Fields: []pluginapi.DecisionFactInputFieldDescriptor{{Name: "ip", Kind: pluginapi.DecisionValueKindString}},
+	}}
 	provider := &fakeDecisionFactProvider{descriptor: descriptor}
 
 	if err := registrar.RegisterDecisionFactProvider(provider); err != nil {
@@ -66,6 +71,7 @@ func TestDecisionProviderRegistrationStagesAndOwnsDescriptors(t *testing.T) {
 	descriptor.Outputs[1].MaxLength = 0
 	descriptor.Outputs[1].MaxItems = 0
 	descriptor.Outputs[2].MaxBytes = 1
+	descriptor.Inputs[0].Fields[0].Name = "changed"
 	provider.descriptor = descriptor
 
 	staged := registrar.Components()
@@ -74,6 +80,10 @@ func TestDecisionProviderRegistrationStagesAndOwnsDescriptors(t *testing.T) {
 	}
 
 	assertOwnedDecisionFactDescriptor(t, staged[0].DecisionFactProviderDescriptor)
+
+	if staged[0].DecisionFactProviderDescriptor.Inputs[0].Fields[0].Name != "ip" {
+		t.Fatal("registration retained mutable input fields")
+	}
 
 	if err := registrar.Commit(); err != nil {
 		t.Fatalf("Commit() error = %v", err)
@@ -86,8 +96,13 @@ func TestDecisionProviderRegistrationStagesAndOwnsDescriptors(t *testing.T) {
 
 	committed[0].DecisionFactProviderDescriptor.Targets[0].Action = "mutated"
 	committed[0].DecisionFactProviderDescriptor.Outputs[0].Name = "mutated"
+	committed[0].DecisionFactProviderDescriptor.Inputs[0].Fields[0].Name = "mutated"
 
 	assertOwnedDecisionFactDescriptor(t, registry.DecisionFactProviders()[0].DecisionFactProviderDescriptor)
+
+	if registry.DecisionFactProviders()[0].DecisionFactProviderDescriptor.Inputs[0].Fields[0].Name != "ip" {
+		t.Fatal("registry exposed mutable input fields")
+	}
 }
 
 func TestDecisionProviderRegistrationRejectsDuplicateIdentity(t *testing.T) {

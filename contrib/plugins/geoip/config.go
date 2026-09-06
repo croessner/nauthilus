@@ -40,6 +40,8 @@ const (
 )
 
 type moduleConfig struct {
+	Freshness         databaseFreshness `mapstructure:"-"`
+	DecisionBindings  []decisionBinding `mapstructure:"-"`
 	Privacy           privacyConfig     `mapstructure:"-"`
 	ASNRegistry       asnRegistryConfig `mapstructure:"-"`
 	ASNLookup         asnLookupConfig   `mapstructure:"-"`
@@ -66,6 +68,8 @@ type asnRegistryConfig struct {
 }
 
 type rawModuleConfig struct {
+	Freshness         rawDatabaseFreshness `mapstructure:"freshness"`
+	DecisionBindings  []rawDecisionBinding `mapstructure:"decision_bindings"`
 	Privacy           rawPrivacyConfig     `mapstructure:"privacy_intelligence"`
 	ASNRegistry       rawASNRegistryConfig `mapstructure:"asn_registry"`
 	ASNLookup         rawASNLookupConfig   `mapstructure:"asn_lookup"`
@@ -145,7 +149,19 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	freshness, err := compileDatabaseFreshness(raw.Freshness)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
+	bindings, err := compileDecisionBindings(raw.DecisionBindings)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
 	return moduleConfig{
+		Freshness:         freshness,
+		DecisionBindings:  bindings,
 		Privacy:           privacy,
 		ASNRegistry:       asnRegistry,
 		ASNLookup:         asnLookup,

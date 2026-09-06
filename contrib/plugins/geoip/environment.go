@@ -113,12 +113,12 @@ func (s geoIPLookupService) evaluateClientIP(
 
 	start := time.Now()
 
-	addr, err := netip.ParseAddr(clientIP)
+	addr, err := parseGeoIPAddress(clientIP)
 	if err != nil {
 		return s.invalidClientIPResult(spanCtx, config, start), nil
 	}
 
-	result, record, lookupResult, err := s.lookupGeoIPResult(spanCtx, span, addr, start)
+	result, record, lookupResult, err := s.lookupGeoIPResult(spanCtx, span, addr, start, config.Freshness)
 	if err != nil {
 		return geoIPLookupResult{}, err
 	}
@@ -145,6 +145,20 @@ func (s geoIPLookupService) evaluateClientIP(
 	return result, nil
 }
 
+// parseGeoIPAddress canonicalizes an unscoped network address for local geographic lookup.
+func parseGeoIPAddress(value string) (netip.Addr, error) {
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+
+	if address.Zone() != "" {
+		return netip.Addr{}, fmt.Errorf("geoip address must not contain a zone")
+	}
+
+	return address.Unmap(), nil
+}
+
 // invalidClientIPResult records one invalid request and preserves the configured privacy fact vocabulary.
 func (s geoIPLookupService) invalidClientIPResult(
 	ctx context.Context,
@@ -167,6 +181,7 @@ func (s geoIPLookupService) lookupGeoIPResult(
 	span pluginapi.Span,
 	addr netip.Addr,
 	start time.Time,
+	limits databaseFreshness,
 ) (geoIPLookupResult, geoRecord, string, error) {
 	record, matched, err := s.plugin.lookupRecord(ctx, addr)
 	if err != nil {
@@ -177,7 +192,8 @@ func (s geoIPLookupService) lookupGeoIPResult(
 	}
 
 	if !matched {
-		return missResult(), record, resultMiss, nil
+		result, record := geoIPFreshnessResult(missResult(), record, addr, false, limits, time.Now())
+		return result, record, resultMiss, nil
 	}
 
 	span.SetAttributes(
@@ -185,7 +201,9 @@ func (s geoIPLookupService) lookupGeoIPResult(
 		pluginapi.TraceAttribute{Key: "geoip.country_iso", Value: record.CountryISO},
 	)
 
-	return matchResult(record), record, resultMatched, nil
+	result, record := geoIPFreshnessResult(matchResult(record), record, addr, true, limits, time.Now())
+
+	return result, record, resultMatched, nil
 }
 
 // lookupPrivacy evaluates the immutable privacy index within its tighter request deadline.

@@ -59,7 +59,7 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return errConfiguration
 	}
 
-	if err := decisionRegistrar.RegisterDecisionFactProvider(observationProvider{plugin: p}); err != nil {
+	if err := decisionRegistrar.RegisterDecisionFactProvider(observationProvider{plugin: p, config: cfg}); err != nil {
 		return err
 	}
 

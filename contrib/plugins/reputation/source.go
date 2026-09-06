@@ -30,6 +30,8 @@ type sourceConfig struct {
 	MaximumLateness   string              `mapstructure:"maximum_lateness"`
 	FutureClockSkew   string              `mapstructure:"future_clock_skew"`
 	ASNProvider       string              `mapstructure:"asn_provider"`
+	ASNFact           string              `mapstructure:"asn_fact"`
+	ASNMaxAge         string              `mapstructure:"asn_max_age"`
 	MaximumSubjects   int                 `mapstructure:"maximum_subjects"`
 	RequestsPerSecond int                 `mapstructure:"requests_per_second"`
 	MaxConcurrency    int                 `mapstructure:"max_concurrency"`
@@ -37,6 +39,7 @@ type sourceConfig struct {
 }
 
 type sourcePolicy struct {
+	asnMaxAge  time.Duration
 	config     sourceConfig
 	lateness   time.Duration
 	futureSkew time.Duration
@@ -62,6 +65,7 @@ func (c *configuration) compileSources() error {
 	}
 
 	c.apiSources = make(map[string]*sourcePolicy)
+	c.asnFacts = make(map[string]string)
 	c.internalSources = make(map[executionKey]*sourcePolicy)
 	ids := make(map[string]struct{})
 
@@ -83,6 +87,15 @@ func (c *configuration) compileSources() error {
 
 		if err := c.indexSource(source); err != nil {
 			return err
+		}
+
+		if source.config.ASNFact != "" {
+			previous, exists := c.asnFacts[source.config.ASNFact]
+			if exists && previous != source.config.ASNProvider {
+				return errConfiguration
+			}
+
+			c.asnFacts[source.config.ASNFact] = source.config.ASNProvider
 		}
 	}
 
@@ -121,7 +134,15 @@ func (c *configuration) compileSource(raw sourceConfig) (*sourcePolicy, error) {
 		return nil, err
 	}
 
-	return &sourcePolicy{config: raw, lateness: late, futureSkew: skew}, nil
+	var asnMaxAge time.Duration
+	if raw.ASNProvider != "" {
+		asnMaxAge, err = durationBound(raw.ASNMaxAge, 365*24*time.Hour, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &sourcePolicy{config: raw, lateness: late, futureSkew: skew, asnMaxAge: asnMaxAge}, nil
 }
 
 // validateSourceSignals rejects undeclared signals and cross-origin or cross-class bindings.
@@ -264,13 +285,7 @@ func (c *configuration) sourceForExecution(identity pluginapi.ExecutionIdentityV
 
 // validProviderReference requires an exact namespace-qualified native provider, never a runtime-selected dependency.
 func validProviderReference(value string) bool {
-	namespace, provider, ok := strings.Cut(value, "/")
-	if !ok || !strings.HasPrefix(provider, "plugin.") {
-		return false
-	}
-
-	return pluginapi.ValidateDecisionTargetSelector(pluginapi.DecisionTargetSelector{Namespace: namespace, Action: "lookup"}) == nil &&
-		pluginapi.ValidateQualifiedComponentName(strings.TrimPrefix(provider, "plugin.")) == nil
+	return pluginapi.ValidateDecisionProviderReference(value) == nil
 }
 
 // validSourceLimits requires finite explicit producer rate and fan-out capabilities.
@@ -294,10 +309,10 @@ func validateDerivedSubjects(raw sourceConfig) error {
 	}
 
 	if directKind(raw.DerivedSubjects, kindASN) {
-		if !validProviderReference(raw.ASNProvider) {
+		if !validProviderReference(raw.ASNProvider) || !validExtractorAttribute(raw.ASNFact) || !strings.HasPrefix(raw.ASNFact, asnProviderFactPrefix(raw.ASNProvider)) || raw.ASNMaxAge == "" {
 			return errConfiguration
 		}
-	} else if raw.ASNProvider != "" {
+	} else if raw.ASNProvider != "" || raw.ASNFact != "" || raw.ASNMaxAge != "" {
 		return errConfiguration
 	}
 

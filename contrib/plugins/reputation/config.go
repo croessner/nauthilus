@@ -76,6 +76,7 @@ type profileConfig struct {
 }
 
 type configuration struct {
+	asnFacts        map[string]string
 	shadow          *configuration
 	bindings        map[pluginapi.DecisionTargetSelector]targetBindingConfig
 	raw             rawConfig

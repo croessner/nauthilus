@@ -1,5 +1,6 @@
 # Independent evidence admission example. Configure real mounted host keys and
 # a dedicated caller credential. The catalog values are calibration examples.
+# Optional exact IP/ASN enrichment is shown in reputation_geoip_observation.yml.
 # The exact synchronous storage effect is selected only after valid admission.
 plugins:
   opaque_identifier_tagger:

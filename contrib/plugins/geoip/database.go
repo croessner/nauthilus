@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/oschwald/maxminddb-golang"
 )
@@ -32,6 +32,7 @@ import (
 var errGeoDatabaseEmpty = errors.New("geoip database has no records")
 
 type geoDatabase interface {
+	SnapshotTime() time.Time
 	Lookup(context.Context, netip.Addr) (geoRecord, bool, error)
 	Records() int
 	Close() error
@@ -51,15 +52,18 @@ type geoDatabases struct {
 }
 
 type fileDatabase struct {
+	databaseSnapshot
 	records []geoRecord
 }
 
 type maxMindDatabase struct {
+	databaseSnapshot
 	reader *maxminddb.Reader
 	path   string
 }
 
 type geoRecord struct {
+	observedAt    time.Time
 	CountryISO    string
 	CountryName   string
 	CityName      string
@@ -155,7 +159,7 @@ func loadFileDatabase(ctx context.Context, path string) (*fileDatabase, error) {
 		return nil, fmt.Errorf("database_path must be absolute: %s", path)
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, observedAt, err := readGeoDatabaseSnapshot(path)
 	if err != nil {
 		return nil, fmt.Errorf("read geoip database %q: %w", path, err)
 	}
@@ -170,7 +174,7 @@ func loadFileDatabase(ctx context.Context, path string) (*fileDatabase, error) {
 		return nil, fmt.Errorf("validate geoip database %q: %w", path, err)
 	}
 
-	return &fileDatabase{records: records}, nil
+	return &fileDatabase{databaseSnapshot: databaseSnapshot{timestamp: observedAt}, records: records}, nil
 }
 
 // loadMaxMindDatabase eagerly loads a MaxMind database into process memory.
@@ -188,7 +192,7 @@ func loadMaxMindDatabaseWithFactory(ctx context.Context, path string, factory ma
 		return nil, fmt.Errorf("database_path must be absolute: %s", path)
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, observedAt, err := readGeoDatabaseSnapshot(path)
 	if err != nil {
 		return nil, fmt.Errorf("read MaxMind database %q: %w", path, err)
 	}
@@ -202,7 +206,9 @@ func loadMaxMindDatabaseWithFactory(ctx context.Context, path string, factory ma
 		return nil, fmt.Errorf("open MaxMind database %q from memory: %w", path, err)
 	}
 
-	return &maxMindDatabase{reader: reader, path: path}, nil
+	observedAt = oldestEvidenceTime(observedAt, time.Unix(int64(reader.Metadata.BuildEpoch), 0))
+
+	return &maxMindDatabase{databaseSnapshot: databaseSnapshot{timestamp: observedAt}, reader: reader, path: path}, nil
 }
 
 // FromBytes constructs a MaxMind reader over the retained in-memory database bytes.

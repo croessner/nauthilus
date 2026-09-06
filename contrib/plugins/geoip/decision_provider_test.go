@@ -52,8 +52,8 @@ func TestTopLevelPolicyExampleReferencesRegisteredDecisionFactProvider(t *testin
 		t.Fatalf("ValidateDecisionFactProviderDescriptor() error = %v", err)
 	}
 
-	if len(descriptor.Outputs) != 26 {
-		t.Fatalf("generic fact outputs = %d, want exact 26-fact contract", len(descriptor.Outputs))
+	if len(descriptor.Outputs) != 31 {
+		t.Fatalf("generic fact outputs = %d, want exact 31-fact contract", len(descriptor.Outputs))
 	}
 
 	example := readPolicyExample(t, "go_plugin_geoip.yml")
@@ -110,7 +110,7 @@ func TestDecisionFactProviderReusesRedactedGeoIPLookup(t *testing.T) {
 	runner, plugin, _, _ := startedTestRunnerWithPlugin(t, testModule(testDatabasePath(t, "geoip.json")))
 	defer stopRunner(t, runner)
 
-	provider := geoIPDecisionFactProvider{plugin: plugin}
+	provider := testDecisionProvider(t, plugin)
 
 	for _, action := range []string{"authenticate", "lookup_identity"} {
 		t.Run(action, func(t *testing.T) {
@@ -133,7 +133,7 @@ func TestDecisionFactProviderReusesRedactedGeoIPLookup(t *testing.T) {
 }
 
 func TestDecisionFactProviderRejectsMalformedAdmittedInput(t *testing.T) {
-	provider := geoIPDecisionFactProvider{plugin: NewPlugin()}
+	provider := testDecisionProvider(t, NewPlugin())
 
 	for _, test := range malformedDecisionInputCases(t) {
 		t.Run(test.name, func(t *testing.T) {
@@ -165,6 +165,7 @@ func malformedDecisionInputCases(t *testing.T) []malformedDecisionInputCase {
 
 	return []malformedDecisionInputCase{
 		{name: "missing fact", target: validTarget},
+		{name: "scoped address", target: validTarget, fact: decisionFactView(t, decisionInputClientIP, pluginapi.DecisionFactCategoryEnvironment, decisionStringValue(t, "fe80::1%lo0"))},
 		{
 			name: "wrong category", target: validTarget,
 			fact: decisionFactView(t, decisionInputClientIP, pluginapi.DecisionFactCategorySubject, validString),
@@ -218,7 +219,7 @@ func TestDecisionFactProviderRejectsOutputsOutsideDescriptorBounds(t *testing.T)
 	plugin.swapDatabases(
 		context.Background(),
 		moduleConfig{LookupTimeout: time.Second},
-		geoDatabases{primary: &fileDatabase{records: []geoRecord{{
+		geoDatabases{primary: &fileDatabase{databaseSnapshot: databaseSnapshot{timestamp: time.Now()}, records: []geoRecord{{
 			Prefix:      mustPrefix(t, "203.0.113.0/24"),
 			CountryName: oversizedText,
 		}}}},
@@ -230,7 +231,7 @@ func TestDecisionFactProviderRejectsOutputsOutsideDescriptorBounds(t *testing.T)
 		}
 	})
 
-	provider := geoIPDecisionFactProvider{plugin: plugin}
+	provider := testDecisionProvider(t, plugin)
 
 	_, err := provider.Collect(
 		context.Background(),
@@ -322,7 +323,7 @@ func newDecisionReconfigureFixture(t *testing.T) decisionReconfigureFixture {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	provider := geoIPDecisionFactProvider{plugin: plugin}
+	provider := testDecisionProvider(t, plugin)
 	request := newGeoIPDecisionFactRequest(t, "authenticate", testClientIP)
 
 	return decisionReconfigureFixture{
@@ -394,14 +395,15 @@ func TestDecisionFactProviderUsesImmutableBoundedTimeoutCapability(t *testing.T)
 	plugin.config.LookupTimeout = time.Second
 	plugin.mu.Unlock()
 
-	descriptor := (geoIPDecisionFactProvider{plugin: plugin}).Descriptor()
+	descriptor := (testDecisionProvider(t, plugin)).Descriptor()
 	if descriptor.Timeout != pluginapi.MaximumDecisionFactProviderTimeout {
 		t.Fatalf("descriptor timeout = %s, want immutable capability %s", descriptor.Timeout, pluginapi.MaximumDecisionFactProviderTimeout)
 	}
 
 	_, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
-		"database_path":  testDatabasePath(t, "geoip.json"),
-		"lookup_timeout": (pluginapi.MaximumDecisionFactProviderTimeout + time.Nanosecond).String(),
+		"decision_bindings": testDecisionBindings(),
+		"database_path":     testDatabasePath(t, "geoip.json"),
+		"lookup_timeout":    (pluginapi.MaximumDecisionFactProviderTimeout + time.Nanosecond).String(),
 	}))
 	if err == nil {
 		t.Fatal("decodeModuleConfig() error = nil, want generic capability timeout bound")

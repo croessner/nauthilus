@@ -257,3 +257,24 @@ The host-owned `learning_total` counter has only `channel` and `result` labels.
 Channels are `external` and `authentication`; results are `applied`, `duplicate`,
 `partial`, `rejected`, `unavailable` or `skipped`. No event identity, subject,
 principal, raw payload or contribution detail appears in these labels.
+
+## Exact geographic evidence
+
+Optional ASN expansion declares `asn_provider`, `asn_fact`, and `asn_max_age` in the source policy. The fact must
+belong to that provider's module. Registration freezes required IP, lookup state, age, and integer ASN record fields;
+activation rejects a missing scheduler dependency or an incompatible/hidden input. The observation and storage
+providers use only this configured output and correlate exactly one record to the canonical admitted IP. Missing,
+ambiguous, too-old, or unavailable ASN evidence makes ASN-required admission indeterminate and writes no evidence.
+A source without ASN expansion continues to admit its own subjects even when shared geographic providers run.
+
+The [GeoIP observation fragment](../../../server/docs/examples/reputation_geoip_observation.yml) supplements the base
+example by exact module/source/provider/fact/field identity. It is not a standalone server configuration and must not
+replace the base schema's caller facts or allowlist. Keep both observation-context and storage visibility on protected
+geographic outputs. The tests compose these same files and exercise actual HTTP/gRPC admission, the host scheduler,
+and primary Redis storage with a deterministic geographic test double; the real GeoIP implementation is tested
+separately against local database snapshots.
+
+Manifest matching remains byte-for-byte over the complete contribution plan. Changed ASN attribution on retry is
+`event_conflict`; absent geographic evidence is unavailable. Neither case adopts a new subject plan or creates a
+second event. An exact retry resumes the original immutable plan until expiry. No Redis manifest format or ingestion
+semantics were relaxed for geographic enrichment.

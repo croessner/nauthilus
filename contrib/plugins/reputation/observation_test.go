@@ -197,21 +197,15 @@ func (f exactASNFixture) lookupASN(_ context.Context, binding, ip string) (strin
 
 // TestObservationASNExpansionRequiresExactProviderAndAdmittedIP prevents caller-supplied ASN substitution.
 func TestObservationASNExpansionRequiresExactProviderAndAdmittedIP(t *testing.T) {
-	raw := testConfigMap(t)
-	source := raw["sources"].(map[string]any)["scan"].(map[string]any)
-	source["derived_subjects"] = map[string]any{"smtp_peer": []any{"network", "asn"}}
-	source["asn_provider"] = "reputation/plugin.geoip.peer"
-	raw["signals"].(map[string]any)["scan.clean"].(map[string]any)["subject_roles"].(map[string]any)["smtp_peer"].(map[string]any)["asn"] = 0.1
-	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
-	requireNoError(t, err)
+	cfg := testASNObservationConfig(t)
 
 	input := testObservation()
-	for _, resolver := range []asnResolver{nil, exactASNFixture{binding: "reputation/plugin.geoip.other", ip: "192.0.2.3"}, exactASNFixture{binding: "reputation/plugin.geoip.peer", ip: "192.0.2.4"}} {
+	for _, resolver := range []asnResolver{nil, exactASNFixture{binding: "reputation/plugin.geoip.other", ip: "192.0.2.3"}, exactASNFixture{binding: "reputation/plugin.geoip.observation", ip: "192.0.2.4"}} {
 		_, _, err := cfg.admitObservation(context.Background(), cfg.apiSources["ScanWriter"], input, input.observedAt, testTagger(t), resolver)
 		requireError(t, err)
 	}
 
-	admitted, reason, err := cfg.admitObservation(context.Background(), cfg.apiSources["ScanWriter"], input, input.observedAt, testTagger(t), exactASNFixture{binding: "reputation/plugin.geoip.peer", ip: "192.0.2.3"})
+	admitted, reason, err := cfg.admitObservation(context.Background(), cfg.apiSources["ScanWriter"], input, input.observedAt, testTagger(t), exactASNFixture{binding: "reputation/plugin.geoip.observation", ip: "192.0.2.3"})
 	requireNoError(t, err)
 
 	if reason != reasonValid || len(admitted.subjects) != 3 {
@@ -233,4 +227,14 @@ func TestObservationRejectsCanonicalDuplicatesAcrossRoles(t *testing.T) {
 	if reason != reasonDuplicate {
 		t.Fatal("role alias counted the same canonical identity twice")
 	}
+}
+
+// testASNObservationConfig enables exact provider-derived ASN evidence in the canonical fixture.
+func testASNObservationConfig(t *testing.T) *configuration {
+	t.Helper()
+	raw := testGeoIPReputationConfig(t)
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
+	requireNoError(t, err)
+
+	return cfg
 }

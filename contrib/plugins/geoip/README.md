@@ -1,9 +1,9 @@
 # GeoIP/ASN Reference Plugin
 
-This directory contains a native Go plugin with one request-time component owner: the target-aware generic
-`DecisionFactProvider` named `geoip.environment`. Top-level `policy` configuration binds its canonical ID
-`authn/plugin.geoip.environment`; the host qualifies its 26 outputs under `plugin.geoip.*`. The plugin does not
-register an authentication-shaped `EnvironmentSource` or another request-time adapter.
+This native plugin registers configuration-compiled `DecisionFactProvider` components. Each `decision_bindings`
+entry selects exact targets and one admitted IP input. The authentication example explicitly registers
+`authn/plugin.geoip.environment`; other namespaces use the same local lookup implementation. Scalar bindings expose
+31 bounded facts under `plugin.geoip.*`. Record bindings emit one closed correlated collection. No binding is implicit.
 
 Runtime debug output is controlled with `server.log.debug_modules`. The module-level selector `plugin.geoip` is
 registered automatically; the plugin currently does not declare additional local debug selectors.
@@ -50,6 +50,18 @@ The `build/` directory and local `.so` artifacts are ignored by Git.
 
 The plugin-owned config subtree accepts:
 
+- `decision_bindings`: required list of 1–32 immutable bindings, each with `component`, exact same-namespace `targets`,
+  `input.fact`, `input.category`, and `output_schema: geoip.facts.v1`. Component names and target/output ownership must
+  be unique. Changes require restart; reload cannot replace a captured input or target contract.
+- Record bindings use `input.records.ip_field`, optional exact string `match` predicates, optional
+  `correlation_fields`, `output_schema: geoip.records.v1`, and one `output_fact`. At most eight input records are
+  evaluated; caller network/ASN records do not match the IP selector. Correlation fields cannot overwrite geographic
+  outputs. Required input fields must be visible to the exact provider and have compatible types at activation.
+- `freshness.max_age`: source age before a matching result becomes `stale`, default `1080h` (45 days).
+- `freshness.max_stale_age`: absolute maximum usable age, default `2160h` (90 days), at most one year and at least
+  `max_age`. JSON snapshots retain the opened file's modification time. MMDB snapshots use the earlier of that time
+  and the embedded database build time. Contributing ASN routing/registry snapshots retain their own confirmation
+  times, and the oldest contributing timestamp governs the result. Reloading unchanged data does not reset its age.
 - `database_path`: absolute path to a local JSON fixture or MaxMind `.mmdb` database.
 - `database_format`: optional `auto`, `json`, or `mmdb`; `auto` is the default and selects `mmdb` for `.mmdb` paths.
 - `asn_database_path`: optional absolute path to a local JSON fixture or MaxMind ASN `.mmdb` database. When set, ASN and
@@ -196,6 +208,11 @@ policy example.
 
 ## Generic Policy facts
 
+- `plugin.geoip.lookup_state` (`fresh`, `stale`, `not_found`, or `unavailable`)
+- `plugin.geoip.data_age_seconds`
+- `plugin.geoip.data_stale`
+- `plugin.geoip.ip` (the exact canonical input IP)
+- `plugin.geoip.network` (the matching database prefix)
 - `plugin.geoip.matched`
 - `plugin.geoip.country_iso`
 - `plugin.geoip.country_name`
@@ -223,10 +240,19 @@ policy example.
 - `plugin.geoip.is_hosting_network`
 - `plugin.geoip.is_shared_egress`
 
-The generic provider accepts only the already admitted `input.auth.client_ip` fact and supports the exact targets
-`authn/authenticate` and `authn/lookup_identity`. It receives no credential, raw transport, response, or scheduling
-authority. Candidate preparation cross-checks `authn/plugin.geoip.environment` and every selected `plugin.geoip.*`
-output against this registered descriptor.
+The authentication example selects `input.auth.client_ip` for `authn/authenticate` and `authn/lookup_identity`.
+A DKIM2 current-peer binding instead selects `environment.rspamd.smtp_client_ip` for
+`dkim2/accept-message-instance`. Neither identity is embedded in lookup code. Current-peer output is never attached
+to a historical hop. The optional [observation fragment](../../../server/docs/examples/reputation_geoip_observation.yml)
+selects only IP records from admitted `resource.reputation.subjects` and retains their role alongside the canonical IP.
+
+Too-old or undated snapshots emit `unavailable` without ASN, geographic location, network, or a fabricated negative
+match. A valid database miss emits `not_found` with its known age. Database/service failures remain technical provider
+failures with no ASN. Privacy evidence retains its independent state; expired geographic records do not feed derived
+hosting classifications. All lookups use immutable local memory; network downloads remain lifecycle/background work.
+
+The provider receives no credential, raw transport, response, or scheduling authority. Candidate preparation checks
+exact input kinds, visible record fields, upstream ownership/dependencies where declared, and selected output capabilities.
 
 The generic result contract carries facts and a safe error class only. It does not expose the old plugin-owned request
 log fields or runtime delta; policy diagnostics and request logging remain host-owned surfaces.

@@ -447,6 +447,11 @@ func nativeDecisionOwner(moduleName string) string {
 
 // cloneDecisionFactProviderDescriptor detaches all mutable public fact-provider metadata.
 func cloneDecisionFactProviderDescriptor(input pluginapi.DecisionFactProviderDescriptor) pluginapi.DecisionFactProviderDescriptor {
+	input.Inputs = append([]pluginapi.DecisionFactInputDescriptor(nil), input.Inputs...)
+	for index := range input.Inputs {
+		input.Inputs[index].Fields = append([]pluginapi.DecisionFactInputFieldDescriptor(nil), input.Inputs[index].Fields...)
+	}
+
 	input.Targets = append([]pluginapi.DecisionTargetSelector(nil), input.Targets...)
 	input.Outputs = append([]pluginapi.DecisionFactOutputDescriptor(nil), input.Outputs...)
 

@@ -73,11 +73,27 @@ type DecisionFactOutputDescriptor struct {
 
 // DecisionFactProviderDescriptor declares one target-aware fact provider capability.
 type DecisionFactProviderDescriptor struct {
+	Inputs    []DecisionFactInputDescriptor
 	Targets   []DecisionTargetSelector
 	Outputs   []DecisionFactOutputDescriptor
 	Namespace string
 	Name      string
 	Timeout   time.Duration
+}
+
+// DecisionFactInputDescriptor requires one exact admitted fact and any record fields consumed by a provider.
+type DecisionFactInputDescriptor struct {
+	Fields   []DecisionFactInputFieldDescriptor
+	ID       string
+	Provider string
+	Category DecisionFactCategory
+	Kind     DecisionValueKind
+}
+
+// DecisionFactInputFieldDescriptor requires one visible, typed field of an admitted record collection.
+type DecisionFactInputFieldDescriptor struct {
+	Name string
+	Kind DecisionValueKind
 }
 
 // DecisionEffectExecution identifies one host-owned effect execution boundary.

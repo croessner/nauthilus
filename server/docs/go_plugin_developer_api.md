@@ -1633,3 +1633,12 @@ no authentication material or Policy source. Modules may use it for startup
 cross-checks, but runtime authority still comes from host-authenticated request
 views. On a module-bound Host, `host_context.module_name` is always the actual
 configured module instance; a configuration entry cannot override it.
+
+### Exact decision-provider input requirements
+
+`DecisionFactProviderDescriptor.Inputs` optionally declares exact admitted fact IDs, categories, kinds, and consumed
+record field names/kinds. For provider-produced input, `Provider` identifies its exact upstream native owner. The
+host freezes these declarations with registration, validates input schema and field visibility for every activated
+target, and requires the declared upstream producer and an explicit scheduler dependency. A hidden/wrong-kind field,
+missing fact, different owner, or missing dependency rejects the candidate before request processing. Empty input
+requirements declare no additional schema contract; they never bypass normal admission or record-field filtering.

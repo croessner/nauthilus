@@ -158,6 +158,11 @@ type FactProvider interface {
 	Collect(context.Context, FactProviderInput) ([]ProvidedFact, error)
 }
 
+// FactProviderSchemaValidator rejects candidate schemas that cannot satisfy a captured input contract.
+type FactProviderSchemaValidator interface {
+	ValidateInputTarget(CompiledTarget) error
+}
+
 // AuthnHostProvider is one immutable source that must run in the captured authn host.
 type AuthnHostProvider interface {
 	ID() string
@@ -808,6 +813,10 @@ func (s *BindingSet) ValidateCatalog(catalog *TargetCatalog) error {
 	}
 
 	for _, target := range catalog.Targets() {
+		if err := s.validateProviderInputSchemas(target); err != nil {
+			return err
+		}
+
 		if err := s.validateTargetProviders(target); err != nil {
 			return err
 		}

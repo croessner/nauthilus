@@ -43,14 +43,20 @@ func (p observationStorageProvider) Execute(ctx context.Context, request plugina
 		return failedObservationEffect(pluginapi.DecisionErrorClassUnavailable), nil
 	}
 
-	input, frozen, err := decodeObservationEffectFacts(request.Facts(), identity.Module())
+	source := state.config.sourceForCaller(request.Caller())
+
+	facts, resolver, err := state.config.splitASNProviderFacts(source, request.Facts())
+	if err != nil {
+		metric = learningUnavailable
+		return failedObservationEffect(pluginapi.DecisionErrorClassUnavailable), nil
+	}
+
+	input, frozen, err := decodeObservationEffectFacts(facts, identity.Module())
 	if err != nil {
 		return failedObservationEffect(pluginapi.DecisionErrorClassInvalidInput), nil
 	}
 	// This transport effect intentionally selects only API sources; its own host execution identity cannot impersonate an internal producer.
-	source := state.config.sourceForCaller(request.Caller())
-
-	admitted, reason, err := state.admitForPolicy(ctx, source, input, nil)
+	admitted, reason, err := state.admitForPolicy(ctx, source, input, resolver)
 	if err != nil {
 		metric = learningUnavailable
 		return failedObservationEffect(pluginapi.DecisionErrorClassUnavailable), nil

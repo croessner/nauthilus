@@ -296,6 +296,7 @@ func TestInvalidDatabaseFailsValidation(t *testing.T) {
 
 func TestDecodeModuleConfigInfersMMDBAndASNRegistryDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"decision_bindings":    testDecisionBindings(),
 		testConfigDatabasePath: testDatabasePath(t, "geoip-test.mmdb"),
 		"asn_registry": map[string]any{
 			testConfigEnabledKey: true,
@@ -320,6 +321,7 @@ func TestDecodeModuleConfigInfersMMDBAndASNRegistryDefaults(t *testing.T) {
 
 func TestDecodeModuleConfigEnablesASNLookupRoutingDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"decision_bindings":    testDecisionBindings(),
 		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
 		"asn_lookup": map[string]any{
 			testConfigEnabledKey: true,
@@ -366,7 +368,7 @@ func TestPluginSupportsMMDBConfigThroughDatabaseLoader(t *testing.T) {
 			t.Fatalf("database format = %q, want %q", config.DatabaseFormat, databaseFormatMMDB)
 		}
 
-		return &fileDatabase{records: []geoRecord{
+		return &fileDatabase{databaseSnapshot: databaseSnapshot{timestamp: time.Now()}, records: []geoRecord{
 			{
 				CountryISO:  testCountryDE,
 				CountryName: testCountryNameGermany,
@@ -496,7 +498,7 @@ func TestInternalLookupUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.T) 
 			t.Fatalf("ASN lookup sources = %#v", config.ASNLookup.SourceURLs)
 		}
 
-		return &fileDatabase{records: []geoRecord{
+		return &fileDatabase{databaseSnapshot: databaseSnapshot{timestamp: time.Now()}, records: []geoRecord{
 			{
 				CountryISO:  testCountryDE,
 				CountryName: testCountryNameGermany,
@@ -688,7 +690,7 @@ func newASNDatabaseTestPlugin(
 
 		switch config.DatabasePath {
 		case primaryDatabasePath:
-			return &fileDatabase{records: []geoRecord{
+			return &fileDatabase{databaseSnapshot: databaseSnapshot{timestamp: time.Now()}, records: []geoRecord{
 				{
 					CountryISO:  testCountryDE,
 					CountryName: testCountryNameGermany,
@@ -697,7 +699,7 @@ func newASNDatabaseTestPlugin(
 				},
 			}}, nil
 		case asnDatabasePath:
-			return &fileDatabase{records: []geoRecord{
+			return &fileDatabase{databaseSnapshot: databaseSnapshot{timestamp: time.Now()}, records: []geoRecord{
 				{
 					ASNOrg: testASNOrg,
 					Prefix: mustPrefix(t, testASNPrefix),
@@ -828,7 +830,8 @@ func (d *lifecycleTestDatabase) unblock() {
 func testModule(databasePath string) config.PluginModule {
 	return config.PluginModule{
 		Config: map[string]any{
-			"database_path": databasePath,
+			"decision_bindings": testDecisionBindings(),
+			"database_path":     databasePath,
 		},
 		Name: "geoip",
 		Type: config.PluginModuleTypeGo,
@@ -1099,3 +1102,6 @@ func (f fakeASNRouteFetcher) Fetch(_ context.Context, sourceURL string) ([]byte,
 
 	return raw, nil
 }
+
+// SnapshotTime supplies a fresh immutable source time for the synthetic lifetime fixture.
+func (d *lifecycleTestDatabase) SnapshotTime() time.Time { return time.Now() }

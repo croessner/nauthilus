@@ -18,34 +18,36 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/netip"
+	"slices"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
 const (
-	decisionInputClientIP            = "input.auth.client_ip"
 	decisionOutputMaximumStringBytes = 512
 	decisionOutputMaximumStrings     = 64
-	decisionPolicyNamespace          = "authn"
 )
 
 var _ pluginapi.DecisionFactProvider = (*geoIPDecisionFactProvider)(nil)
 
 // geoIPDecisionFactProvider exposes the redacted lookup as the sole generic Policy capability.
 type geoIPDecisionFactProvider struct {
-	plugin *Plugin
+	plugin  *Plugin
+	binding decisionBinding
 }
 
-// Descriptor declares the exact authn targets and bounded GeoIP fact vocabulary.
-func (geoIPDecisionFactProvider) Descriptor() pluginapi.DecisionFactProviderDescriptor {
-	return pluginapi.DecisionFactProviderDescriptor{
-		Targets:   geoIPDecisionTargets(),
-		Outputs:   geoIPDecisionFactOutputs(),
-		Namespace: decisionPolicyNamespace,
-		Name:      componentSource,
-		Timeout:   pluginapi.MaximumDecisionFactProviderTimeout,
+// Descriptor returns a detached copy of the exact compiled binding.
+func (p geoIPDecisionFactProvider) Descriptor() pluginapi.DecisionFactProviderDescriptor {
+	descriptor := p.binding.descriptor
+	descriptor.Targets = slices.Clone(descriptor.Targets)
+	descriptor.Outputs = slices.Clone(descriptor.Outputs)
+
+	descriptor.Inputs = slices.Clone(descriptor.Inputs)
+	for index := range descriptor.Inputs {
+		descriptor.Inputs[index].Fields = slices.Clone(descriptor.Inputs[index].Fields)
 	}
+
+	return descriptor
 }
 
 // Collect resolves the admitted client address through the shared GeoIP lookup path.
@@ -57,12 +59,16 @@ func (p geoIPDecisionFactProvider) Collect(
 		return pluginapi.DecisionFactResult{}, fmt.Errorf("geoip decision provider has no plugin")
 	}
 
-	clientIP, valid := decisionClientIP(request)
+	if p.binding.input.Records != nil {
+		return p.collectRecords(ctx, request)
+	}
+
+	clientIP, valid := p.decisionClientIP(request)
 	if !valid {
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassInvalidInput}, nil
 	}
 
-	result, err := (geoIPLookupService(p)).evaluateClientIP(ctx, clientIP)
+	result, err := (geoIPLookupService{plugin: p.plugin}).evaluateClientIP(ctx, clientIP)
 	if err != nil {
 		return pluginapi.DecisionFactResult{}, err
 	}
@@ -80,26 +86,18 @@ func (p geoIPDecisionFactProvider) Collect(
 	return pluginapi.DecisionFactResult{Facts: outputs}, nil
 }
 
-// geoIPDecisionTargets returns the exact immutable generic target allowlist.
-func geoIPDecisionTargets() []pluginapi.DecisionTargetSelector {
-	return []pluginapi.DecisionTargetSelector{
-		{Namespace: decisionPolicyNamespace, Action: "authenticate"},
-		{Namespace: decisionPolicyNamespace, Action: "lookup_identity"},
-	}
-}
-
 // decisionClientIP selects one correctly typed admitted fact for an allowed target.
-func decisionClientIP(request pluginapi.DecisionFactRequest) (string, bool) {
-	if !geoIPDecisionTargetAllowed(request.Target()) {
+func (p geoIPDecisionFactProvider) decisionClientIP(request pluginapi.DecisionFactRequest) (string, bool) {
+	if !slices.Contains(p.binding.descriptor.Targets, request.Target()) {
 		return "", false
 	}
 
 	for _, fact := range request.Facts() {
-		if fact.ID() != decisionInputClientIP {
+		if fact.ID() != p.binding.input.Fact {
 			continue
 		}
 
-		if fact.Category() != pluginapi.DecisionFactCategoryEnvironment {
+		if fact.Category() != p.binding.input.Category {
 			return "", false
 		}
 
@@ -108,25 +106,15 @@ func decisionClientIP(request pluginapi.DecisionFactRequest) (string, bool) {
 			return "", false
 		}
 
-		if _, err := netip.ParseAddr(value); err != nil {
+		address, err := parseGeoIPAddress(value)
+		if err != nil {
 			return "", false
 		}
 
-		return value, true
+		return address.String(), true
 	}
 
 	return "", false
-}
-
-// geoIPDecisionTargetAllowed reports whether the request selects one declared target.
-func geoIPDecisionTargetAllowed(target pluginapi.DecisionTargetSelector) bool {
-	for _, allowed := range geoIPDecisionTargets() {
-		if target == allowed {
-			return true
-		}
-	}
-
-	return false
 }
 
 type geoIPDecisionOutputSpec struct {
@@ -149,6 +137,11 @@ func geoIPDecisionFactOutputs() []pluginapi.DecisionFactOutputDescriptor {
 // geoIPDecisionOutputSpecifications defines each local output once for lookup and descriptor construction.
 func geoIPDecisionOutputSpecifications() []geoIPDecisionOutputSpec {
 	return []geoIPDecisionOutputSpec{
+		{name: factLookupState, kind: pluginapi.DecisionValueKindString},
+		{name: factDataAge, kind: pluginapi.DecisionValueKindInteger},
+		{name: factDataStale, kind: pluginapi.DecisionValueKindBoolean},
+		{name: factInputIP, kind: pluginapi.DecisionValueKindString},
+		{name: factNetwork, kind: pluginapi.DecisionValueKindString},
 		{name: factMatched, kind: pluginapi.DecisionValueKindBoolean},
 		{name: factCountryISO, kind: pluginapi.DecisionValueKindString},
 		{name: factCountryName, kind: pluginapi.DecisionValueKindString},

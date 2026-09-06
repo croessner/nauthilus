@@ -55,6 +55,10 @@ func ValidateDecisionFactProviderDescriptor(descriptor DecisionFactProviderDescr
 		return err
 	}
 
+	if err := validateDecisionFactInputs(descriptor.Inputs); err != nil {
+		return err
+	}
+
 	return validateDecisionFactOutputs(descriptor.Outputs)
 }
 

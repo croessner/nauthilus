@@ -115,7 +115,7 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 	}
 }
 
-// Register declares the init task, sole generic fact provider, and policy attributes.
+// Register freezes explicit generic lookup bindings and declares the database lifecycle task.
 func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	if registrar == nil {
 		return fmt.Errorf("registrar is nil")
@@ -135,8 +135,10 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return fmt.Errorf("registrar does not support the required generic decision fact provider")
 	}
 
-	if err := decisionRegistrar.RegisterDecisionFactProvider(geoIPDecisionFactProvider{plugin: p}); err != nil {
-		return err
+	for _, binding := range config.DecisionBindings {
+		if err := decisionRegistrar.RegisterDecisionFactProvider(geoIPDecisionFactProvider{plugin: p, binding: binding}); err != nil {
+			return err
+		}
 	}
 
 	if err := registrar.RegisterInitTask(geoIPInitTask{plugin: p}); err != nil {
@@ -219,6 +221,14 @@ func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.Conf
 	config, err := decodeModuleConfig(view)
 	if err != nil {
 		return moduleConfig{}, geoDatabases{}, nil, err
+	}
+
+	p.mu.RLock()
+	bindingsUnchanged := reflect.DeepEqual(config.DecisionBindings, p.config.DecisionBindings)
+	p.mu.RUnlock()
+
+	if !bindingsUnchanged {
+		return moduleConfig{}, geoDatabases{}, nil, fmt.Errorf("decision_bindings changes require restart")
 	}
 
 	databases, err := p.loadDatabases(ctx, config)
@@ -356,6 +366,8 @@ func (r *geoLookupResources) lookupRecord(ctx context.Context, addr netip.Addr) 
 	record, matched, err := traceGeoIPLookup(ctx, r.tracer, spanGeoIPPrimaryDatabaseLookup, func(spanCtx context.Context) (geoRecord, bool, error) {
 		return databases.primary.Lookup(spanCtx, addr)
 	})
+
+	record.observedAt = databases.primary.SnapshotTime()
 	if err != nil || !matched {
 		return record, matched, err
 	}
@@ -387,6 +399,7 @@ func (r *geoLookupResources) enrichASNLookup(ctx context.Context, addr netip.Add
 	}
 
 	if matched {
+		record.observedAt = oldestEvidenceTime(record.observedAt, asnRecord.observedAt)
 		mergeASNLookupRecord(record, asnRecord)
 	}
 
@@ -408,6 +421,7 @@ func (r *geoLookupResources) enrichASNDatabase(ctx context.Context, addr netip.A
 	}
 
 	if matched {
+		record.observedAt = oldestEvidenceTime(record.observedAt, database.SnapshotTime())
 		mergeASNDatabaseRecord(record, asnRecord)
 	}
 
@@ -429,6 +443,7 @@ func (r *geoLookupResources) enrichASNRegistry(ctx context.Context, record *geoR
 		return
 	}
 
+	record.observedAt = oldestEvidenceTime(record.observedAt, r.asnRegistry.loadedAt)
 	record.ASNRegistry = asnRecord.Registry
 	record.ASNCountryISO = asnRecord.CountryISO
 	record.ASNStatus = asnRecord.Status

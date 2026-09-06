@@ -109,3 +109,13 @@ func recordInputs(inputs []outputInput) (pluginapi.DecisionRecord, error) {
 func stringOutput(name, value string) outputInput {
 	return outputInput{name: name, input: pluginapi.DecisionValueInput{String: &value}}
 }
+
+// recordFieldValues indexes immutable scalar fields for shared extractor and provider-correlation logic.
+func recordFieldValues(record pluginapi.DecisionRecord) map[string]pluginapi.DecisionRecordFieldValue {
+	fields := make(map[string]pluginapi.DecisionRecordFieldValue, len(record.Fields()))
+	for _, field := range record.Fields() {
+		fields[field.Name()] = field.Value()
+	}
+
+	return fields
+}

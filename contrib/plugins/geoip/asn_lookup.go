@@ -194,7 +194,10 @@ func (s *asnLookupSnapshot) Lookup(addr netip.Addr) (geoRecord, bool) {
 		return geoRecord{}, false
 	}
 
-	return s.trie.Lookup(addr.Unmap())
+	record, found := s.trie.Lookup(addr.Unmap())
+	record.observedAt = s.loadedAt
+
+	return record, found
 }
 
 // Records reports how many routing prefixes are available.

@@ -31,6 +31,7 @@ var privacyEvidenceSink []privacyEvidence
 
 func TestPrivacyConfigValidationAndDefaults(t *testing.T) {
 	config, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"decision_bindings":    testDecisionBindings(),
 		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
 		"privacy_intelligence": map[string]any{
 			"enabled": true,
@@ -51,6 +52,7 @@ func TestPrivacyConfigValidationAndDefaults(t *testing.T) {
 	}
 
 	_, err = decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"decision_bindings":    testDecisionBindings(),
 		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
 		"privacy_intelligence": map[string]any{
 			"enabled": true,
@@ -67,6 +69,7 @@ func TestPrivacyConfigValidationAndDefaults(t *testing.T) {
 
 func TestPrivacyConfigRejectsUnimplementedDestinationMetadata(t *testing.T) {
 	_, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{
+		"decision_bindings":    testDecisionBindings(),
 		testConfigDatabasePath: testDatabasePath(t, "geoip.json"),
 		"privacy_intelligence": map[string]any{
 			"enabled": true,

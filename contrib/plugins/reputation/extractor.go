@@ -185,10 +185,7 @@ func (c *configuration) extractValues(extractor extractorConfig, value pluginapi
 
 	result := make([]extractedSubject, 0, len(records.Records()))
 	for _, record := range records.Records() {
-		fields := make(map[string]pluginapi.DecisionRecordFieldValue)
-		for _, field := range record.Fields() {
-			fields[field.Name()] = field.Value()
-		}
+		fields := recordFieldValues(record)
 
 		subject, err := c.extractedValue(extractor, fields[extractor.Field].Value(), fields)
 		if err != nil {

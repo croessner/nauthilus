@@ -16,6 +16,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/handler/policygrpc"
 	"github.com/croessner/nauthilus/v4/server/handler/policyhttp"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/gin-gonic/gin"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -50,11 +51,7 @@ func TestReputationObserveHTTPAndGRPCShareAdmissionAndIdempotency(t *testing.T) 
 	service, plugin := newReputationTransportService(t)
 	counter := &learningTestCounter{}
 	plugin.learningCounter = counter
-	engine := gin.New()
-	policyhttp.New(service, policyhttp.DirectTLSTransportEvidence{}).Register(engine.Group("/api/v1"))
-	grpcHandler := policygrpc.New(service, func(context.Context) (decision.AuthenticationInput, error) {
-		return decision.NewAuthenticationInput(decision.AuthenticationEvidence{Kind: "basic", Credential: []byte("ScanWriter:" + transportTestPassword), TransportKind: "grpc", Protected: true})
-	})
+	engine, grpcHandler := reputationTransportHandlers(service)
 
 	now := time.Now().UTC()
 	for _, extra := range []string{"", "causality", "independent", "policy_influenced", "evidence_origin"} {
@@ -101,4 +98,15 @@ func assertObservationGRPC(t *testing.T, handler *policygrpc.Handler, now time.T
 	if permitted != (extra == "") {
 		t.Fatalf("gRPC observation: %s %v", reply.GetEffect(), err)
 	}
+}
+
+// reputationTransportHandlers constructs both actual unary adapters with isolated authenticated transport evidence.
+func reputationTransportHandlers(service *decisionservice.DecisionService) (*gin.Engine, *policygrpc.Handler) {
+	engine := gin.New()
+	policyhttp.New(service, policyhttp.DirectTLSTransportEvidence{}).Register(engine.Group("/api/v1"))
+	grpcHandler := policygrpc.New(service, func(context.Context) (decision.AuthenticationInput, error) {
+		return decision.NewAuthenticationInput(decision.AuthenticationEvidence{Kind: "basic", Credential: []byte("ScanWriter:" + transportTestPassword), TransportKind: "grpc", Protected: true})
+	})
+
+	return engine, grpcHandler
 }

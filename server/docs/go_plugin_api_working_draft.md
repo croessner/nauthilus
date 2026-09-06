@@ -273,6 +273,11 @@ plugins:
             - nauthilus:admin
             - nauthilus:custom:health
       config:
+        decision_bindings:
+          - component: environment
+            targets: [authn/authenticate, authn/lookup_identity]
+            input: {fact: input.auth.client_ip, category: environment}
+            output_schema: geoip.facts.v1
         database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
         database_format: mmdb
         asn_database_path: /var/lib/GeoIP/GeoLite2-ASN.mmdb

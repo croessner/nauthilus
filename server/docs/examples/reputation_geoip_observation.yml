@@ -1,0 +1,115 @@
+# Optional additions to go_plugin_reputation.yml, merged by module name,
+# source name, provider name, and schema fact attribute. This is a fragment,
+# not a standalone server configuration. Preserve the base caller allowlist.
+# Extend role/kind/value provider_visibility on resource.reputation.subjects
+# with reputation/plugin.geoip.observation. Keep all original visibility entries.
+plugins:
+  modules:
+    - name: geoip
+      type: go
+      path: /usr/lib/nauthilus/plugins/geoip.so
+      config:
+        database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
+        asn_database_path: /var/lib/GeoIP/GeoLite2-ASN.mmdb
+        freshness: {max_age: 1080h, max_stale_age: 2160h}
+        decision_bindings:
+          - component: observation
+            targets: [reputation/observe]
+            input:
+              fact: resource.reputation.subjects
+              category: resource
+              records:
+                ip_field: value
+                match: {kind: ip}
+                correlation_fields: [role]
+            output_schema: geoip.records.v1
+            output_fact: observations
+    - name: reputation
+      config:
+        sources:
+          scan:
+            derived_subjects: {smtp_peer: [network, asn]}
+            asn_provider: reputation/plugin.geoip.observation
+            asn_fact: plugin.geoip.observations
+            asn_max_age: 2160h
+        signals:
+          scan.clean:
+            subject_roles:
+              smtp_peer: {asn: 0.1}
+policy:
+  namespaces:
+    reputation:
+      providers:
+        observation:
+          kind: native
+          module: geoip
+          targets: [{action: observe}]
+          produced_facts: [plugin.geoip.observations]
+          failure: indeterminate
+          timeout: 100ms
+          diagnostics: {public_id: observation-geography}
+        observation_context:
+          requires: [reputation/plugin.geoip.observation]
+      domain_plans:
+        observation:
+          checkpoints:
+            final_decision:
+              providers:
+                - {name: observation, use: reputation/plugin.geoip.observation}
+                - {name: observation_context, use: reputation/observation_context}
+      schema_contributions:
+        static:
+          observe:
+            versions:
+              v1:
+                facts:
+                  - attribute: resource.reputation.subjects
+                    record_schema:
+                      fields:
+                        - {name: role, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.geoip.observation]}
+                        - {name: kind, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.geoip.observation]}
+                        - {name: value, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.geoip.observation]}
+                  - attribute: plugin.geoip.observations
+                    category: environment
+                    type: records
+                    allowed_sources: [plugin]
+                    record_schema:
+                      id: geographic_observations
+                      version: v1
+                      min_records: 0
+                      max_records: 8
+                      max_fields: 32
+                      max_aggregate_bytes: 65536
+                      fields:
+                        - {name: lookup_state, type: string, max_length: 512, required: true, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: ip, type: string, max_length: 512, required: true, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: network, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: country_iso, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: country_name, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: city_name, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn_org, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn_prefix, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn_registry, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn_country_iso, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn_allocated, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn_status, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_lookup_state, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_primary_class, type: string, max_length: 512, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: data_age_seconds, type: integer, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: asn, type: integer, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: data_stale, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: matched, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_detected, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_data_stale, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_tor_exit_node, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_known_vpn_exit, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_community_vpn_exit, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_public_proxy, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_privacy_relay, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_hosting_network, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: is_shared_egress, type: boolean, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_confidence, type: double, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_data_age_seconds, type: double, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_classes, type: strings, max_length: 512, max_items: 64, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: privacy_source_authorities, type: strings, max_length: 512, max_items: 64, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}
+                        - {name: role, type: string, max_length: 512, required: true, provider_visibility: [reputation/plugin.reputation.observation_context, reputation/plugin.reputation.storage]}

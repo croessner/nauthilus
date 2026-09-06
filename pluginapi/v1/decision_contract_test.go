@@ -152,7 +152,9 @@ func assertAdditiveDecisionRegistrar(t *testing.T) {
 func TestDecisionPublicResultFieldsFreezeAuthorityBoundary(t *testing.T) {
 	assertExactExportedFields(t, reflect.TypeFor[DecisionTargetSelector](), []string{"Namespace", "Action"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionFactOutputDescriptor](), []string{"Name", "Category", "Kind", "MaxLength", "MaxItems", "MaxBytes"})
-	assertExactExportedFields(t, reflect.TypeFor[DecisionFactProviderDescriptor](), []string{"Targets", "Outputs", "Namespace", "Name", "Timeout"})
+	assertExactExportedFields(t, reflect.TypeFor[DecisionFactInputDescriptor](), []string{"Fields", "ID", "Provider", "Category", "Kind"})
+	assertExactExportedFields(t, reflect.TypeFor[DecisionFactInputFieldDescriptor](), []string{"Name", "Kind"})
+	assertExactExportedFields(t, reflect.TypeFor[DecisionFactProviderDescriptor](), []string{"Inputs", "Targets", "Outputs", "Namespace", "Name", "Timeout"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectParameterDescriptor](), []string{"AllowedStrings", "Name", "Kind", "MaxLength", "MaxItems", "MaxBytes", "NonEmpty", "Required"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectDescriptor](), []string{"Targets", "Parameters", "Name", "Execution", "ReplaySafety", "IdempotencyKey"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectProviderDescriptor](), []string{"Effects", "Namespace", "Name"})

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,15 +49,10 @@ func (transportTestThrottler) RecordSuccess(context.Context, callerauth.BasicThr
 }
 
 // transportPolicyInput loads the actual operator example with a disposable credential and both unary transports.
-func transportPolicyInput(t *testing.T) configinput.UnifiedPolicyInput {
+func transportPolicyInput(t *testing.T, raw map[string]any) configinput.UnifiedPolicyInput {
 	t.Helper()
 
-	content, err := os.ReadFile("../../../server/docs/examples/go_plugin_reputation.yml")
-	requireNoError(t, err)
-
-	var raw map[string]any
-	requireNoError(t, yaml.Unmarshal(content, &raw))
-	content, err = yaml.Marshal(map[string]any{"policy": raw["policy"]})
+	content, err := yaml.Marshal(map[string]any{"policy": raw["policy"]})
 	requireNoError(t, err)
 
 	content = []byte(strings.ReplaceAll(string(content), "${POLICY_REPUTATION_PASSWORD}", transportTestPassword))
@@ -70,54 +66,64 @@ func transportPolicyInput(t *testing.T) configinput.UnifiedPolicyInput {
 	return normalized
 }
 
-// transportNativeBindings registers actual providers and retains their immutable module generation.
-func transportNativeBindings(t *testing.T, plugin *Plugin) *pluginruntime.GenerationBindings {
+// transportNativeBindings registers real reputation providers and an optional deterministic upstream test double.
+func transportNativeBindings(t *testing.T, plugin *Plugin, raw map[string]any, upstream pluginapi.DecisionFactProvider) *pluginruntime.GenerationBindings {
 	t.Helper()
-
 	registry := pluginregistry.NewRegistry()
-	artifact := filepath.Join(t.TempDir(), "reputation-fixture.so")
-	requireNoError(t, os.WriteFile(artifact, []byte("in-process-native-fixture"), 0600))
-	module := config.PluginModule{Name: pluginName, Type: config.PluginModuleTypeGo, Path: artifact, Config: testConfigMap(t)}
-	registrar := registry.NewRegistrar(module)
-	requireNoError(t, plugin.Register(registrar))
-	requireNoError(t, registrar.Commit())
+	modules := raw["plugins"].(map[string]any)["modules"].([]any)
 
-	digest, err := pluginloader.DigestArtifact(artifact)
-	requireNoError(t, err)
-	bindings, err := pluginruntime.CaptureGenerationBindings([]pluginloader.ModuleInstance{{Module: module,
-		Descriptors: registrar.Components(), ArtifactPath: artifact, ArtifactDigest: digest, ModuleName: pluginName, Status: pluginloader.ModuleStatusRegistered}})
+	instances := make([]pluginloader.ModuleInstance, 0, len(modules))
+	for _, value := range modules {
+		configured := value.(map[string]any)
+		name := configured["name"].(string)
+
+		module := config.PluginModule{Name: name, Type: config.PluginModuleTypeGo, Config: configured["config"].(map[string]any)}
+		if name == pluginName {
+			instances = append(instances, transportModuleInstance(t, registry, module, plugin.Register))
+		} else if upstream != nil {
+			instances = append(instances, transportModuleInstance(t, registry, module, func(registrar pluginapi.Registrar) error {
+				return registrar.(pluginapi.DecisionRegistrar).RegisterDecisionFactProvider(upstream)
+			}))
+		}
+	}
+
+	bindings, err := pluginruntime.CaptureGenerationBindings(instances)
 	requireNoError(t, err)
 
 	return bindings
 }
 
+// transportModuleInstance captures one exact in-process fixture owner without claiming native artifact loading.
+func transportModuleInstance(t *testing.T, registry *pluginregistry.Registry, module config.PluginModule, register func(pluginapi.Registrar) error) pluginloader.ModuleInstance {
+	t.Helper()
+	artifact := filepath.Join(t.TempDir(), module.Name+"-fixture.so")
+	requireNoError(t, os.WriteFile(artifact, []byte("in-process-native-fixture"), 0600))
+	module.Path = artifact
+	registrar := registry.NewRegistrar(module)
+	requireNoError(t, register(registrar))
+	requireNoError(t, registrar.Commit())
+	digest, err := pluginloader.DigestArtifact(artifact)
+	requireNoError(t, err)
+
+	return pluginloader.ModuleInstance{Module: module, Descriptors: registrar.Components(), ArtifactPath: artifact,
+		ArtifactDigest: digest, ModuleName: module.Name, Status: pluginloader.ModuleStatusRegistered}
+}
+
 // newReputationTransportService uses the real catalog, caller authentication, admission and selected native effects.
 func newReputationTransportService(t *testing.T) (*decisionservice.DecisionService, *Plugin) {
 	t.Helper()
+	return newReputationTransportExampleService(t, testYAMLMap(t, "../../../server/docs/examples/go_plugin_reputation.yml"), nil)
+}
+
+// newReputationTransportExampleService exercises one composed operator example through the actual host scheduler and transports.
+func newReputationTransportExampleService(t *testing.T, raw map[string]any, upstream pluginapi.DecisionFactProvider) (*decisionservice.DecisionService, *Plugin) {
+	t.Helper()
 	_, facade := localReputationRedis(t)
 	plugin := NewPlugin()
-	bindings := transportNativeBindings(t, plugin)
+	bindings := transportNativeBindings(t, plugin, raw, upstream)
 	host := pluginruntime.NewHost(pluginruntime.WithConfig(pluginregistry.NewConfigView(testAdmissionMap())), pluginruntime.WithRedis(facade), pluginruntime.WithOpaqueIdentifierTagger(manifestTestTagger(t, false)))
 	requireNoError(t, plugin.Start(t.Context(), host))
-	normalized := transportPolicyInput(t)
-	supervisor, err := effectsupervisor.New(effectsupervisor.Config{Lifetime: t.Context(), Capacity: 4, Workers: 1})
-	requireNoError(t, err)
-	t.Cleanup(func() { requireNoError(t, supervisor.Shutdown(context.Background())) })
-	preparation, err := configinput.PrepareConfiguredNativeGeneration(t.Context(), configinput.ConfiguredNativeGenerationInput{Policy: normalized.Policy, Bindings: bindings, PostActionAcceptance: supervisor})
-	requireNoError(t, err)
-	contributors, err := normalized.Contributors(t.Context(), supervisor)
-	requireNoError(t, err)
-
-	var activations []registry.TargetActivation
-
-	for _, activation := range normalized.Activations {
-		if activation.Target().String() == "reputation/observe" {
-			activations = append(activations, activation)
-		}
-	}
-
-	catalog, err := catalogcompile.NewTargetCatalogCompiler(contributors...).Compile(t.Context(), activations)
-	requireNoError(t, err)
+	normalized, preparation, catalog := transportPreparedCatalog(t, raw, bindings)
 	requireNoError(t, preparation.Bindings.ValidateCatalog(catalog))
 
 	store := policyruntime.NewGenerationStore()
@@ -162,4 +168,30 @@ func reputationTransportSlots(normalized configinput.UnifiedPolicyInput, catalog
 		}),
 		Application: decisionservice.NewRuntimeApplicationPreparationSlot(),
 	}
+}
+
+// transportPreparedCatalog prepares exact configuration and captured providers for positive and negative activation checks.
+func transportPreparedCatalog(t *testing.T, raw map[string]any, bindings *pluginruntime.GenerationBindings) (configinput.UnifiedPolicyInput, policyruntime.ExtensionPreparation, *policyruntime.TargetCatalog) {
+	t.Helper()
+	normalized := transportPolicyInput(t, raw)
+	supervisor, err := effectsupervisor.New(effectsupervisor.Config{Lifetime: t.Context(), Capacity: 4, Workers: 1})
+	requireNoError(t, err)
+	t.Cleanup(func() { requireNoError(t, supervisor.Shutdown(context.Background())) })
+	preparation, err := configinput.PrepareConfiguredNativeGeneration(t.Context(), configinput.ConfiguredNativeGenerationInput{Policy: normalized.Policy, Bindings: bindings, PostActionAcceptance: supervisor})
+	requireNoError(t, err)
+	contributors, err := normalized.Contributors(t.Context(), supervisor)
+	requireNoError(t, err)
+
+	var activations []registry.TargetActivation
+
+	for _, activation := range normalized.Activations {
+		if activation.Target().String() == "reputation/observe" {
+			activations = append(activations, activation)
+		}
+	}
+
+	catalog, err := catalogcompile.NewTargetCatalogCompiler(contributors...).Compile(t.Context(), activations)
+	requireNoError(t, err)
+
+	return normalized, preparation, catalog
 }

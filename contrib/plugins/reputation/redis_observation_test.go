@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -125,4 +126,56 @@ func TestReputationRedisSelectedEffectRejectsTamperedPlan(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReputationRedisRetryRejectsChangedASNPlan proves the exact stored plan cannot adopt changed or unavailable provider evidence.
+func TestReputationRedisRetryRejectsChangedASNPlan(t *testing.T) {
+	_, facade := localReputationRedis(t)
+	cfg := testASNObservationConfig(t)
+	tagger := manifestTestTagger(t, false)
+	owner, err := newStateOwner(cfg, tagger, facade)
+	requireNoError(t, err)
+	requireNoError(t, owner.start(t.Context()))
+
+	input := testObservation()
+	input.observedAt = time.Now().UTC()
+	source := cfg.apiSources["ScanWriter"]
+	initial, reason, err := owner.admitForPolicy(t.Context(), source, input, exactASNFixture{binding: source.config.ASNProvider, ip: input.subjects[0].value})
+	requireNoError(t, err)
+
+	if reason != reasonValid {
+		t.Fatal("initial ASN plan rejected")
+	}
+
+	_, err = owner.ingest(t.Context(), initial)
+	requireNoError(t, err)
+	_, _, err = owner.admitForPolicy(t.Context(), source, input, nil)
+	requireError(t, err)
+	_, reason, err = owner.admitForPolicy(t.Context(), source, input, changingASNFixture{})
+	requireNoError(t, err)
+
+	if reason != reasonConflict {
+		t.Fatal("changed derived ASN was not rejected as event_conflict")
+	}
+
+	retry, reason, err := owner.admitForPolicy(t.Context(), source, input, exactASNFixture{binding: source.config.ASNProvider, ip: input.subjects[0].value})
+	requireNoError(t, err)
+
+	if reason != reasonValid {
+		t.Fatal("exact stored plan could not be resumed")
+	}
+
+	result, err := owner.ingest(t.Context(), retry)
+	requireNoError(t, err)
+
+	if result.Applied != 0 || result.Duplicates != 3 {
+		t.Fatalf("stored plan changed: %+v", result)
+	}
+}
+
+type changingASNFixture struct{}
+
+// lookupASN simulates a new geographic snapshot mapping the same IP to another ASN.
+func (changingASNFixture) lookupASN(context.Context, string, string) (string, error) {
+	return "64501", nil
 }
