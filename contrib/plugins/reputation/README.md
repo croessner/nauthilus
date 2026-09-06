@@ -133,3 +133,77 @@ a socket-only primary and a three-node loopback Cluster. Tests include real Lua
 execution, time/expiry, quotas, malformed state, concurrent allocations and
 rotation, lost requests/acknowledgments, partial fan-out, allocation drain and
 host-managed `NOSCRIPT` recovery. No production Redis endpoint is accepted.
+
+## Primary assessment and calibration
+
+Every decision-time assessment reads the primary through a named host script.
+The script obtains Redis time and atomically validates and decays all configured
+profile/class masses alongside the model-independent override. Ingestion and
+assessment share the same state validator and decay implementation. Reads never
+rewrite hashes, advance timestamps or refresh TTLs. `age_seconds` describes the
+age of the stored snapshot since its last accepted update; independent and
+authoritative evidence timestamps remain separate inputs to risk guards.
+
+The pure scoring transform uses the configured `score` parameters:
+`log_odds = ln((risk + alpha)/(trust + alpha))`,
+`confidence = 1 - exp(-(risk + trust)/saturation)`, and
+`signed_score = tanh(log_odds/temperature) * confidence`. Positive signed
+values are risk; negative values are trust. Numeric golden vectors freeze this
+contract independently of the Redis implementation.
+
+The required `bands` configuration owns every score, confidence and sample
+threshold, the current source-mass floor, severe-risk window and authoritative
+risk window. The example deliberately sets `learned_blocked: false`. If enabled,
+learned blocking additionally requires recent authoritative risk or the
+configured number of current risk-contributing source classes (at least two).
+Positive contributions from other classes cannot manufacture risk diversity.
+The public diversity count covers current independent contributions in either
+direction; the stricter risk-diversity count is private to the blocking guard.
+Changing read thresholds or score transforms does not reinterpret the stored
+model or reset its evidence.
+
+An enforcing assessment requires both active and previous tag slots when the
+host exposes a rotation ring. Only explicit `not_found` is empty. A timeout,
+malformed state or unavailable override in either slot makes every profile
+unavailable. Merging histories takes the greater risk, lower trust, lower
+confidence and lower effective samples/diversity; it never sums evidence.
+No replica or stale-cache binding is implemented, so enforcing configuration
+cannot accidentally select one. The shared tuple validator recognizes `stale`
+for the closed external contract, but this provider never emits stale data.
+
+Each configured target binding names a generic fact-provider `component`
+(default `assessment`). A component belongs to one exact namespace; bindings
+across namespaces use distinct component names because registry identities are
+module-wide. Configuration rejects ambiguous component reuse before registration. `decision_profile` defaults to `operational` and selects the tuple in
+`output_fact`. The additional `<output_fact>_fast`, `_operational` and `_baseline`
+record collections expose all profiles from the same primary snapshots. Each
+record includes role, kind, the closed assessment tuple and explicitly retained
+same-record correlation fields. Raw subjects and HMAC tags are not output.
+Correlation cannot overwrite any provider-owned tuple field, and generated
+output names are checked for collisions before registration.
+
+Missing state produces `state=not_found`, `band=unknown` and no numeric details.
+Read failures produce `state=unavailable`, `band=unavailable` and no numeric
+details. An active override can change a missing state's band without inventing
+scores. Fresh state requires all bounded numeric details, including valid zero
+mass. Providers emit reputation facts only; Policy retains permit/deny authority
+and all external hard failures remain independent.
+
+## Operator override service
+
+The internal management service supports primary readback and compare-and-set
+creation, replacement and removal. It accepts bounded kind/subject, band
+(`blocked`, `trusted`, `neutral`), reason, creator, audit correlation and origin,
+plus optional bounded lifetime. Redis supplies creation and expiry times.
+Replacement/removal must name the previously read audit correlation, preventing
+a stale operator action from overwriting a newer revision. Override keys are
+model-independent and contain their typed opaque subject identity and complete
+audit metadata. Non-expiring overrides are explicit; expired entries lose their
+authority.
+
+Across rotation slots, precedence is `blocked`, then `trusted`, then `neutral`,
+then learned state. Any required read failure still makes the result unavailable.
+Management writes the active slot only; rotation requires explicit copies and
+readback verification. The operator-facing authenticated management surface
+owns authorization and is connected separately. This module adds no management
+HTTP route or implicit external authority.

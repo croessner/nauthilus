@@ -62,6 +62,10 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
+	if err := p.registerAssessments(decisionRegistrar, cfg); err != nil {
+		return err
+	}
+
 	p.config = cfg
 
 	return nil

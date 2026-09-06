@@ -123,3 +123,9 @@ local function valid_manifest_payload(payload)
     end
     return true
 end
+
+-- Keep stored operator identities bounded and free of control characters or surrounding whitespace.
+local function audit_text(value)
+    return text(value, 128) and not string.find(value, '%c') and
+        not string.find(value, '^%s') and not string.find(value, '%s$')
+end

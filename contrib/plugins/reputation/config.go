@@ -27,6 +27,7 @@ const (
 )
 
 type rawConfig struct {
+	Bands                           bandConfig               `mapstructure:"bands"`
 	ShadowModel                     *shadowModelConfig       `mapstructure:"shadow_model"`
 	AllocationDrainGeneration       int                      `mapstructure:"allocation_drain_generation"`
 	MaximumEventManifestsPerSource  int                      `mapstructure:"maximum_event_manifests_per_source"`
@@ -118,6 +119,10 @@ func compileConfiguration(raw rawConfig) (*configuration, error) {
 	}
 
 	if err := cfg.compileExtractors(); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.validateBands(); err != nil {
 		return nil, err
 	}
 

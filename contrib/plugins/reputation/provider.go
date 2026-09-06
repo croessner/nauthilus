@@ -24,7 +24,7 @@ func (observationProvider) Descriptor() pluginapi.DecisionFactProviderDescriptor
 		outputs[index].Category = pluginapi.DecisionFactCategoryResource
 	}
 
-	return pluginapi.DecisionFactProviderDescriptor{Namespace: pluginName, Name: "observation_context", Targets: []pluginapi.DecisionTargetSelector{observeTarget}, Outputs: outputs, Timeout: time.Second}
+	return pluginapi.DecisionFactProviderDescriptor{Namespace: pluginName, Name: componentObservation, Targets: []pluginapi.DecisionTargetSelector{observeTarget}, Outputs: outputs, Timeout: time.Second}
 }
 
 // Collect validates source-owned pre-policy evidence without storage or final-outcome inference.

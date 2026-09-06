@@ -11,6 +11,12 @@ import (
 )
 
 const (
+	storageSnapshot        = "snapshot"
+	storageOverrideWritten = "override_written"
+	storageOverrideRead    = "override_read"
+	storageOverrideMissing = "override_missing"
+	storageOverrideDeleted = "override_deleted"
+
 	storageActive    = "active"
 	storageAdmitted  = "admitted"
 	storageApplied   = "applied"
@@ -183,8 +189,10 @@ func (s *stateOwner) run(ctx context.Context, name string, keys []string, reques
 // storageStatusError preserves the closed state-machine outcomes without Redis keys or evidence in errors.
 func storageStatusError(status string) error {
 	switch status {
-	case storageActive, "draining", storageAdmitted, storageApplied, storageDuplicate:
+	case storageOverrideRead, storageOverrideMissing, storageOverrideWritten, storageOverrideDeleted, storageSnapshot, storageActive, "draining", storageAdmitted, storageApplied, storageDuplicate:
 		return nil
+	case "override_conflict":
+		return errOverrideConflict
 	case "event_conflict":
 		return errEventConflict
 	case "event_time":

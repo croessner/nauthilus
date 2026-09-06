@@ -10,9 +10,11 @@ import (
 var factPattern = regexp.MustCompile(`^(subject|resource|environment|plugin)\.[a-z][a-z0-9_.-]{0,126}$`)
 
 type targetBindingConfig struct {
-	Subjects   []extractorConfig `mapstructure:"subjects"`
-	Target     string            `mapstructure:"target"`
-	OutputFact string            `mapstructure:"output_fact"`
+	Component       string            `mapstructure:"component"`
+	DecisionProfile string            `mapstructure:"decision_profile"`
+	Subjects        []extractorConfig `mapstructure:"subjects"`
+	Target          string            `mapstructure:"target"`
+	OutputFact      string            `mapstructure:"output_fact"`
 }
 
 type extractorConfig struct {
@@ -36,19 +38,49 @@ func (c *configuration) compileExtractors() error {
 
 	c.bindings = make(map[pluginapi.DecisionTargetSelector]targetBindingConfig, len(c.raw.TargetBindings))
 	outputs := make(map[string]struct{})
+	components := make(map[string]string)
 
 	for _, binding := range c.raw.TargetBindings {
+		if binding.Component == "" {
+			binding.Component = "assessment"
+		}
+
+		if !identifierPattern.MatchString(binding.Component) || binding.Component == componentObservation {
+			return errConfiguration
+		}
+
+		if binding.DecisionProfile == "" {
+			binding.DecisionProfile = profileOperational
+		}
+
+		if !profileName(binding.DecisionProfile) {
+			return errConfiguration
+		}
 		target, err := exactSelector(binding.Target)
 		if err != nil || !identifierPattern.MatchString(binding.OutputFact) || len(binding.Subjects) < 1 || len(binding.Subjects) > maximumSubjects {
 			return errConfiguration
 		}
 
+		if namespace, exists := components[binding.Component]; exists && namespace != target.Namespace {
+			return errConfiguration
+		}
+
+		components[binding.Component] = target.Namespace
+
 		if _, exists := c.bindings[target]; exists {
 			return errConfiguration
 		}
 
-		if _, exists := outputs[binding.OutputFact]; exists {
-			return errConfiguration
+		for _, name := range assessmentOutputNames(binding.OutputFact) {
+			if !identifierPattern.MatchString(name) {
+				return errConfiguration
+			}
+
+			if _, exists := outputs[name]; exists {
+				return errConfiguration
+			}
+
+			outputs[name] = struct{}{}
 		}
 
 		for _, extractor := range binding.Subjects {
@@ -58,7 +90,6 @@ func (c *configuration) compileExtractors() error {
 		}
 
 		c.bindings[target] = binding
-		outputs[binding.OutputFact] = struct{}{}
 	}
 
 	return nil
@@ -76,6 +107,12 @@ func validateExtractor(extractor extractorConfig) error {
 
 	if !uniqueIdentifiers(extractor.CorrelationFields, 8, true) || (extractor.Field == "" && len(extractor.CorrelationFields) > 0) {
 		return errConfiguration
+	}
+
+	for _, name := range extractor.CorrelationFields {
+		if assessmentField(name) {
+			return errConfiguration
+		}
 	}
 
 	return nil

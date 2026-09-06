@@ -28,6 +28,7 @@ func TestModelFingerprintBindsIngestionButNotReadTransforms(t *testing.T) {
 		{"network prefix", func(raw map[string]any) { raw["network_subjects"].(map[string]any)["ipv4_prefix"] = 25 }, true},
 		{"subject scope", func(raw map[string]any) { raw["subject_scope"] = "other-subject" }, true},
 		{"normalizer", func(raw map[string]any) { raw["account_normalization"] = "lowercase" }, true},
+		{"read bands", func(raw map[string]any) { raw["bands"].(map[string]any)["trusted"].(map[string]any)["score"] = 0.7 }, false},
 		{"read transform", func(raw map[string]any) { raw["score"].(map[string]any)["alpha"] = 3.0 }, false},
 	}
 	for _, tt := range tests {

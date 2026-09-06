@@ -17,55 +17,30 @@ local existing = next(state) ~= nil
 if existing and (state.schema_version ~= state_schema or state.model_fingerprint ~= request.fingerprint or state.kind ~= request.kind) then
     return {'model_mismatch'}
 end
-local allowed = {schema_version=true,model_fingerprint=true,kind=true,expires_at=true,seen_until=true,
-    last_independent_risk_at=true,last_independent_trust_at=true,last_authoritative_risk_at=true}
-local values = {}
+local values = decay_state(request, state, now)
+if not values or not valid_subject_lifetime(state, KEYS[1], KEYS[2], now, request.retention) then return {'invalid_state'} end
 local eligible = {}
 for _, profile in ipairs(request.eligible_profiles) do eligible[profile] = true end
 local source_exists = false
 for _, class in ipairs(request.classes) do
-    if not text(class.name, 64) or not bounded(class.risk, 0, 1000000) or not bounded(class.trust, 0, 1000000) or
-       not bounded(class.samples, 0, 1000000) or class.samples == 0 then return {'invalid_state'} end
     if class.name == request.source_class then source_exists = true end
 end
 if not source_exists then return {'invalid_state'} end
 for _, profile in ipairs(request.profiles) do
-    if not text(profile.name, 64) or not bounded(profile.half_life, 0, 31536000) or profile.half_life == 0 then return {'invalid_state'} end
-    local updated_key = profile.name .. '_updated_at'
-    allowed[updated_key] = true
-    local updated = stored_number(state, updated_key, 0, now, now)
-    if not updated then return {'invalid_state'} end
-    local decay = math.pow(2, -(now - updated) / profile.half_life)
     local evidence_decay = math.pow(2, -math.max(0, now - request.observed_at) / profile.half_life)
-    values[updated_key] = now
     for _, class in ipairs(request.classes) do
         for _, measure in ipairs({'risk','trust','samples'}) do
             local field = profile.name .. '_' .. class.name .. '_' .. measure
-            allowed[field] = true
-            local cap = class[measure]
-            local previous = stored_number(state, field, 0, cap, 0)
-            if not previous then return {'invalid_state'} end
             local increment = 0
             if eligible[profile.name] and class.name == request.source_class then
                 if measure == request.direction then increment = request.weight end
                 if measure == 'samples' and request.weight > 0 then increment = 1 end
             end
-            values[field] = math.min(cap, previous * decay + increment * evidence_decay)
+            values[field] = math.min(class[measure], values[field] + increment * evidence_decay)
             if not finite(values[field]) then return {'invalid_state'} end
         end
     end
 end
-for field in pairs(state) do if not allowed[field] then return {'invalid_state'} end end
-for _, field in ipairs({'last_independent_risk_at','last_independent_trust_at','last_authoritative_risk_at'}) do
-    values[field] = stored_number(state, field, 0, now, 0)
-    if not values[field] then return {'invalid_state'} end
-end
-if existing then
-    local expiry = number(state.expires_at, now, now + request.retention)
-    local seen_until = number(state.seen_until, 0, now + request.retention)
-    if not expiry or not seen_until or redis.call('PTTL', KEYS[1]) <= 0 then return {'invalid_state'} end
-    if seen_type == 'none' and seen_until > now then return {'invalid_state'} end
-elseif seen_type ~= 'none' then return {'invalid_state'} end
 local seen_expiry = tonumber(redis.call('ZSCORE', KEYS[2], request.seen_tag))
 if seen_expiry and seen_expiry > now then return {'duplicate'} end
 if redis.call('ZCOUNT', KEYS[2], now, '+inf') >= request.maximum_seen then return {'quota_exceeded'} end

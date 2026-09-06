@@ -50,3 +50,25 @@ func TestNeutralTargetExtractorsCompileExactScalarAndCorrelatedRecords(t *testin
 	_, err = cfg.extractSubjects(pluginapi.DecisionTargetSelector{Namespace: "workflow", Action: "other"}, facts)
 	requireError(t, err)
 }
+
+// TestAssessmentBindingsRejectAmbiguousOutputsAndComponents keeps generated facts and module identities unambiguous.
+func TestAssessmentBindingsRejectAmbiguousOutputsAndComponents(t *testing.T) {
+	cases := []struct{ name, firstTarget, secondTarget, firstOutput, secondOutput string }{
+		{"generated output collision", "workflow/submit", "workflow/read", "subjects", "subjects_fast"},
+		{"component namespace collision", "authn/authenticate", "workflow/submit", "auth_subjects", "workflow_subjects"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := testConfigMap(t)
+			raw["target_bindings"] = []any{testAssessmentBinding(tt.firstTarget, "", tt.firstOutput), testAssessmentBinding(tt.secondTarget, "", tt.secondOutput)}
+			_, err := decodeConfig(pluginregistry.NewConfigView(raw))
+			requireError(t, err)
+		})
+	}
+}
+
+// testAssessmentBinding builds one neutral scalar fixture shared by extraction and actual registry tests.
+func testAssessmentBinding(target, component, output string) map[string]any {
+	return map[string]any{"target": target, "component": component, "output_fact": output,
+		"subjects": []any{map[string]any{"attribute": "subject.worker", "role": "service", "kind": "service"}}}
+}
