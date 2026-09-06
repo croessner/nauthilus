@@ -3,13 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/release-semver-metadata.sh <tag>
+Usage: scripts/release-semver-metadata.sh [--module-file <go.mod>] <tag>
 
 Print GitHub Actions output lines for supported release tags.
 Supported tags use vMAJOR.MINOR.PATCH with an optional SemVer prerelease
 suffix, for example v2.1.3, v2.1.3-rc.1, or v2.1.3-alpha.5.
 USAGE
 }
+
+module_file=""
+if [[ "${1:-}" == "--module-file" && $# -ge 3 ]]; then
+  module_file="$2"
+  shift 2
+fi
 
 if [[ $# -ne 1 ]]; then
   usage >&2
@@ -37,7 +43,13 @@ IFS='.' read -r major minor patch <<< "${base_version}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-module_path="$(sed -n 's/^module[[:space:]][[:space:]]*//p' "${repo_root}/go.mod")"
+module_file="${module_file:-${repo_root}/go.mod}"
+module_path="$(sed -n 's/^module[[:space:]][[:space:]]*//p' "${module_file}")"
+
+if [[ -z "${module_path}" ]]; then
+  echo "Module file '${module_file}' has no module declaration." >&2
+  exit 1
+fi
 
 if [[ "${module_path}" =~ /v([2-9]|[1-9][0-9]+)$ ]]; then
   module_major="${BASH_REMATCH[1]}"

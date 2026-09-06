@@ -28,8 +28,6 @@ permissions:
   contents: read
 
 env:
-  ALPINE_IMAGE: alpine:3.24
-  GOLANG_IMAGE: golang:1.27.0-alpine3.24
   OCI_IMAGE_DESCRIPTION: >-
     Authentication and identity platform with OIDC, SAML, MFA, LDAP,
     Lua, and mail integrations
@@ -55,10 +53,15 @@ jobs:
 
       - name: Resolve base image digests
         id: base_digests
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          git -C workflow-src show "${RELEASE_TAG}:Dockerfile" > release.Dockerfile
+          base_digests="$(./workflow-src/scripts/docker-base-digests.sh \
+            --dockerfile release.Dockerfile)"
           while IFS= read -r line; do
             echo "${line}" >> "${GITHUB_OUTPUT}"
-          done < <(./workflow-src/scripts/docker-base-digests.sh)
+          done <<< "${base_digests}"
 
       - name: Extract release metadata
         id: release_metadata
@@ -79,6 +82,11 @@ jobs:
           golang_digest="${{ steps.base_digests.outputs.golang_digest }}"
           golang_image="${{ steps.base_digests.outputs.golang_image }}"
 
+          # Validate the selected release against its own module, not today's main.
+          git -C workflow-src show "${release_commit}:go.mod" > release.go.mod
+          release_metadata="$(./workflow-src/scripts/release-semver-metadata.sh \
+            --module-file release.go.mod "${RELEASE_TAG}")"
+
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "${GITHUB_OUTPUT}"
 
@@ -93,7 +101,7 @@ jobs:
                 tag_minor="${value}"
                 ;;
             esac
-          done < <(./workflow-src/scripts/release-semver-metadata.sh "${RELEASE_TAG}")
+          done <<< "${release_metadata}"
 
           if [[ -n "${REBUILD_SUFFIX}" ]]; then
             rebuild_tag="${RELEASE_TAG}-${REBUILD_SUFFIX}"

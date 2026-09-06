@@ -52,6 +52,12 @@ jobs:
 
           echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
 
+      - name: Check out selected release
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ steps.latest_release.outputs.release_tag }}
+          path: release-src
+
       - name: Create rebuild suffix
         id: rebuild_suffix
         run: |
@@ -60,9 +66,11 @@ jobs:
       - name: Resolve current base image digests
         id: base_digests
         run: |
+          base_digests="$(./scripts/docker-base-digests.sh \
+            --dockerfile release-src/Dockerfile)"
           while IFS= read -r line; do
             echo "${line}" >> "${GITHUB_OUTPUT}"
-          done < <(./scripts/docker-base-digests.sh)
+          done <<< "${base_digests}"
 
       - name: Compare against published stable image
         id: compare
@@ -74,14 +82,15 @@ jobs:
           registry_image="ghcr.io/${{ github.repository_owner }}/nauthilus"
           image="${registry_image}:${RELEASE_TAG}"
 
-          while IFS= read -r line; do
-            echo "${line}" >> "${GITHUB_OUTPUT}"
-          done < <(
+          comparison="$(
             ./scripts/docker-stable-refresh-check.sh \
               --image "${image}" \
               --expected-alpine-digest "${ALPINE_DIGEST}" \
               --expected-golang-digest "${GOLANG_DIGEST}"
-          )
+          )"
+          while IFS= read -r line; do
+            echo "${line}" >> "${GITHUB_OUTPUT}"
+          done <<< "${comparison}"
 
       - name: Print decision
         run: |
