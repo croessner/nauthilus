@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/croessner/nauthilus/v4/server/config"
 )
 
 // TestCustomTolerationUpsert retains existing addresses when adding or replacing an entry.
@@ -45,5 +47,18 @@ func TestCustomTolerationReadSnapshotDoesNotChange(t *testing.T) {
 
 	if snapshot[0].ToleratePercent != 10 {
 		t.Fatal("an unlocked snapshot shares mutable manager storage")
+	}
+}
+
+// TestCustomTolerationDoesNotMutateConfiguration preserves the immutable config snapshot after construction.
+func TestCustomTolerationDoesNotMutateConfiguration(t *testing.T) {
+	cfg := &config.FileSettings{BruteForce: &config.BruteForceSection{CustomTolerations: []config.Tolerate{
+		{IPAddress: "192.0.2.1", ToleratePercent: 10, TolerateTTL: time.Minute},
+	}}}
+	manager := NewTolerateWithDeps(cfg, nil, nil, 10)
+	manager.SetCustomToleration("192.0.2.1", 20, time.Minute)
+
+	if cfg.BruteForce.CustomTolerations[0].ToleratePercent != 10 {
+		t.Fatal("runtime custom tolerance mutated its borrowed configuration slice")
 	}
 }

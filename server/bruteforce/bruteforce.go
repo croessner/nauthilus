@@ -387,17 +387,19 @@ func (bm *bucketManagerImpl) GetSlidingWindowKeys(rule *config.BruteForceRule, n
 	return bm.getSlidingWindowKeys(rule, network)
 }
 
+// bucketWindowSeconds is the shared Redis precision for bucket identity, weighting and retention.
+func bucketWindowSeconds(period time.Duration) int64 {
+	return max(1, int64(math.Round(period.Seconds())))
+}
+
+// getSlidingWindowKeys resolves adjacent windows using the same period as their Redis retention.
 func (bm *bucketManagerImpl) getSlidingWindowKeys(rule *config.BruteForceRule, network *net.IPNet) (currentKey, prevKey string, weight float64) {
 	if rule == nil || network == nil {
 		return
 	}
 
 	baseKey := bm.getBruteForceBucketBaseKey(rule, network)
-	period := int64(math.Round(rule.Period.Seconds()))
-
-	if period <= 0 {
-		period = 1
-	}
+	period := bucketWindowSeconds(rule.Period)
 
 	now := time.Now().Unix()
 	currentWindow := now / period
@@ -423,6 +425,7 @@ func (bm *bucketManagerImpl) parsedIPFamily() string {
 	}
 }
 
+// getBruteForceBucketBaseKey identifies a bucket by its effective period and network context.
 func (bm *bucketManagerImpl) getBruteForceBucketBaseKey(rule *config.BruteForceRule, network *net.IPNet) string {
 	if rule == nil || network == nil {
 		return ""
@@ -437,7 +440,7 @@ func (bm *bucketManagerImpl) getBruteForceBucketBaseKey(rule *config.BruteForceR
 	sb.WriteString("bf:{")
 	sb.WriteString(bruteForceBucketHashTag(netStr, protocolPart, oidcCIDPart))
 	sb.WriteString("}:")
-	sb.WriteString(strconv.FormatInt(int64(math.Round(rule.Period.Seconds())), 10))
+	sb.WriteString(strconv.FormatInt(bucketWindowSeconds(rule.Period), 10))
 	sb.WriteByte(':')
 	sb.WriteString(strconv.FormatUint(uint64(rule.CIDR), 10))
 	sb.WriteByte(':')
@@ -1498,7 +1501,7 @@ func (bm *bucketManagerImpl) execBucketCounterPipeline(
 	for _, c := range cands {
 		rule := &rules[c.idx]
 		currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, c.network)
-		ttl := int64(math.Round(rule.Period.Seconds() * 2))
+		ttl := 2 * bucketWindowSeconds(rule.Period)
 		limit := int64(rule.FailedRequests) - 1
 
 		// rwp_floor = 0: read-only check path must never modify counters
@@ -1834,7 +1837,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 		increment = 1
 	}
 
-	ttl := int64(math.Round(rule.Period.Seconds() * 2))
+	ttl := 2 * bucketWindowSeconds(rule.Period)
 	limit := int64(rule.FailedRequests) - 1
 
 	// Every first-seen failed password is counted directly; no catch-up is needed.
@@ -2656,7 +2659,7 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	// Reputation key for the client IP and adaptive scaling configuration
 	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
-	ttl := int64(math.Round(rule.Period.Seconds() * 2))
+	ttl := 2 * bucketWindowSeconds(rule.Period)
 	limit := int64(rule.FailedRequests) - 1
 
 	res, err := rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],

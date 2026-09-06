@@ -798,11 +798,11 @@ func (t *tolerateImpl) findIP(ipOrNet, ipAddress string) bool {
 	return network.Contains(cmpAddress)
 }
 
-// NewTolerateWithDeps provides the exported NewTolerateWithDeps function.
+// NewTolerateWithDeps constructs a manager with its own mutable tolerance snapshot.
 func NewTolerateWithDeps(cfg config.File, logger *slog.Logger, redis rediscli.Client, pctTolerated uint8) Tolerate {
 	t := &tolerateImpl{
 		pctTolerated:    pctTolerated,
-		customTolerates: cfg.GetBruteForce().GetCustomTolerations(),
+		customTolerates: slices.Clone(cfg.GetBruteForce().GetCustomTolerations()),
 		mu:              sync.Mutex{},
 		deps: tolerateDeps{
 			cfg:    cfg,

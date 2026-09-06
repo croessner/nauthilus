@@ -277,3 +277,9 @@ brute_force:
   up most `bf:*` keys associated with their IPs via `prepareRedisUserKeys` in `server/core/rest.go`.
 * **Affected Accounts:** The `affected_accounts` SET intentionally has no TTL. It preserves the signal path for
   accounts that were targeted by brute-force attacks. Clean up only via the Flush API or administrative intervention.
+
+## Redis time precision
+
+Bucket periods use whole seconds, rounded to the nearest second with a minimum of one second. Bucket keys,
+window weighting and retention use this same effective period. Counter storage lasts for two effective windows,
+including positive subsecond configuration values. RWP windows round retention up to whole seconds.
