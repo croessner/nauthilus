@@ -156,10 +156,9 @@ redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
 -- Check if hash already exists
 local score = redis.call('ZSCORE', key, hash)
 local legacy_score = redis.call('ZSCORE', key, legacy_hash)
-local card = redis.call('ZCARD', key)
 
--- Return 1 if it was a repeat (existed before) or if we were below the limit
-if score or legacy_score or card < max then
+-- Only a previously confirmed failed hash receives an allowance
+if score or legacy_score then
     return 1
 end
 
@@ -186,6 +185,9 @@ local legacy_hash = ARGV[5]
 -- Remove outdated entries
 redis.call('ZREMRANGEBYSCORE', key, '-inf', '(' .. (now - ttl))
 
+-- Classify before mutation so concurrent failures cannot share a stale allowance.
+local repeated = redis.call('ZSCORE', key, hash) or redis.call('ZSCORE', key, legacy_hash)
+
 -- Add/update the current hash
 redis.call('ZREM', key, legacy_hash)
 redis.call('ZADD', key, now, hash)
@@ -197,7 +199,10 @@ end
 
 redis.call('EXPIRE', key, ttl)
 
-return 1
+if repeated then
+    return 1
+end
+return 0
 `,
 	// SlidingWindowCounter implements a sliding window counter for rate limiting with adaptive reputation scaling.
 	// KEYS:

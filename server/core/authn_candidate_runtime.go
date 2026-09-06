@@ -470,6 +470,9 @@ func (e *authnCandidateExecution) prepareBruteForceProvider() bool {
 	}
 
 	e.preAuthResult = definitions.AuthResultFail
+	if e.auth.Runtime.BruteForceError {
+		e.preAuthResult = definitions.AuthResultTempFail
+	}
 
 	return true
 }

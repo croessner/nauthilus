@@ -439,7 +439,7 @@ func (a *AuthState) recordPolicyBruteForce(ctx *gin.Context, triggered bool) {
 		policycollection.NumberAttribute(policy.AttributeBruteForceBucketTriggeredCount, policy.StagePreAuth, operation, summary.triggeredCount, details),
 		policycollection.NumberAttribute(policy.AttributeBruteForceBucketMaxCount, policy.StagePreAuth, operation, summary.maxCount, details),
 		policycollection.NumberAttribute(policy.AttributeBruteForceBucketMaxRatio, policy.StagePreAuth, operation, summary.maxRatio, details),
-		policycollection.BoolAttribute(policy.AttributeBruteForceError, policy.StagePreAuth, operation, false, nil),
+		policycollection.BoolAttribute(policy.AttributeBruteForceError, policy.StagePreAuth, operation, a.Runtime.BruteForceError, nil),
 	}
 
 	attributes = append(attributes, bruteForceBucketPolicyAttributes(a.Runtime.BruteForceBuckets, operation)...)

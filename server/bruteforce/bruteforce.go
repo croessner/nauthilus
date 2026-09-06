@@ -108,6 +108,9 @@ type BucketManager interface {
 	// GetPasswordsTotalSeen retrieves the total number of unique passwords encountered across all accounts.
 	GetPasswordsTotalSeen() uint
 
+	// GetBruteForceError returns the last storage error encountered by this request.
+	GetBruteForceError() error
+
 	// GetEnvironmentName returns the name "brute_force" if the system triggered.
 	GetEnvironmentName() string
 
@@ -198,7 +201,7 @@ type BucketManager interface {
 	// CommitRWPSlidingWindow writes the current password hash into the RWP sliding window in Redis.
 	// This must only be called after confirming that the rejection was due to a genuine authentication
 	// failure, not a environment-based rejection (e.g., RBL) where the password was never verified.
-	CommitRWPSlidingWindow()
+	CommitRWPSlidingWindow() (bool, error)
 }
 
 // BucketPolicyFact is the read-only policy view of one configured brute-force bucket.
@@ -220,6 +223,7 @@ type BucketPolicyFact struct {
 }
 
 type bucketManagerImpl struct {
+	lastError            error
 	deps                 BucketManagerDeps
 	ctx                  context.Context
 	scoper               ipscoper.IPScoper
@@ -265,6 +269,9 @@ func (bm *bucketManagerImpl) tolerate() tolerate.Tolerate {
 
 // sgBurst deduplicates parallel identical burst-gate requests for the same burst key.
 var sgBurst singleflight.Group
+
+// GetBruteForceError preserves an unavailable storage outcome across boolean control APIs.
+func (bm *bucketManagerImpl) GetBruteForceError() error { return bm.lastError }
 
 // GetLoginAttempts retrieves the current number of login attempts made for the given bucket manager instance.
 func (bm *bucketManagerImpl) GetLoginAttempts() uint {
@@ -861,6 +868,10 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 		return false, true, index
 	}
 
+	if bm.lastError != nil {
+		return true, false, -1
+	}
+
 	if !result.matchedAnyRule {
 		bm.logNoMatchingBruteForceBuckets()
 		sp.SetAttributes(attribute.Bool("rules.matched_any", false))
@@ -1024,6 +1035,8 @@ func (bm *bucketManagerImpl) applyRepeatingPreResult(
 	if err != nil && !errors2.Is(err, redis.Nil) {
 		level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EXISTS ban-key failed: %v", err))
 
+		bm.lastError = err
+
 		return false, 0
 	}
 
@@ -1126,7 +1139,10 @@ func (bm *bucketManagerImpl) collectBucketPolicyFacts(
 	}
 
 	if includeBanState {
-		bm.markBucketPolicyBanState(ctx, rules, cands, facts)
+		if err := bm.markBucketPolicyBanState(ctx, rules, cands, facts); err != nil {
+			bm.bucketPolicyFacts = facts
+			return facts, err
+		}
 	}
 
 	if err := bm.readBucketPolicyCounters(cands, rules, facts); err != nil {
@@ -1169,6 +1185,8 @@ func (bm *bucketManagerImpl) CheckBucketOverLimit(rules []config.BruteForceRule,
 			definitions.LogKeyMsg, "Failed to collect brute-force bucket policy facts",
 			definitions.LogKeyError, err,
 		)
+
+		bm.lastError = err
 
 		return true, false, -1
 	}
@@ -1295,14 +1313,15 @@ func (bm *bucketManagerImpl) gatherBucketPolicyCandidates(
 	return cands, nil
 }
 
+// markBucketPolicyBanState reads ban facts without treating unavailable storage as an absent ban.
 func (bm *bucketManagerImpl) markBucketPolicyBanState(
 	ctx context.Context,
 	rules []config.BruteForceRule,
 	cands []bkcand,
 	facts []BucketPolicyFact,
-) {
+) error {
 	if len(cands) == 0 {
-		return
+		return nil
 	}
 
 	networks := make([]string, len(cands))
@@ -1317,12 +1336,16 @@ func (bm *bucketManagerImpl) markBucketPolicyBanState(
 			definitions.LogKeyMsg, fmt.Sprintf("Pipeline EXISTS ban-key for policy facts failed: %v", err),
 		)
 
-		return
+		return err
 	}
 
 	for i, cmd := range cmds {
 		exists, err := cmd.Result()
-		if err != nil || exists == 0 {
+		if err != nil {
+			return err
+		}
+
+		if exists == 0 {
 			continue
 		}
 
@@ -1334,6 +1357,8 @@ func (bm *bucketManagerImpl) markBucketPolicyBanState(
 			bm.bruteForceName = rules[idx].Name
 		}
 	}
+
+	return nil
 }
 
 func (bm *bucketManagerImpl) readBucketPolicyCounters(
@@ -1379,8 +1404,10 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 		}
 	}
 
-	if errP != nil && !errors2.Is(errP, redis.Nil) {
+	if errP != nil {
 		_ = level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EVAL bucket counters failed: %v", errP))
+
+		return errP
 	}
 
 	if bm.bruteForceCounter == nil {
@@ -1390,7 +1417,7 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 	for i, cmd := range cmds {
 		res, err := cmd.Result()
 		if err != nil {
-			continue
+			return err
 		}
 
 		bm.applyBucketPolicyCounterResult(cands[i].idx, res, rules, facts)
@@ -1687,6 +1714,7 @@ func (bm *bucketManagerImpl) setTriggeredBruteForceName(rule *config.BruteForceR
 func (bm *bucketManagerImpl) activateBruteForceBan(rule *config.BruteForceRule, network *net.IPNet) bool {
 	banActive, err := bm.setPreResultBruteForceRedis(rule)
 	if err != nil || !banActive {
+		bm.lastError = err
 		return false
 	}
 
@@ -1809,16 +1837,8 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 	ttl := int64(math.Round(rule.Period.Seconds() * 2))
 	limit := int64(rule.FailedRequests) - 1
 
-	// Determine RWP catch-up floor: when the bucket counter is below the RWP threshold,
-	// the Lua script will bring it up before the normal increment to compensate for
-	// attempts that were tolerated during the RWP grace period.
+	// Every first-seen failed password is counted directly; no catch-up is needed.
 	rwpFloor := 0
-
-	if increment > 0 {
-		if bfCfg := bm.cfg().GetBruteForce(); bfCfg != nil {
-			rwpFloor = int(bfCfg.GetRWPAllowedUniqueHashes())
-		}
-	}
 
 	// Limit is not needed for Save in terms of triggering here, but we pass it anyway
 	// to maintain script logic.
@@ -2223,21 +2243,21 @@ func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
 		passwordHash: passwordHashes.Full(),
 		legacyHash:   passwordHashes.Legacy(),
 		argThreshold: strconv.FormatUint(uint64(threshold), 10),
-		argTTL:       strconv.FormatInt(int64(ttl.Seconds()), 10),
+		argTTL:       strconv.FormatInt(max(1, int64(math.Ceil(ttl.Seconds()))), 10),
 		argNow:       strconv.FormatInt(time.Now().Unix(), 10),
 	}
 }
 
 // CommitRWPSlidingWindow writes the current password hash into the RWP sliding window.
 // It must only be called when the password was genuinely wrong (not rejected by an environment control).
-func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
+func (bm *bucketManagerImpl) CommitRWPSlidingWindow() (bool, error) {
 	args := bm.buildRWPScriptArgs()
 	if args == nil {
-		return
+		return false, nil
 	}
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
-	_, execErr := rediscli.ExecuteScript(
+	result, execErr := rediscli.ExecuteScript(
 		dCtx,
 		bm.redis(),
 		"RWPSlidingWindowCommit",
@@ -2253,7 +2273,16 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() {
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, fmt.Sprintf("RWPSlidingWindowCommit script error: %v", execErr),
 		)
+
+		return false, execErr
 	}
+
+	repeated, ok := result.(int64)
+	if !ok {
+		return false, fmt.Errorf("invalid RWP commit result: %T", result)
+	}
+
+	return bm.accountName != "" && repeated == 1, nil
 }
 
 // buildRWPKeyAndHashes computes the Redis key and bounded hash candidates used by RWP.
@@ -2329,8 +2358,7 @@ func (bm *bucketManagerImpl) currentPasswordHashCandidates() internalpasswordhas
 
 // isRepeatingWrongPassword implements the RWP allowance logic.
 // It returns true if the current wrong password should be tolerated (i.e., buckets should NOT be increased),
-// based on allowing up to N distinct wrong password hashes within a rolling window. Repeats of already seen
-// hashes are always tolerated within the window.
+// only when its hash is already recorded within the rolling window. New hashes never qualify.
 // This is a read-only check; the actual write is deferred to CommitRWPSlidingWindow.
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
 	logger := bm.logger()
@@ -2361,7 +2389,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	cancel()
 
 	if execErr != nil {
-		return bm.repeatingWrongPasswordFallback(logger, args, execErr), nil
+		return false, execErr
 	}
 
 	if v, ok := res.(int64); ok && v == 1 {
@@ -2369,33 +2397,6 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 	}
 
 	return false, nil
-}
-
-// repeatingWrongPasswordFallback checks PW_HIST membership when the RWP script fails.
-func (bm *bucketManagerImpl) repeatingWrongPasswordFallback(logger *slog.Logger, args *rwpScriptArgs, execErr error) bool {
-	level.Warn(logger).Log(
-		definitions.LogKeyGUID, bm.guid,
-		definitions.LogKeyMsg, fmt.Sprintf("RWPSlidingWindow script error, using totals fallback: %v", execErr),
-	)
-
-	acctKey := bm.getPasswordHistoryRedisSetKey(true)
-	if acctKey == "" {
-		return false
-	}
-
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-	defer cancel()
-
-	for _, candidate := range []string{args.passwordHash, args.legacyHash} {
-		isMember, _ := bm.redis().GetReadHandle().SIsMember(dCtx, acctKey, candidate).Result()
-		if isMember {
-			return true
-		}
-	}
-
-	return false
 }
 
 // checkEnforceBruteForceComputation determines if brute force computation must be enforced based on user and password state.
@@ -2406,7 +2407,7 @@ func (bm *bucketManagerImpl) checkEnforceBruteForceComputation() (bool, error) {
 		  - If it is a repeating wrong password, then skip increasing buckets.
 		- Otherwise, or if the user is unknown, enforce the brute forcing computation (increase buckets).
 
-		- On any error that might occur during these checks, do NOT increase buckets (fail safe).
+		- On storage error, return the error so authentication can fail temporarily.
 	*/
 	if bm.accountName == "" {
 		return true, nil
@@ -2563,6 +2564,8 @@ func (bm *bucketManagerImpl) prepareNetcalcAddress() (netip.Addr, error) {
 	if err != nil {
 		return netip.Addr{}, err
 	}
+
+	addr = addr.Unmap()
 
 	bm.ipIsV4 = addr.Is4()
 	bm.ipIsV6 = addr.Is6()

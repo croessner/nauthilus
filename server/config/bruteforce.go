@@ -232,7 +232,7 @@ func (b *BruteForceSection) GetTolerationsIPv6CIDR() uint {
 	return b.IPScoping.TolerationsIPv6CIDR
 }
 
-// GetRWPAllowedUniqueHashes returns how many distinct wrong password hashes are tolerated within the window.
+// GetRWPAllowedUniqueHashes returns the maximum number of recorded failed hashes retained for repeat detection.
 // Defaults to 3 if not set or if the receiver is nil.
 func (b *BruteForceSection) GetRWPAllowedUniqueHashes() uint {
 	if b == nil {
@@ -246,7 +246,7 @@ func (b *BruteForceSection) GetRWPAllowedUniqueHashes() uint {
 	return b.AllowedUniqueWrongPWHashes
 }
 
-// GetRWPWindow returns the time window for tracking tolerated unique wrong password hashes.
+// GetRWPWindow returns the time window for recognizing previously recorded failed password hashes.
 // Defaults to 15 minutes if not set or invalid.
 func (b *BruteForceSection) GetRWPWindow() time.Duration {
 	if b == nil {

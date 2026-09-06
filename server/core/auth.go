@@ -566,6 +566,8 @@ type AuthRuntime struct {
 	// A pre-auth candidate is cleared after successful authentication, so final logs retain true only for failures
 	// whose brute-force bucket counters were not increased.
 	BFRWP bool
+	// BruteForceError marks unavailable protection, distinct from an attack.
+	BruteForceError bool
 
 	// MasterUserMode indicates whether the request is in master user mode.
 	MasterUserMode bool
@@ -2544,6 +2546,15 @@ func (a *AuthState) GetPasswordsTotalSeen() uint {
 	return a.Security.PasswordsTotalSeen
 }
 
+// GetBruteForceError reports request-level protection unavailability.
+func (a *AuthState) GetBruteForceError() error {
+	if a.Runtime.BruteForceError {
+		return fmt.Errorf("brute-force protection unavailable")
+	}
+
+	return nil
+}
+
 // GetBruteForceCounter returns the brute force counter from the AuthState.
 func (a *AuthState) GetBruteForceCounter() map[string]uint {
 	return a.Security.BruteForceCounter
@@ -2713,9 +2724,9 @@ func (a *AuthState) ProcessPWHist() (accountName string) {
 }
 
 // CommitRWPSlidingWindow delegates to the underlying BucketManager to write the RWP hash.
-func (a *AuthState) CommitRWPSlidingWindow() {
+func (a *AuthState) CommitRWPSlidingWindow() (bool, error) {
 	bm := a.createBucketManager(a.Ctx())
-	bm.CommitRWPSlidingWindow()
+	return bm.CommitRWPSlidingWindow()
 }
 
 // SaveBruteForceBucketCounterToRedis persists the brute force bucket counter to Redis.
@@ -4381,6 +4392,10 @@ func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) b
 
 // rejectDefaultPreAuthBruteForce performs the legacy rejection side effects.
 func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.Span) {
+	if a.Runtime.BruteForceError {
+		a.AuthTempFail(ctx, definitions.TempFailDefault)
+		return
+	}
 	a.markEnvironmentRejected(ctx)
 	a.UpdateBruteForceBucketsCounter(ctx)
 
