@@ -815,3 +815,11 @@ func soleProfileID(ids []string) string {
 
 	return ids[0]
 }
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*testSyncEffectProvider) IdempotencyKey(string) string {
+	return ""
+}
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*testPostActionProvider) IdempotencyKey(string) string { return "" }

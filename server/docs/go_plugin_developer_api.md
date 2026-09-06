@@ -899,11 +899,28 @@ provider. Post-actions must be accepted synchronously by the internal effect sup
 finalization, then wait for the host-owned finalization gate. A late provider or transport failure is observable but
 cannot mutate the completed decision or response.
 
-Each selected effect ordinal is attempted at most once per Decision invocation. Nauthilus does not retry after errors,
-timeouts, cancellation, panic, or an ambiguous external dispatch, and an internal attempt identity is correlation data,
-not a public idempotency key. Report `outcome_unknown` only when an external side effect may have been dispatched but its
-remote result cannot be established. A provider may voluntarily implement domain-specific idempotency, but that remains
-provider-owned behavior outside the generic Policy API and provider contract; the host neither requires nor infers it.
+Every `DecisionEffectDescriptor` must explicitly declare `ReplaySafety` as `unsafe` or `idempotent`.
+There is no omitted-value default. `unsafe` forbids an `IdempotencyKey`; `idempotent` requires one exact
+fact ID admitted by every selected target schema. The key must be a required caller-owned string with
+an explicit maximum length of at most 128 bytes. The host rejects an absent or empty value before
+invoking the native provider. The provider owns deduplication and must retain it across retries.
+
+Each selected effect ordinal is attempted at most once per Decision invocation. Nauthilus never
+retries effects internally. Report `outcome_unknown` only when an external side effect may have
+been dispatched but its result cannot be established. When this effect and all previously attempted
+effects declare idempotence, the public status is `effect_outcome_unknown_replay_safe`, with
+`retryable: true`. The caller may repeat the complete request with identical payload and all original
+idempotency values. An earlier unsafe effect prevents this status. Unsafe ambiguity remains
+`effect_outcome_unknown`, with `retryable: false`. A definite failure retains its existing behavior.
+Accepted asynchronous post-actions cannot change an already finalized response.
+
+`DecisionEffectRequest`, `ObligationRequest`, and `PostActionRequest` expose an immutable
+`ExecutionIdentity()` view. It contains the configured module, registered component, callback
+extension point, selected operation, and exact target. The host derives it from the captured registry
+generation; facts, arguments, and returned plugin values never supply this identity. Authentication
+adapters overwrite any identity in an incoming internal request before calling the public component.
+The API constructors serve host adapters; constructing a local value grants no registration or
+execution authority. This requires coherent rebuilding of the server and native plugins.
 
 Provider errors and panics are contained behind bounded, secret-safe classifications. Configured ordinary provider
 failure follows the shared `indeterminate|continue` scheduler semantics, including dependency skipping; contract,
@@ -1540,7 +1557,7 @@ The following implementation notes are visible in the current codebase and shoul
 | Response mutation | Subject sources and synchronous obligations can set or delete allowed response headers while the HTTP response is still mutable. Post-actions have no response mutation field. | Use result-bound `ResponseMutation`; do not expect async work, gRPC paths, already-written responses, or forbidden headers to mutate client output. |
 | Effect requests | Native obligations and post-actions receive policy-selected `Args` and validated Lua/native plugin `Facts` from the active decision context. | Keep effects policy-selected; use explicit logs for public output and register every fact before emission. Use `authn/plugin.clickhouse.post_action` and `authn/plugin.haveibeenpwnd.post_action` for the bundled native action replacements. |
 | Generic decision facts | An exact operator-configured subset of registered `DecisionFactProvider` capabilities is resolved and frozen during candidate-generation preparation. Calls use immutable redacted requests, context deadlines, the shared scheduler, and strict schema/source/namespace/authority validation. | Keep descriptors exact and bounded; emit only declared local outputs. Registration alone never activates a target or provider. |
-| Generic decision effects | Only selected, target-valid, parameter-valid `host_sync` and `host_post_action` effects reach `DecisionEffectProvider`. Post-actions use supervisor acceptance and the response-finalization gate; advice and `return_only` obligations never invoke a provider. | Treat each call as one at-most-once attempt. Report ambiguity as `outcome_unknown`; do not expect host retries or a public idempotency key. |
+| Generic decision effects | Only selected, target-valid, parameter-valid `host_sync` and `host_post_action` effects reach `DecisionEffectProvider`. Post-actions use supervisor acceptance and the response-finalization gate; advice and `return_only` obligations never invoke a provider. | Treat each call as one at-most-once attempt. Report ambiguity as `outcome_unknown`; declare per-effect replay safety and the exact admitted key when idempotent; never expect host retries. |
 | Generic generation lifecycle | Native provider references and their configured capability subset are immutable generation bindings. Config deactivation applies to a newly published generation while older leased generations drain; module or artifact addition, removal, or replacement remains restart-required. | Keep one loaded module instance safe for concurrent calls and do not interpret config reload as code replacement or unload. |
 | Host-managed HTTP | `Host.HTTP(scope)` validates outbound requests, injects trace headers, applies context timeouts and response body limits, records `host_http_client_*` metrics, and logs only bounded fields. | Prefer this facade for Lua-style outbound HTTP migrations such as blocklist, GeoIP, HIBP, proxy backends, Telegram, and ClickHouse inserts when the value-oriented request shape is sufficient. |
 | Redis keys and scripts | `Host.Redis()` exposes command handles, key construction, and a named script registry with `NOSCRIPT` recovery. | Use host key helpers for prefixed, cluster-safe keys and upload scripts before running them by deterministic name. |

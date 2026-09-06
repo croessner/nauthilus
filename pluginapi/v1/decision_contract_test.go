@@ -154,7 +154,7 @@ func TestDecisionPublicResultFieldsFreezeAuthorityBoundary(t *testing.T) {
 	assertExactExportedFields(t, reflect.TypeFor[DecisionFactOutputDescriptor](), []string{"Name", "Category", "Kind", "MaxLength", "MaxItems", "MaxBytes"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionFactProviderDescriptor](), []string{"Targets", "Outputs", "Namespace", "Name", "Timeout"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectParameterDescriptor](), []string{"AllowedStrings", "Name", "Kind", "MaxLength", "MaxItems", "MaxBytes", "NonEmpty", "Required"})
-	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectDescriptor](), []string{"Targets", "Parameters", "Name", "Execution"})
+	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectDescriptor](), []string{"Targets", "Parameters", "Name", "Execution", "ReplaySafety", "IdempotencyKey"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionEffectProviderDescriptor](), []string{"Effects", "Namespace", "Name"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionFactOutput](), []string{"Name", "Value"})
 	assertExactExportedFields(t, reflect.TypeFor[DecisionFactResult](), []string{"Facts", "ErrorClass"})
@@ -469,12 +469,18 @@ func TestDecisionRequestsOwnCallerFactsAndParameters(t *testing.T) {
 
 	parameters := map[string]DecisionValue{"recipient": mustDecisionStringValue(t, "ops")}
 
+	identity, err := NewExecutionIdentityView("worker", "notifier", "decision_effect", "notify", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	effectRequest, err := NewDecisionEffectRequest(DecisionEffectRequestInput{
-		Parameters: parameters,
-		Facts:      factRequest.Facts(),
-		Target:     target,
-		Caller:     caller,
-		Effect:     "notify",
+		ExecutionIdentity: identity,
+		Parameters:        parameters,
+		Facts:             factRequest.Facts(),
+		Target:            target,
+		Caller:            caller,
+		Effect:            "notify",
 	})
 	if err != nil {
 		t.Fatalf("NewDecisionEffectRequest() error = %v", err)
@@ -588,7 +594,7 @@ func validDecisionEffectProviderDescriptor() DecisionEffectProviderDescriptor {
 		Effects: []DecisionEffectDescriptor{
 			{
 				Name:      "notify",
-				Execution: DecisionEffectExecutionHostSync,
+				Execution: DecisionEffectExecutionHostSync, ReplaySafety: DecisionEffectReplayUnsafe,
 				Targets: []DecisionTargetSelector{
 					{Namespace: "mail.security", Action: "evaluate"},
 				},
@@ -700,6 +706,11 @@ func assertNoForbiddenDecisionFields(t *testing.T, contractType reflect.Type) {
 	for index := range contractType.NumField() {
 		field := contractType.Field(index)
 		if !field.IsExported() {
+			continue
+		}
+
+		// Per-effect replay metadata declares safety; it cannot request host retries.
+		if contractType == reflect.TypeFor[DecisionEffectDescriptor]() && (field.Name == "ReplaySafety" || field.Name == "IdempotencyKey") {
 			continue
 		}
 

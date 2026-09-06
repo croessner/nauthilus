@@ -155,6 +155,7 @@ func (p *authnNativeObligationTestProgram) ID() string { return p.id }
 func (p *authnNativeObligationTestProgram) ExecuteObligation(
 	context.Context,
 	pluginapi.ObligationRequest,
+	decision.Target,
 ) (pluginapi.ObligationResult, error) {
 	p.calls.Add(1)
 
@@ -179,6 +180,7 @@ func (p *authnNativePostActionTestProgram) Capabilities() []pluginapi.Capability
 func (p *authnNativePostActionTestProgram) EnqueuePostAction(
 	context.Context,
 	pluginapi.PostActionRequest,
+	decision.Target,
 ) (pluginapi.PostActionEnqueueResult, error) {
 	p.calls.Add(1)
 

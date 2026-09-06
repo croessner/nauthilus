@@ -200,11 +200,31 @@ func validateDecisionEffectDescriptor(effect DecisionEffectDescriptor, index int
 		return invalidDecisionContract(field, "must declare an exact local name and host execution class")
 	}
 
+	if err := validateDecisionEffectReplaySafety(effect, field); err != nil {
+		return err
+	}
+
 	if err := validateDecisionTargets(effect.Targets, field+".targets"); err != nil {
 		return err
 	}
 
 	return validateDecisionEffectParameters(effect.Parameters, field+".parameters")
+}
+
+// validateDecisionEffectReplaySafety requires explicit replay intent and one canonical key for idempotent effects.
+func validateDecisionEffectReplaySafety(effect DecisionEffectDescriptor, field string) error {
+	switch effect.ReplaySafety {
+	case DecisionEffectReplayUnsafe:
+		if effect.IdempotencyKey == "" {
+			return nil
+		}
+	case DecisionEffectReplayIdempotent:
+		if validDecisionFactName(effect.IdempotencyKey) {
+			return nil
+		}
+	}
+
+	return invalidDecisionContract(field, "requires explicit unsafe without a key or idempotent with one exact admitted key fact")
 }
 
 // validateDecisionEffectParameters checks typed parameter declarations and duplicates.

@@ -631,7 +631,16 @@ func (p *nativeDecisionEffectProvider) effectRequest(
 		return pluginapi.DecisionEffectRequest{}, err
 	}
 
-	return newNativeDecisionEffectRequest(execution, binding.descriptor.Name)
+	if err := validateNativeReplayKey(p.IdempotencyKey(execution.EffectID()), execution.Facts()); err != nil {
+		return pluginapi.DecisionEffectRequest{}, err
+	}
+
+	identity, err := pluginapi.NewExecutionIdentityView(p.moduleName, p.component, "decision_effect", binding.descriptor.Name, nativeDecisionTargetSelector(execution.Target()))
+	if err != nil {
+		return pluginapi.DecisionEffectRequest{}, err
+	}
+
+	return newNativeDecisionEffectRequest(execution, binding.descriptor.Name, identity)
 }
 
 // execute maps one closed native result into the shared effect supervisor vocabulary.
@@ -765,6 +774,7 @@ func newNativeDecisionFactRequest(input policyruntime.FactProviderInput) (plugin
 func newNativeDecisionEffectRequest(
 	input policyruntime.EffectExecution,
 	localEffect string,
+	identity pluginapi.ExecutionIdentityView,
 ) (pluginapi.DecisionEffectRequest, error) {
 	caller, err := nativeDecisionCallerView(input.Caller())
 	if err != nil {
@@ -783,7 +793,7 @@ func newNativeDecisionEffectRequest(
 
 	return pluginapi.NewDecisionEffectRequest(pluginapi.DecisionEffectRequestInput{
 		Parameters: parameters, Facts: facts, Target: nativeDecisionTargetSelector(input.Target()),
-		Caller: caller, Effect: localEffect,
+		Caller: caller, Effect: localEffect, ExecutionIdentity: identity,
 	})
 }
 
@@ -1295,4 +1305,30 @@ func nilDecisionDependency(input any) bool {
 // invalidDecisionBinding returns one bounded preparation failure without provider-controlled values.
 func invalidDecisionBinding(reason string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidDecisionBinding, strings.TrimSpace(reason))
+}
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (p *nativeDecisionEffectProvider) IdempotencyKey(effectID string) string {
+	binding, exists := p.effects[effectID]
+	if !exists || binding.descriptor.ReplaySafety != pluginapi.DecisionEffectReplayIdempotent {
+		return ""
+	}
+
+	return binding.descriptor.IdempotencyKey
+}
+
+// validateNativeReplayKey refuses to invoke an idempotent callback without a bounded non-empty key.
+func validateNativeReplayKey(key string, facts decision.FactSet) error {
+	if key == "" {
+		return nil
+	}
+
+	fact, exists := facts.Get(key)
+	value, valid := fact.Value().StringValue()
+
+	if !exists || !valid || len(value) == 0 || len(value) > 128 {
+		return decisionProviderContractError("effect replay key is absent or invalid")
+	}
+
+	return nil
 }

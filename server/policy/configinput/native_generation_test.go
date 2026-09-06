@@ -517,8 +517,8 @@ func nativeEffectDescriptor() pluginapi.DecisionEffectProviderDescriptor {
 	return pluginapi.DecisionEffectProviderDescriptor{
 		Namespace: "mail", Name: "notifier",
 		Effects: []pluginapi.DecisionEffectDescriptor{
-			{Name: "notify", Execution: pluginapi.DecisionEffectExecutionHostSync, Targets: targets, Parameters: []pluginapi.DecisionEffectParameterDescriptor{parameter}},
-			{Name: "archive", Execution: pluginapi.DecisionEffectExecutionHostPostAction, Targets: targets, Parameters: []pluginapi.DecisionEffectParameterDescriptor{parameter}},
+			{Name: "notify", Execution: pluginapi.DecisionEffectExecutionHostSync, ReplaySafety: pluginapi.DecisionEffectReplayUnsafe, Targets: targets, Parameters: []pluginapi.DecisionEffectParameterDescriptor{parameter}},
+			{Name: "archive", Execution: pluginapi.DecisionEffectExecutionHostPostAction, ReplaySafety: pluginapi.DecisionEffectReplayUnsafe, Targets: targets, Parameters: []pluginapi.DecisionEffectParameterDescriptor{parameter}},
 		},
 	}
 }

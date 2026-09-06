@@ -79,6 +79,9 @@ const (
 	// StatusCodeProviderUnavailable reports a retryable required-provider outage.
 	StatusCodeProviderUnavailable StatusCode = "provider_unavailable"
 
+	// StatusCodeEffectOutcomeUnknownReplaySafe permits a complete request retry with the same admitted key.
+	StatusCodeEffectOutcomeUnknownReplaySafe StatusCode = "effect_outcome_unknown_replay_safe"
+
 	// StatusCodeEffectOutcomeUnknown reports non-retryable ambiguous synchronous effect delivery.
 	StatusCodeEffectOutcomeUnknown StatusCode = "effect_outcome_unknown"
 
@@ -443,6 +446,7 @@ func (c StatusCode) valid() bool {
 		StatusCodeEvaluationFailed,
 		StatusCodeProviderUnavailable,
 		StatusCodeEffectOutcomeUnknown,
+		StatusCodeEffectOutcomeUnknownReplaySafe,
 		StatusCodeEffectAcceptanceRejected:
 		return true
 	default:
@@ -452,7 +456,8 @@ func (c StatusCode) valid() bool {
 
 // retryable derives retry guidance from the stable taxonomy.
 func (c StatusCode) retryable() bool {
-	return c == StatusCodeEvaluationFailed ||
+	return c == StatusCodeEffectOutcomeUnknownReplaySafe ||
+		c == StatusCodeEvaluationFailed ||
 		c == StatusCodeProviderUnavailable ||
 		c == StatusCodeEffectAcceptanceRejected
 }

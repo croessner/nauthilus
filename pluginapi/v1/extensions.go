@@ -111,10 +111,11 @@ type SubjectSource interface {
 
 // ObligationRequest is passed to synchronous policy obligation targets.
 type ObligationRequest struct {
-	Snapshot RequestSnapshot
-	Runtime  RuntimeContext
-	Args     ArgsView
-	Facts    []PolicyFact
+	executionIdentity ExecutionIdentityView
+	Snapshot          RequestSnapshot
+	Runtime           RuntimeContext
+	Args              ArgsView
+	Facts             []PolicyFact
 }
 
 // ObligationResult is returned by synchronous policy obligation targets.
@@ -136,12 +137,13 @@ type ObligationTarget interface {
 
 // PostActionRequest is passed to asynchronous post-action enqueue targets.
 type PostActionRequest struct {
-	Snapshot     RequestSnapshot
-	Runtime      RuntimeContext
-	Credentials  CredentialProvider
-	PasswordHash string
-	Args         ArgsView
-	Facts        []PolicyFact
+	executionIdentity ExecutionIdentityView
+	Snapshot          RequestSnapshot
+	Runtime           RuntimeContext
+	Credentials       CredentialProvider
+	PasswordHash      string
+	Args              ArgsView
+	Facts             []PolicyFact
 }
 
 // PostActionEnqueueResult is returned after detached post-action work is accepted or skipped.

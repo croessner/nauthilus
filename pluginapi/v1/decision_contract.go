@@ -108,12 +108,24 @@ type DecisionEffectParameterDescriptor struct {
 	Required       bool
 }
 
-// DecisionEffectDescriptor declares one policy-selectable host effect.
+// DecisionEffectReplaySafety declares whether a caller may safely repeat an ambiguous effect.
+type DecisionEffectReplaySafety string
+
+const (
+	// DecisionEffectReplayUnsafe forbids replay after an unknown outcome.
+	DecisionEffectReplayUnsafe DecisionEffectReplaySafety = "unsafe"
+	// DecisionEffectReplayIdempotent requires one stable admitted key across complete request retries.
+	DecisionEffectReplayIdempotent DecisionEffectReplaySafety = "idempotent"
+)
+
+// DecisionEffectDescriptor declares one policy-selectable host effect with explicit replay semantics.
 type DecisionEffectDescriptor struct {
-	Targets    []DecisionTargetSelector
-	Parameters []DecisionEffectParameterDescriptor
-	Name       string
-	Execution  DecisionEffectExecution
+	Targets        []DecisionTargetSelector
+	Parameters     []DecisionEffectParameterDescriptor
+	Name           string
+	Execution      DecisionEffectExecution
+	ReplaySafety   DecisionEffectReplaySafety
+	IdempotencyKey string
 }
 
 // DecisionEffectProviderDescriptor declares one target-aware effect provider capability.

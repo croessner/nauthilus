@@ -456,7 +456,7 @@ func (sampleDecisionEffectProvider) Descriptor() pluginapi.DecisionEffectProvide
 		Effects: []pluginapi.DecisionEffectDescriptor{
 			{
 				Name:      "notify",
-				Execution: pluginapi.DecisionEffectExecutionHostSync,
+				Execution: pluginapi.DecisionEffectExecutionHostSync, ReplaySafety: pluginapi.DecisionEffectReplayUnsafe,
 				Targets: []pluginapi.DecisionTargetSelector{
 					{Namespace: "authn", Action: "authenticate"},
 				},

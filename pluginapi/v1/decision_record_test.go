@@ -44,7 +44,7 @@ func TestDecisionEffectParameterDescriptorRejectsRecords(t *testing.T) {
 	descriptor := DecisionEffectProviderDescriptor{
 		Namespace: "mail", Name: "audit",
 		Effects: []DecisionEffectDescriptor{{
-			Name: "audit", Execution: DecisionEffectExecutionHostSync,
+			Name: "audit", Execution: DecisionEffectExecutionHostSync, ReplaySafety: DecisionEffectReplayUnsafe,
 			Targets:    []DecisionTargetSelector{{Namespace: "mail", Action: "submit"}},
 			Parameters: []DecisionEffectParameterDescriptor{{Name: "records", Kind: DecisionValueKindRecords}},
 		}},

@@ -716,3 +716,8 @@ func normalizeContext(ctx context.Context) context.Context {
 func invalidGenerationRegistration(reason string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidGenerationRegistration, reason)
 }
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*generationEffectProvider) IdempotencyKey(string) string {
+	return ""
+}

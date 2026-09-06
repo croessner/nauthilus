@@ -363,10 +363,13 @@ type PolicyResponseValueMap map[string]PolicyResponseValue
 
 // PolicyStatus defines model for PolicyStatus.
 type PolicyStatus struct {
-	Code      string                    `json:"code"`
-	Details   *[]PolicyValidationDetail `json:"details,omitempty"`
-	Message   string                    `json:"message"`
-	Retryable bool                      `json:"retryable"`
+	// Code Stable result code. effect_outcome_unknown is non-retryable. effect_outcome_unknown_replay_safe permits retrying the complete Policy request with unchanged admitted idempotency keys and payload. The host never retries an effect within one request.
+	Code    string                    `json:"code"`
+	Details *[]PolicyValidationDetail `json:"details,omitempty"`
+	Message string                    `json:"message"`
+
+	// Retryable Whether the caller may retry; replay-safe unknown outcomes require the same complete request and idempotency keys.
+	Retryable bool `json:"retryable"`
 }
 
 // PolicyTarget defines model for PolicyTarget.

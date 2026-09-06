@@ -14,6 +14,7 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
 	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 )
@@ -273,6 +274,14 @@ func TestPrepareAuthenticationBindingsRegistersPolicySelectedAuthEffects(t *test
 		t.Fatalf("effect calls = obligation:%d post:%d, want one each", obligation.calls, postAction.calls)
 	}
 
+	if obligation.identity.Module() != "clickhouse" || obligation.identity.Component() != "enforce" ||
+		obligation.identity.ExtensionPoint() != "obligation" || obligation.identity.Operation() != "execute" ||
+		postAction.identity.Module() != "clickhouse" || postAction.identity.Component() != "post_action" ||
+		postAction.identity.ExtensionPoint() != "post_action" || postAction.identity.Operation() != "enqueue" ||
+		obligation.identity.Target().Action != "login" || postAction.identity.Target() != obligation.identity.Target() {
+		t.Fatal("captured registry identity was not preserved")
+	}
+
 	assertSelectedAuthenticationEffectDefinitions(t, prepared, obligationID, postActionID)
 }
 
@@ -318,13 +327,13 @@ func assertSelectedSyncAuthenticationEffect(t *testing.T, prepared *Authenticati
 	}
 
 	program, ok := syncOwner.(interface {
-		ExecuteObligation(context.Context, pluginapi.ObligationRequest) (pluginapi.ObligationResult, error)
+		ExecuteObligation(context.Context, pluginapi.ObligationRequest, decision.Target) (pluginapi.ObligationResult, error)
 	})
 	if !ok {
 		t.Fatalf("sync owner = %T, want public obligation program", syncOwner)
 	}
 
-	if _, err := program.ExecuteObligation(t.Context(), pluginapi.ObligationRequest{}); err != nil {
+	if _, err := program.ExecuteObligation(t.Context(), forgedObligationRequest(t), authenticationEffectTestTarget(t)); err != nil {
 		t.Fatalf("ExecuteObligation() error = %v", err)
 	}
 }
@@ -339,14 +348,14 @@ func assertSelectedPostAuthenticationEffect(t *testing.T, prepared *Authenticati
 	}
 
 	postProgram, ok := postOwner.(interface {
-		EnqueuePostAction(context.Context, pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error)
+		EnqueuePostAction(context.Context, pluginapi.PostActionRequest, decision.Target) (pluginapi.PostActionEnqueueResult, error)
 		Capabilities() []pluginapi.Capability
 	})
 	if !ok {
 		t.Fatalf("post owner = %T, want public post-action program", postOwner)
 	}
 
-	if _, err := postProgram.EnqueuePostAction(t.Context(), pluginapi.PostActionRequest{}); err != nil {
+	if _, err := postProgram.EnqueuePostAction(t.Context(), forgedPostActionRequest(t), authenticationEffectTestTarget(t)); err != nil {
 		t.Fatalf("EnqueuePostAction() error = %v", err)
 	}
 
@@ -407,8 +416,9 @@ type recordingAuthnSubjectSource struct {
 }
 
 type recordingAuthnObligationTarget struct {
-	name  string
-	calls int
+	identity pluginapi.ExecutionIdentityView
+	name     string
+	calls    int
 }
 
 // Name returns the unchanged public component-local identity.
@@ -416,17 +426,19 @@ func (t *recordingAuthnObligationTarget) Name() string { return t.name }
 
 // Execute records one policy-selected generation-owned obligation call.
 func (t *recordingAuthnObligationTarget) Execute(
-	context.Context,
-	pluginapi.ObligationRequest,
+	_ context.Context,
+	request pluginapi.ObligationRequest,
 ) (pluginapi.ObligationResult, error) {
 	t.calls++
+	t.identity = request.ExecutionIdentity()
 
 	return pluginapi.ObligationResult{Applied: true}, nil
 }
 
 type recordingAuthnPostActionTarget struct {
-	name  string
-	calls int
+	identity pluginapi.ExecutionIdentityView
+	name     string
+	calls    int
 }
 
 // Name returns the unchanged public component-local identity.
@@ -434,10 +446,11 @@ func (t *recordingAuthnPostActionTarget) Name() string { return t.name }
 
 // Enqueue records one policy-selected generation-owned post-action call.
 func (t *recordingAuthnPostActionTarget) Enqueue(
-	context.Context,
-	pluginapi.PostActionRequest,
+	_ context.Context,
+	request pluginapi.PostActionRequest,
 ) (pluginapi.PostActionEnqueueResult, error) {
 	t.calls++
+	t.identity = request.ExecutionIdentity()
 
 	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil
 }
@@ -465,4 +478,52 @@ func (s *recordingAuthnSubjectSource) Evaluate(
 	s.calls++
 
 	return pluginapi.SubjectResult{}, nil
+}
+
+// authenticationEffectTestTarget supplies an admitted target to captured native callbacks.
+func authenticationEffectTestTarget(t *testing.T) decision.Target {
+	t.Helper()
+
+	target, err := decision.NewTarget("authn", "login")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return target
+}
+
+// forgedExecutionIdentity supplies attacker-chosen metadata to test the host overwrite boundary.
+func forgedExecutionIdentity(t *testing.T) pluginapi.ExecutionIdentityView {
+	t.Helper()
+
+	identity, err := pluginapi.NewExecutionIdentityView("forged", "other", "other", "other", pluginapi.DecisionTargetSelector{Namespace: "workflow", Action: "approve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return identity
+}
+
+// forgedObligationRequest proves callback arguments cannot impersonate a registration.
+func forgedObligationRequest(t *testing.T) pluginapi.ObligationRequest {
+	t.Helper()
+
+	request, err := pluginapi.NewObligationRequest(pluginapi.ObligationRequest{}, forgedExecutionIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return request
+}
+
+// forgedPostActionRequest proves detached callbacks overwrite supplied identity metadata.
+func forgedPostActionRequest(t *testing.T) pluginapi.PostActionRequest {
+	t.Helper()
+
+	request, err := pluginapi.NewPostActionRequest(pluginapi.PostActionRequest{}, forgedExecutionIdentity(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return request
 }

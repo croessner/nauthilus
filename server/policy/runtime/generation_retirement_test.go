@@ -1054,3 +1054,14 @@ func TestGenerationConcurrentCaptureReloadShutdown(t *testing.T) {
 
 	wait.Wait()
 }
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*blockingGenerationSyncEffectProvider) IdempotencyKey(string) string {
+	return ""
+}
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*testGenerationPostActionProvider) IdempotencyKey(string) string { return "" }
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*blockingGenerationPostActionProvider) IdempotencyKey(string) string { return "" }

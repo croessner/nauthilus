@@ -207,20 +207,22 @@ func (r DecisionFactRequest) Facts() []DecisionFactView {
 
 // DecisionEffectRequestInput carries one host-selected effect into its immutable request.
 type DecisionEffectRequestInput struct {
-	Parameters map[string]DecisionValue
-	Facts      []DecisionFactView
-	Target     DecisionTargetSelector
-	Caller     DecisionCallerView
-	Effect     string
+	ExecutionIdentity ExecutionIdentityView
+	Parameters        map[string]DecisionValue
+	Facts             []DecisionFactView
+	Target            DecisionTargetSelector
+	Caller            DecisionCallerView
+	Effect            string
 }
 
 // DecisionEffectRequest is an immutable policy-selected effect input.
 type DecisionEffectRequest struct {
-	parameters map[string]DecisionValue
-	facts      []DecisionFactView
-	caller     DecisionCallerView
-	target     DecisionTargetSelector
-	effect     string
+	executionIdentity ExecutionIdentityView
+	parameters        map[string]DecisionValue
+	facts             []DecisionFactView
+	caller            DecisionCallerView
+	target            DecisionTargetSelector
+	effect            string
 }
 
 // NewDecisionEffectRequest validates and copies one selected effect input.
@@ -229,7 +231,8 @@ func NewDecisionEffectRequest(input DecisionEffectRequestInput) (DecisionEffectR
 		return DecisionEffectRequest{}, err
 	}
 
-	if !validDecisionAction(input.Effect) || !input.Caller.valid() {
+	if !validDecisionAction(input.Effect) || !input.Caller.valid() || !input.ExecutionIdentity.valid() ||
+		input.ExecutionIdentity.Target() != input.Target || input.ExecutionIdentity.Operation() != input.Effect {
 		return DecisionEffectRequest{}, invalidDecisionContract("effect request", "contains an invalid effect or caller")
 	}
 
@@ -244,11 +247,12 @@ func NewDecisionEffectRequest(input DecisionEffectRequestInput) (DecisionEffectR
 	}
 
 	return DecisionEffectRequest{
-		parameters: parameters,
-		facts:      facts,
-		caller:     input.Caller.clone(),
-		target:     input.Target,
-		effect:     input.Effect,
+		executionIdentity: input.ExecutionIdentity,
+		parameters:        parameters,
+		facts:             facts,
+		caller:            input.Caller.clone(),
+		target:            input.Target,
+		effect:            input.Effect,
 	}, nil
 }
 
@@ -331,3 +335,6 @@ func cloneDecisionParameters(input map[string]DecisionValue) (map[string]Decisio
 
 	return result, nil
 }
+
+// ExecutionIdentity returns immutable metadata assigned by the captured host registration.
+func (r DecisionEffectRequest) ExecutionIdentity() ExecutionIdentityView { return r.executionIdentity }

@@ -875,7 +875,7 @@ func TestDecisionRuntimeDeadlineBoundsUncooperativeSynchronousEffect(t *testing.
 	}
 }
 
-// assertDecisionRuntimeOutcomeUnknown proves synchronous ambiguity is non-retryable and attempted once.
+// assertDecisionRuntimeOutcomeUnknown checks explicit replay semantics without within-request retries.
 func assertDecisionRuntimeOutcomeUnknown(
 	t *testing.T,
 	provider registry.ProviderDefinition,
@@ -883,25 +883,32 @@ func assertDecisionRuntimeOutcomeUnknown(
 ) {
 	t.Helper()
 
-	unknown := &recordingSyncEffectProvider{result: effectsupervisor.OutcomeUnknown("dispatch_ambiguous")}
-	unknownCatalog, unknownTarget := decisionRuntimeCatalogWithSelections(
-		t,
-		decision.EffectPermit,
-		registry.NoMatchDeny,
-		nil,
-		[]registry.ProviderDefinition{provider},
-		[]registry.EffectDefinition{syncEffect},
-		[]registry.EffectUse{decisionRuntimeEffectUse(t, "mail/sync")},
-		nil,
-	)
-	unknownEvaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
-		catalog: unknownCatalog, ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
-		syncEffects: map[string]syncEffectBinding{"mail/sync_provider": {provider: unknown}},
-	})
-	unknownResponse := evaluateRuntimeOutcome(t, unknownEvaluator, unknownTarget, &recordingEffectAcceptor{}).response
+	for _, key := range []string{"", "resource.workflow.event_id"} {
+		unknown := &recordingSyncEffectProvider{result: effectsupervisor.OutcomeUnknown("dispatch_ambiguous"), replayKey: key}
+		unknownCatalog, unknownTarget := decisionRuntimeCatalogWithSelections(
+			t,
+			decision.EffectPermit,
+			registry.NoMatchDeny,
+			nil,
+			[]registry.ProviderDefinition{provider},
+			[]registry.EffectDefinition{syncEffect},
+			[]registry.EffectUse{decisionRuntimeEffectUse(t, "mail/sync")},
+			nil,
+		)
+		unknownEvaluator := mustCheckpointRuntime(t, checkpointRuntimeConfig{
+			catalog: unknownCatalog, ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
+			syncEffects: map[string]syncEffectBinding{"mail/sync_provider": {provider: unknown}},
+		})
+		unknownResponse := evaluateRuntimeOutcome(t, unknownEvaluator, unknownTarget, &recordingEffectAcceptor{}).response
 
-	if unknownResponse.Status().Code() != decision.StatusCodeEffectOutcomeUnknown || unknownResponse.Status().Retryable() || unknown.callCount() != 1 {
-		t.Fatalf("outcome_unknown status/retry/calls = %q/%v/%d", unknownResponse.Status().Code(), unknownResponse.Status().Retryable(), unknown.callCount())
+		wantCode := decision.StatusCodeEffectOutcomeUnknown
+		if key != "" {
+			wantCode = decision.StatusCodeEffectOutcomeUnknownReplaySafe
+		}
+
+		if unknownResponse.Status().Code() != wantCode || unknownResponse.Status().Retryable() != (key != "") || unknown.callCount() != 1 {
+			t.Fatalf("outcome_unknown status/retry/calls = %q/%v/%d", unknownResponse.Status().Code(), unknownResponse.Status().Retryable(), unknown.callCount())
+		}
 	}
 }
 
@@ -1169,9 +1176,10 @@ type countingFactProvider struct {
 }
 
 type recordingSyncEffectProvider struct {
-	mu     sync.Mutex
-	result effectsupervisor.Result
-	calls  int
+	replayKey string
+	mu        sync.Mutex
+	result    effectsupervisor.Result
+	calls     int
 }
 
 type cancelAwareSyncEffectProvider struct {
@@ -2294,3 +2302,38 @@ func assertTrustedRuntimeFact(t *testing.T, facts decision.FactSet, id string, s
 		t.Fatalf("trusted fact %s = %#v", id, fact)
 	}
 }
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (p *recordingSyncEffectProvider) IdempotencyKey(string) string {
+	return p.replayKey
+}
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (p *capturingSyncEffectProvider) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
+}
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*uncooperativeSyncEffectProvider) IdempotencyKey(string) string {
+	return ""
+}
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*cancelAwareSyncEffectProvider) IdempotencyKey(string) string {
+	return ""
+}
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*recordingPostActionProvider) IdempotencyKey(string) string { return "" }
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*blockingPostActionProvider) IdempotencyKey(string) string { return "" }
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*capturingPostActionProvider) IdempotencyKey(string) string { return "" }
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (panickingPostActionProvider) IdempotencyKey(string) string { return "" }
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*laterFailingPostActionProvider) IdempotencyKey(string) string { return "" }

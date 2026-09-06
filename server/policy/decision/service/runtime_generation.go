@@ -302,3 +302,13 @@ func capturedEffectExecution(input effectExecution) (policyruntime.EffectExecuti
 		Ordinal:    input.ordinal,
 	})
 }
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (p capturedSyncEffectProvider) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
+}
+
+// IdempotencyKey returns the captured per-effect replay declaration.
+func (p capturedPostActionProvider) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
+}

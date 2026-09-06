@@ -28,10 +28,12 @@ import (
 )
 
 type syncEffectProvider interface {
+	IdempotencyKey(string) string
 	Execute(context.Context, effectExecution) effectsupervisor.Result
 }
 
 type postActionProvider interface {
+	IdempotencyKey(string) string
 	Prepare(context.Context, effectExecution) (effectsupervisor.Work, error)
 }
 
@@ -213,6 +215,10 @@ func (r *checkpointRuntime) executePreparedEffects(
 
 		if state == effectsupervisor.StateOutcomeUnknown {
 			appendUnstartedPlannedEffects(report, plan[index+1:])
+
+			if replaySafeEffectPrefix(plan[:index+1]) {
+				return decision.StatusCodeEffectOutcomeUnknownReplaySafe, true
+			}
 
 			return decision.StatusCodeEffectOutcomeUnknown, true
 		}
@@ -666,4 +672,24 @@ func clonePostActionBindings(input map[string]postActionBinding) map[string]post
 	}
 
 	return result
+}
+
+// replaySafeEffectPrefix allows complete-request retries only when all attempted effects tolerate replay.
+func replaySafeEffectPrefix(plan []plannedEffect) bool {
+	for _, planned := range plan {
+		var key string
+
+		switch {
+		case planned.syncProvider != nil:
+			key = planned.syncProvider.IdempotencyKey(planned.definition.ID())
+		case planned.postProvider != nil:
+			key = planned.postProvider.IdempotencyKey(planned.definition.ID())
+		}
+
+		if key == "" {
+			return false
+		}
+	}
+
+	return len(plan) > 0
 }

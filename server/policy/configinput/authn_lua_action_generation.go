@@ -365,3 +365,11 @@ var _ policyruntime.AuthnLuaActionProgram = (*preparedAuthnLuaAction)(nil)
 var _ policyruntime.CandidateResource = (*preparedAuthnLuaAction)(nil)
 var _ policyruntime.SyncEffectProvider = configuredAuthnLuaSyncDispatcher{}
 var _ policyruntime.PostActionProvider = configuredAuthnLuaPostDispatcher{}
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (configuredAuthnLuaSyncDispatcher) IdempotencyKey(string) string {
+	return ""
+}
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (configuredAuthnLuaPostDispatcher) IdempotencyKey(string) string { return "" }

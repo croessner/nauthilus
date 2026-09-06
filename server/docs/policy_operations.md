@@ -148,7 +148,8 @@ The public effect and status are authoritative for the synchronous response:
 | post-action acceptance failure | response finalization fails before acceptance | repair supervisor capacity or shutdown state |
 | accepted post-action later fails | original response is immutable; failure is operational | reconcile the external system from audit and provider evidence |
 | partial effect execution | completed ordinals stay completed; remaining work is not replayed | reconcile externally, preserving original order evidence |
-| `outcome_unknown` | an external dispatch may have happened | reconcile before another domain action; never assume absence |
+| `effect_outcome_unknown` | an unsafe external dispatch may have happened | reconcile before another domain action; never assume absence |
+| `effect_outcome_unknown_replay_safe` | all attempted effects explicitly tolerate replay | retry the complete identical request with its original admitted idempotency keys |
 
 The host attempts each selected effect ordinal at most once. It provides no
 automatic retry, replay, deduplication, or outcome API. It also provides no
@@ -188,7 +189,7 @@ process restart; a configuration reload cannot unload or replace a Go module.
 After publication, verify both enabled transports, authentication isolation, a
 permit and a deny, diagnostics denial and authorized release, bounded metrics,
 correlated logs/audit/spans, and provider/effect failure mapping. For an
-ambiguous or late effect failure, stop automated replay and reconcile using the
+unsafe ambiguous or late effect failure, stop automated replay and reconcile using the
 Decision ID, audit record, provider-owned domain identity, and external
 destination state.
 

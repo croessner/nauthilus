@@ -1373,10 +1373,18 @@ components:
       properties:
         code:
           type: string
+          description: >-
+            Stable result code. effect_outcome_unknown is non-retryable.
+            effect_outcome_unknown_replay_safe permits retrying the complete Policy
+            request with unchanged admitted idempotency keys and payload. The host
+            never retries an effect within one request.
         message:
           type: string
         retryable:
           type: boolean
+          description: >-
+            Whether the caller may retry; replay-safe unknown outcomes require the
+            same complete request and idempotency keys.
         details:
           type: array
           items:

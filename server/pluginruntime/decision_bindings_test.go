@@ -466,6 +466,12 @@ func TestNativeDecisionEffectsInvokeOnlySelectedTypedEffects(t *testing.T) {
 	}
 
 	request := provider.lastEffectRequest()
+	identity := request.ExecutionIdentity()
+
+	if identity.Module() != "riskmod" || identity.Component() != "notifier" || identity.Operation() != "notify" || identity.Target() != request.Target() {
+		t.Fatalf("registered execution identity = %#v", identity)
+	}
+
 	if request.Effect() != "notify" || request.Target().Action != "filter" {
 		t.Fatalf("effect request = %#v/%#v", request.Effect(), request.Target())
 	}
@@ -1290,12 +1296,12 @@ func nativeDecisionEffectDescriptor() pluginapi.DecisionEffectProviderDescriptor
 		Name:      testNativeDecisionEffectComponent,
 		Effects: []pluginapi.DecisionEffectDescriptor{
 			{
-				Name: "notify", Execution: pluginapi.DecisionEffectExecutionHostSync,
+				Name: "notify", Execution: pluginapi.DecisionEffectExecutionHostSync, ReplaySafety: pluginapi.DecisionEffectReplayUnsafe,
 				Targets:    []pluginapi.DecisionTargetSelector{{Namespace: "mail", Action: "filter"}},
 				Parameters: parameters,
 			},
 			{
-				Name: "archive", Execution: pluginapi.DecisionEffectExecutionHostPostAction,
+				Name: "archive", Execution: pluginapi.DecisionEffectExecutionHostPostAction, ReplaySafety: pluginapi.DecisionEffectReplayUnsafe,
 				Targets:    []pluginapi.DecisionTargetSelector{{Namespace: "mail", Action: "filter"}},
 				Parameters: parameters,
 			},
@@ -1534,13 +1540,20 @@ func nativeDecisionEffectExecutionWith(
 func nativeDecisionFacts(t *testing.T) decision.FactSet {
 	t.Helper()
 
+	return nativeDecisionFactsWithValue(t, "message-1")
+}
+
+// nativeDecisionFactsWithValue constructs an admitted scalar fact for effect boundary tests.
+func nativeDecisionFactsWithValue(t *testing.T, value string) decision.FactSet {
+	t.Helper()
+
 	provenance, err := decision.NewProvenance(decision.FactSourceCaller, "client", "resource")
 	if err != nil {
 		t.Fatalf("NewProvenance() error = %v", err)
 	}
 
 	fact, err := decision.NewFact(
-		"resource.id", decision.FactCategoryResource, nativeDecisionStringValue(t, "message-1"), provenance,
+		"resource.id", decision.FactCategoryResource, nativeDecisionStringValue(t, value), provenance,
 	)
 	if err != nil {
 		t.Fatalf("NewFact() error = %v", err)

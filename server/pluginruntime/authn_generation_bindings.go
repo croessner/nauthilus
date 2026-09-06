@@ -903,7 +903,18 @@ func (p *nativeAuthnObligationProvider) ID() string { return p.id }
 func (p *nativeAuthnObligationProvider) ExecuteObligation(
 	ctx context.Context,
 	request pluginapi.ObligationRequest,
+	target decision.Target,
 ) (result pluginapi.ObligationResult, err error) {
+	identity, err := p.call.executionIdentity(target, "obligation", "execute")
+	if err != nil {
+		return result, err
+	}
+
+	request, err = pluginapi.NewObligationRequest(request, identity)
+	if err != nil {
+		return result, err
+	}
+
 	return invokeAuthenticationComponent(
 		ctx, p.call,
 		func(callbackCtx context.Context) (pluginapi.ObligationResult, error) {
@@ -941,7 +952,18 @@ func (p *nativeAuthnPostActionProvider) Capabilities() []pluginapi.Capability {
 func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 	ctx context.Context,
 	request pluginapi.PostActionRequest,
+	target decision.Target,
 ) (result pluginapi.PostActionEnqueueResult, err error) {
+	identity, err := p.call.executionIdentity(target, "post_action", "enqueue")
+	if err != nil {
+		return result, err
+	}
+
+	request, err = pluginapi.NewPostActionRequest(request, identity)
+	if err != nil {
+		return result, err
+	}
+
 	return invokeAuthenticationComponent(
 		ctx, p.call,
 		func(callbackCtx context.Context) (pluginapi.PostActionEnqueueResult, error) {
@@ -1012,3 +1034,16 @@ var _ policyruntime.AuthnHostProvider = (*nativeAuthnEnvironmentProvider)(nil)
 var _ policyruntime.AuthnHostProvider = (*nativeAuthnSubjectProvider)(nil)
 var _ policyruntime.SyncEffectProvider = (*nativeAuthnObligationProvider)(nil)
 var _ policyruntime.PostActionProvider = (*nativeAuthnPostActionProvider)(nil)
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*nativeAuthnObligationProvider) IdempotencyKey(string) string {
+	return ""
+}
+
+// executionIdentity derives callback metadata exclusively from its captured registration.
+func (c nativeAuthnComponentCall) executionIdentity(target decision.Target, extension, operation string) (pluginapi.ExecutionIdentityView, error) {
+	return pluginapi.NewExecutionIdentityView(c.spec.moduleName, c.spec.componentName, extension, operation, nativeDecisionTargetSelector(target))
+}
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*nativeAuthnPostActionProvider) IdempotencyKey(string) string { return "" }

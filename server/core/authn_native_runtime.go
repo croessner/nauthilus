@@ -52,18 +52,19 @@ type AuthnNativeRuntime interface {
 
 type authnNativeObligationProgram interface {
 	decisionservice.AuthnNativeEffectProgram
-	ExecuteObligation(context.Context, pluginapi.ObligationRequest) (pluginapi.ObligationResult, error)
+	ExecuteObligation(context.Context, pluginapi.ObligationRequest, decision.Target) (pluginapi.ObligationResult, error)
 }
 
 type authnNativePostActionProgram interface {
 	decisionservice.AuthnNativeEffectProgram
 	Capabilities() []pluginapi.Capability
-	EnqueuePostAction(context.Context, pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error)
+	EnqueuePostAction(context.Context, pluginapi.PostActionRequest, decision.Target) (pluginapi.PostActionEnqueueResult, error)
 }
 
 type authnNativePostActionWork struct {
 	program authnNativePostActionProgram
 	request pluginapi.PostActionRequest
+	target  decision.Target
 	once    sync.Once
 }
 
@@ -89,7 +90,7 @@ func (e *authnCandidateExecution) ExecuteAuthnNativeObligation(
 		return effectsupervisor.Failed("authn_native_obligation_request")
 	}
 
-	result, err := owner.ExecuteObligation(ctx, request)
+	result, err := owner.ExecuteObligation(ctx, request, execution.Target())
 	if err != nil {
 		return effectsupervisor.Failed("authn_native_obligation_execute")
 	}
@@ -131,7 +132,7 @@ func (e *authnCandidateExecution) PrepareAuthnNativePostAction(
 		return nil, err
 	}
 
-	return &authnNativePostActionWork{program: owner, request: request}, nil
+	return &authnNativePostActionWork{program: owner, request: request, target: execution.Target()}, nil
 }
 
 // Validate confirms detached work has an exact immutable owner and public request capture.
@@ -152,7 +153,7 @@ func (w *authnNativePostActionWork) Execute(ctx context.Context) effectsuperviso
 	result := effectsupervisor.Failed("authn_native_post_action_reused")
 
 	w.once.Do(func() {
-		response, err := w.program.EnqueuePostAction(ctx, w.request)
+		response, err := w.program.EnqueuePostAction(ctx, w.request, w.target)
 		switch {
 		case err != nil && response.Enqueued:
 			result = effectsupervisor.OutcomeUnknown("authn_native_post_action_ambiguous")

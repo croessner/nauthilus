@@ -133,3 +133,8 @@ func (e *authnCandidateExecution) executeAuthnPolicyEffect(request report.Effect
 }
 
 var _ policyruntime.SyncEffectProvider = authnPolicySyncEffectProvider{}
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (authnPolicySyncEffectProvider) IdempotencyKey(string) string {
+	return ""
+}

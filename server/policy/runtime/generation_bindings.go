@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -309,11 +310,13 @@ func cloneBindingCaller(caller decision.CallerContext) (decision.CallerContext, 
 
 // SyncEffectProvider executes one generation-captured synchronous host effect.
 type SyncEffectProvider interface {
+	IdempotencyKey(string) string
 	Execute(context.Context, EffectExecution) effectsupervisor.Result
 }
 
 // PostActionProvider prepares immutable work for generation-owned supervision.
 type PostActionProvider interface {
+	IdempotencyKey(string) string
 	Prepare(context.Context, EffectExecution) (effectsupervisor.Work, error)
 }
 
@@ -524,6 +527,16 @@ func (p *generationSyncEffectProvider) CaptureSyncEffectCall() (SyncEffectProvid
 	}
 
 	return &generationSyncEffectProviderCall{provider: p.provider, lease: lease}, nil
+}
+
+// IdempotencyKey exposes the captured provider's immutable per-effect replay key.
+func (p *generationSyncEffectProvider) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
+}
+
+// IdempotencyKey preserves replay metadata across a retained generation call.
+func (p *generationSyncEffectProviderCall) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
 }
 
 // Execute provides safe synchronous fallback ownership for direct effect callers.
@@ -993,11 +1006,19 @@ func (s *BindingSet) validateTargetEffects(target CompiledTarget) error {
 		case registry.ExecutionReturnOnly:
 			continue
 		case registry.ExecutionHostSync:
-			if _, exists = s.syncEffects[effect.Provider()]; exists {
+			if provider, bound := s.syncEffects[effect.Provider()]; bound {
+				if err := validateEffectReplayKey(provider.IdempotencyKey(effectID), target.Schema().Facts()); err != nil {
+					return err
+				}
+
 				continue
 			}
 		case registry.ExecutionHostPostAction:
-			if _, exists = s.postActions[effect.Provider()]; exists {
+			if provider, bound := s.postActions[effect.Provider()]; bound {
+				if err := validateEffectReplayKey(provider.IdempotencyKey(effectID), target.Schema().Facts()); err != nil {
+					return err
+				}
+
 				continue
 			}
 		}
@@ -1013,6 +1034,28 @@ func (s *BindingSet) validateTargetEffects(target CompiledTarget) error {
 	}
 
 	return nil
+}
+
+// validateEffectReplayKey requires a bounded mandatory caller field in the exact selected schema.
+func validateEffectReplayKey(key string, facts []registry.FactSchema) error {
+	if key == "" {
+		return nil
+	}
+
+	for _, fact := range facts {
+		if fact.ID() != key {
+			continue
+		}
+
+		if fact.Kind() == decision.ValueKindString && fact.Required() && fact.MaxLength() > 0 &&
+			fact.MaxLength() <= 128 && slices.Equal(fact.AllowedSources(), []decision.FactSource{decision.FactSourceCaller}) {
+			return nil
+		}
+
+		break
+	}
+
+	return fmt.Errorf("%w: effect replay key requires one mandatory bounded caller string fact", ErrInvalidGenerationBinding)
 }
 
 // cloneFactBindings validates immutable fact-provider ownership metadata.
@@ -1153,4 +1196,14 @@ func nilInterface(input any) bool {
 	default:
 		return false
 	}
+}
+
+// IdempotencyKey returns the captured per-effect replay declaration.
+func (p *generationPostActionProvider) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
+}
+
+// IdempotencyKey returns the captured per-effect replay declaration.
+func (p *generationPostActionProviderCall) IdempotencyKey(effectID string) string {
+	return p.provider.IdempotencyKey(effectID)
 }

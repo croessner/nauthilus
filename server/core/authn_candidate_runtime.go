@@ -1007,6 +1007,7 @@ func authnCandidateRuntimePresentation(
 func authnCandidateDistinctRuntimeFailure(code decision.StatusCode) bool {
 	return code == decision.StatusCodeEffectAcceptanceRejected ||
 		code == decision.StatusCodeEffectOutcomeUnknown ||
+		code == decision.StatusCodeEffectOutcomeUnknownReplaySafe ||
 		code == decision.StatusCodeProviderUnavailable
 }
 
@@ -1017,6 +1018,8 @@ func authnCandidateRuntimeFailureMetadata(code decision.StatusCode) (string, str
 		return authnCandidateOutcomeEffectAcceptanceFailure, authnCandidateResponseSourceEffectAcceptance
 	case decision.StatusCodeEffectOutcomeUnknown:
 		return "auth.outcome.effect_outcome_unknown", "effect_outcome"
+	case decision.StatusCodeEffectOutcomeUnknownReplaySafe:
+		return "auth.outcome.effect_outcome_unknown_replay_safe", "effect_outcome"
 	case decision.StatusCodeProviderUnavailable:
 		return "auth.outcome.provider_unavailable", "decision_provider"
 	default:

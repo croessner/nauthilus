@@ -504,7 +504,7 @@ func validNativeEffectProviderDescriptor() pluginapi.DecisionEffectProviderDescr
 		Effects: []pluginapi.DecisionEffectDescriptor{
 			{
 				Name:      testDecisionEffectName,
-				Execution: pluginapi.DecisionEffectExecutionHostSync,
+				Execution: pluginapi.DecisionEffectExecutionHostSync, ReplaySafety: pluginapi.DecisionEffectReplayUnsafe,
 				Targets: []pluginapi.DecisionTargetSelector{
 					{Namespace: testDecisionTargetNS, Action: testDecisionAction},
 				},

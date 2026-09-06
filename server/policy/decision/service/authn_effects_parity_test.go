@@ -1286,3 +1286,14 @@ func (a *orderedFailingAuthnAcceptor) Accept(
 
 	return effectsupervisor.Receipt{}, a.err
 }
+
+// IdempotencyKey declares the captured per-effect replay contract; empty forbids replay.
+func (*orderedAuthnSyncEffectProvider) IdempotencyKey(string) string {
+	return ""
+}
+
+// IdempotencyKey keeps arbitrary authentication effects non-replayable.
+func (cancelingAuthnSyncEffectProvider) IdempotencyKey(string) string { return "" }
+
+// IdempotencyKey explicitly forbids replay for this effect provider.
+func (*orderedAuthnPostActionProvider) IdempotencyKey(string) string { return "" }
