@@ -553,10 +553,11 @@ type recordedCheckpointEvaluation struct {
 }
 
 type recordingCheckpointEvaluator struct {
-	outcome runtimeEvaluation
-	err     error
-	mu      sync.Mutex
-	calls   []recordedCheckpointEvaluation
+	outcome       runtimeEvaluation
+	providerFacts decision.FactSet
+	err           error
+	mu            sync.Mutex
+	calls         []recordedCheckpointEvaluation
 }
 
 // Checkpoints returns the operation-specific plan used by recording authn sessions.
@@ -586,6 +587,7 @@ func (e *recordingCheckpointEvaluator) Evaluate(_ context.Context, input checkpo
 		supervisor: input.supervisor,
 		generation: input.generation,
 	})
+	e.providerFacts = input.providerFacts
 
 	outcome := e.outcome
 	outcome.report.checkpoint = input.checkpoint.Name()

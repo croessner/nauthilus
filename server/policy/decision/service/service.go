@@ -56,6 +56,12 @@ type DecisionSession interface {
 	Evaluate(context.Context, decision.Checkpoint) (decision.DecisionResponse, error)
 }
 
+// AuthnProviderFactSession exposes detached provider evidence from completed checkpoints.
+type AuthnProviderFactSession interface {
+	DecisionSession
+	AuthnProviderFacts() decision.FactSet
+}
+
 // AuthnHostProvider is the narrow generation-owned host-source boundary.
 type AuthnHostProvider = policyruntime.AuthnHostProvider
 
@@ -614,6 +620,7 @@ type decisionSession struct {
 	generation      *runtimeGeneration
 	request         decision.DecisionRequest
 	facts           decision.FactSet
+	providerFacts   decision.FactSet
 	permit          admissionPermit
 	finalization    decision.EvaluationFinalization
 	checkpoints     []CheckpointPlan
@@ -744,6 +751,7 @@ func (s *decisionSession) Evaluate(
 		request:       s.request,
 		checkpoint:    ownedCheckpoint,
 		facts:         s.facts,
+		providerFacts: s.providerFacts,
 		hostStates:    hostStates,
 		hostReasons:   hostReasons,
 		finalization:  s.finalization,
@@ -764,7 +772,23 @@ func (s *decisionSession) Evaluate(
 		return decision.DecisionResponse{}, fmt.Errorf("%w: evaluator returned an invalid boundary result", ErrDecisionEvaluation)
 	}
 
+	s.mu.Lock()
+	s.providerFacts = outcome.report.runtime.providerFacts
+	s.mu.Unlock()
+
 	return outcome.response, nil
+}
+
+// AuthnProviderFacts returns only completed, lease-owned provider output.
+func (s *decisionSession) AuthnProviderFacts() decision.FactSet {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.evaluating {
+		return decision.FactSet{}
+	}
+
+	return s.providerFacts
 }
 
 // beginEvaluation enforces compiled checkpoint order and serial session execution.

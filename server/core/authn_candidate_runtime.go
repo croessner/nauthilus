@@ -57,6 +57,7 @@ type authnCandidateExecution struct {
 	selected       map[string]*report.FinalDecision
 	accounts       AccountList
 	backendPlan    backendExecutionPlan
+	providerFacts  decision.FactSet
 	backendAccount string
 	operation      policy.Operation
 	mu             sync.Mutex
@@ -152,6 +153,10 @@ func (e *authnCandidateExecution) prepareCheckpoint(
 	hostSession, ok := session.(decisionservice.AuthnHostExecutionSession)
 	if !ok {
 		return authnApplicationResult{}, fmt.Errorf("authn host execution session is unavailable")
+	}
+
+	if facts, available := session.(decisionservice.AuthnProviderFactSession); available {
+		e.providerFacts = facts.AuthnProviderFacts()
 	}
 
 	for {

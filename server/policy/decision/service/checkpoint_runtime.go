@@ -118,6 +118,7 @@ type effectRecord struct {
 
 type runtimeReport struct {
 	facts               decision.FactSet
+	providerFacts       decision.FactSet
 	providers           []providerRecord
 	effects             []effectRecord
 	policySet           string
@@ -285,6 +286,13 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
 
+	retained := retainedCheckpointProviderFacts(input.providerFacts, target, checkpoint)
+
+	facts, err = mergeAdmittedFacts(facts, retained)
+	if err != nil {
+		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
+	}
+
 	facts, err = target.Schema().NormalizeFacts(facts)
 	if err != nil {
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
@@ -294,7 +302,7 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{facts: facts}), nil
 	}
 
-	report := runtimeReport{facts: facts}
+	report := runtimeReport{facts: facts, providerFacts: retained}
 	facts, providersReliable := r.runProviders(
 		evaluationContext,
 		target,
@@ -441,9 +449,46 @@ func (r *checkpointRuntime) runProviders(
 		}
 
 		facts = owned
+
+		report.providerFacts, err = decision.NewFactSet(append(report.providerFacts.Facts(), levelFacts...))
+		if err != nil {
+			return facts, false
+		}
 	}
 
 	return facts, true
+}
+
+// retainedCheckpointProviderFacts expires outputs whose owner is scheduled again.
+// Fresh execution (including skips and failures) must never inherit stale evidence.
+func retainedCheckpointProviderFacts(
+	previous decision.FactSet,
+	target policyruntime.CompiledTarget,
+	checkpoint policyruntime.CompiledCheckpoint,
+) decision.FactSet {
+	refreshed := make(map[string]struct{})
+
+	for _, instance := range checkpoint.ProviderInstances() {
+		provider, exists := target.LookupProvider(instance.Use())
+		if !exists {
+			continue
+		}
+
+		for id := range declaredProviderOutputs(instance, provider) {
+			refreshed[id] = struct{}{}
+		}
+	}
+
+	facts := make([]decision.Fact, 0, previous.Len())
+	for _, fact := range previous.Facts() {
+		if _, expires := refreshed[fact.ID()]; !expires {
+			facts = append(facts, fact)
+		}
+	}
+
+	retained, _ := decision.NewFactSet(facts)
+
+	return retained
 }
 
 type providerLevelResult struct {

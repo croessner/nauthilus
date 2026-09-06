@@ -24,6 +24,7 @@ type checkpointEvaluation struct {
 	request       decision.DecisionRequest
 	checkpoint    decision.Checkpoint
 	facts         decision.FactSet
+	providerFacts decision.FactSet
 	hostStates    map[string]providerState
 	hostReasons   map[string]string
 	finalization  decision.EvaluationFinalization

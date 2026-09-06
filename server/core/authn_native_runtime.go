@@ -230,7 +230,12 @@ func authnNativeEffectArgs(execution policyruntime.EffectExecution) (map[string]
 
 // authnNativeEffectFacts exposes only Lua/native facts from the exact selected decision.
 func authnNativeEffectFacts(execution policyruntime.EffectExecution) []pluginapi.PolicyFact {
-	facts := execution.Facts().Facts()
+	return authnNativePublicFacts(execution.Facts())
+}
+
+// authnNativePublicFacts shares only detached Lua/native evidence with public plugins.
+func authnNativePublicFacts(input decision.FactSet) []pluginapi.PolicyFact {
+	facts := input.Facts()
 
 	result := make([]pluginapi.PolicyFact, 0, len(facts))
 	for _, fact := range facts {
@@ -320,9 +325,12 @@ func (e *authnCandidateExecution) prepareNativeSubjectSource(
 		return false, err
 	}
 
+	backend := authnNativeBackendResult(e.backendResult)
+	backend.Facts = authnNativePublicFacts(e.providerFacts)
+
 	result, callErr := provider.EvaluateSubject(e.ginCtx.Request.Context(), pluginapi.SubjectRequest{
 		Snapshot: capture.Snapshot, Runtime: capture.Runtime,
-		BackendResult: authnNativeBackendResult(e.backendResult), Credentials: capture.Credentials,
+		BackendResult: backend, Credentials: capture.Credentials,
 	})
 	if err = e.recordAuthnNativeSubjectResult(providerID, result, callErr); err != nil {
 		return false, err
