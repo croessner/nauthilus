@@ -1005,6 +1005,10 @@ func serveCanonicalSelfServiceTOTP(
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
+	if handler.deps == nil || handler.deps.Redis == nil {
+		configureMFAAttemptTestStorage(t, handler)
+	}
+
 	router := gin.New()
 	router.POST(
 		"/login/totp",
@@ -1035,6 +1039,10 @@ func serveCanonicalSelfServiceRecovery(
 	ticket string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+
+	if handler.deps == nil || handler.deps.Redis == nil {
+		configureMFAAttemptTestStorage(t, handler)
+	}
 
 	router := gin.New()
 	router.POST(

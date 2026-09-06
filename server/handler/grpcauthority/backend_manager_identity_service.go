@@ -411,11 +411,25 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(ctx context.Conte
 	return changedMFAResult(input.Backend), nil
 }
 
+// consumeMFAAttempt reserves capacity using the admitted backend identity.
+func (s *backendManagerIdentityService) consumeMFAAttempt(ctx context.Context, auth *core.AuthState) error {
+	identity := auth.GetUniqueUserID()
+	if identity == "" {
+		identity = auth.Runtime.AccountName
+	}
+
+	return core.ConsumeMFAAttempt(ctx, s.authDeps, identity)
+}
+
 func (s *backendManagerIdentityService) VerifyTOTP(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationVerifyTOTP
 
 	auth, manager, err := s.authAndManager(ctx, input)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.consumeMFAAttempt(ctx, auth); err != nil {
 		return nil, err
 	}
 
@@ -496,6 +510,10 @@ func (s *backendManagerIdentityService) UseRecoveryCode(ctx context.Context, inp
 
 	auth, manager, err := s.authAndManager(ctx, input)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.consumeMFAAttempt(ctx, auth); err != nil {
 		return nil, err
 	}
 

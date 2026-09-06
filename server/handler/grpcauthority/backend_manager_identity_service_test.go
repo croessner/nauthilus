@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -30,8 +31,10 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	_ "github.com/croessner/nauthilus/v4/server/pluginruntime"
+	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/pquerna/otp/totp"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -699,6 +702,13 @@ func TestBackendManagerIdentityServiceConsumesRecoveryCodeOnce(t *testing.T) {
 	username := "consume-once@example.test"
 	deps := authorityMFATestAuthDeps()
 
+	storage := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: storage.Addr()})
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	deps.Redis = rediscli.NewTestClient(client)
+
 	seedAuthorityMFATestUser(t, deps, backendName, username, "", []string{
 		authorityMFATestRecoveryCodeA,
 		authorityMFATestRecoveryCodeB,
@@ -974,4 +984,36 @@ func newAuthorityMFATestService(deps core.AuthDeps, input AuthorityIdentityInput
 		AuthService: &recordingAuthorityMFAApplicationService{lookupOutcome: authorityMFATestOutcome(input)},
 		AuthDeps:    deps,
 	})
+}
+
+// TestAuthorityCodeBudgetUsesResolvedIdentity shares browser reservations despite references without an ID.
+func TestAuthorityCodeBudgetUsesResolvedIdentity(t *testing.T) {
+	deps := authorityMFATestAuthDeps()
+	storage := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: storage.Addr()})
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	deps.Redis = rediscli.NewTestClient(client)
+	input := authorityMFATestInput("authority-code-budget", "budget@example.test")
+	seedAuthorityMFATestUser(t, deps, input.Backend.Name, input.Username, "", nil)
+	outcome := authorityMFATestOutcome(input)
+	outcome.UniqueUserID = "stable-code-identity"
+	outcome.UniqueUserIDField = "entryUUID"
+	outcome.Attributes = map[string][]any{"entryUUID": {"stable-code-identity"}}
+
+	service := NewBackendManagerIdentityService(BackendManagerIdentityServiceDeps{
+		AuthService: &recordingAuthorityMFAApplicationService{lookupOutcome: outcome}, AuthDeps: deps,
+	})
+	for range 10 {
+		if err := core.ConsumeMFAAttempt(t.Context(), deps, outcome.UniqueUserID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, verify := range []func(context.Context, AuthorityIdentityInput) (*AuthorityIdentityResult, error){service.VerifyTOTP, service.UseRecoveryCode} {
+		if _, err := verify(t.Context(), input); !errors.Is(err, core.ErrMFAAttemptLimit) {
+			t.Fatalf("exhausted resolved identity must stop verification, got %v", err)
+		}
+	}
 }

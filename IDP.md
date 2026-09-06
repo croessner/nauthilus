@@ -751,3 +751,13 @@ If you have configured more than one second factor (e.g., both TOTP and a Securi
   login.
 - **Backup Access**: If your preferred method is unavailable, you can always choose one of your other active factors or
   use a **Recovery Code**.
+
+### Code verification attempt budget
+
+Canonical browser TOTP and recovery verification share a Redis-backed budget of ten admitted attempts per
+stable identity in a fixed five-minute window. Reservations happen atomically before code verification and
+include successful attempts. Switching IP addresses, methods, or browser challenges does not reset this budget.
+Exhaustion returns HTTP 429; unavailable budget storage returns HTTP 503 without invoking the verifier.
+The identity authority also enforces this budget before its direct TOTP and recovery operations. In distributed
+setups the frontend and authority enforce their own identity-bound reservations; when both resolve to the same
+Redis key, a verification consumes both reservations. Size deployment expectations accordingly.

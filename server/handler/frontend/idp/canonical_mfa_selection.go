@@ -44,6 +44,28 @@ type canonicalMFASelectionState struct {
 	failLatched  bool
 }
 
+// admitCanonicalMFACode reserves the account budget before any local or remote verifier is dispatched.
+func (h *FrontendHandler) admitCanonicalMFACode(ctx *gin.Context, selection canonicalMFASelectionState) bool {
+	if h == nil || h.deps == nil {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+		return false
+	}
+
+	err := core.ConsumeMFAAttempt(ctx.Request.Context(), h.deps.Auth(), selection.identity.Reference)
+	if err == nil {
+		return true
+	}
+
+	if errors.Is(err, core.ErrMFAAttemptLimit) {
+		ctx.Header("Retry-After", "300")
+		ctx.AbortWithStatus(http.StatusTooManyRequests)
+	} else {
+		ctx.AbortWithStatus(http.StatusServiceUnavailable)
+	}
+
+	return false
+}
+
 // canonicalGlobalMFAMethodLevels returns the effective global policy or the built-in compatibility baseline.
 func (h *FrontendHandler) canonicalGlobalMFAMethodLevels() map[string]int {
 	if h == nil || h.deps == nil || h.deps.Cfg == nil || h.deps.Cfg.GetIDP() == nil {

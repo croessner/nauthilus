@@ -37,7 +37,7 @@ func TestCanonicalRecoveryEnrollmentGeneratesSavesAndAdvancesOnce(t *testing.T) 
 	generateCalls := 0
 	saveCalls := 0
 	operation := sessionstate.Handle("")
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalRecoveryEnrollmentGenerator = func(
 		_ *gin.Context,
 		selection canonicalEnrollmentSelectionState,
@@ -161,7 +161,7 @@ func TestCanonicalWebAuthnEnrollmentBindsCeremonyAndResumesOnce(t *testing.T) {
 
 	beginCalls := 0
 	finishCalls := 0
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalWebAuthnEnrollmentBegin = func(
 		_ *gin.Context,
 		selection canonicalEnrollmentSelectionState,
@@ -245,7 +245,7 @@ func TestCanonicalTOTPEnrollmentPersistsPendingMaterialAndAdvancesOnce(t *testin
 	beginCalls := 0
 	finishCalls := 0
 	operation := sessionstate.Handle("")
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalTOTPEnrollmentStarter = func(
 		_ *gin.Context,
 		selection canonicalEnrollmentSelectionState,

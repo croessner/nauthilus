@@ -1133,8 +1133,10 @@ func newMFASelfServiceContext(method string, path string, sessionData map[string
 }
 
 // newLoginMFAViewHandler creates a frontend handler for MFA login view tests.
-func newLoginMFAViewHandler() *FrontendHandler {
-	return &FrontendHandler{
+func newLoginMFAViewHandler(t *testing.T) *FrontendHandler {
+	t.Helper()
+
+	handler := &FrontendHandler{
 		deps: &deps.Deps{
 			Cfg:         &mockFrontendCfg{},
 			Env:         config.NewTestEnvironmentConfig(),
@@ -1142,6 +1144,9 @@ func newLoginMFAViewHandler() *FrontendHandler {
 			Logger:      slog.Default(),
 		},
 	}
+	configureMFAAttemptTestStorage(t, handler)
+
+	return handler
 }
 
 // loginMFATestTemplate returns minimal templates that would expose Username when present.

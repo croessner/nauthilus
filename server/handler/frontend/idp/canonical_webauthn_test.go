@@ -32,7 +32,7 @@ func TestCanonicalWebAuthnCeremonyCompletesBoundStepUpAndResumesOnce(t *testing.
 
 	beginCalls := 0
 	finishCalls := 0
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalWebAuthnAvailability
 	handler.canonicalWebAuthnBegin = func(
 		_ *gin.Context,
@@ -136,7 +136,7 @@ func TestCanonicalWebAuthnCompletionRefreshesAnchorAfterCeremonyConsume(t *testi
 	stepUpHandle := seedCanonicalWebAuthnStepUp(t, runtime, browserCookie, flowID)
 	ceremonyHandle := sessionstate.Handle("YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY")
 
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalWebAuthnAvailability
 	handler.canonicalWebAuthnFinish = func(
 		ctx *gin.Context,
@@ -223,7 +223,7 @@ func TestCanonicalLoginWebAuthnViewDoesNotExpose2FAHomeMenuBeforeCompletion(t *t
 	authenticateCanonicalFixture(t, runtime, browserCookie)
 	stepUpHandle := seedCanonicalWebAuthnStepUp(t, runtime, browserCookie, flowID)
 
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalWebAuthnAvailability
 	router := gin.New()
 	router.SetHTMLTemplate(loginMFATestTemplate())

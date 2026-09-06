@@ -66,6 +66,10 @@ func (h *FrontendHandler) completeCanonicalTOTP(ctx *gin.Context) {
 		return
 	}
 
+	if !h.admitCanonicalMFACode(ctx, selection) {
+		return
+	}
+
 	verifier := h.canonicalTOTPVerifier
 	if verifier == nil {
 		verifier = h.verifyCanonicalTOTP

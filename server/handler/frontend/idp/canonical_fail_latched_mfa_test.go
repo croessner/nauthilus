@@ -28,7 +28,7 @@ func TestCanonicalFailLatchedWebAuthnProofTerminatesWithoutAuthentication(t *tes
 	runtime, browserCookie, flowID, stepUp := seedCanonicalFailLatchedMFA(
 		t, definitions.MFAMethodWebAuthn, 2,
 	)
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	finishCalls := 0
 	handler.canonicalWebAuthnFinish = func(
 		_ *gin.Context,
@@ -82,7 +82,7 @@ func TestCanonicalFailLatchedRecoveryProofTerminatesWithoutAuthentication(t *tes
 	runtime, browserCookie, flowID, stepUp := seedCanonicalFailLatchedMFA(
 		t, definitions.MFAMethodRecoveryCodes, 1,
 	)
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	verifyCalls := 0
 	handler.canonicalRecoveryVerifier = func(
 		_ *gin.Context,
@@ -135,7 +135,7 @@ func TestCanonicalFailLatchedRecoveryProofRejectsInsufficientAssuranceLevel(t *t
 	runtime, browserCookie, _, stepUp := seedCanonicalFailLatchedMFA(
 		t, definitions.MFAMethodRecoveryCodes, 2,
 	)
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	verifyCalls := 0
 	handler.canonicalRecoveryVerifier = func(
 		_ *gin.Context,

@@ -65,6 +65,10 @@ func (h *FrontendHandler) completeCanonicalRecovery(ctx *gin.Context) {
 		return
 	}
 
+	if !h.admitCanonicalMFACode(ctx, selection) {
+		return
+	}
+
 	verifier := h.canonicalRecoveryVerifier
 	if verifier == nil {
 		verifier = h.verifyCanonicalRecovery

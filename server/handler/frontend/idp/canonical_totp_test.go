@@ -32,7 +32,7 @@ func TestCanonicalTOTPWrongCodePreservesTicketAndCSRFThenCompletesOnce(t *testin
 	stepUpHandle := seedCanonicalTOTPStepUp(t, runtime, browserCookie, flowID)
 
 	verificationCalls := 0
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalTOTPAvailability
 	handler.canonicalTOTPVerifier = func(
 		_ *gin.Context,
@@ -84,6 +84,39 @@ func TestCanonicalTOTPWrongCodePreservesTicketAndCSRFThenCompletesOnce(t *testin
 	_ = csrfHandler
 }
 
+// TestCanonicalTOTPAttemptBudget stops verification after the shared account budget is exhausted.
+func TestCanonicalTOTPAttemptBudget(t *testing.T) {
+	runtime, browserCookie, flowID := seedCanonicalIDPFlow(t, canonicalDecisionOIDCState(""))
+	authenticateCanonicalFixture(t, runtime, browserCookie)
+	handle := seedCanonicalTOTPStepUp(t, runtime, browserCookie, flowID)
+	handler := newLoginMFAViewHandler(t)
+	handler.canonicalMFAAvailabilityResolver = canonicalTOTPAvailability
+	calls := 0
+	handler.canonicalTOTPVerifier = func(*gin.Context, canonicalMFASelectionState, string) (bool, error) {
+		calls++
+		return false, nil
+	}
+	router, _ := canonicalTOTPTestRouter(t, runtime, handler)
+
+	csrfCookie, token := loadCanonicalTOTPForm(t, router, browserCookie, handle)
+	for i := range 11 {
+		response := postCanonicalTOTP(t, router, browserCookie, csrfCookie, handle, token, "000000")
+		if i == 10 {
+			if response.Code != http.StatusTooManyRequests || calls != 10 {
+				t.Fatalf("exhausted budget: status=%d verifier calls=%d", response.Code, calls)
+			}
+
+			continue
+		}
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("ordinary retry: %d", response.Code)
+		}
+
+		token = canonicalTOTPTemplateValue(t, response.Body.String(), "csrf")
+	}
+}
+
 func TestCanonicalLoginTOTPViewDoesNotExpose2FAHomeMenuBeforeCompletion(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +124,7 @@ func TestCanonicalLoginTOTPViewDoesNotExpose2FAHomeMenuBeforeCompletion(t *testi
 	authenticateCanonicalFixture(t, runtime, browserCookie)
 	stepUpHandle := seedCanonicalTOTPStepUp(t, runtime, browserCookie, flowID)
 
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalTOTPAvailability
 	router := gin.New()
 	router.SetHTMLTemplate(loginMFATestTemplate())

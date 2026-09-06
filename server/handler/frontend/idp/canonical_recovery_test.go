@@ -31,7 +31,7 @@ func TestCanonicalRecoveryWrongCodeRetriesThenConsumesAndResumesOnce(t *testing.
 	stepUpHandle := seedCanonicalRecoveryStepUp(t, runtime, browserCookie, flowID)
 
 	verificationCalls := 0
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalRecoveryAvailability
 	handler.canonicalRecoveryVerifier = func(
 		_ *gin.Context,
@@ -88,7 +88,7 @@ func TestCanonicalLoginRecoveryViewDoesNotExpose2FAHomeMenuBeforeCompletion(t *t
 	authenticateCanonicalFixture(t, runtime, browserCookie)
 	stepUpHandle := seedCanonicalRecoveryStepUp(t, runtime, browserCookie, flowID)
 
-	handler := newLoginMFAViewHandler()
+	handler := newLoginMFAViewHandler(t)
 	handler.canonicalMFAAvailabilityResolver = canonicalRecoveryAvailability
 	router := gin.New()
 	router.SetHTMLTemplate(loginMFATestTemplate())
