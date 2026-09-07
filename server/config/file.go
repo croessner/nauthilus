@@ -3921,17 +3921,7 @@ func decodePolicyConfiguration(settings map[string]any) (policyconfig.Document, 
 		documentSettings["policy"] = policySettings
 	}
 
-	encoded, err := json.Marshal(documentSettings)
-	if err != nil {
-		return policyconfig.Document{}, fmt.Errorf("encode policy configuration: %w", err)
-	}
-
-	document, err := policyconfig.Decode("json", bytes.NewReader(encoded))
-	if err != nil {
-		return policyconfig.Document{}, err
-	}
-
-	return document, nil
+	return policyconfig.DecodeMapping(documentSettings)
 }
 
 // rejectRemovedPolicyAliases rejects value aliases that strict field decoding cannot identify.
