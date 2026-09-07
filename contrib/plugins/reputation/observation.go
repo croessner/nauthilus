@@ -23,6 +23,7 @@ const (
 )
 
 var errASNUnavailable = errors.New("reputation ASN dependency unavailable")
+var errASNNotFound = errors.New("reputation ASN verified absent")
 
 type subjectInput struct{ role, kind, value string }
 
@@ -186,7 +187,7 @@ func (c *configuration) admitSubjects(ctx context.Context, source *sourcePolicy,
 	return result, reasonValid, nil
 }
 
-// expandSubject derives only configured related subjects from the same canonical IP.
+// expandSubject derives related subjects, omitting only a provider-verified absent ASN.
 func (c *configuration) expandSubject(ctx context.Context, source *sourcePolicy, subject subjectInput, resolver asnResolver) ([]subjectInput, error) {
 	canonical, err := c.canonicalSubject(subject.kind, subject.value)
 	if err != nil {
@@ -202,6 +203,10 @@ func (c *configuration) expandSubject(ctx context.Context, source *sourcePolicy,
 
 	for _, kind := range source.config.DerivedSubjects[subject.role] {
 		value, err := c.derivedSubject(ctx, source, kind, canonical, resolver)
+		if kind == kindASN && errors.Is(err, errASNNotFound) {
+			continue
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -223,6 +228,10 @@ func (c *configuration) derivedSubject(ctx context.Context, source *sourcePolicy
 	}
 
 	value, err := resolver.lookupASN(ctx, source.config.ASNProvider, canonicalIP)
+	if errors.Is(err, errASNNotFound) {
+		return "", errASNNotFound
+	}
+
 	if err != nil {
 		return "", errASNUnavailable
 	}

@@ -526,7 +526,7 @@ func (e *authnCandidateExecution) prepareBackendPlan(plan backendExecutionPlan) 
 	return e.prepareVerifiedBackendResult(plan)
 }
 
-// prepareCachedBackendResult installs one request-compatible positive cache hit.
+// prepareCachedBackendResult installs a positive hit using its restored canonical identity, including attribute-backed accounts.
 func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecutionPlan) bool {
 	result, found := e.auth.takePositiveBackendAuthenticationCache(e.ginCtx)
 	if !found {
@@ -534,10 +534,11 @@ func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecuti
 	}
 
 	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultOK, result, nil)
-	e.captureBackendOutcome(result, result.Account)
+	account := e.auth.GetAccount()
+	e.captureBackendOutcome(result, account)
 	e.backendResult = result
 	e.backendPlan = plan
-	e.backendAccount = result.Account
+	e.backendAccount = account
 	e.backendReady = true
 	e.backendCached = true
 	e.authResult = definitions.AuthResultOK

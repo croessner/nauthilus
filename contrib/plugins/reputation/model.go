@@ -41,6 +41,7 @@ type ingestionSemantics struct {
 	Services             []string                `json:"services"`
 	Schema               string                  `json:"schema"`
 	AccountNormalization string                  `json:"account_normalization"`
+	ASNAbsencePolicy     string                  `json:"asn_absence_policy,omitempty"`
 	Network              networkConfig           `json:"network"`
 	Retention            time.Duration           `json:"retention"`
 	ManifestTTL          time.Duration           `json:"manifest_ttl"`
@@ -68,6 +69,10 @@ func canonicalIngestionSemantics(cfg *configuration) ingestionSemantics {
 	value := ingestionSemantics{AuthLearning: cfg.raw.AuthLearning, SubjectScope: cfg.raw.SubjectScope, MaximumManifests: cfg.raw.MaximumEventManifestsPerSource, MaximumSeen: cfg.raw.MaximumSeenEventsPerSubject, Schema: cfg.raw.StateSchema, AccountNormalization: cfg.raw.AccountNormalization, Network: cfg.raw.NetworkSubjects,
 		Retention: cfg.retention, ManifestTTL: cfg.manifestTTL, SeenTTL: cfg.seenTTL, RetryHorizon: cfg.retryHorizon, NewSubjectsPerHour: cfg.raw.MaximumNewSubjectsPerSourceHour,
 		Services: slices.Clone(cfg.raw.Services), Sources: make(map[string]sourceConfig), Signals: make(map[string]signalConfig)}
+	if len(cfg.asnFacts) != 0 {
+		value.ASNAbsencePolicy = "omit_verified_not_found"
+	}
+
 	sort.Strings(value.Services)
 
 	for name, halfLife := range cfg.profiles {

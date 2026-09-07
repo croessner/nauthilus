@@ -10,6 +10,56 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
+// TestReputationRedisVerifiedASNAbsenceReplaysWithoutInventedSubject keeps the committed IP/network plan immutable.
+func TestReputationRedisVerifiedASNAbsenceReplaysWithoutInventedSubject(t *testing.T) {
+	_, facade := localReputationRedis(t)
+	cfg := testASNObservationConfig(t)
+	owner, err := newStateOwner(cfg, manifestTestTagger(t, false), facade)
+	requireNoError(t, err)
+	requireNoError(t, owner.start(t.Context()))
+	input := testObservation()
+	input.observedAt = time.Now().UTC()
+	source := cfg.apiSources["ScanWriter"]
+	age := int64(1)
+	record, err := recordInputs([]outputInput{stringOutput("ip", "192.0.2.3"), stringOutput("lookup_state", assessmentMissing),
+		{name: "data_age_seconds", input: pluginapi.DecisionValueInput{Integer: &age}}})
+	requireNoError(t, err)
+	resolver := providerASNResolver{source: source, records: []pluginapi.DecisionRecord{record}}
+	admitted, reason, err := owner.admitForPolicy(t.Context(), source, input, resolver)
+	requireNoError(t, err)
+	if reason != reasonValid {
+		t.Fatal("verified absence prevented admission")
+	}
+
+	first, err := owner.ingest(t.Context(), admitted)
+	requireNoError(t, err)
+	if first.Applied != 2 {
+		t.Fatal("IP and network were not committed exactly once")
+	}
+
+	_, reason, err = owner.admitForPolicy(t.Context(), source, input, changingASNFixture{})
+	requireNoError(t, err)
+	if reason != reasonConflict {
+		t.Fatal("changed ASN attribution was not rejected")
+	}
+
+	retry, reason, err := owner.admitForPolicy(t.Context(), source, input, resolver)
+	requireNoError(t, err)
+	if reason != reasonValid {
+		t.Fatal("immutable retry was not admitted")
+	}
+
+	duplicate, err := owner.ingest(t.Context(), retry)
+	requireNoError(t, err)
+	if duplicate.Applied != 0 || duplicate.Duplicates != 2 {
+		t.Fatal("retry changed the committed no-ASN subject plan")
+	}
+
+	if value := owner.assess(t.Context(), subjectInput{kind: kindASN, value: "64501"}, profileOperational); value.State != assessmentMissing {
+		t.Fatal("retry invented an ASN observation")
+	}
+}
+
 // TestReputationRedisObservationAdmissionNeverAllocatesBeforePolicy keeps validation read-only and preserves exact late retries.
 func TestReputationRedisObservationAdmissionNeverAllocatesBeforePolicy(t *testing.T) {
 	client, facade := localReputationRedis(t)

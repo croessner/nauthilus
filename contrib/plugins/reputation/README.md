@@ -39,6 +39,9 @@ never enter plugin configuration. Network derivation uses explicit prefixes;
 ASN derivation requires an exact provider binding and the same admitted IP.
 Direct ASN input requires a separately authenticated authoritative external
 feed. An unavailable ASN seam makes an ASN-dependent observation unavailable.
+An exactly correlated, bounded-age `not_found` result permits IP/network
+learning without creating an ASN subject. Missing, malformed, contradictory,
+expired or ambiguous provider evidence is still unavailable.
 
 The example's raw subject records are visible only to the observation provider.
 Its provider-owned admitted collection is visible only to the selected storage
@@ -370,7 +373,14 @@ belong to that provider's module. Registration freezes required IP, lookup state
 activation rejects a missing scheduler dependency or an incompatible/hidden input. The observation and storage
 providers use only this configured output and correlate exactly one record to the canonical admitted IP. Missing,
 ambiguous, too-old, or unavailable ASN evidence makes ASN-required admission indeterminate and writes no evidence.
+A verified `not_found` result with no positive ASN omits only the ASN contribution.
 A source without ASN expansion continues to admit its own subjects even when shared geographic providers run.
+
+The verified-absence attribution rule is part of the ingestion fingerprint for
+ASN-enabled models. Deploy it under a new model ID when an older model is
+already registered. Preserve the previous model and its evidence for rollback;
+never overwrite its fingerprint or relabel historical evidence. New models
+start with unknown reputation and accumulate independent observations normally.
 
 The [GeoIP observation fragment](../../../server/docs/examples/reputation_geoip_observation.yml) supplements the base
 example by exact module/source/provider/fact/field identity. It is not a standalone server configuration and must not

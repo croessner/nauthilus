@@ -2,10 +2,45 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/policy"
 )
+
+// TestCachedBackendOutcomeRetainsCanonicalAccount covers LDAP results whose identity lives in attributes and context.
+func TestCachedBackendOutcomeRetainsCanonicalAccount(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	source, sourceCtx := newRequestOwnedContractAuth(t, cfg, "alias@example.test", "credential", "cold-account")
+
+	result := newSemanticPassDBResult(sourceCtx, source)
+	defer PutPassDBResultToPool(result)
+
+	result.Account = ""
+	result.Attributes["uid"] = []any{"canonical@example.test"}
+	source.Runtime.AccountName = ""
+
+	sourceCtx.Set(definitions.CtxAccountKey, "canonical@example.test")
+
+	cache := NewPositiveBackendAuthenticationCache(time.Now)
+	if !cache.StoreForRequest(sourceCtx, source, result, time.Minute, source.Request.Username) {
+		t.Fatal("canonical backend fixture was not cached")
+	}
+
+	auth, ginCtx := newRequestOwnedContractAuth(t, cfg, source.Request.Username, "credential", "warm-account")
+	auth.deps.BackendAuthenticationCache = cache
+
+	host := &authnCandidateExecution{auth: auth, ginCtx: ginCtx, operation: policy.OperationAuthenticate}
+	if !host.prepareCachedBackendResult(backendExecutionPlan{}) {
+		t.Fatal("expected positive backend cache hit")
+	}
+	defer PutPassDBResultToPool(host.backendResult)
+
+	if !host.backendOutcome.Observed() || host.backendOutcome.Account() != "canonical@example.test" || host.backendAccount != "canonical@example.test" {
+		t.Fatal("warm backend outcome lost the verified canonical identity")
+	}
+}
 
 // TestAuthnBackendOutcomeRetainsOriginalTruth separates verified evidence from later subject and Policy changes.
 func TestAuthnBackendOutcomeRetainsOriginalTruth(t *testing.T) {

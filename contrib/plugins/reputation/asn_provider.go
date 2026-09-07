@@ -25,7 +25,7 @@ func (r providerASNResolver) lookupASN(ctx context.Context, provider, ip string)
 		return "", errASNUnavailable
 	}
 
-	result := ""
+	var selected map[string]pluginapi.DecisionRecordFieldValue
 
 	for _, record := range r.records {
 		fields, matches, err := matchingASNRecord(record, ip)
@@ -37,31 +37,37 @@ func (r providerASNResolver) lookupASN(ctx context.Context, provider, ip string)
 			continue
 		}
 
-		if result != "" {
+		if selected != nil {
 			return "", errASNUnavailable
 		}
 
-		result, err = r.recordASN(fields)
-		if err != nil {
-			return "", err
-		}
+		selected = fields
 	}
 
-	if result == "" {
+	if selected == nil {
 		return "", errASNUnavailable
 	}
 
-	return result, nil
+	return r.recordASN(selected)
 }
 
-// recordASN requires a evaluated, bounded-age integer ASN without treating missing data as a negative observation.
+// recordASN distinguishes a bounded-age database miss from unavailable or contradictory attribution.
 func (r providerASNResolver) recordASN(fields map[string]pluginapi.DecisionRecordFieldValue) (string, error) {
 	state, validState := fields["lookup_state"].Value().StringValue()
 	age, validAge := fields["data_age_seconds"].Value().Integer()
 
-	asn, validASN := fields["asn"].Value().Integer()
-	if !validState || (state != assessmentFresh && state != assessmentStale) || !validAge || age < 0 ||
-		age > int64(r.source.asnMaxAge/time.Second) || !validASN || asn <= 0 || asn > 4294967295 {
+	asnField, hasASN := fields["asn"]
+	asn, validASN := asnField.Value().Integer()
+
+	if !validState || !validAge || age < 0 || age > int64(r.source.asnMaxAge/time.Second) {
+		return "", errASNUnavailable
+	}
+
+	if state == assessmentMissing && (!hasASN || (validASN && asn == 0)) {
+		return "", errASNNotFound
+	}
+
+	if (state != assessmentFresh && state != assessmentStale) || !validASN || asn <= 0 || asn > 4294967295 {
 		return "", errASNUnavailable
 	}
 

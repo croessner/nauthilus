@@ -54,3 +54,60 @@ func TestGeoIPASNSourceRequiresExactProviderFactAndAge(t *testing.T) {
 		})
 	}
 }
+
+// TestObservationWithoutASNRetainsIndependentPeerEvidence distinguishes a verified miss from unavailable attribution.
+func TestObservationWithoutASNRetainsIndependentPeerEvidence(t *testing.T) {
+	cfg := testASNObservationConfig(t)
+	source := cfg.apiSources["ScanWriter"]
+	input := testObservation()
+
+	for _, test := range []struct {
+		name, state string
+		age, asn    int64
+		duplicate   bool
+		omitASN     bool
+		accepted    bool
+	}{
+		{name: "verified miss", state: "not_found", age: 1, accepted: true},
+		{name: "verified miss without ASN field", state: "not_found", age: 1, omitASN: true, accepted: true},
+		{name: "outage", state: "unavailable", age: 1},
+		{name: "expired miss", state: "not_found", age: 100 * 86400},
+		{name: "contradictory miss", state: "not_found", age: 1, asn: 64500},
+		{name: "duplicate miss", state: "not_found", age: 1, duplicate: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inputs := []outputInput{stringOutput("lookup_state", test.state), stringOutput("ip", "192.0.2.3"),
+				{name: "data_age_seconds", input: pluginapi.DecisionValueInput{Integer: &test.age}}}
+			if !test.omitASN {
+				inputs = append(inputs, outputInput{name: "asn", input: pluginapi.DecisionValueInput{Integer: &test.asn}})
+			}
+
+			record, err := recordInputs(inputs)
+			requireNoError(t, err)
+
+			resolver := providerASNResolver{source: source, records: []pluginapi.DecisionRecord{record}}
+			if test.duplicate {
+				resolver.records = append(resolver.records, record)
+			}
+
+			admitted, reason, err := cfg.admitObservation(t.Context(), source, input, input.observedAt, testTagger(t), resolver)
+			if !test.accepted {
+				requireError(t, err)
+
+				return
+			}
+
+			requireNoError(t, err)
+
+			if reason != reasonValid || len(admitted.subjects) != 2 {
+				t.Fatal("verified ASN absence discarded independent IP/network evidence")
+			}
+
+			for _, subject := range admitted.subjects {
+				if subject.kind == kindASN {
+					t.Fatal("verified absence invented ASN evidence")
+				}
+			}
+		})
+	}
+}

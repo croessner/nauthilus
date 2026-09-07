@@ -1,10 +1,38 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 )
+
+// TestASNAbsenceFingerprintPreservesUnaffectedModels prevents silently reusing old ASN attribution semantics.
+func TestASNAbsenceFingerprintPreservesUnaffectedModels(t *testing.T) {
+	for _, withASN := range []bool{false, true} {
+		cfg := testConfig(t)
+		if withASN {
+			cfg = testASNObservationConfig(t)
+		}
+
+		model, err := compileModel(cfg)
+		requireNoError(t, err)
+
+		legacy := canonicalIngestionSemantics(cfg)
+		legacy.ASNAbsencePolicy = ""
+		encoded, err := json.Marshal(legacy)
+		requireNoError(t, err)
+
+		digest := sha256.Sum256(encoded)
+		legacyFingerprint := hex.EncodeToString(digest[:])
+
+		if (model.fingerprint != legacyFingerprint) != withASN {
+			t.Fatal("ASN compatibility boundary changed an unaffected model or reused old attribution semantics")
+		}
+	}
+}
 
 // TestModelFingerprintBindsIngestionButNotReadTransforms requires new model identity for changed evidence semantics.
 func TestModelFingerprintBindsIngestionButNotReadTransforms(t *testing.T) {
