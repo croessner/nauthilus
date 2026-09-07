@@ -54,11 +54,16 @@ func exampleIdentity(value any) string {
 		return ""
 	}
 
-	for _, field := range []string{"name", "attribute"} {
+	for _, field := range []string{"name", "attribute", "target"} {
 		if text, ok := record[field].(string); ok {
 			return field + ":" + text
 		}
 	}
 
+	if namespace, ok := record["namespace"].(string); ok {
+		if action, ok := record["action"].(string); ok {
+			return "target:" + namespace + "/" + action
+		}
+	}
 	return ""
 }

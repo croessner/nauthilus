@@ -11,19 +11,17 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
+	projection "github.com/croessner/nauthilus/v4/contrib/plugins/internal/dkim2projection"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/openapi/generated/management"
-	"github.com/croessner/nauthilus/v4/server/pluginloader"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
-	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	"github.com/croessner/nauthilus/v4/server/policy/admission"
 	"github.com/croessner/nauthilus/v4/server/policy/catalogcompile"
 	"github.com/croessner/nauthilus/v4/server/policy/configinput"
@@ -70,25 +68,39 @@ func TestTrackedPolicyRequestPassesAdmissionAndNativeProvider(t *testing.T) {
 		t.Fatal("admission double-prefixed the local environment fact")
 	}
 
-	plugin := NewPlugin()
-	plugin.swapConfig(mustTestConfig(t))
+	input := pluginRequestFromAdmittedFacts(t, admitted)
 
-	result, err := (decisionFactProvider{plugin: plugin}).Collect(ctx, pluginRequestFromAdmittedFacts(t, admitted))
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(testConfigMap()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source, err := projection.Decode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input, err = pluginapi.NewDecisionFactRequest(input.Target(), input.Caller(), append(input.Facts(), testSignerAssessmentFact(t, source, cfg.raw.ReputationFact, false)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := (decisionProvider{plugin: &Plugin{config: cfg}, config: cfg}).Collect(ctx, input)
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
 	}
 
-	if result.ErrorClass != "" || len(result.Facts) != 1 || result.Facts[0].Name != outputAssessedChain {
+	if result.ErrorClass != "" || len(result.Facts) != 3 || result.Facts[0].Name != valueAssessedChain {
 		t.Fatalf("Collect() result = %#v, want assessed_chain", result)
 	}
 
 	Chain, ok := result.Facts[0].Value.Records()
-	if !ok || len(Chain.Records()) == 0 || !wireAssessmentAcceptable(t, Chain.Records()[0]) {
-		t.Fatalf("assessed_chain = %#v, want a non-empty acceptable assessment", result.Facts[0].Value)
+	if !ok || len(Chain.Records()) == 0 || !wireAssessmentSignaturePass(t, Chain.Records()[0]) {
+		t.Fatalf("assessed_chain = %#v, want a non-empty verifier-pass assessment", result.Facts[0].Value)
 	}
 }
 
-func TestTrackedPolicyRequestReceivesPermitFromDecisionService(t *testing.T) {
+func TestTrackedPolicyRequestRequiresUsableEvidenceFromDecisionService(t *testing.T) {
 	tests := []struct {
 		name    string
 		request func(*testing.T) management.PolicyDecisionRequest
@@ -99,13 +111,13 @@ func TestTrackedPolicyRequestReceivesPermitFromDecisionService(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assertTrackedPolicyPermit(t, test.request(t))
+			assertTrackedPolicyEvidenceDenied(t, test.request(t))
 		})
 	}
 }
 
-// assertTrackedPolicyPermit exercises admission, the native provider, and the shipped policy as one decision path.
-func assertTrackedPolicyPermit(t *testing.T, dto management.PolicyDecisionRequest) {
+// assertTrackedPolicyEvidenceDenied exercises admission, the native provider, and the shipped policy as one decision path.
+func assertTrackedPolicyEvidenceDenied(t *testing.T, dto management.PolicyDecisionRequest) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -134,9 +146,9 @@ func assertTrackedPolicyPermit(t *testing.T, dto management.PolicyDecisionReques
 		t.Fatalf("DecisionService.Evaluate() error = %v", err)
 	}
 
-	if response.Effect() != decision.EffectPermit || response.Policy().Rule() != "permit_strict_pass" {
+	if response.Effect() != decision.EffectDeny || response.Policy().Rule() != "deny_unusable_reputation" {
 		t.Fatalf(
-			"DecisionService response = %q/%q status=%q, want permit/permit_strict_pass",
+			"DecisionService response = %q/%q status=%q, want deny/deny_unusable_reputation",
 			response.Effect(), response.Policy().Rule(), response.Status().Code(),
 		)
 	}
@@ -148,11 +160,11 @@ func readTrackedCurrentPolicyRequest(t *testing.T) management.PolicyDecisionRequ
 
 	dto := readTrackedPolicyRequest(t)
 	replacements := map[string]string{
-		"dkim2.scope":                 scopeCurrent,
-		"dkim2.historical_content":    stateNotEvaluated,
-		"dkim2.historical_signatures": stateNotEvaluated,
-		"dkim2.do_not_modify_state":   stateNotEvaluated,
-		"dkim2.do_not_explode_state":  stateNotEvaluated,
+		"dkim2.scope":                 projection.ScopeCurrent,
+		"dkim2.historical_content":    projection.StateNotEvaluated,
+		"dkim2.historical_signatures": projection.StateNotEvaluated,
+		"dkim2.do_not_modify_state":   projection.StateNotEvaluated,
+		"dkim2.do_not_explode_state":  projection.StateNotEvaluated,
 	}
 
 	for name, replacement := range replacements {
@@ -174,11 +186,8 @@ func trackedPolicyDecisionService(
 	t.Helper()
 
 	document := decodeTrackedPolicyConfig(t)
-	plugin := NewPlugin()
-	plugin.swapConfig(mustTestConfig(t))
-	provider := decisionFactProvider{plugin: plugin}
 	acceptor := trackedPolicyEffectAcceptor{}
-	bindings := trackedPolicyNativeBindings(t, provider)
+	bindings := compositionNativeBindings(t, document)
 
 	extensions, err := configinput.PrepareConfiguredNativeGeneration(ctx, configinput.ConfiguredNativeGenerationInput{
 		Policy: document.Policy, Bindings: bindings, PostActionAcceptance: acceptor,
@@ -300,44 +309,6 @@ func decodeTrackedPolicyConfig(t *testing.T) policyconfig.Document {
 	}
 
 	return document
-}
-
-// trackedPolicyNativeBindings captures the actual provider behind immutable native module identity.
-func trackedPolicyNativeBindings(
-	t *testing.T,
-	provider pluginapi.DecisionFactProvider,
-) *pluginruntime.GenerationBindings {
-	t.Helper()
-
-	descriptor := provider.Descriptor()
-	component := pluginregistry.Component{
-		Value: provider, DecisionFactProviderDescriptor: descriptor,
-		ModuleName: pluginName, LocalName: providerName,
-		Kind: pluginregistry.ComponentKindDecisionFactProvider, Origin: pluginregistry.ComponentOriginNative,
-	}
-
-	artifact := filepath.Join(t.TempDir(), "dkim2_reputation.so")
-	if err := os.WriteFile(artifact, []byte("dkim2-reputation-native-binding-proof"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	digest, err := pluginloader.DigestArtifact(artifact)
-	if err != nil {
-		t.Fatalf("DigestArtifact() error = %v", err)
-	}
-
-	bindings, err := pluginruntime.CaptureGenerationBindings([]pluginloader.ModuleInstance{{
-		Module: config.PluginModule{
-			Name: pluginName, Type: config.PluginModuleTypeGo, Path: artifact, Config: testConfigMap(),
-		},
-		Descriptors: []pluginregistry.Component{component}, ArtifactPath: artifact, ArtifactDigest: digest,
-		ModuleName: pluginName, Status: pluginloader.ModuleStatusRegistered,
-	}})
-	if err != nil {
-		t.Fatalf("CaptureGenerationBindings() error = %v", err)
-	}
-
-	return bindings
 }
 
 // configinputAdmission returns the real caller-admission configuration from normalized tracked Policy.
@@ -742,7 +713,7 @@ func pluginRequestFromAdmittedFacts(t *testing.T, admitted decision.FactSet) plu
 		t.Fatalf("NewDecisionCallerView() error = %v", err)
 	}
 
-	request, err := pluginapi.NewDecisionFactRequest(exactTarget, caller, facts)
+	request, err := pluginapi.NewDecisionFactRequest(projection.ExactTarget, caller, facts)
 	if err != nil {
 		t.Fatalf("NewDecisionFactRequest() error = %v", err)
 	}
@@ -866,24 +837,18 @@ func readTrackedPolicyRequest(t *testing.T) management.PolicyDecisionRequest {
 	return dto
 }
 
-// wireAssessmentAcceptable extracts the provider's exact boolean assessment field.
-func wireAssessmentAcceptable(t *testing.T, record pluginapi.DecisionRecord) bool {
+// wireAssessmentSignaturePass extracts the provider's exact boolean assessment field.
+func wireAssessmentSignaturePass(t *testing.T, record pluginapi.DecisionRecord) bool {
 	t.Helper()
 
 	for _, field := range record.Fields() {
-		if field.Name() != "acceptable" {
-			continue
+		if field.Name() == "signature_state" {
+			text, ok := field.Value().Value().StringValue()
+			return ok && text == "pass"
 		}
-
-		value, ok := field.Value().Value().Boolean()
-		if !ok {
-			t.Fatal("acceptable output is not boolean")
-		}
-
-		return value
 	}
 
-	t.Fatal("acceptable output is missing")
+	t.Fatal("signature state missing")
 
 	return false
 }

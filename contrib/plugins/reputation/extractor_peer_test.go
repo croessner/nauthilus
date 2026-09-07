@@ -2,6 +2,7 @@ package main
 
 import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 	"testing"
 )
 
@@ -50,5 +51,35 @@ func TestAssessmentExtractorDeclaresExactUpstreamOwnerAndInputKind(t *testing.T)
 
 	if len(inputs) != 1 || inputs[0].Provider != "dkim2/plugin.geoip.smtp_peer" || inputs[0].Kind != pluginapi.DecisionValueKindInteger {
 		t.Fatal("exact ASN provider contract lost")
+	}
+}
+
+// TestAssessmentCombinesAuthenticationAndDKIM2WithoutComponentCollision compiles the actual operator fragments together.
+func TestAssessmentCombinesAuthenticationAndDKIM2WithoutComponentCollision(t *testing.T) {
+	raw := learningConfigMap(t)
+
+	fragment := testYAMLMap(t, "../../../server/docs/examples/go_plugin_dkim2_intelligence.yml")
+	for _, value := range fragment["plugins"].(map[string]any)["modules"].([]any) {
+		module := value.(map[string]any)
+		if module["name"] != "reputation" {
+			continue
+		}
+
+		addition := module["config"].(map[string]any)["target_bindings"].([]any)
+		raw["target_bindings"] = append(raw["target_bindings"].([]any), addition...)
+	}
+
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
+	requireNoError(t, err)
+
+	if len(cfg.bindings) != 2 {
+		t.Fatal("consumer binding dropped during composition")
+	}
+
+	auth := cfg.bindings[pluginapi.DecisionTargetSelector{Namespace: "authn", Action: "authenticate"}]
+
+	mail := cfg.bindings[pluginapi.DecisionTargetSelector{Namespace: "dkim2", Action: "accept-message-instance"}]
+	if auth.Component == mail.Component || auth.Component != "authentication" || mail.Component != "assessment" {
+		t.Fatal("namespace-bound component collision")
 	}
 }

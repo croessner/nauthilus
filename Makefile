@@ -187,7 +187,7 @@ check-go-toolchain-contract: ## Verify exact Go declarations and experiment prop
 release-contract-check: ## Verify release-major and public protobuf compatibility guard contracts
 	python3 scripts/test_release_contracts.py
 
-guardrails: sync-prompts-check policy-check makefile-package-scope-check check-go-toolchain-contract release-contract-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
+guardrails: static-reputation-conversion-check sync-prompts-check policy-check makefile-package-scope-check check-go-toolchain-contract release-contract-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) not found. Install it and rerun make guardrails"; exit 1; }
 	@$(GOLANGCI_LINT) version | grep -Eq 'version $(GOLANGCI_LINT_VERSION)([[:space:]]|$$)' || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required"; $(GOLANGCI_LINT) version; exit 1; }
 	$(GOLANGCI_LINT) run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
@@ -196,3 +196,7 @@ guardrails: sync-prompts-check policy-check makefile-package-scope-check check-g
 .PHONY: reputation-redis-check
 reputation-redis-check:
 	sh scripts/check-reputation-redis.sh
+
+.PHONY: static-reputation-conversion-check
+static-reputation-conversion-check:
+	python3 scripts/test_static_reputation_conversion.py

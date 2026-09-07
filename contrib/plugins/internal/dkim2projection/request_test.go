@@ -5,7 +5,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-package main
+package dkim2projection
 
 import (
 	"testing"
@@ -18,7 +18,7 @@ func testDecisionRequest(t *testing.T, ClientIP string) pluginapi.DecisionFactRe
 	t.Helper()
 
 	return testDecisionRequestWithFlagStates(
-		t, ClientIP, false, false, stateNotRequested, stateNotRequested,
+		t, ClientIP, false, false, StateNotRequested, StateNotRequested,
 	)
 }
 
@@ -38,8 +38,8 @@ func testDecisionRequestWithFlagStates(
 	ProjectionBinding, HopBinding, RecipeDigest := testProjectionBindingsWithFlags(DoNotModify, DoNotExplode)
 
 	facts := []pluginapi.DecisionFactView{
-		testFact(t, "resource.dkim2.projection_schema", pluginapi.DecisionFactCategoryResource, testStringValue(t, projectionSchema)),
-		testFact(t, "resource.dkim2.draft", pluginapi.DecisionFactCategoryResource, testStringValue(t, draftVersion)),
+		testFact(t, "resource.dkim2.projection_schema", pluginapi.DecisionFactCategoryResource, testStringValue(t, ProjectionSchema)),
+		testFact(t, "resource.dkim2.draft", pluginapi.DecisionFactCategoryResource, testStringValue(t, DraftVersion)),
 		testFact(t, "resource.dkim2.projection_binding_algorithm", pluginapi.DecisionFactCategoryResource, testStringValue(t, "sha-256")),
 		testFact(t, "resource.dkim2.projection_binding", pluginapi.DecisionFactCategoryResource, testBytesValue(t, ProjectionBinding)),
 		testFact(t, "resource.dkim2.verification_state", pluginapi.DecisionFactCategoryResource, testStringValue(t, "PASS")),
@@ -86,7 +86,7 @@ func testDecisionRequestWithFlagStates(
 		t.Fatalf("NewDecisionCallerView() error = %v", err)
 	}
 
-	request, err := pluginapi.NewDecisionFactRequest(exactTarget, caller, facts)
+	request, err := pluginapi.NewDecisionFactRequest(ExactTarget, caller, facts)
 	if err != nil {
 		t.Fatalf("NewDecisionFactRequest() error = %v", err)
 	}
@@ -106,18 +106,18 @@ func testChainValueWithFlags(
 ) pluginapi.DecisionValue {
 	t.Helper()
 
-	return testChainValue(t, []verifierHop{{
+	return testChainValue(t, []Hop{{
 		SignerDomain: "relay.example", SignatureAlgorithms: []string{"ed25519-sha256"}, HopBinding: HopBinding,
-		RecipeDigest: RecipeDigest, SignatureState: "pass", CustodyTransition: custodyOrigin, RecipeMode: "unchanged",
-		RecipeBodyMode: recipeBodyAbsent, ChangeClasses: []string{}, AffectedHeaders: []string{},
-		HistoryHeaderState: historyMatched, HistoryBodyState: historyMatched,
+		RecipeDigest: RecipeDigest, SignatureState: "pass", CustodyTransition: CustodyOrigin, RecipeMode: "unchanged",
+		RecipeBodyMode: RecipeBodyAbsent, ChangeClasses: []string{}, AffectedHeaders: []string{},
+		HistoryHeaderState: HistoryMatched, HistoryBodyState: HistoryMatched,
 		BodyAvailability: "known", Sequence: 1, MessageInstance: 1, DoNotModify: DoNotModify,
 		DoNotExplode: DoNotExplode,
 	}})
 }
 
 // testChainValue constructs an exact wire record list from binding-valid semantic hops.
-func testChainValue(t *testing.T, hops []verifierHop) pluginapi.DecisionValue {
+func testChainValue(t *testing.T, hops []Hop) pluginapi.DecisionValue {
 	t.Helper()
 
 	records := make([]pluginapi.DecisionRecord, 0, len(hops))
@@ -139,7 +139,7 @@ func testChainValue(t *testing.T, hops []verifierHop) pluginapi.DecisionValue {
 }
 
 // testChainRecord maps one semantic hop into the exact public record contract.
-func testChainRecord(t *testing.T, hop verifierHop) pluginapi.DecisionRecord {
+func testChainRecord(t *testing.T, hop Hop) pluginapi.DecisionRecord {
 	t.Helper()
 
 	fields := []struct {
@@ -196,16 +196,16 @@ func testChainRecord(t *testing.T, hop verifierHop) pluginapi.DecisionRecord {
 
 // testProjectionBindingsWithFlags returns producer-compatible bindings for explicit protection flags.
 func testProjectionBindingsWithFlags(DoNotModify bool, DoNotExplode bool) ([]byte, []byte, []byte) {
-	hop := verifierHop{
+	hop := Hop{
 		SignerDomain: "relay.example", SignatureAlgorithms: []string{"ed25519-sha256"}, SignatureState: "pass",
-		CustodyTransition: custodyOrigin, RecipeMode: "unchanged", RecipeBodyMode: recipeBodyAbsent,
-		HistoryHeaderState: historyMatched, HistoryBodyState: historyMatched, BodyAvailability: "known",
+		CustodyTransition: CustodyOrigin, RecipeMode: "unchanged", RecipeBodyMode: RecipeBodyAbsent,
+		HistoryHeaderState: HistoryMatched, HistoryBodyState: HistoryMatched, BodyAvailability: "known",
 		Sequence: 1, MessageInstance: 1, DoNotModify: DoNotModify, DoNotExplode: DoNotExplode,
 	}
-	recipe := calculateRecipeDescriptorDigest(hop)
+	recipe := CalculateRecipeDescriptorDigest(hop)
 	hop.RecipeDigest = recipe[:]
-	projection := calculateProjectionBinding([]verifierHop{hop})
-	bound := calculateBoundHopBinding(projection, hop)
+	projection := CalculateProjectionBinding([]Hop{hop})
+	bound := CalculateBoundHopBinding(projection, hop)
 
 	return projection[:], bound[:], recipe[:]
 }

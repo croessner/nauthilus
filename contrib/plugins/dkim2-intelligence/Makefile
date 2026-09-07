@@ -1,5 +1,5 @@
 GO ?= go
-PLUGIN_OUT ?= build/dkim2-reputation.so
+PLUGIN_OUT ?= build/dkim2-intelligence.so
 
 .PHONY: build test clean
 

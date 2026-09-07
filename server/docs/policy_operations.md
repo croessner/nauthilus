@@ -224,8 +224,8 @@ diagnostics, reports, normal logs, traces, metrics, or error bodies.
 The complete bounded hop list, immutable verifier result, normalized Recipe
 descriptors, flags, change classes, recipient classes, and correlation bindings
 are input. Exact Recipe payload and raw message or envelope content are
-excluded. The native `dkim2/plugin.dkim2_reputation.assessment` provider owns
-semantic validation and emits `plugin.dkim2_reputation.assessed_chain`. Policy
+excluded. The native `dkim2/plugin.dkim2_intelligence.assessment` provider owns
+semantic validation and emits `plugin.dkim2_intelligence.assessed_chain`. Policy
 controls every hop: PASS can still be denied, and incomplete, reordered,
 mismatched, or non-permittable chains fail closed.
 

@@ -31,7 +31,7 @@ class ToolchainContractTest(unittest.TestCase):
                 fixture = Path(directory)
                 for name in ("go.mod", "Makefile", "README.md", "AGENTS.md", "Dockerfile", "Dockerfile.debug", "Dockerfile.blocklist"):
                     shutil.copy2(ROOT / name, fixture / name)
-                for name in ("scripts", ".github", ".junie", "contrib/plugins/geoip", "contrib/plugins/dkim2-reputation", "contrib/identity-proxy-e2e/scripts"):
+                for name in ("scripts", ".github", ".junie", "contrib/plugins/geoip", "contrib/plugins/dkim2-intelligence", "contrib/identity-proxy-e2e/scripts"):
                     shutil.copytree(ROOT / name, fixture / name)
                 if path:
                     target = fixture / path

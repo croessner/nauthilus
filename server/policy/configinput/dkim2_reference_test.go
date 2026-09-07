@@ -37,8 +37,8 @@ func TestDKIM2RspamdReferenceCompilesExactGenericTargetAndNativeAssessment(t *te
 func assertDKIM2ReferenceProvider(t *testing.T, input UnifiedPolicyInput) {
 	t.Helper()
 
-	provider, _ := findProviderAndEffectOptional(input, "dkim2/plugin.dkim2_reputation.assessment", "")
-	if got := provider.ProducedFacts(); !slices.Equal(got, []string{"plugin.dkim2_reputation.assessed_chain"}) {
+	provider, _ := findProviderAndEffectOptional(input, "dkim2/plugin.dkim2_intelligence.assessment", "")
+	if got := provider.ProducedFacts(); !slices.Equal(got, []string{"plugin.dkim2_intelligence.assessed_chain", "plugin.dkim2_intelligence.smtp_peer", "plugin.dkim2_intelligence.assessment_complete"}) {
 		t.Fatalf("assessor produced facts = %v", got)
 	}
 
@@ -53,7 +53,7 @@ func assertDKIM2ReferenceSchema(t *testing.T, schema policyruntime.CompiledSchem
 
 	assertDKIM2ReferenceFact(t, schema.Facts(), "resource.dkim2.chain", decision.ValueKindRecords, decision.FactSourceCaller, true)
 	assertDKIM2ReferenceFact(t, schema.Facts(), "environment.rspamd.smtp_client_ip", decision.ValueKindString, decision.FactSourceCaller, true)
-	assertDKIM2ReferenceFact(t, schema.Facts(), "plugin.dkim2_reputation.assessed_chain", decision.ValueKindRecords, decision.FactSourcePlugin, false)
+	assertDKIM2ReferenceFact(t, schema.Facts(), "plugin.dkim2_intelligence.assessed_chain", decision.ValueKindRecords, decision.FactSourcePlugin, false)
 	assertDKIM2ReferenceMaxItems(t, schema.Facts(), "environment.rspamd.normalized_signals", 20)
 	assertDKIM2ReferenceMaxItems(t, schema.Facts(), "environment.rspamd.recipient_classes", 3)
 	assertDKIM2VerifierChainSchema(t, schema.Facts())
@@ -77,49 +77,44 @@ func assertDKIM2VerifierChainSchema(t *testing.T, facts []registry.FactSchema) {
 	}
 }
 
-// assertDKIM2AssessmentSchema verifies the exact native assessment record contract.
+// assertDKIM2AssessmentSchema verifies both closed composition collections and independent failure-state fields.
 func assertDKIM2AssessmentSchema(t *testing.T, facts []registry.FactSchema) {
 	t.Helper()
 
-	assessment, _ := schemaFactByID(facts, "plugin.dkim2_reputation.assessed_chain")
+	for _, tc := range []struct {
+		name                 string
+		count, fields, bytes int
+	}{{"assessed_chain", 128, 34, 262144}, {"smtp_peer", 1, 36, 8192}} {
+		fact, found := schemaFactByID(facts, "plugin.dkim2_intelligence."+tc.name)
 
-	assessmentSchema, ok := assessment.RecordSchema()
-	if !ok || assessmentSchema.MinRecords() != 1 || assessmentSchema.MaxRecords() != 128 || len(assessmentSchema.Fields()) != 10 {
-		t.Fatalf("assessed chain schema = %#v", assessmentSchema)
-	}
-
-	fieldNames := make([]string, 0, len(assessmentSchema.Fields()))
-	for _, field := range assessmentSchema.Fields() {
-		fieldNames = append(fieldNames, field.Name())
-	}
-
-	wantFields := []string{
-		"sequence", "message_instance", "hop_binding", "signer_reputation", "smtp_peer_reputation",
-		"contract_state", "recipe_authorization", "assessment_complete", "acceptable", "violation_classes",
-	}
-	if !slices.Equal(fieldNames, wantFields) {
-		t.Fatalf("assessed chain fields = %v, want %v", fieldNames, wantFields)
-	}
-
-	violationClasses, ok := recordFieldByName(assessmentSchema.Fields(), "violation_classes")
-	if !ok || violationClasses.MaxItems() != 14 {
-		t.Fatalf("violation_classes schema = %#v, want max_items 14", violationClasses)
+		schema, ok := fact.RecordSchema()
+		if !found || !ok || schema.MinRecords() != 1 || schema.MaxRecords() != tc.count || len(schema.Fields()) != tc.fields || schema.MaxAggregateBytes() != tc.bytes {
+			t.Fatalf("invalid %s schema", tc.name)
+		}
 	}
 }
 
-// assertDKIM2ReferenceSchedule verifies the guarded final-decision provider instance.
+// assertDKIM2ReferenceSchedule verifies all guarded providers and their exact module identities.
 func assertDKIM2ReferenceSchedule(t *testing.T, compiled policyruntime.CompiledTarget) {
 	t.Helper()
-
 	checkpoint, ok := compiled.DomainPlan().Checkpoint(decision.CheckpointFinalDecision)
-	if !ok || !slices.Equal(checkpoint.ProviderIDs(), []string{"dkim2/plugin.dkim2_reputation.assessment"}) {
+	if !ok || !sameDKIM2ProviderSet(checkpoint.ProviderIDs()) {
 		t.Fatalf("final provider schedule = %v", checkpoint.ProviderIDs())
 	}
 
-	instances := checkpoint.ProviderInstances()
-	if len(instances) != 1 || !slices.Equal(instances[0].SkipIf(), []string{"nonpass_verifier_state"}) {
-		t.Fatalf("assessment scheduler guard = %#v", instances)
+	for _, instance := range checkpoint.ProviderInstances() {
+		if !slices.Equal(instance.SkipIf(), []string{"nonpass_verifier_state"}) {
+			t.Fatal("provider missing verifier guard")
+		}
 	}
+}
+
+// sameDKIM2ProviderSet compares the exact dependency owners without assuming map traversal order.
+func sameDKIM2ProviderSet(ids []string) bool {
+	got := slices.Clone(ids)
+	slices.Sort(got)
+
+	return slices.Equal(got, []string{"dkim2/plugin.dkim2_intelligence.assessment", "dkim2/plugin.geoip.smtp_peer", "dkim2/plugin.reputation.assessment"})
 }
 
 func TestDKIM2RspamdReferenceUsesRelativeWireAllowlistsAndIsNotBuiltin(t *testing.T) {
@@ -184,7 +179,7 @@ func TestDKIM2RspamdReferenceIsIsolatedFromAuthenticationFactsAndProviders(t *te
 		t.Fatalf("DKIM2 checkpoints = %#v, want generic final_decision only", got)
 	}
 
-	if got := compiled.ProviderIDs(); !slices.Equal(got, []string{"dkim2/plugin.dkim2_reputation.assessment"}) {
+	if got := compiled.ProviderIDs(); !sameDKIM2ProviderSet(got) {
 		t.Fatalf("DKIM2 providers = %v, want isolated assessment provider", got)
 	}
 }

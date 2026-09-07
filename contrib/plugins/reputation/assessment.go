@@ -79,6 +79,10 @@ func (s *stateOwner) assessProfiles(ctx context.Context, subject subjectInput) m
 		}
 	}
 
+	if subject.kind == kindIP {
+		return s.applyNetworkOverride(ctx, canonical, result)
+	}
+
 	return result
 }
 

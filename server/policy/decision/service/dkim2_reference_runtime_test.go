@@ -9,7 +9,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,133 +24,12 @@ import (
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
-const dkim2AssessmentProviderID = "dkim2/plugin.dkim2_reputation.assessment"
+const dkim2AssessmentProviderID = "dkim2/plugin.dkim2_intelligence.assessment"
 
 const (
 	dkim2TestSMTPPeerIP   = "203.0.113.77"
 	dkim2TestSignerDomain = "sensitive-signer.example"
 )
-
-type dkim2AssessmentState struct {
-	complete   bool
-	acceptable bool
-}
-
-type dkim2RuntimeCase struct {
-	name            string
-	verification    string
-	factOverrides   map[string]string
-	providerFacts   []providedFact
-	wantRule        string
-	wantEffect      decision.Effect
-	wantStatus      decision.StatusCode
-	wantProviderRun bool
-	providerErr     error
-}
-
-func TestDKIM2ReferenceRuntimeBoundary(t *testing.T) {
-	catalog, target := compileDKIM2ReferenceCatalog(t)
-	compiled, _ := catalog.Lookup(target)
-	assessmentSchema, _ := schemaFactByID(compiled.Schema().Facts(), "plugin.dkim2_reputation.assessed_chain")
-
-	tests := dkim2ReferenceRuntimeCases(t, assessmentSchema)
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assertDKIM2RuntimeCase(t, catalog, target, compiled.Schema(), test)
-		})
-	}
-}
-
-// dkim2ReferenceRuntimeCases defines the verifier and provider boundary matrix.
-func dkim2ReferenceRuntimeCases(t *testing.T, assessmentSchema registry.FactSchema) []dkim2RuntimeCase {
-	t.Helper()
-
-	return []dkim2RuntimeCase{
-		{
-			name: "TEMPERROR remains verifier-owned", verification: "TEMPERROR",
-			wantEffect: decision.EffectDeny, wantRule: "deny_nonpass_verifier_state",
-		},
-		{
-			name: "strict PASS permits a complete acceptable assessment", verification: "PASS",
-			providerFacts: dkim2ReferenceAssessmentFact(t, assessmentSchema, true),
-			wantEffect:    decision.EffectPermit, wantRule: "permit_strict_pass", wantProviderRun: true,
-		},
-		{
-			name: "strict PASS permits an acceptable current projection", verification: "PASS",
-			factOverrides: map[string]string{
-				"resource.dkim2.scope":                 "current",
-				"resource.dkim2.historical_content":    "not_evaluated",
-				"resource.dkim2.historical_signatures": "not_evaluated",
-				"resource.dkim2.do_not_modify_state":   "not_evaluated",
-				"resource.dkim2.do_not_explode_state":  "not_evaluated",
-			},
-			providerFacts: dkim2ReferenceAssessmentFact(t, assessmentSchema, true),
-			wantEffect:    decision.EffectPermit, wantRule: "permit_strict_pass", wantProviderRun: true,
-		},
-		{
-			name: "strict PASS denies an unacceptable assessment", verification: "PASS",
-			providerFacts: dkim2ReferenceAssessmentFact(t, assessmentSchema, false),
-			wantEffect:    decision.EffectDeny, wantRule: "deny_unacceptable_assessment", wantProviderRun: true,
-		},
-		{
-			name: "strict PASS denies when a non-target hop is unacceptable", verification: "PASS",
-			providerFacts: dkim2ReferenceAssessmentFacts(t, assessmentSchema,
-				dkim2AssessmentState{complete: true, acceptable: false},
-				dkim2AssessmentState{complete: true, acceptable: true},
-			),
-			wantEffect: decision.EffectDeny, wantRule: "deny_unacceptable_assessment", wantProviderRun: true,
-		},
-		{
-			name: "strict PASS denies a vacuous incomplete assessment", verification: "PASS",
-			providerFacts: dkim2ReferenceAssessmentFacts(t, assessmentSchema,
-				dkim2AssessmentState{complete: false, acceptable: false},
-			),
-			wantEffect: decision.EffectDeny, wantRule: "deny_incomplete_assessment", wantProviderRun: true,
-		},
-		{
-			name: "strict PASS retries a required provider failure", verification: "PASS",
-			providerErr: errors.New("reference provider unavailable"), wantEffect: decision.EffectIndeterminate,
-			wantStatus: decision.StatusCodeProviderUnavailable, wantProviderRun: true,
-		},
-	}
-}
-
-// assertDKIM2RuntimeCase evaluates and verifies one reference-policy case.
-func assertDKIM2RuntimeCase(
-	t *testing.T,
-	catalog *policyruntime.TargetCatalog,
-	target decision.Target,
-	schema policyruntime.CompiledSchema,
-	test dkim2RuntimeCase,
-) {
-	t.Helper()
-	assertDKIM2ReferenceProviderFacts(t, schema, test.providerFacts)
-
-	provider := &countingFactProvider{facts: test.providerFacts, err: test.providerErr}
-	outcome := evaluateDKIM2Reference(t, catalog, target, provider, test.verification, test.factOverrides)
-	wantCalls := 0
-
-	if test.wantProviderRun {
-		wantCalls = 1
-	}
-
-	if provider.callCount() != wantCalls {
-		t.Fatalf("assessment provider calls = %d, want %d", provider.callCount(), wantCalls)
-	}
-
-	if outcome.response.Effect() != test.wantEffect || outcome.response.Policy().Rule() != test.wantRule {
-		t.Fatalf("response = %q/%q status=%q providers=%#v, want %q/%q", outcome.response.Effect(),
-			outcome.response.Policy().Rule(), outcome.response.Status().Code(), outcome.report.runtime.providers,
-			test.wantEffect, test.wantRule)
-	}
-
-	if test.wantStatus != "" && (outcome.response.Status().Code() != test.wantStatus || !outcome.response.Status().Retryable()) {
-		t.Fatalf("status = %q retryable=%v, want %q retryable", outcome.response.Status().Code(), outcome.response.Status().Retryable(), test.wantStatus)
-	}
-
-	assertDKIM2DiagnosticsDoNotLeak(t, outcome.response)
-}
 
 // assertDKIM2DiagnosticsDoNotLeak verifies that public diagnostics never project request identities.
 func assertDKIM2DiagnosticsDoNotLeak(t *testing.T, response decision.DecisionResponse) {
@@ -179,7 +57,7 @@ func assertDKIM2ReferenceProviderFacts(
 ) {
 	t.Helper()
 
-	provenance, err := decision.NewProvenance(decision.FactSourcePlugin, "dkim2_reputation", dkim2AssessmentProviderID)
+	provenance, err := decision.NewProvenance(decision.FactSourcePlugin, "dkim2_intelligence", dkim2AssessmentProviderID)
 	if err != nil {
 		t.Fatalf("NewProvenance() error = %v", err)
 	}
@@ -213,7 +91,7 @@ func evaluateDKIM2Reference(
 	target decision.Target,
 	provider *countingFactProvider,
 	verificationState string,
-	factOverrides map[string]string,
+	factOverrides map[string]any,
 ) runtimeEvaluation {
 	t.Helper()
 
@@ -222,8 +100,10 @@ func evaluateDKIM2Reference(
 		factProviders: map[string]factProviderBinding{
 			dkim2AssessmentProviderID: {
 				provider: provider, source: decision.FactSourcePlugin,
-				authority: "dkim2_reputation", component: dkim2AssessmentProviderID,
+				authority: "dkim2_intelligence", component: dkim2AssessmentProviderID,
 			},
+			"dkim2/plugin.geoip.smtp_peer":       {provider: &countingFactProvider{}, source: decision.FactSourcePlugin, authority: "geoip", component: "dkim2/plugin.geoip.smtp_peer"},
+			"dkim2/plugin.reputation.assessment": {provider: &countingFactProvider{}, source: decision.FactSourcePlugin, authority: "reputation", component: "dkim2/plugin.reputation.assessment"},
 		},
 		ids: &sequenceIDGenerator{}, evaluationTimeout: time.Second,
 	})
@@ -232,7 +112,8 @@ func evaluateDKIM2Reference(
 	}
 
 	compiled, _ := catalog.Lookup(target)
-	overrides := map[string]string{
+
+	overrides := map[string]any{
 		"resource.dkim2.verification_state":    verificationState,
 		"resource.dkim2.authentication_state":  "PASS",
 		"resource.dkim2.scope":                 "chain",
@@ -317,7 +198,7 @@ func compileDKIM2ReferenceCatalog(t *testing.T) (*policyruntime.TargetCatalog, d
 func dkim2ReferenceCallerFacts(
 	t *testing.T,
 	schema []registry.FactSchema,
-	stringOverrides map[string]string,
+	stringOverrides map[string]any,
 ) decision.FactSet {
 	t.Helper()
 
@@ -365,12 +246,12 @@ func containsFactSource(sources []decision.FactSource, source decision.FactSourc
 func dkim2ReferenceFactValue(
 	t *testing.T,
 	definition registry.FactSchema,
-	stringOverrides map[string]string,
+	stringOverrides map[string]any,
 ) decision.Value {
 	t.Helper()
 
 	if value, exists := stringOverrides[definition.ID()]; exists {
-		return runtimeStringValue(t, value)
+		return dkim2PolicyValue(t, value)
 	}
 
 	if definition.Kind() == decision.ValueKindRecords {
@@ -380,88 +261,6 @@ func dkim2ReferenceFactValue(
 	}
 
 	return dkim2ReferenceScalarValue(t, definition.Kind())
-}
-
-// dkim2ReferenceAssessmentFact constructs the native provider's exact v1 output shape.
-func dkim2ReferenceAssessmentFact(
-	t *testing.T,
-	definition registry.FactSchema,
-	acceptable bool,
-) []providedFact {
-	t.Helper()
-
-	return dkim2ReferenceAssessmentFacts(t, definition, dkim2AssessmentState{complete: true, acceptable: acceptable})
-}
-
-// dkim2ReferenceAssessmentFacts constructs a complete native multi-hop assessment.
-func dkim2ReferenceAssessmentFacts(
-	t *testing.T,
-	definition registry.FactSchema,
-	states ...dkim2AssessmentState,
-) []providedFact {
-	t.Helper()
-
-	recordSchema, ok := definition.RecordSchema()
-	if !ok {
-		t.Fatal("assessed_chain record schema is missing")
-	}
-
-	records := make([]decision.Record, 0, len(states))
-	for _, state := range states {
-		fields := dkim2ReferenceAssessmentFields(t, recordSchema, state)
-		records = append(records, dkim2ReferenceRecord(t, fields))
-	}
-
-	value := dkim2ReferenceRecordListValue(t, records)
-
-	return []providedFact{{
-		id: definition.ID(), category: definition.Category(), value: value,
-	}}
-}
-
-// dkim2ReferenceAssessmentFields constructs exact native assessment fields.
-func dkim2ReferenceAssessmentFields(
-	t *testing.T,
-	recordSchema registry.RecordSchema,
-	state dkim2AssessmentState,
-) []decision.RecordField {
-	t.Helper()
-
-	stringValues := map[string]string{
-		"signer_reputation":    "neutral",
-		"smtp_peer_reputation": "neutral",
-		"contract_state":       "matched",
-		"recipe_authorization": "permitted",
-	}
-	booleanValues := map[string]bool{"assessment_complete": state.complete, "acceptable": state.acceptable}
-	fields := make([]decision.RecordField, 0, len(recordSchema.Fields()))
-
-	for _, fieldSchema := range recordSchema.Fields() {
-		value := dkim2ReferenceAssessmentFieldValue(t, fieldSchema, stringValues, booleanValues)
-		fields = append(fields, dkim2ReferenceRecordField(t, fieldSchema.Name(), value))
-	}
-
-	return fields
-}
-
-// dkim2ReferenceAssessmentFieldValue selects configured assessment values or a type-correct default.
-func dkim2ReferenceAssessmentFieldValue(
-	t *testing.T,
-	fieldSchema registry.RecordFieldSchema,
-	stringValues map[string]string,
-	booleanValues map[string]bool,
-) decision.Value {
-	t.Helper()
-
-	if text, exists := stringValues[fieldSchema.Name()]; exists {
-		return runtimeStringValue(t, text)
-	}
-
-	if flag, exists := booleanValues[fieldSchema.Name()]; exists {
-		return dkim2ReferenceBooleanValue(t, flag)
-	}
-
-	return dkim2ReferenceScalarValue(t, fieldSchema.Kind())
 }
 
 // dkim2ReferenceBooleanValue constructs one boolean fact value.

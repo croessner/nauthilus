@@ -10,7 +10,7 @@ config:
     authentication: {risk: 20, trust: 20, samples: 100}
   target_bindings:
     - target: authn/authenticate
-      component: assessment
+      component: authentication
       output_fact: auth_subjects
       decision_profile: operational
       subjects:

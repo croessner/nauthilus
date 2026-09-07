@@ -5,7 +5,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-package main
+package dkim2projection
 
 import (
 	"encoding/base64"
@@ -49,11 +49,11 @@ type bindingGolden struct {
 func TestBindingMatchesDKIM2ProducerGolden(t *testing.T) {
 	fixture := readBindingGolden(t)
 	hop := goldenHop(t, fixture)
-	recipe := calculateRecipeDescriptorDigest(hop)
+	recipe := CalculateRecipeDescriptorDigest(hop)
 	hop.RecipeDigest = recipe[:]
-	hopContent := calculateHopContentDigest(hop)
-	projection := calculateProjectionBinding([]verifierHop{hop})
-	boundHop := calculateBoundHopBinding(projection, hop)
+	hopContent := CalculateHopContentDigest(hop)
+	projection := CalculateProjectionBinding([]Hop{hop})
+	boundHop := CalculateBoundHopBinding(projection, hop)
 
 	assertGoldenDigest(t, "recipe", recipe[:], fixture.Expected.Recipe)
 	assertGoldenDigest(t, "hop content", hopContent[:], fixture.Expected.Hop)
@@ -64,23 +64,23 @@ func TestBindingMatchesDKIM2ProducerGolden(t *testing.T) {
 func TestBindingRejectsEveryBoundSemanticMutation(t *testing.T) {
 	fixture := readBindingGolden(t)
 	hop := goldenHop(t, fixture)
-	recipe := calculateRecipeDescriptorDigest(hop)
+	recipe := CalculateRecipeDescriptorDigest(hop)
 	hop.RecipeDigest = recipe[:]
-	projection := calculateProjectionBinding([]verifierHop{hop})
-	bound := calculateBoundHopBinding(projection, hop)
+	projection := CalculateProjectionBinding([]Hop{hop})
+	bound := CalculateBoundHopBinding(projection, hop)
 	hop.HopBinding = bound[:]
 
 	tests := []struct {
 		name   string
-		mutate func(*verifierHop)
+		mutate func(*Hop)
 	}{
-		{name: "signature state", mutate: func(value *verifierHop) { value.SignatureState = "fail" }},
-		{name: "Recipe header presence", mutate: func(value *verifierHop) { value.RecipeHasHeaders = false }},
-		{name: "Recipe body mode", mutate: func(value *verifierHop) { value.RecipeBodyMode = stateUnavailable }},
-		{name: "change classes", mutate: func(value *verifierHop) { value.ChangeClasses = []string{"body.rewrite"} }},
-		{name: "affected headers", mutate: func(value *verifierHop) { value.AffectedHeaders = []string{"subject"} }},
-		{name: "change count", mutate: func(value *verifierHop) { value.ChangeCount++ }},
-		{name: "affected header count", mutate: func(value *verifierHop) { value.AffectedHeaderCount++ }},
+		{name: "signature state", mutate: func(value *Hop) { value.SignatureState = "fail" }},
+		{name: "Recipe header presence", mutate: func(value *Hop) { value.RecipeHasHeaders = false }},
+		{name: "Recipe body mode", mutate: func(value *Hop) { value.RecipeBodyMode = StateUnavailable }},
+		{name: "change classes", mutate: func(value *Hop) { value.ChangeClasses = []string{"body.rewrite"} }},
+		{name: "affected headers", mutate: func(value *Hop) { value.AffectedHeaders = []string{"subject"} }},
+		{name: "change count", mutate: func(value *Hop) { value.ChangeCount++ }},
+		{name: "affected header count", mutate: func(value *Hop) { value.AffectedHeaderCount++ }},
 	}
 
 	for _, test := range tests {
@@ -88,8 +88,8 @@ func TestBindingRejectsEveryBoundSemanticMutation(t *testing.T) {
 			candidate := hop
 			test.mutate(&candidate)
 
-			if validProjectionBindings(projection[:], []verifierHop{candidate}) {
-				t.Fatal("validProjectionBindings() accepted a semantic mutation")
+			if ValidProjectionBindings(projection[:], []Hop{candidate}) {
+				t.Fatal("ValidProjectionBindings() accepted a semantic mutation")
 			}
 		})
 	}
@@ -113,10 +113,10 @@ func readBindingGolden(t *testing.T) bindingGolden {
 }
 
 // goldenHop maps the shared JSON fields into the plugin's immutable semantic model.
-func goldenHop(t *testing.T, fixture bindingGolden) verifierHop {
+func goldenHop(t *testing.T, fixture bindingGolden) Hop {
 	t.Helper()
 
-	return verifierHop{
+	return Hop{
 		SignerDomain: fixture.Hop.SignerDomain, SignatureAlgorithms: fixture.Hop.SignatureAlgorithms,
 		SignatureState: fixture.Hop.SignatureState, CustodyTransition: fixture.Hop.CustodyTransition,
 		RecipeMode: fixture.Hop.RecipeMode, RecipeBodyMode: fixture.Hop.RecipeBodyMode,

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	projection "github.com/croessner/nauthilus/v4/contrib/plugins/internal/dkim2projection"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
@@ -146,6 +147,7 @@ func compositionYAML(t *testing.T, name string) map[string]any {
 
 type compositionUpstream struct {
 	descriptor pluginapi.DecisionFactProviderDescriptor
+	testing    *testing.T
 }
 
 // Descriptor freezes the deterministic upstream fixture contract.
@@ -153,9 +155,38 @@ func (p compositionUpstream) Descriptor() pluginapi.DecisionFactProviderDescript
 	return p.descriptor
 }
 
-// Collect does not simulate storage or geographic evidence in the activation-only test.
-func (compositionUpstream) Collect(context.Context, pluginapi.DecisionFactRequest) (pluginapi.DecisionFactResult, error) {
-	return pluginapi.DecisionFactResult{}, nil
+// Collect supplies deterministic absent geographic and reputation state only for the composed scheduler fixture.
+func (p compositionUpstream) Collect(_ context.Context, request pluginapi.DecisionFactRequest) (pluginapi.DecisionFactResult, error) {
+	if p.descriptor.Name == "smtp_peer" {
+		for _, fact := range request.Facts() {
+			if fact.ID() == "environment.rspamd.smtp_client_ip" {
+				state := "not_found"
+
+				value, err := pluginapi.NewDecisionValue(pluginapi.DecisionValueInput{String: &state})
+				if err != nil {
+					return pluginapi.DecisionFactResult{}, err
+				}
+
+				return pluginapi.DecisionFactResult{Facts: []pluginapi.DecisionFactOutput{{Name: "ip", Value: fact.Value()}, {Name: "lookup_state", Value: value}}}, nil
+			}
+		}
+
+		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassInvalidInput}, nil
+	}
+
+	source, err := compositionSignerProjection(request)
+	if err != nil {
+		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassInvalidInput}, nil
+	}
+
+	result := pluginapi.DecisionFactResult{}
+
+	for _, output := range p.descriptor.Outputs {
+		fact := testSignerAssessmentFact(p.testing, source, "plugin.reputation."+output.Name, false)
+		result.Facts = append(result.Facts, pluginapi.DecisionFactOutput{Name: output.Name, Value: fact.Value()})
+	}
+
+	return result, nil
 }
 
 // compositionNativeBindings captures the real composition factory and explicitly identified upstream test doubles.
@@ -181,7 +212,7 @@ func compositionNativeBindings(t *testing.T, document policyconfig.Document) *pl
 			}
 		} else {
 			descriptor := compositionUpstreamDescriptor(provider.NativeComponent(alias), provider.Module, provider.ProducedFacts, document)
-			if err := registrar.RegisterDecisionFactProvider(compositionUpstream{descriptor}); err != nil {
+			if err := registrar.RegisterDecisionFactProvider(compositionUpstream{descriptor: descriptor, testing: t}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -253,4 +284,34 @@ func compositionConfiguredCatalog(t *testing.T, normalized configinput.UnifiedPo
 	}
 
 	return catalog
+}
+
+// compositionSignerProjection reads only the exact public signer correlation fields visible to the reputation test double.
+func compositionSignerProjection(request pluginapi.DecisionFactRequest) (projection.Projection, error) {
+	for _, fact := range request.Facts() {
+		if fact.ID() != "resource.dkim2.chain" {
+			continue
+		}
+
+		records, ok := fact.Value().Records()
+		if !ok {
+			return projection.Projection{}, errCorrelation
+		}
+
+		source := projection.Projection{}
+
+		for _, record := range records.Records() {
+			fields := recordFields(record)
+			hop := projection.Hop{}
+			hop.Sequence, _ = fields["sequence"].Value().Integer()
+			hop.MessageInstance, _ = fields["message_instance"].Value().Integer()
+			hop.SignerDomain, _ = fields["signer_domain"].Value().StringValue()
+			hop.HopBinding, _ = fields["hop_binding"].Value().Bytes()
+			source.Chain = append(source.Chain, hop)
+		}
+
+		return source, nil
+	}
+
+	return projection.Projection{}, errCorrelation
 }

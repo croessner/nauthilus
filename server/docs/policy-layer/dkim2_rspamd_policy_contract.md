@@ -33,12 +33,13 @@ The complete-chain producer-golden-backed wire request is stored in
 projection, Recipe, and hop-binding values are copied coherently from the DKIM2
 producer golden vector `testdata/reference/verifier-projection-v1-binding.json`;
 the Nauthilus plugin keeps a byte-for-byte copy in
-`contrib/plugins/dkim2-reputation/testdata`. A cross-artifact test must decode
+`contrib/plugins/internal/dkim2projection/testdata`. A cross-artifact test must decode
 this tracked request through generic admission and the real native provider
 `Collect` path. The same cross-artifact boundary also exercises the valid
 current-mode aggregate envelope over the binding-valid one-hop projection and
-requires a final Policy permit. JSON syntax validation alone is not contract
-evidence.
+requires an explicit evidence-dependent Policy result. A valid projection with
+unavailable reputation must not become a permit. JSON syntax validation alone
+is not contract evidence.
 
 ## Provenance model
 
@@ -55,17 +56,13 @@ The request has three distinct provenance classes.
 3. `version`, `request_id`, `target`, and the environment identity are transport
    and caller-correlation data.
 
-Nauthilus provider results are not caller inputs. The production v1 native Go
-DecisionFactProvider has canonical identity
-`dkim2/plugin.dkim2_reputation.assessment` and emits only
-`plugin.dkim2_reputation.assessed_chain`. This initial static provider derives
-signer reputation, current SMTP-peer reputation, contract matching, Recipe
-authorization, and policy violations with host-qualified native-plugin
-provenance. It does not implement ASN/Geo enrichment and never authorizes a
-terminal OOB case; `terminal_oob_required` makes the assessment unacceptable.
-Later native providers may derive ASN/Geo or separately specified OOB trust
-from admitted IP/domain facts without changing caller provenance. Generic Lua
-is not the production assessor for this contract.
+Nauthilus provider results are not caller inputs. The generic reputation and
+GeoIP providers supply preexisting subject assessments and current-peer
+geographic evidence. `dkim2/plugin.dkim2_intelligence.assessment` composes those
+facts with the admitted verifier projection and explicit identity contracts.
+It does not score or learn reputation, authorize a Recipe, or decide message
+acceptance. Terminal OOB, cryptographic, replay and integrity failures remain
+hard denies before any discretionary Policy permit.
 
 ## Nauthilus implementation boundary
 
@@ -182,56 +179,43 @@ it must use a separately enabled protected field with strict size limits and a
 single provider allowlist. It must remain unavailable to expressions,
 diagnostics, reports, logs, traces, metrics, and error bodies.
 
-## Native assessed-chain output
+## Native correlated composition output
 
-The production provider `dkim2/plugin.dkim2_reputation.assessment` emits one
-ordered record-list fact, `plugin.dkim2_reputation.assessed_chain`. Its record
-schema has exactly ten fields:
+The `dkim2_intelligence` module supplies the fact-only composition contract for
+cross-signal Policy. Its executable configuration is
+[`policy_dkim2_rspamd_verifier.yml`](../examples/policy_dkim2_rspamd_verifier.yml);
+its ownership and identity semantics are documented in the
+[plugin README](../../../contrib/plugins/dkim2-intelligence/README.md).
+The module configuration is in `go_plugin_dkim2_intelligence.yml`. The canonical
+strict Policy places hard denies first, operator Recipe/reputation denies next
+and a current-target identity-bound permit last, with `no_match: deny`.
+Placeholder domains and thresholds are illustrative; use the separate
+consumer observation overlay until operator calibration is approved.
 
-- `sequence`;
-- `message_instance`;
-- `hop_binding`;
-- `signer_reputation`;
-- `smtp_peer_reputation`;
-- `contract_state`;
-- `recipe_authorization`;
-- `assessment_complete`;
-- `acceptable`;
-- `violation_classes`.
+`plugin.dkim2_intelligence.assessed_chain` has one record per admitted verifier
+hop in identical order, exactly 34 declared fields and the same sequence,
+Message-Instance, signer domain and hop binding. It copies the verifier's
+lower-case signature state and privacy-minimized Recipe/history semantics.
+It adds the complete configured-profile signer reputation tuple, explicit
+identity-contract state/strength and closed observed violation classes.
+Historical identity membership is `domain_only`; current SMTP CIDR or ASN
+identity is never attributed to a historical signer.
 
-Count, order, sequence, Message-Instance, and hop-binding coverage correlate the
-assessment with every caller chain record. The output does not copy signer
-domains, Recipe digests, projection bindings, caller facts, raw provider data,
-or arbitrary details. Exact enum vocabularies are fixed by the native plugin
-output contract and may not be widened at runtime.
+`plugin.dkim2_intelligence.smtp_peer` contains exactly one record with 36
+declared fields. IP, network and ASN reputation each have their own state,
+band, override and conditional measurements; geographic state and age remain
+independent. No aggregate availability or trust flag replaces these states.
+Both record schemas use globally distinct identities. The generic host checks
+types, bounds and visibility, while the composer checks closed values and
+conditional semantic relationships.
 
-The closed v1 vocabularies are:
-
-- `signer_reputation` and `smtp_peer_reputation`:
-  `trusted|neutral|blocked|unknown`;
-- `contract_state`: `matched|missing|peer_mismatch`;
-- `recipe_authorization`: `permitted|denied|uncontracted`;
-- `violation_classes`: an ascending lexical-byte-order, unique subset of
-  `authentication_not_pass`, `body_unavailable`, `contract_missing`,
-  `contract_peer_mismatch`, `do_not_explode_violated`,
-  `do_not_modify_violated`, `history_not_matched`, `recipe_not_authorized`,
-  `signer_reputation_blocked`, `signer_reputation_unknown`,
-  `smtp_peer_reputation_blocked`, `smtp_peer_reputation_unknown`,
-  `terminal_oob_required`, and `upstream_nonpermittable`.
-
-`assessment_complete` and `acceptable` are booleans. Unknown enum or violation
-values are invalid provider output and fail closed.
-
-The initial provider never turns `terminal_oob_required` into trusted or
-acceptable state. A future OOB authorization mechanism requires its own native
-provider contract and policy change.
-
-`smtp_peer_reputation` repeats one request-wide current-peer assessment in each
-correlated record so record-local predicates remain self-contained. It is
-not evidence about the SMTP IP of a historical hop. The provider may enforce
-allowed peer CIDRs only for the target/current hop identified by
-`target_sequence` and `target_message_instance`; it must never attribute the
-current SMTP peer to earlier chain records.
+`plugin.dkim2_intelligence.assessment_complete` certifies complete structural
+correlation, including explicit missing or unavailable evidence. It never
+means acceptable or permitted. The provider publishes all three facts only
+after projection validation, exact upstream correlation and bounded record
+construction succeed. Any failure emits no partial assessed chain. Final
+Recipe policy and message acceptance remain rule-owned; verifier results are
+never rewritten.
 
 ## Rspamd and SMTP environment facts
 
@@ -344,48 +328,12 @@ intermediate Policy state, authoritative for cache lifecycle.
 - Version 1 uses signer-domain reputation and intentionally omits selector and
   key fingerprint.
 - The actual SMTP client IP is mandatory for every production Milter request.
-- The production assessor is the native Go DecisionFactProvider
-  `dkim2/plugin.dkim2_reputation.assessment`, which emits only
-  `plugin.dkim2_reputation.assessed_chain`; generic Lua is not used for the
-  production assessment.
+- The composition owner is `dkim2/plugin.dkim2_intelligence.assessment`, with
+  exact generic reputation and GeoIP dependencies. It emits assessed chain,
+  independent SMTP peer tuples and structural completion only.
 - The DKIM2 producer owns canonical projection and hop-binding construction
   with SHA-256; the Rspamd and Nauthilus consumers validate but never recreate
   verifier facts.
 - SMTP IP and domain facts are redacted or pseudonymized in ordinary logs,
   traces, audit, reports, diagnostics, errors, and metrics.
 - Outbound signing policy is deferred and is not part of this prompt pack.
-
-## Cross-signal composition contract
-
-The `dkim2_intelligence` module supplies the fact-only composition contract for
-cross-signal Policy. Its executable configuration is
-[`go_plugin_dkim2_intelligence.yml`](../examples/go_plugin_dkim2_intelligence.yml);
-its ownership and identity semantics are documented in the
-[plugin README](../../../contrib/plugins/dkim2-intelligence/README.md).
-The existing reference rules remain a separate migration concern; merely
-loading the composition module does not replace a selected Policy set.
-
-`plugin.dkim2_intelligence.assessed_chain` has one record per admitted verifier
-hop in identical order, exactly 34 declared fields and the same sequence,
-Message-Instance, signer domain and hop binding. It copies the verifier's
-lower-case signature state and privacy-minimized Recipe/history semantics.
-It adds the complete configured-profile signer reputation tuple, explicit
-identity-contract state/strength and closed observed violation classes.
-Historical identity membership is `domain_only`; current SMTP CIDR or ASN
-identity is never attributed to a historical signer.
-
-`plugin.dkim2_intelligence.smtp_peer` contains exactly one record with 36
-declared fields. IP, network and ASN reputation each have their own state,
-band, override and conditional measurements; geographic state and age remain
-independent. No aggregate availability or trust flag replaces these states.
-Both record schemas use globally distinct identities. The generic host checks
-types, bounds and visibility, while the composer checks closed values and
-conditional semantic relationships.
-
-`plugin.dkim2_intelligence.assessment_complete` certifies complete structural
-correlation, including explicit missing or unavailable evidence. It never
-means acceptable or permitted. The provider publishes all three facts only
-after projection validation, exact upstream correlation and bounded record
-construction succeed. Any failure emits no partial assessed chain. Final
-Recipe policy and message acceptance remain rule-owned; verifier results are
-never rewritten.

@@ -93,7 +93,7 @@ func compareGoldenFields(t *testing.T, fields []fieldSpec, expected []goldenFiel
 func compareExecutableSchemas(t *testing.T, golden map[string]goldenSchema) {
 	t.Helper()
 
-	raw, err := os.ReadFile("../../../server/docs/examples/go_plugin_dkim2_intelligence.yml")
+	raw, err := os.ReadFile("../../../server/docs/examples/policy_dkim2_rspamd_verifier.yml")
 	if err != nil {
 		t.Fatal(err)
 	}

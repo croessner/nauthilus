@@ -5,7 +5,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-package main
+package dkim2projection
 
 import (
 	"slices"
@@ -20,16 +20,16 @@ func TestVerifierProjectionRejectsImpossibleAggregateFlagStates(t *testing.T) {
 		id    string
 		value string
 	}{
-		{name: "modify satisfied", id: factDoNotModifyState, value: "satisfied"},
-		{name: "modify violated", id: factDoNotModifyState, value: "violated"},
-		{name: "explode satisfied", id: factDoNotExplodeState, value: "satisfied"},
+		{name: "modify satisfied", id: FactDoNotModifyState, value: "satisfied"},
+		{name: "modify violated", id: FactDoNotModifyState, value: "violated"},
+		{name: "explode satisfied", id: FactDoNotExplodeState, value: "satisfied"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := replaceRequestStringFact(t, testDecisionRequest(t, "192.0.2.25"), test.id, test.value)
-			if _, err := decodeVerifierProjection(request); err == nil {
-				t.Fatalf("decodeVerifierProjection() error = nil for %s=%q", test.id, test.value)
+			if _, err := Decode(request); err == nil {
+				t.Fatalf("Decode() error = nil for %s=%q", test.id, test.value)
 			}
 		})
 	}
@@ -46,23 +46,23 @@ func TestVerifierProjectionRejectsAggregateFlagContradictions(t *testing.T) {
 	}{
 		{
 			name: "explode request cannot be aggregate not requested", DoNotExplode: true,
-			DoNotModifyState: stateNotRequested, DoNotExplodeState: stateNotRequested, wantError: true,
+			DoNotModifyState: StateNotRequested, DoNotExplodeState: StateNotRequested, wantError: true,
 		},
 		{
 			name: "modify request cannot be aggregate not requested", DoNotModify: true,
-			DoNotModifyState: stateNotRequested, DoNotExplodeState: stateNotRequested, wantError: true,
+			DoNotModifyState: StateNotRequested, DoNotExplodeState: StateNotRequested, wantError: true,
 		},
 		{
 			name: "explode request may remain indeterminate", DoNotExplode: true,
-			DoNotModifyState: stateNotRequested, DoNotExplodeState: stateIndeterminate,
+			DoNotModifyState: StateNotRequested, DoNotExplodeState: StateIndeterminate,
 		},
 		{
 			name: "modify request may remain indeterminate", DoNotModify: true,
-			DoNotModifyState: stateIndeterminate, DoNotExplodeState: stateNotRequested,
+			DoNotModifyState: StateIndeterminate, DoNotExplodeState: StateNotRequested,
 		},
 		{
 			name:             "unrequested flags require aggregate not requested",
-			DoNotModifyState: stateIndeterminate, DoNotExplodeState: stateNotRequested, wantError: true,
+			DoNotModifyState: StateIndeterminate, DoNotExplodeState: StateNotRequested, wantError: true,
 		},
 	}
 
@@ -73,9 +73,9 @@ func TestVerifierProjectionRejectsAggregateFlagContradictions(t *testing.T) {
 				test.DoNotModifyState, test.DoNotExplodeState,
 			)
 
-			_, err := decodeVerifierProjection(request)
+			_, err := Decode(request)
 			if (err != nil) != test.wantError {
-				t.Fatalf("decodeVerifierProjection() error = %v, wantError %t", err, test.wantError)
+				t.Fatalf("Decode() error = %v, wantError %t", err, test.wantError)
 			}
 		})
 	}
@@ -86,17 +86,17 @@ func TestVerifierProjectionAcceptsExactRspamdScanActions(t *testing.T) {
 		"no action", "accept", "add header", "rewrite subject", "greylist",
 		"soft reject", "reject", "quarantine", "discard",
 	}
-	if !slices.Equal(rspamdScanActions, want) {
-		t.Fatalf("rspamdScanActions = %v, want exact adapter vocabulary %v", rspamdScanActions, want)
+	if !slices.Equal(RspamdScanActions, want) {
+		t.Fatalf("RspamdScanActions = %v, want exact adapter vocabulary %v", RspamdScanActions, want)
 	}
 
 	for _, action := range want {
 		t.Run(action, func(t *testing.T) {
 			request := replaceRequestStringFact(
-				t, testDecisionRequest(t, "192.0.2.25"), factScanAction, action,
+				t, testDecisionRequest(t, "192.0.2.25"), FactScanAction, action,
 			)
-			if _, err := decodeVerifierProjection(request); err != nil {
-				t.Fatalf("decodeVerifierProjection() error = %v for admitted action %q", err, action)
+			if _, err := Decode(request); err != nil {
+				t.Fatalf("Decode() error = %v for admitted action %q", err, action)
 			}
 		})
 	}
@@ -104,10 +104,10 @@ func TestVerifierProjectionAcceptsExactRspamdScanActions(t *testing.T) {
 
 func TestVerifierProjectionRejectsUnknownRspamdScanAction(t *testing.T) {
 	request := replaceRequestStringFact(
-		t, testDecisionRequest(t, "192.0.2.25"), factScanAction, "ACCEPT",
+		t, testDecisionRequest(t, "192.0.2.25"), FactScanAction, "ACCEPT",
 	)
-	if _, err := decodeVerifierProjection(request); err == nil {
-		t.Fatal("decodeVerifierProjection() error = nil for unknown case-variant action")
+	if _, err := Decode(request); err == nil {
+		t.Fatal("Decode() error = nil for unknown case-variant action")
 	}
 }
 

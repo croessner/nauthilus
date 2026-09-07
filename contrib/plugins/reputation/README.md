@@ -232,7 +232,7 @@ Success contributes low trust to the verified account and client IP/network.
 Bad credentials contribute low risk only to IP/network. Neither signal spreads
 to ASN; account-risk and authoritative abuse require separate evidence sources.
 
-Select `authn/plugin.reputation.assessment` before the current backend outcome
+Select `authn/plugin.reputation.authentication` before the current backend outcome
 is learned. The example binds the host's canonical
 `nauthilus.request.client.ip` fact and publishes `auth_subjects` plus its three
 profile collections. Generic extractors accept canonical admitted fact names;
@@ -297,3 +297,25 @@ source row. Read-only assessment fanout is bounded at 160 subjects separately
 from write fanout; the DKIM2 example admits up to 128 signer rows and three
 current-peer subjects. The common closed tuple codec is shared with consumers
 in `internal/reputationview`.
+
+### Explicit IP overrides from operator networks
+
+`ip_override_networks` is a bounded list of canonical CIDRs whose stored
+operator overrides may classify an IP assessment. It does not change learned
+network aggregation, admit caller overrides or create state. Matching uses the
+most specific active network override; absent or expired entries fall through
+to a less-specific configured network. An exact-IP override takes precedence.
+Every selected override read retains primary-only and tag-rotation validation;
+a failed required lookup yields unavailable, never an implicit static trust.
+The emitted tuple retains the IP's actual evidence state and measurements.
+
+The offline `scripts/convert-static-reputation.py` converts an exported JSON
+snapshot into exact same-band override import records, this CIDR catalog,
+explicit identity contracts and same-hop Recipe deny guards. It records origin
+`cutover.static_dkim2_v4` and deterministic audit correlation. Absent entries
+produce no override. The tool creates a new mode-0600 file and never accesses
+Redis or credentials. Apply overrides through authenticated management and
+merge all generated guards after invariant denies and before permits; the
+converter never grants a permit or bypasses freshness, identity or integrity
+requirements. Absolute expiry is preserved in the import artifact, including
+explicit non-expiring entries. It is not a server configuration reader.

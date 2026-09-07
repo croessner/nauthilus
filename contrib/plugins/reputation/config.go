@@ -4,6 +4,7 @@ package main
 import (
 	"errors"
 	"math"
+	"net/netip"
 	"regexp"
 	"slices"
 	"time"
@@ -27,6 +28,7 @@ const (
 )
 
 type rawConfig struct {
+	IPOverrideNetworks              []string                 `mapstructure:"ip_override_networks"`
 	AuthLearning                    *authLearningConfig      `mapstructure:"auth_learning"`
 	Bands                           bandConfig               `mapstructure:"bands"`
 	ShadowModel                     *shadowModelConfig       `mapstructure:"shadow_model"`
@@ -76,18 +78,19 @@ type profileConfig struct {
 }
 
 type configuration struct {
-	asnFacts        map[string]string
-	shadow          *configuration
-	bindings        map[pluginapi.DecisionTargetSelector]targetBindingConfig
-	raw             rawConfig
-	apiSources      map[string]*sourcePolicy
-	internalSources map[executionKey]*sourcePolicy
-	signals         map[string]*signalPolicy
-	profiles        map[string]time.Duration
-	retention       time.Duration
-	manifestTTL     time.Duration
-	seenTTL         time.Duration
-	retryHorizon    time.Duration
+	overrideNetworks []netip.Prefix
+	asnFacts         map[string]string
+	shadow           *configuration
+	bindings         map[pluginapi.DecisionTargetSelector]targetBindingConfig
+	raw              rawConfig
+	apiSources       map[string]*sourcePolicy
+	internalSources  map[executionKey]*sourcePolicy
+	signals          map[string]*signalPolicy
+	profiles         map[string]time.Duration
+	retention        time.Duration
+	manifestTTL      time.Duration
+	seenTTL          time.Duration
+	retryHorizon     time.Duration
 }
 
 // decodeConfig compiles the strict, explicit operator-owned catalog before registration.
@@ -129,6 +132,10 @@ func compileConfiguration(raw rawConfig) (*configuration, error) {
 	}
 
 	if err := cfg.validateBands(); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.compileOverrideNetworks(); err != nil {
 		return nil, err
 	}
 

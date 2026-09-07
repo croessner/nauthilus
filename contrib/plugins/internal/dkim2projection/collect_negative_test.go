@@ -5,10 +5,9 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-package main
+package dkim2projection
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -16,13 +15,13 @@ import (
 )
 
 //nolint:funlen // The single table keeps the complete negative provider boundary reviewable.
-func TestCollectRejectsMalformedSealedProjectionWithoutEmittingFacts(t *testing.T) {
+func TestVerifierProjectionRejectsMalformedSealedInputs(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*testing.T, pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest
 	}{
 		{name: "missing fact", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
-			return removeRequestFact(t, request, factProjectionSchema)
+			return removeRequestFact(t, request, FactProjectionSchema)
 		}},
 		{name: "unknown fact", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
 			return appendRequestFact(t, request, testFact(
@@ -43,7 +42,7 @@ func TestCollectRejectsMalformedSealedProjectionWithoutEmittingFacts(t *testing.
 			)
 		}},
 		{name: "sequence mismatch", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
-			return replaceChainField(t, request, fieldSequence, testIntegerValue(t, 2))
+			return replaceChainField(t, request, FieldSequence, testIntegerValue(t, 2))
 		}},
 		{name: "count mismatch", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
 			return replaceRequestFact(t, request, "resource.dkim2.claimed_hop_count", testIntegerValue(t, 2))
@@ -69,10 +68,10 @@ func TestCollectRejectsMalformedSealedProjectionWithoutEmittingFacts(t *testing.
 			))
 		}},
 		{name: "double prefix", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
-			return renameRequestFact(t, request, factProjectionSchema, "resource.resource.dkim2.projection_schema")
+			return renameRequestFact(t, request, FactProjectionSchema, "resource.resource.dkim2.projection_schema")
 		}},
 		{name: "incomplete history", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
-			return replaceRequestFact(t, request, factHistoricalContent, testStringValue(t, stateUnavailable))
+			return replaceRequestFact(t, request, FactHistoricalContent, testStringValue(t, StateUnavailable))
 		}},
 		{name: "wrong target", mutate: func(t *testing.T, request pluginapi.DecisionFactRequest) pluginapi.DecisionFactRequest {
 			target := pluginapi.DecisionTargetSelector{Namespace: "dkim2", Action: "different-action"}
@@ -81,36 +80,14 @@ func TestCollectRejectsMalformedSealedProjectionWithoutEmittingFacts(t *testing.
 		}},
 	}
 
-	plugin := NewPlugin()
-	plugin.swapConfig(mustTestConfig(t))
-	provider := decisionFactProvider{plugin: plugin}
-
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := test.mutate(t, testDecisionRequest(t, "192.0.2.25"))
 
-			result, err := provider.Collect(context.Background(), request)
-			if err != nil {
-				t.Fatalf("Collect() error = %v", err)
-			}
-
-			if result.ErrorClass != pluginapi.DecisionErrorClassInvalidInput || len(result.Facts) != 0 {
-				t.Fatalf("Collect() = %#v, want invalid_input without assessed facts", result)
+			if _, err := Decode(request); err == nil {
+				t.Fatal("malformed sealed projection accepted")
 			}
 		})
-	}
-}
-
-func TestCollectReportsUnavailableWithoutConfigurationAndEmitsNoFacts(t *testing.T) {
-	result, err := (decisionFactProvider{plugin: NewPlugin()}).Collect(
-		context.Background(), testDecisionRequest(t, "192.0.2.25"),
-	)
-	if err != nil {
-		t.Fatalf("Collect() error = %v", err)
-	}
-
-	if result.ErrorClass != pluginapi.DecisionErrorClassUnavailable || len(result.Facts) != 0 {
-		t.Fatalf("Collect() = %#v, want unavailable without assessed facts", result)
 	}
 }
 

@@ -22,6 +22,7 @@ const (
 	factVerificationState   = "resource.dkim2.verification_state"
 	factAuthenticationState = "resource.dkim2.authentication_state"
 	factDisposition         = "resource.dkim2.disposition"
+	factReceivedDSN         = "resource.dkim2.received_dsn_propagation"
 	verdictTempfail         = "tempfail"
 	verificationPass        = "PASS"
 
@@ -199,7 +200,7 @@ func validateFactSet(facts map[string]pluginapi.DecisionFactView) error {
 	}
 
 	for id := range facts {
-		if strings.HasPrefix(id, "resource.dkim2.") && !slices.Contains(requiredResourceFacts, id) {
+		if strings.HasPrefix(id, "resource.dkim2.") && id != factReceivedDSN && !slices.Contains(requiredResourceFacts, id) {
 			return fmt.Errorf("unknown DKIM2 fact %s", id)
 		}
 
@@ -208,7 +209,23 @@ func validateFactSet(facts map[string]pluginapi.DecisionFactView) error {
 		}
 	}
 
-	return nil
+	return validateOptionalReceivedDSN(facts)
+}
+
+// validateOptionalReceivedDSN admits the verifier's optional delivery-status fact without deriving composition authority from it.
+func validateOptionalReceivedDSN(facts map[string]pluginapi.DecisionFactView) error {
+	if _, exists := facts[factReceivedDSN]; !exists {
+		return nil
+	}
+
+	if err := requireCategory(facts, factReceivedDSN, pluginapi.DecisionFactCategoryResource); err != nil {
+		return err
+	}
+
+	_, err := requireStringIn(facts, factReceivedDSN, "not_applicable", "eligible", "terminal_origin", "not_failure",
+		"forbidden_null_previous_sender", "unsupported_chain", "not_reconstructable", "not_evaluated")
+
+	return err
 }
 
 // requireCategory verifies presence and the host-assigned provenance category.

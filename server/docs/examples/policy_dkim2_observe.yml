@@ -1,0 +1,10 @@
+# Consumer-target calibration overlay for policy_dkim2_rspamd_verifier.yml.
+# Merge this exact namespace/action target by identity, preserving its schema,
+# domain plan, rules, no_match and timeouts. This is not a standalone config.
+# The separate reputation/observe ingestion target stays in enforce mode so its
+# acknowledged storage effect executes. Do not copy this mode to ingestion.
+policy:
+  targets:
+    - namespace: dkim2
+      action: accept-message-instance
+      mode: observe

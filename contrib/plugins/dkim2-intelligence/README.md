@@ -14,7 +14,7 @@ contains one SMTP peer record (36 declared fields, 8192 aggregate bytes).
 Conditional tuple fields are absent when their state does not permit details.
 The independent normative fixture is `testdata/record-contract.json`; the
 executable field schema is in
-`server/docs/examples/go_plugin_dkim2_intelligence.yml`.
+`server/docs/examples/policy_dkim2_rspamd_verifier.yml`.
 
 ## Input authority and correlation
 
@@ -48,9 +48,9 @@ permission result.
 
 ## Configuration
 
-Merge the composition fragment by module, target binding, provider, schema
-fact and checkpoint-provider identity with the verifier target and generic
-reputation configuration. Preserve the reputation model, primary Redis,
+Merge the module composition fragment by module and target-binding identity
+with the generic reputation configuration. The canonical verifier Policy owns
+the provider schedule and all fact schemas in one place. Preserve the reputation model, primary Redis,
 opaque-key and source admission settings. Different target namespaces need
 different reputation component names. The supplied DKIM2 component is
 `assessment`; an authentication component must have another local name when
