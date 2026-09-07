@@ -28,6 +28,14 @@ class ClientError(RuntimeError):
     """ClientError represents an operator-facing request or configuration failure."""
 
 
+class HTTPClientError(ClientError):
+    """Preserve an acknowledged HTTP status without changing existing error handling."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 @dataclass(frozen=True)
 class Response:
     """Response stores the HTTP response after body decoding."""
@@ -144,7 +152,7 @@ class NauthilusClient:
 
         response = self._send(method.upper(), url, body=data, headers=request_headers)
         if response.status >= 400:
-            raise ClientError(format_http_error(method.upper(), url, response))
+            raise HTTPClientError(format_http_error(method.upper(), url, response), response.status)
 
         return response
 
@@ -961,6 +969,94 @@ def add_wait_args(parser: argparse.ArgumentParser, *, include_switch: bool = Tru
     parser.add_argument("--wait-interval", type=float, default=1.0, help="seconds between status polls")
 
 
+def reputation_request(client: NauthilusClient, args: argparse.Namespace) -> Response:
+    """Send one bounded administrative operation without retrying uncertain mutations."""
+
+    if not client.config.bearer_token and client.config.basic_user and client.config.basic_password:
+        raise ClientError("reputation administration requires a backchannel bearer token with nauthilus:admin")
+    body = {field: getattr(args, field) for field in args.reputation_fields if getattr(args, field, None) is not None}
+    if "kind" in body:
+        if bool(args.subject) == bool(args.subject_file):
+            raise ClientError("provide exactly one subject or --subject-file")
+        body["subject"] = args.subject
+        if args.subject_file:
+            with Path(args.subject_file).open("rb") as source:
+                subject = source.read(515)
+                if len(subject) > 514:
+                    raise ClientError("subject file exceeds the bounded input size")
+                body["subject"] = subject.decode("utf-8").removesuffix("\n").removesuffix("\r")
+        if not body["subject"] or len(body["subject"].encode("utf-8")) > 512:
+            raise ClientError("subject must contain 1 to 512 UTF-8 bytes")
+    if args.reputation_action:
+        body["action"] = args.reputation_action
+    if len(json.dumps(body).encode("utf-8")) > 4096:
+        raise ClientError("reputation request exceeds 4096 bytes")
+    try:
+        return client.request(args.reputation_method, "/api/v1/custom/reputation/" + args.reputation_path, body=body)
+    except (ClientError, OSError, http.client.HTTPException) as exc:
+        if isinstance(exc, HTTPClientError) and 400 <= exc.status < 500 and exc.status != 408:
+            raise
+        if args.reputation_mutation:
+            raise ClientError("reputation mutation failed; outcome may be unknown. Inspect lookup/status before retrying the same change.") from exc
+        raise
+
+
+def reputation_ttl(value: str) -> int:
+    """Require an explicit bounded lifetime; zero deliberately means no expiry."""
+
+    seconds = int(value)
+    if not 0 <= seconds <= 31536000:
+        raise argparse.ArgumentTypeError("TTL must be between 0 and 31536000 seconds")
+    return seconds
+
+
+def add_reputation_arguments(parser: argparse.ArgumentParser, *, subject: bool, audit: bool) -> list[str]:
+    """Share exact subject and audit arguments without exposing actor or storage keys."""
+
+    fields = []
+    if subject:
+        parser.add_argument("kind", choices=("ip", "network", "asn", "domain", "account", "service"))
+        parser.add_argument("subject", nargs="?", help="exact subject; use --subject-file to keep it out of process arguments")
+        parser.add_argument("--subject-file", help="read one exact subject from a private UTF-8 file")
+        fields.append("kind")
+    if audit:
+        for field in ("reason", "origin", "audit_id"):
+            parser.add_argument("--" + field.replace("_", "-"), required=True)
+            fields.append(field)
+    return fields
+
+
+def add_reputation_commands(subcommands: Any) -> None:
+    """Expose the supported Management API through the existing operator client."""
+
+    reputation = subcommands.add_parser("reputation", help="administrative reputation lookup, overrides and allocation recovery")
+    commands = reputation.add_subparsers(dest="reputation_command", required=True)
+    lookup = commands.add_parser("lookup", help="inspect one exact subject through primary storage")
+    lookup.set_defaults(func=reputation_request, reputation_fields=add_reputation_arguments(lookup, subject=True, audit=False),
+                        reputation_method="POST", reputation_path="lookup", reputation_action=None, reputation_mutation=False)
+    override = commands.add_parser("override", help="audited operator exceptions")
+    overrides = override.add_subparsers(dest="override_command", required=True)
+    for operation, method in (("put", "PUT"), ("delete", "DELETE")):
+        command = overrides.add_parser(operation)
+        fields = add_reputation_arguments(command, subject=True, audit=True)
+        command.add_argument("--slot", choices=("active", "previous"), default="active")
+        command.add_argument("--previous-audit", required=operation == "delete", help="current override audit ID for optimistic replacement/removal")
+        fields.extend(("slot", "previous_audit"))
+        if operation == "put":
+            command.add_argument("--band", choices=("blocked", "trusted", "neutral"), required=True)
+            command.add_argument("--ttl-seconds", type=reputation_ttl, required=True, help="explicit expiry; 0 means non-expiring")
+            fields.extend(("band", "ttl_seconds"))
+        command.set_defaults(func=reputation_request, reputation_fields=fields, reputation_method=method,
+                             reputation_path="override", reputation_action=None, reputation_mutation=True)
+    allocation = commands.add_parser("allocation", help="inspect or fence writers before allocation-key rotation")
+    allocations = allocation.add_subparsers(dest="allocation_command", required=True)
+    for action in ("status", "drain"):
+        command = allocations.add_parser(action)
+        fields = add_reputation_arguments(command, subject=False, audit=action == "drain")
+        command.set_defaults(func=reputation_request, reputation_fields=fields, reputation_method="POST",
+                             reputation_path="allocation", reputation_action=action, reputation_mutation=action == "drain")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse command tree."""
 
@@ -985,6 +1081,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", choices=("pretty", "json", "body", "headers"), default="pretty")
 
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    add_reputation_commands(subcommands)
 
     token = subcommands.add_parser("token", help="token cache helpers")
     token_sub = token.add_subparsers(dest="token_command", required=True)
