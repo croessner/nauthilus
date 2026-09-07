@@ -115,7 +115,7 @@ func TestAuthLearningMappingParticipatesInModelIdentity(t *testing.T) {
 // TestAuthAssessmentAcceptsHostCanonicalFactIdentity keeps generic extractors compatible with real host-owned authentication facts.
 func TestAuthAssessmentAcceptsHostCanonicalFactIdentity(t *testing.T) {
 	raw := testConfigMap(t)
-	raw["target_bindings"] = []any{map[string]any{"target": "authn/authenticate", "output_fact": "auth_subjects", "subjects": []any{map[string]any{"attribute": "nauthilus.request.client.ip", "role": "auth_client", "kind": "ip"}}}}
+	raw["target_bindings"] = []any{map[string]any{"target": "authn/authenticate", "output_fact": "auth_subjects", "subjects": []any{map[string]any{"attribute": "nauthilus.request.client.ip", "category": "environment", "role": "auth_client", "kind": "ip"}}}}
 	_, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)
 }

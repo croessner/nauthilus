@@ -278,3 +278,22 @@ Manifest matching remains byte-for-byte over the complete contribution plan. Cha
 `event_conflict`; absent geographic evidence is unavailable. Neither case adopts a new subject plan or creates a
 second event. An exact retry resumes the original immutable plan until expiry. No Redis manifest format or ingestion
 semantics were relaxed for geographic enrichment.
+
+### Typed decision inputs and provider provenance
+
+Each target extractor declares its exact `category` when the fact name does
+not begin with a category prefix. Plugin facts also require an exact `provider`
+identity and a direct Policy dependency on that producer. `input_kind:
+integer` is supported for ASN input; other subjects use canonical strings.
+`derive: network_from_ip` uses the same configured IPv4/IPv6 prefix lengths as
+observation ingestion. `optional: true` applies only to scalar inputs: absence
+emits an unavailable tuple and performs no identity lookup. It never substitutes
+an empty or guessed subject.
+
+Record extraction declares `correlation_types` for every configured
+`correlation_fields` entry. The host checks each field's kind and provider
+visibility before activation. Correlation values remain attached to the exact
+source row. Read-only assessment fanout is bounded at 160 subjects separately
+from write fanout; the DKIM2 example admits up to 128 signer rows and three
+current-peer subjects. The common closed tuple codec is shared with consumers
+in `internal/reputationview`.

@@ -50,7 +50,7 @@ func TestBindingMatchesDKIM2ProducerGolden(t *testing.T) {
 	fixture := readBindingGolden(t)
 	hop := goldenHop(t, fixture)
 	recipe := calculateRecipeDescriptorDigest(hop)
-	hop.recipeDigest = recipe[:]
+	hop.RecipeDigest = recipe[:]
 	hopContent := calculateHopContentDigest(hop)
 	projection := calculateProjectionBinding([]verifierHop{hop})
 	boundHop := calculateBoundHopBinding(projection, hop)
@@ -65,22 +65,22 @@ func TestBindingRejectsEveryBoundSemanticMutation(t *testing.T) {
 	fixture := readBindingGolden(t)
 	hop := goldenHop(t, fixture)
 	recipe := calculateRecipeDescriptorDigest(hop)
-	hop.recipeDigest = recipe[:]
+	hop.RecipeDigest = recipe[:]
 	projection := calculateProjectionBinding([]verifierHop{hop})
 	bound := calculateBoundHopBinding(projection, hop)
-	hop.hopBinding = bound[:]
+	hop.HopBinding = bound[:]
 
 	tests := []struct {
 		name   string
 		mutate func(*verifierHop)
 	}{
-		{name: "signature state", mutate: func(value *verifierHop) { value.signatureState = "fail" }},
-		{name: "Recipe header presence", mutate: func(value *verifierHop) { value.recipeHasHeaders = false }},
-		{name: "Recipe body mode", mutate: func(value *verifierHop) { value.recipeBodyMode = stateUnavailable }},
-		{name: "change classes", mutate: func(value *verifierHop) { value.changeClasses = []string{"body.rewrite"} }},
-		{name: "affected headers", mutate: func(value *verifierHop) { value.affectedHeaders = []string{"subject"} }},
-		{name: "change count", mutate: func(value *verifierHop) { value.changeCount++ }},
-		{name: "affected header count", mutate: func(value *verifierHop) { value.affectedHeaderCount++ }},
+		{name: "signature state", mutate: func(value *verifierHop) { value.SignatureState = "fail" }},
+		{name: "Recipe header presence", mutate: func(value *verifierHop) { value.RecipeHasHeaders = false }},
+		{name: "Recipe body mode", mutate: func(value *verifierHop) { value.RecipeBodyMode = stateUnavailable }},
+		{name: "change classes", mutate: func(value *verifierHop) { value.ChangeClasses = []string{"body.rewrite"} }},
+		{name: "affected headers", mutate: func(value *verifierHop) { value.AffectedHeaders = []string{"subject"} }},
+		{name: "change count", mutate: func(value *verifierHop) { value.ChangeCount++ }},
+		{name: "affected header count", mutate: func(value *verifierHop) { value.AffectedHeaderCount++ }},
 	}
 
 	for _, test := range tests {
@@ -117,16 +117,16 @@ func goldenHop(t *testing.T, fixture bindingGolden) verifierHop {
 	t.Helper()
 
 	return verifierHop{
-		signerDomain: fixture.Hop.SignerDomain, signatureAlgorithms: fixture.Hop.SignatureAlgorithms,
-		signatureState: fixture.Hop.SignatureState, custodyTransition: fixture.Hop.CustodyTransition,
-		recipeMode: fixture.Hop.RecipeMode, recipeBodyMode: fixture.Hop.RecipeBodyMode,
-		changeClasses: fixture.Hop.ChangeClasses, affectedHeaders: fixture.Hop.AffectedHeaders,
-		historyHeaderState: fixture.Hop.HistoryHeaderState, historyBodyState: fixture.Hop.HistoryBodyState,
-		bodyAvailability: fixture.Hop.BodyAvailability, sequence: fixture.Hop.Sequence,
-		messageInstance: fixture.Hop.MessageInstance, changeCount: fixture.Hop.ChangeCount,
-		affectedHeaderCount: fixture.Hop.AffectedHeaderCount, doNotModify: fixture.Hop.DoNotModify,
-		doNotExplode: fixture.Hop.DoNotExplode, feedback: fixture.Hop.Feedback, feedHere: fixture.Hop.FeedHere,
-		exploded: fixture.Hop.Exploded, recipeHasHeaders: fixture.Hop.RecipeHasHeaders,
+		SignerDomain: fixture.Hop.SignerDomain, SignatureAlgorithms: fixture.Hop.SignatureAlgorithms,
+		SignatureState: fixture.Hop.SignatureState, CustodyTransition: fixture.Hop.CustodyTransition,
+		RecipeMode: fixture.Hop.RecipeMode, RecipeBodyMode: fixture.Hop.RecipeBodyMode,
+		ChangeClasses: fixture.Hop.ChangeClasses, AffectedHeaders: fixture.Hop.AffectedHeaders,
+		HistoryHeaderState: fixture.Hop.HistoryHeaderState, HistoryBodyState: fixture.Hop.HistoryBodyState,
+		BodyAvailability: fixture.Hop.BodyAvailability, Sequence: fixture.Hop.Sequence,
+		MessageInstance: fixture.Hop.MessageInstance, ChangeCount: fixture.Hop.ChangeCount,
+		AffectedHeaderCount: fixture.Hop.AffectedHeaderCount, DoNotModify: fixture.Hop.DoNotModify,
+		DoNotExplode: fixture.Hop.DoNotExplode, Feedback: fixture.Hop.Feedback, FeedHere: fixture.Hop.FeedHere,
+		Exploded: fixture.Hop.Exploded, RecipeHasHeaders: fixture.Hop.RecipeHasHeaders,
 	}
 }
 

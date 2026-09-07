@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"slices"
 	"sort"
 	"time"
@@ -216,14 +215,7 @@ func (c *configuration) expandSubject(ctx context.Context, source *sourcePolicy,
 // derivedSubject binds network or provider-owned ASN attribution to the exact admitted address.
 func (c *configuration) derivedSubject(ctx context.Context, source *sourcePolicy, kind, canonicalIP string, resolver asnResolver) (string, error) {
 	if kind == kindNetwork {
-		address := netip.MustParseAddr(canonicalIP)
-
-		bits := c.raw.NetworkSubjects.IPv6Prefix
-		if address.Is4() {
-			bits = c.raw.NetworkSubjects.IPv4Prefix
-		}
-
-		return netip.PrefixFrom(address, bits).Masked().String(), nil
+		return c.networkSubject(canonicalIP), nil
 	}
 
 	if resolver == nil {

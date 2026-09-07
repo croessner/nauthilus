@@ -3,52 +3,45 @@ package main
 import (
 	"sort"
 
-	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
-)
+	view "github.com/croessner/nauthilus/v4/contrib/plugins/internal/reputationview"
 
-const (
-	assessmentFieldState      = "state"
-	assessmentFieldProfile    = "profile"
-	assessmentFieldBand       = "band"
-	assessmentFieldOverride   = "override"
-	assessmentFieldRisk       = "risk_score"
-	assessmentFieldTrust      = "trust_score"
-	assessmentFieldConfidence = "confidence"
-	assessmentFieldSamples    = "samples"
-	assessmentFieldDiversity  = "source_diversity"
-	assessmentFieldAge        = "age_seconds"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
 // assessmentRecord emits only validated conditional details plus explicit same-record correlation.
 func assessmentRecord(subject extractedSubject, tuple assessmentTuple) (pluginapi.DecisionRecord, error) {
-	if tuple.validate() != nil {
-		return pluginapi.DecisionRecord{}, errAssessment
-	}
-
-	inputs := []outputInput{
-		stringOutput(fieldRole, subject.role),
-		stringOutput(fieldKind, subject.kind),
-		stringOutput(assessmentFieldState, tuple.State),
-		stringOutput(assessmentFieldProfile, tuple.Profile),
-		stringOutput(assessmentFieldBand, tuple.Band),
-		stringOutput(assessmentFieldOverride, tuple.Override),
-	}
-	if d := tuple.Details; d != nil {
-		diversity := int64(d.Diversity)
-		inputs = append(inputs,
-			outputInput{name: assessmentFieldRisk, input: pluginapi.DecisionValueInput{Double: &d.Risk}},
-			outputInput{name: assessmentFieldTrust, input: pluginapi.DecisionValueInput{Double: &d.Trust}},
-			outputInput{name: assessmentFieldConfidence, input: pluginapi.DecisionValueInput{Double: &d.Confidence}},
-			outputInput{name: assessmentFieldSamples, input: pluginapi.DecisionValueInput{Double: &d.Samples}},
-			outputInput{name: assessmentFieldDiversity, input: pluginapi.DecisionValueInput{Integer: &diversity}},
-			outputInput{name: assessmentFieldAge, input: pluginapi.DecisionValueInput{Integer: &d.AgeSeconds}})
-	}
-
-	record, err := recordInputs(inputs)
+	fields, err := view.Encode(view.Tuple(tuple))
 	if err != nil {
 		return pluginapi.DecisionRecord{}, err
 	}
 
+	record, err := recordInputs([]outputInput{stringOutput(fieldRole, subject.role), stringOutput(fieldKind, subject.kind)})
+	if err != nil {
+		return pluginapi.DecisionRecord{}, err
+	}
+
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	output := record.Fields()
+
+	for _, name := range names {
+		field, fieldErr := pluginapi.NewDecisionRecordField(name, fields[name])
+		if fieldErr != nil {
+			return pluginapi.DecisionRecord{}, fieldErr
+		}
+
+		output = append(output, field)
+	}
+
+	record, err = pluginapi.NewDecisionRecord(output)
+	if err != nil {
+		return pluginapi.DecisionRecord{}, err
+	}
 	return correlateAssessmentRecord(record, subject.correlation)
 }
 
@@ -81,10 +74,14 @@ func correlateAssessmentRecord(record pluginapi.DecisionRecord, correlation map[
 
 // assessmentField reserves the complete conditional schema, even fields absent from missing-state tuples.
 func assessmentField(name string) bool {
-	switch name {
-	case fieldRole, fieldKind, assessmentFieldState, assessmentFieldProfile, assessmentFieldBand, assessmentFieldOverride, assessmentFieldRisk, assessmentFieldTrust, assessmentFieldConfidence, assessmentFieldSamples, assessmentFieldDiversity, assessmentFieldAge:
+	if name == fieldRole || name == fieldKind {
 		return true
 	}
 
+	for _, field := range view.Fields() {
+		if field.Name == name {
+			return true
+		}
+	}
 	return false
 }

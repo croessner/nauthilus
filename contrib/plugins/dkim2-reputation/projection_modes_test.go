@@ -226,26 +226,26 @@ func replaceRequestStringFacts(
 func testDecisionRequestWithHops(t *testing.T, hops []verifierHop) pluginapi.DecisionFactRequest {
 	t.Helper()
 
-	boundHops, projectionBinding := testBoundHops(hops)
+	boundHops, ProjectionBinding := testBoundHops(hops)
 	last := boundHops[len(boundHops)-1]
 	request := testDecisionRequest(t, "192.0.2.25")
-	request = replaceRequestFact(t, request, "resource.dkim2.projection_binding", testBytesValue(t, projectionBinding))
+	request = replaceRequestFact(t, request, "resource.dkim2.projection_binding", testBytesValue(t, ProjectionBinding))
 	request = replaceRequestFact(t, request, "resource.dkim2.chain", testChainValue(t, boundHops))
-	request = replaceRequestFact(t, request, "resource.dkim2.target_sequence", testIntegerValue(t, last.sequence))
-	request = replaceRequestFact(t, request, "resource.dkim2.target_message_instance", testIntegerValue(t, last.messageInstance))
+	request = replaceRequestFact(t, request, "resource.dkim2.target_sequence", testIntegerValue(t, last.Sequence))
+	request = replaceRequestFact(t, request, "resource.dkim2.target_message_instance", testIntegerValue(t, last.MessageInstance))
 	request = replaceRequestFact(t, request, "resource.dkim2.claimed_hop_count", testIntegerValue(t, int64(len(boundHops))))
 
 	return request
 }
 
 // testUnchangedHop returns one deterministic pass hop without Recipe changes or protection flags.
-func testUnchangedHop(sequence int64, custodyTransition string) verifierHop {
+func testUnchangedHop(Sequence int64, CustodyTransition string) verifierHop {
 	return verifierHop{
-		signerDomain: "relay.example", signatureAlgorithms: []string{"ed25519-sha256"}, signatureState: "pass",
-		custodyTransition: custodyTransition, recipeMode: "unchanged", recipeBodyMode: recipeBodyAbsent,
-		changeClasses: []string{}, affectedHeaders: []string{},
-		historyHeaderState: historyMatched, historyBodyState: historyMatched, bodyAvailability: "known",
-		sequence: sequence, messageInstance: 1,
+		SignerDomain: "relay.example", SignatureAlgorithms: []string{"ed25519-sha256"}, SignatureState: "pass",
+		CustodyTransition: CustodyTransition, RecipeMode: "unchanged", RecipeBodyMode: recipeBodyAbsent,
+		ChangeClasses: []string{}, AffectedHeaders: []string{},
+		HistoryHeaderState: historyMatched, HistoryBodyState: historyMatched, BodyAvailability: "known",
+		Sequence: Sequence, MessageInstance: 1,
 	}
 }
 
@@ -254,13 +254,13 @@ func testBoundHops(hops []verifierHop) ([]verifierHop, []byte) {
 	result := append([]verifierHop(nil), hops...)
 	for index := range result {
 		recipe := calculateRecipeDescriptorDigest(result[index])
-		result[index].recipeDigest = recipe[:]
+		result[index].RecipeDigest = recipe[:]
 	}
 
 	projection := calculateProjectionBinding(result)
 	for index := range result {
 		binding := calculateBoundHopBinding(projection, result[index])
-		result[index].hopBinding = binding[:]
+		result[index].HopBinding = binding[:]
 	}
 
 	return result, projection[:]

@@ -38,7 +38,7 @@ func (p assessmentProvider) Collect(ctx context.Context, request pluginapi.Decis
 
 	for _, subject := range subjects {
 		profiles := emptyProfiles(assessmentUnavailable)
-		if state != nil {
+		if state != nil && !subject.unavailable {
 			profiles = state.assessProfiles(ctx, subject.subjectInput)
 		}
 
@@ -69,7 +69,10 @@ func (p assessmentProvider) Collect(ctx context.Context, request pluginapi.Decis
 // registerAssessments groups exact targets under explicitly named, namespace-bound generic components.
 func (p *Plugin) registerAssessments(registrar pluginapi.DecisionRegistrar, cfg *configuration) error {
 	components := make(map[string]*assessmentProvider)
+
+	extractors := make(map[string][]extractorConfig)
 	for target, binding := range cfg.bindings {
+		extractors[binding.Component] = append(extractors[binding.Component], binding.Subjects...)
 		provider := components[binding.Component]
 		if provider == nil {
 			provider = &assessmentProvider{plugin: p, config: cfg, descriptor: pluginapi.DecisionFactProviderDescriptor{
@@ -93,6 +96,13 @@ func (p *Plugin) registerAssessments(registrar pluginapi.DecisionRegistrar, cfg 
 
 	for _, name := range names {
 		provider := components[name]
+
+		inputs, err := assessmentInputs(extractors[name])
+		if err != nil {
+			return err
+		}
+
+		provider.descriptor.Inputs = inputs
 		sort.Slice(provider.descriptor.Targets, func(i, j int) bool {
 			return provider.descriptor.Targets[i].Action < provider.descriptor.Targets[j].Action
 		})

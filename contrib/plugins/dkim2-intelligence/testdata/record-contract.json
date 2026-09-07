@@ -1,0 +1,485 @@
+{
+  "assessed_chain": {
+    "id": "assessed_chain",
+    "version": "v1",
+    "min_records": 1,
+    "max_records": 128,
+    "max_fields": 34,
+    "max_aggregate_bytes": 262144,
+    "fields": [
+      {
+        "name": "sequence",
+        "type": "integer",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "message_instance",
+        "type": "integer",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "hop_binding",
+        "type": "bytes",
+        "required": true,
+        "expression_visible": false,
+        "max_bytes": 32,
+        "provider_visibility": [
+          "dkim2/plugin.dkim2_intelligence.assessment"
+        ]
+      },
+      {
+        "name": "is_target",
+        "type": "boolean",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_domain",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 253
+      },
+      {
+        "name": "signature_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "custody_transition",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 32
+      },
+      {
+        "name": "do_not_modify",
+        "type": "boolean",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "do_not_explode",
+        "type": "boolean",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "feedback",
+        "type": "boolean",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "feed_here",
+        "type": "boolean",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "exploded",
+        "type": "boolean",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "recipe_mode",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "recipe_body_mode",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "change_classes",
+        "type": "strings",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 64,
+        "max_items": 2
+      },
+      {
+        "name": "affected_headers",
+        "type": "strings",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 64,
+        "max_items": 128
+      },
+      {
+        "name": "change_count",
+        "type": "integer",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "affected_header_count",
+        "type": "integer",
+        "required": true,
+        "expression_visible": true
+      },
+      {
+        "name": "history_header_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "history_body_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "body_availability",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "signer_reputation_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "signer_reputation_profile",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 32
+      },
+      {
+        "name": "signer_reputation_band",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "signer_risk_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_trust_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_confidence",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_samples",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_source_diversity",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_reputation_age_seconds",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "signer_override",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "identity_contract_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "identity_contract_strength",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "violation_classes",
+        "type": "strings",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 64,
+        "max_items": 14
+      }
+    ]
+  },
+  "smtp_peer": {
+    "id": "smtp_peer",
+    "version": "v1",
+    "min_records": 1,
+    "max_records": 1,
+    "max_fields": 36,
+    "max_aggregate_bytes": 8192,
+    "fields": [
+      {
+        "name": "reputation_profile",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 32
+      },
+      {
+        "name": "ip_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "ip_band",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "ip_risk_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "ip_trust_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "ip_confidence",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "ip_samples",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "ip_source_diversity",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "ip_age_seconds",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "ip_override",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "network_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "network_band",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "network_risk_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "network_trust_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "network_confidence",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "network_samples",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "network_source_diversity",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "network_age_seconds",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "network_override",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "asn_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "asn_band",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "asn_risk_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_trust_score",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_confidence",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_samples",
+        "type": "double",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_source_diversity",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_age_seconds",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_override",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "geoip_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "geoip_age_seconds",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "country_iso",
+        "type": "string",
+        "required": false,
+        "expression_visible": true,
+        "max_length": 2
+      },
+      {
+        "name": "asn",
+        "type": "integer",
+        "required": false,
+        "expression_visible": true
+      },
+      {
+        "name": "asn_org",
+        "type": "string",
+        "required": false,
+        "expression_visible": false,
+        "max_length": 128,
+        "provider_visibility": [
+          "dkim2/plugin.dkim2_intelligence.assessment"
+        ]
+      },
+      {
+        "name": "asn_prefix",
+        "type": "string",
+        "required": false,
+        "expression_visible": true,
+        "max_length": 43
+      },
+      {
+        "name": "target_contract_state",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      },
+      {
+        "name": "target_contract_strength",
+        "type": "string",
+        "required": true,
+        "expression_visible": true,
+        "max_length": 16
+      }
+    ]
+  }
+}

@@ -839,6 +839,8 @@ func validateBackendFactSources(
 
 // validateProviders validates configured provider ownership and failure semantics.
 func validateProviders(namespace string, providers map[string]ProviderConfig, path string) error {
+	identities := make(map[string]bool, len(providers))
+
 	for _, name := range sortedProviderNames(providers) {
 		provider := providers[name]
 
@@ -859,6 +861,13 @@ func validateProviders(namespace string, providers map[string]ProviderConfig, pa
 			return err
 		}
 
+		identity := provider.CanonicalID(namespace, name)
+		if identities[identity] {
+			return invalid(providerPath, "duplicates an exact provider identity")
+		}
+
+		identities[identity] = true
+
 		if err := validateTargetReferences(provider.Targets, providerPath+".targets"); err != nil {
 			return err
 		}
@@ -877,6 +886,10 @@ func validateProviders(namespace string, providers map[string]ProviderConfig, pa
 
 // validateProviderBinding delegates each provider kind to its binding boundary.
 func validateProviderBinding(namespace string, name string, provider ProviderConfig, path string) error {
+	if provider.Component != "" && provider.Kind != providerKindNative {
+		return invalid(path+".component", "is supported only for generic native provider bindings")
+	}
+
 	if err := validateReservedAuthnProviderKind(namespace, name, provider.Kind, path); err != nil {
 		return err
 	}
@@ -926,7 +939,7 @@ func validateGenericNativeProviderBinding(
 	provider ProviderConfig,
 	path string,
 ) error {
-	if pluginapi.ValidateComponentName(name) != nil {
+	if pluginapi.ValidateComponentName(provider.NativeComponent(name)) != nil {
 		return invalid(path, "must use the canonical public plugin component grammar")
 	}
 
@@ -2650,16 +2663,15 @@ func providerUseResolvable(namespace string, use string, providers map[string]Pr
 		return namespace == authnNamespace
 	}
 
-	if owner, module, component, native := parseGenericNativeProviderUse(use); native {
+	if owner, module, _, native := parseGenericNativeProviderUse(use); native {
 		if owner != namespace {
 			return false
 		}
 
-		if provider, exists := providers[component]; exists &&
-			provider.Kind == ProviderKindNative &&
-			provider.Module == module &&
-			provider.CanonicalID(owner, component) == use {
-			return true
+		for alias, provider := range providers {
+			if provider.Kind == ProviderKindNative && provider.Module == module && provider.CanonicalID(owner, alias) == use {
+				return true
+			}
 		}
 	}
 

@@ -236,6 +236,7 @@ type ProviderConfig struct {
 	Kind          string                  `mapstructure:"kind"`
 	ScriptPath    string                  `mapstructure:"script_path"`
 	Module        string                  `mapstructure:"module"`
+	Component     string                  `mapstructure:"component"`
 	Targets       []TargetReferenceConfig `mapstructure:"targets"`
 	Executions    []string                `mapstructure:"executions"`
 	Requires      []string                `mapstructure:"requires"`
@@ -251,10 +252,19 @@ func (p ProviderConfig) CanonicalID(namespace string, name string) string {
 	case ProviderKindLua:
 		return namespace + "/lua." + p.Module + "." + name
 	case ProviderKindNative:
-		return namespace + "/plugin." + p.Module + "." + name
+		return namespace + "/plugin." + p.Module + "." + p.NativeComponent(name)
 	}
 
 	return namespace + "/" + name
+}
+
+// NativeComponent resolves the exact native component independently of the authored provider alias.
+func (p ProviderConfig) NativeComponent(name string) string {
+	if p.Component != "" {
+		return p.Component
+	}
+
+	return name
 }
 
 // EffectConfig declares one namespace-owned typed effect definition.

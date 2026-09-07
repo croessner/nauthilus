@@ -11,7 +11,7 @@ func TestNeutralTargetExtractorsCompileExactScalarAndCorrelatedRecords(t *testin
 	raw := testConfigMap(t)
 	raw["target_bindings"] = []any{map[string]any{"target": "workflow/submit", "output_fact": "workflow_subjects", "subjects": []any{
 		map[string]any{"attribute": "subject.worker", "role": "origin_service", "kind": "service"},
-		map[string]any{"attribute": "resource.jobs", "field": "owner", "role": "account", "kind": "account", "correlation_fields": []any{"sequence"}},
+		map[string]any{"attribute": "resource.jobs", "field": "owner", "role": "account", "kind": "account", "correlation_fields": []any{"sequence"}, "correlation_types": map[string]any{"sequence": "integer"}},
 	}}}
 	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)

@@ -82,8 +82,8 @@ func TestTrackedPolicyRequestPassesAdmissionAndNativeProvider(t *testing.T) {
 		t.Fatalf("Collect() result = %#v, want assessed_chain", result)
 	}
 
-	chain, ok := result.Facts[0].Value.Records()
-	if !ok || len(chain.Records()) == 0 || !wireAssessmentAcceptable(t, chain.Records()[0]) {
+	Chain, ok := result.Facts[0].Value.Records()
+	if !ok || len(Chain.Records()) == 0 || !wireAssessmentAcceptable(t, Chain.Records()[0]) {
 		t.Fatalf("assessed_chain = %#v, want a non-empty acceptable assessment", result.Facts[0].Value)
 	}
 }

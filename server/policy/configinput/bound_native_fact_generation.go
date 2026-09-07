@@ -179,7 +179,7 @@ func (b *boundNativeFactGenerationBuilder) prepareProvider(
 
 	capability, exists := b.capabilities[providerID]
 	if !exists || capability.ModuleName() != configured.Module ||
-		capability.ComponentName() != name || capability.Namespace() != namespace {
+		capability.ComponentName() != configured.NativeComponent(name) || capability.Namespace() != namespace {
 		return invalidBoundNativeFactGeneration("configured native fact provider descriptor is missing")
 	}
 
@@ -206,7 +206,7 @@ func (b *boundNativeFactGenerationBuilder) prepareProvider(
 	authority.namespaces[namespace] = struct{}{}
 	authority.providers = append(authority.providers, selected)
 	b.factInputs = append(b.factInputs, nativebinding.DecisionFactBindingInput{
-		Definition: selected.Definition, ModuleName: configured.Module, ComponentName: name,
+		Definition: selected.Definition, ModuleName: configured.Module, ComponentName: configured.NativeComponent(name),
 	})
 	b.modules[configured.Module] = struct{}{}
 

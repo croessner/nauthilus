@@ -93,11 +93,11 @@ func TestConfigRejectsNonCanonicalAndAmbiguousEntries(t *testing.T) {
 func TestAssessmentUsesCurrentSMTPPeerOnlyForTargetHop(t *testing.T) {
 	config := mustTestConfig(t)
 	projection := verifierProjection{
-		clientIP: netip.MustParseAddr("203.0.113.7"), verificationState: "PASS", authenticationState: "PASS",
-		disposition: "continue", targetSequence: 2, targetMessageInstance: 2,
-		chain: []verifierHop{
-			{sequence: 1, messageInstance: 1, signerDomain: "origin.example", historyHeaderState: "matched", historyBodyState: "matched", bodyAvailability: "known"},
-			{sequence: 2, messageInstance: 2, signerDomain: "relay.example", historyHeaderState: "matched", historyBodyState: "matched", bodyAvailability: "known"},
+		ClientIP: netip.MustParseAddr("203.0.113.7"), VerificationState: "PASS", AuthenticationState: "PASS",
+		Disposition: "continue", TargetSequence: 2, TargetMessageInstance: 2,
+		Chain: []verifierHop{
+			{Sequence: 1, MessageInstance: 1, SignerDomain: "origin.example", HistoryHeaderState: "matched", HistoryBodyState: "matched", BodyAvailability: "known"},
+			{Sequence: 2, MessageInstance: 2, SignerDomain: "relay.example", HistoryHeaderState: "matched", HistoryBodyState: "matched", BodyAvailability: "known"},
 		},
 	}
 
@@ -110,7 +110,7 @@ func TestAssessmentUsesCurrentSMTPPeerOnlyForTargetHop(t *testing.T) {
 		t.Fatalf("target assessment = %#v, want current-peer match", assessments[1])
 	}
 
-	projection.clientIP = netip.MustParseAddr("198.51.100.10")
+	projection.ClientIP = netip.MustParseAddr("198.51.100.10")
 
 	assessments = assessProjection(config, projection)
 	if !assessments[0].acceptable || assessments[0].contractState != contractMatched {
@@ -126,11 +126,11 @@ func TestAssessmentUsesCurrentSMTPPeerOnlyForTargetHop(t *testing.T) {
 func TestTerminalNextDomainCannotBecomeAcceptable(t *testing.T) {
 	config := mustTestConfig(t)
 	projection := verifierProjection{
-		clientIP: netip.MustParseAddr("203.0.113.7"), verificationState: "PASS", authenticationState: "PASS",
-		disposition: "out_of_band_required", targetSequence: 1, targetMessageInstance: 1,
-		chain: []verifierHop{{
-			sequence: 1, messageInstance: 1, signerDomain: "relay.example", custodyTransition: "terminal_next_domain",
-			historyHeaderState: "matched", historyBodyState: "matched", bodyAvailability: "known",
+		ClientIP: netip.MustParseAddr("203.0.113.7"), VerificationState: "PASS", AuthenticationState: "PASS",
+		Disposition: "out_of_band_required", TargetSequence: 1, TargetMessageInstance: 1,
+		Chain: []verifierHop{{
+			Sequence: 1, MessageInstance: 1, SignerDomain: "relay.example", CustodyTransition: "terminal_next_domain",
+			HistoryHeaderState: "matched", HistoryBodyState: "matched", BodyAvailability: "known",
 		}},
 	}
 

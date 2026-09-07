@@ -38,39 +38,39 @@ func TestVerifierProjectionRejectsImpossibleAggregateFlagStates(t *testing.T) {
 func TestVerifierProjectionRejectsAggregateFlagContradictions(t *testing.T) {
 	tests := []struct {
 		name              string
-		doNotModify       bool
-		doNotExplode      bool
-		doNotModifyState  string
-		doNotExplodeState string
+		DoNotModify       bool
+		DoNotExplode      bool
+		DoNotModifyState  string
+		DoNotExplodeState string
 		wantError         bool
 	}{
 		{
-			name: "explode request cannot be aggregate not requested", doNotExplode: true,
-			doNotModifyState: stateNotRequested, doNotExplodeState: stateNotRequested, wantError: true,
+			name: "explode request cannot be aggregate not requested", DoNotExplode: true,
+			DoNotModifyState: stateNotRequested, DoNotExplodeState: stateNotRequested, wantError: true,
 		},
 		{
-			name: "modify request cannot be aggregate not requested", doNotModify: true,
-			doNotModifyState: stateNotRequested, doNotExplodeState: stateNotRequested, wantError: true,
+			name: "modify request cannot be aggregate not requested", DoNotModify: true,
+			DoNotModifyState: stateNotRequested, DoNotExplodeState: stateNotRequested, wantError: true,
 		},
 		{
-			name: "explode request may remain indeterminate", doNotExplode: true,
-			doNotModifyState: stateNotRequested, doNotExplodeState: stateIndeterminate,
+			name: "explode request may remain indeterminate", DoNotExplode: true,
+			DoNotModifyState: stateNotRequested, DoNotExplodeState: stateIndeterminate,
 		},
 		{
-			name: "modify request may remain indeterminate", doNotModify: true,
-			doNotModifyState: stateIndeterminate, doNotExplodeState: stateNotRequested,
+			name: "modify request may remain indeterminate", DoNotModify: true,
+			DoNotModifyState: stateIndeterminate, DoNotExplodeState: stateNotRequested,
 		},
 		{
 			name:             "unrequested flags require aggregate not requested",
-			doNotModifyState: stateIndeterminate, doNotExplodeState: stateNotRequested, wantError: true,
+			DoNotModifyState: stateIndeterminate, DoNotExplodeState: stateNotRequested, wantError: true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := testDecisionRequestWithFlagStates(
-				t, "192.0.2.25", test.doNotModify, test.doNotExplode,
-				test.doNotModifyState, test.doNotExplodeState,
+				t, "192.0.2.25", test.DoNotModify, test.DoNotExplode,
+				test.DoNotModifyState, test.DoNotExplodeState,
 			)
 
 			_, err := decodeVerifierProjection(request)

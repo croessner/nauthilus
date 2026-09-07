@@ -134,7 +134,7 @@ policy:
                       fields:
                         - {name: sequence, type: integer, required: true, expression_visible: true}
                         - {name: message_instance, type: integer, required: true, expression_visible: true}
-                        - {name: hop_binding, type: bytes, max_bytes: 32, required: true, provider_visibility: [dkim2/plugin.dkim2_reputation.assessment]}
+                        - {name: hop_binding, type: bytes, max_bytes: 32, required: true, provider_visibility: [dkim2/plugin.dkim2_reputation.assessment, dkim2/plugin.reputation.assessment, dkim2/plugin.dkim2_intelligence.assessment]}
                         - {name: signer_domain, type: string, max_length: 253, required: true, expression_visible: true}
                         - {name: signature_algorithms, type: strings, max_length: 32, max_items: 4, required: true, expression_visible: true}
                         - {name: signature_state, type: string, max_length: 16, required: true, expression_visible: true}
@@ -147,7 +147,7 @@ policy:
                         - {name: recipe_mode, type: string, max_length: 16, required: true, expression_visible: true}
                         - {name: recipe_has_header_changes, type: boolean, required: true, expression_visible: true}
                         - {name: recipe_body_mode, type: string, max_length: 16, required: true, expression_visible: true}
-                        - {name: recipe_digest, type: bytes, max_bytes: 32, required: true, provider_visibility: [dkim2/plugin.dkim2_reputation.assessment]}
+                        - {name: recipe_digest, type: bytes, max_bytes: 32, required: true, provider_visibility: [dkim2/plugin.dkim2_reputation.assessment, dkim2/plugin.dkim2_intelligence.assessment]}
                         - {name: change_classes, type: strings, max_length: 64, max_items: 2, required: true, expression_visible: true}
                         - {name: affected_headers, type: strings, max_length: 64, max_items: 128, required: true}
                         - {name: history_header_state, type: string, max_length: 16, required: true, expression_visible: true}

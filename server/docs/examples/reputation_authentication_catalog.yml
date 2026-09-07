@@ -14,7 +14,7 @@ config:
       output_fact: auth_subjects
       decision_profile: operational
       subjects:
-        - {attribute: nauthilus.request.client.ip, role: auth_client, kind: ip}
+        - {attribute: nauthilus.request.client.ip, category: environment, role: auth_client, kind: ip}
   sources:
     authentication:
       source_policy_id: authentication-backend-v1

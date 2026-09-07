@@ -23,21 +23,21 @@ const (
 
 // assessProjection derives deterministic reputation facts without making a Policy decision.
 func assessProjection(config *assessmentConfig, projection verifierProjection) []hopAssessment {
-	clientReputation := config.clientReputation(projection.clientIP)
-	result := make([]hopAssessment, 0, len(projection.chain))
+	clientReputation := config.clientReputation(projection.ClientIP)
+	result := make([]hopAssessment, 0, len(projection.Chain))
 
-	for index, hop := range projection.chain {
-		isTarget := hop.sequence == projection.targetSequence && hop.messageInstance == projection.targetMessageInstance
+	for index, hop := range projection.Chain {
+		isTarget := hop.Sequence == projection.TargetSequence && hop.MessageInstance == projection.TargetMessageInstance
 		assessment := hopAssessment{
 			hop:                hop,
-			domainReputation:   config.domainReputation(hop.signerDomain),
+			domainReputation:   config.domainReputation(hop.SignerDomain),
 			clientIPReputation: clientReputation,
 			assessmentComplete: true,
 		}
 
-		contract, exists := config.contracts[hop.signerDomain]
-		assessment.contractState = assessContractState(contract, exists, projection.clientIP, isTarget)
-		assessment.recipeAuthorization = assessRecipeAuthorization(contract, exists, hop.changeClasses)
+		contract, exists := config.contracts[hop.SignerDomain]
+		assessment.contractState = assessContractState(contract, exists, projection.ClientIP, isTarget)
+		assessment.recipeAuthorization = assessRecipeAuthorization(contract, exists, hop.ChangeClasses)
 		assessment.violations = projectionViolations(projection, assessment, index)
 		assessment.acceptable = len(assessment.violations) == 0
 		result = append(result, assessment)
@@ -67,7 +67,7 @@ func (c *assessmentConfig) clientReputation(address netip.Addr) string {
 }
 
 // assessContractState binds one signer contract to the exact SMTP peer address.
-func assessContractState(contract domainContract, exists bool, clientIP netip.Addr, enforcePeer bool) string {
+func assessContractState(contract domainContract, exists bool, ClientIP netip.Addr, enforcePeer bool) string {
 	if !exists {
 		return contractMissing
 	}
@@ -77,7 +77,7 @@ func assessContractState(contract domainContract, exists bool, clientIP netip.Ad
 	}
 
 	for _, prefix := range contract.allowedPeers {
-		if prefix.Contains(clientIP) {
+		if prefix.Contains(ClientIP) {
 			return contractMatched
 		}
 	}
@@ -105,8 +105,8 @@ func assessRecipeAuthorization(contract domainContract, exists bool, changes []s
 //nolint:funlen,gocyclo // Each branch maps one independent closed assessment dimension.
 func projectionViolations(projection verifierProjection, assessment hopAssessment, index int) []string {
 	violations := make([]string, 0, 8)
-	isTarget := assessment.hop.sequence == projection.targetSequence &&
-		assessment.hop.messageInstance == projection.targetMessageInstance
+	isTarget := assessment.hop.Sequence == projection.TargetSequence &&
+		assessment.hop.MessageInstance == projection.TargetMessageInstance
 
 	switch assessment.domainReputation {
 	case reputationUnknown:
@@ -135,33 +135,33 @@ func projectionViolations(projection verifierProjection, assessment hopAssessmen
 		violations = append(violations, "recipe_not_authorized")
 	}
 
-	if isTarget && projection.authenticationState != "PASS" {
+	if isTarget && projection.AuthenticationState != "PASS" {
 		violations = append(violations, "authentication_not_pass")
 	}
 
-	if isTarget && projection.disposition != verdictAccept && projection.disposition != verdictContinue {
+	if isTarget && projection.Disposition != verdictAccept && projection.Disposition != verdictContinue {
 		violations = append(violations, "upstream_nonpermittable")
 	}
 
-	if assessment.hop.custodyTransition == "terminal_next_domain" {
+	if assessment.hop.CustodyTransition == "terminal_next_domain" {
 		violations = append(violations, "terminal_oob_required")
 	}
 
-	if assessment.hop.historyHeaderState != historyMatched || assessment.hop.historyBodyState != historyMatched {
+	if assessment.hop.HistoryHeaderState != historyMatched || assessment.hop.HistoryBodyState != historyMatched {
 		violations = append(violations, "history_not_matched")
 	}
 
-	if assessment.hop.bodyAvailability == stateUnavailable {
+	if assessment.hop.BodyAvailability == stateUnavailable {
 		violations = append(violations, "body_unavailable")
 	}
 
 	if index > 0 {
-		previous := projection.chain[index-1]
-		if previous.doNotModify && len(assessment.hop.changeClasses) > 0 {
+		previous := projection.Chain[index-1]
+		if previous.DoNotModify && len(assessment.hop.ChangeClasses) > 0 {
 			violations = append(violations, "do_not_modify_violated")
 		}
 
-		if previous.doNotExplode && assessment.hop.exploded {
+		if previous.DoNotExplode && assessment.hop.Exploded {
 			violations = append(violations, "do_not_explode_violated")
 		}
 	}

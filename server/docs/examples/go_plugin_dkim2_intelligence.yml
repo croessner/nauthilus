@@ -1,0 +1,1164 @@
+# Composition fragment: merge modules, target bindings, providers, schema facts and checkpoint providers by identity.
+# Keep the reputation model/source/key configuration and the verifier target and guards from their base examples.
+# This fragment does not add Policy decisions. Identity contracts are empty until explicitly configured.
+# The authentication target must use a distinct reputation component name because components own one namespace.
+plugins:
+    modules:
+        - config:
+            asn_database_path: /var/lib/GeoIP/GeoLite2-ASN.mmdb
+            database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
+            decision_bindings:
+                - component: smtp_peer
+                  input:
+                    category: environment
+                    fact: environment.rspamd.smtp_client_ip
+                  output_schema: geoip.facts.v1
+                  targets:
+                    - dkim2/accept-message-instance
+            freshness:
+                max_age: 1080h
+                max_stale_age: 2160h
+          name: geoip
+          path: /usr/lib/nauthilus/plugins/geoip.so
+          type: go
+        - config:
+            target_bindings:
+                - component: assessment
+                  decision_profile: operational
+                  output_fact: dkim2_subjects
+                  subjects:
+                    - attribute: resource.dkim2.chain
+                      category: resource
+                      correlation_fields:
+                        - sequence
+                        - message_instance
+                        - hop_binding
+                        - signer_domain
+                      correlation_types:
+                        hop_binding: bytes
+                        message_instance: integer
+                        sequence: integer
+                        signer_domain: string
+                      field: signer_domain
+                      kind: dns_domain
+                      role: signer
+                    - attribute: environment.rspamd.smtp_client_ip
+                      category: environment
+                      kind: ip
+                      role: smtp_peer_ip
+                    - attribute: environment.rspamd.smtp_client_ip
+                      category: environment
+                      derive: network_from_ip
+                      kind: network
+                      role: smtp_peer_network
+                    - attribute: plugin.geoip.asn
+                      category: environment
+                      input_kind: integer
+                      kind: asn
+                      optional: true
+                      provider: dkim2/plugin.geoip.smtp_peer
+                      role: smtp_peer_asn
+                  target: dkim2/accept-message-instance
+          name: reputation
+        - config:
+            decision_profile: operational
+            geoip_provider: dkim2/plugin.geoip.smtp_peer
+            identity_contracts: []
+            reputation_fact: plugin.reputation.dkim2_subjects
+            reputation_provider: dkim2/plugin.reputation.assessment
+          name: dkim2_intelligence
+          path: /usr/lib/nauthilus/plugins/dkim2-intelligence.so
+          type: go
+policy:
+    namespaces:
+        dkim2:
+            domain_plans:
+                verifier:
+                    checkpoints:
+                        final_decision:
+                            providers:
+                                - name: smtp_peer
+                                  skip_if:
+                                    - nonpass_verifier_state
+                                  use: dkim2/plugin.geoip.smtp_peer
+                                - name: reputation_assessment
+                                  skip_if:
+                                    - nonpass_verifier_state
+                                  use: dkim2/plugin.reputation.assessment
+                                - name: intelligence_assessment
+                                  skip_if:
+                                    - nonpass_verifier_state
+                                  use: dkim2/plugin.dkim2_intelligence.assessment
+            providers:
+                intelligence_assessment:
+                    component: assessment
+                    failure: indeterminate
+                    kind: native
+                    module: dkim2_intelligence
+                    produced_facts:
+                        - plugin.dkim2_intelligence.assessed_chain
+                        - plugin.dkim2_intelligence.smtp_peer
+                        - plugin.dkim2_intelligence.assessment_complete
+                    requires:
+                        - dkim2/plugin.reputation.assessment
+                        - dkim2/plugin.geoip.smtp_peer
+                    targets:
+                        - action: accept-message-instance
+                    timeout: 400ms
+                reputation_assessment:
+                    component: assessment
+                    failure: indeterminate
+                    kind: native
+                    module: reputation
+                    produced_facts:
+                        - plugin.reputation.dkim2_subjects
+                        - plugin.reputation.dkim2_subjects_fast
+                        - plugin.reputation.dkim2_subjects_operational
+                        - plugin.reputation.dkim2_subjects_baseline
+                    requires:
+                        - dkim2/plugin.geoip.smtp_peer
+                    targets:
+                        - action: accept-message-instance
+                    timeout: 400ms
+                smtp_peer:
+                    component: smtp_peer
+                    failure: indeterminate
+                    kind: native
+                    module: geoip
+                    produced_facts:
+                        - plugin.geoip.lookup_state
+                        - plugin.geoip.ip
+                        - plugin.geoip.network
+                        - plugin.geoip.country_iso
+                        - plugin.geoip.country_name
+                        - plugin.geoip.city_name
+                        - plugin.geoip.asn_org
+                        - plugin.geoip.asn_prefix
+                        - plugin.geoip.asn_registry
+                        - plugin.geoip.asn_country_iso
+                        - plugin.geoip.asn_allocated
+                        - plugin.geoip.asn_status
+                        - plugin.geoip.privacy_lookup_state
+                        - plugin.geoip.privacy_primary_class
+                        - plugin.geoip.data_age_seconds
+                        - plugin.geoip.asn
+                        - plugin.geoip.data_stale
+                        - plugin.geoip.matched
+                        - plugin.geoip.privacy_detected
+                        - plugin.geoip.privacy_data_stale
+                        - plugin.geoip.is_tor_exit_node
+                        - plugin.geoip.is_known_vpn_exit
+                        - plugin.geoip.is_community_vpn_exit
+                        - plugin.geoip.is_public_proxy
+                        - plugin.geoip.is_privacy_relay
+                        - plugin.geoip.is_hosting_network
+                        - plugin.geoip.is_shared_egress
+                        - plugin.geoip.privacy_confidence
+                        - plugin.geoip.privacy_data_age_seconds
+                        - plugin.geoip.privacy_classes
+                        - plugin.geoip.privacy_source_authorities
+                    targets:
+                        - action: accept-message-instance
+                    timeout: 400ms
+            schema_contributions:
+                static:
+                    accept-message-instance:
+                        versions:
+                            v1:
+                                facts:
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.dkim2_intelligence.assessed_chain
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: true
+                                              name: sequence
+                                              required: true
+                                              type: integer
+                                            - expression_visible: true
+                                              name: message_instance
+                                              required: true
+                                              type: integer
+                                            - expression_visible: false
+                                              max_bytes: 32
+                                              name: hop_binding
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: bytes
+                                            - expression_visible: true
+                                              name: is_target
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              max_length: 253
+                                              name: signer_domain
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: signature_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 32
+                                              name: custody_transition
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: do_not_modify
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              name: do_not_explode
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              name: feedback
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              name: feed_here
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              name: exploded
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: recipe_mode
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: recipe_body_mode
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_items: 2
+                                              max_length: 64
+                                              name: change_classes
+                                              required: true
+                                              type: strings
+                                            - expression_visible: true
+                                              max_items: 128
+                                              max_length: 64
+                                              name: affected_headers
+                                              required: true
+                                              type: strings
+                                            - expression_visible: true
+                                              name: change_count
+                                              required: true
+                                              type: integer
+                                            - expression_visible: true
+                                              name: affected_header_count
+                                              required: true
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: history_header_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: history_body_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: body_availability
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: signer_reputation_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 32
+                                              name: signer_reputation_profile
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: signer_reputation_band
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: signer_risk_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: signer_trust_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: signer_confidence
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: signer_samples
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: signer_source_diversity
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              name: signer_reputation_age_seconds
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: signer_override
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: identity_contract_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: identity_contract_strength
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_items: 14
+                                              max_length: 64
+                                              name: violation_classes
+                                              required: true
+                                              type: strings
+                                        id: dkim2_intelligence_assessed_chain
+                                        max_aggregate_bytes: 262144
+                                        max_fields: 34
+                                        max_records: 128
+                                        min_records: 1
+                                        version: v1
+                                      required: false
+                                      type: records
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.dkim2_intelligence.smtp_peer
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: true
+                                              max_length: 32
+                                              name: reputation_profile
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: ip_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: ip_band
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: ip_risk_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: ip_trust_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: ip_confidence
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: ip_samples
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: ip_source_diversity
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              name: ip_age_seconds
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: ip_override
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: network_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: network_band
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: network_risk_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: network_trust_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: network_confidence
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: network_samples
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: network_source_diversity
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              name: network_age_seconds
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: network_override
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: asn_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: asn_band
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: asn_risk_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: asn_trust_score
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: asn_confidence
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: asn_samples
+                                              required: false
+                                              type: double
+                                            - expression_visible: true
+                                              name: asn_source_diversity
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              name: asn_age_seconds
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: asn_override
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: geoip_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: geoip_age_seconds
+                                              required: false
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 2
+                                              name: country_iso
+                                              required: false
+                                              type: string
+                                            - expression_visible: true
+                                              name: asn
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              max_length: 128
+                                              name: asn_org
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 43
+                                              name: asn_prefix
+                                              required: false
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: target_contract_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: target_contract_strength
+                                              required: true
+                                              type: string
+                                        id: dkim2_intelligence_smtp_peer
+                                        max_aggregate_bytes: 8192
+                                        max_fields: 36
+                                        max_records: 1
+                                        min_records: 1
+                                        version: v1
+                                      required: false
+                                      type: records
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.dkim2_intelligence.assessment_complete
+                                      category: resource
+                                      required: false
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.lookup_state
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.ip
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.network
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.country_iso
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.country_name
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.city_name
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn_org
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn_prefix
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn_registry
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn_country_iso
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn_allocated
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn_status
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_lookup_state
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_primary_class
+                                      category: environment
+                                      max_length: 512
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.data_age_seconds
+                                      category: environment
+                                      type: integer
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.asn
+                                      category: environment
+                                      type: integer
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.data_stale
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.matched
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_detected
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_data_stale
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_tor_exit_node
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_known_vpn_exit
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_community_vpn_exit
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_public_proxy
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_privacy_relay
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_hosting_network
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.is_shared_egress
+                                      category: environment
+                                      type: boolean
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_confidence
+                                      category: environment
+                                      type: double
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_data_age_seconds
+                                      category: environment
+                                      type: double
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_classes
+                                      category: environment
+                                      max_items: 64
+                                      max_length: 512
+                                      type: strings
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.geoip.privacy_source_authorities
+                                      category: environment
+                                      max_items: 64
+                                      max_length: 512
+                                      type: strings
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.reputation.dkim2_subjects
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: false
+                                              max_length: 64
+                                              name: role
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: kind
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: state
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: profile
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: band
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: override
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              name: risk_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: trust_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: confidence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: samples
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: source_diversity
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: age_seconds
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: sequence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: message_instance
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              max_bytes: 32
+                                              name: hop_binding
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: bytes
+                                            - expression_visible: false
+                                              max_length: 253
+                                              name: signer_domain
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: string
+                                        id: dkim2_subjects
+                                        max_aggregate_bytes: 262144
+                                        max_fields: 16
+                                        max_records: 131
+                                        min_records: 1
+                                        version: v1
+                                      type: records
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.reputation.dkim2_subjects_fast
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: false
+                                              max_length: 64
+                                              name: role
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: kind
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: state
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: profile
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: band
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: override
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              name: risk_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: trust_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: confidence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: samples
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: source_diversity
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: age_seconds
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: sequence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: message_instance
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              max_bytes: 32
+                                              name: hop_binding
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: bytes
+                                            - expression_visible: false
+                                              max_length: 253
+                                              name: signer_domain
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: string
+                                        id: dkim2_subjects_fast
+                                        max_aggregate_bytes: 262144
+                                        max_fields: 16
+                                        max_records: 131
+                                        min_records: 1
+                                        version: v1
+                                      type: records
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.reputation.dkim2_subjects_operational
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: false
+                                              max_length: 64
+                                              name: role
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: kind
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: state
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: profile
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: band
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: override
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              name: risk_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: trust_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: confidence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: samples
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: source_diversity
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: age_seconds
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: sequence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: message_instance
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              max_bytes: 32
+                                              name: hop_binding
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: bytes
+                                            - expression_visible: false
+                                              max_length: 253
+                                              name: signer_domain
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: string
+                                        id: dkim2_subjects_operational
+                                        max_aggregate_bytes: 262144
+                                        max_fields: 16
+                                        max_records: 131
+                                        min_records: 1
+                                        version: v1
+                                      type: records
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.reputation.dkim2_subjects_baseline
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: false
+                                              max_length: 64
+                                              name: role
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: kind
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: state
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: profile
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 16
+                                              name: band
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              max_length: 32
+                                              name: override
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: true
+                                              type: string
+                                            - expression_visible: false
+                                              name: risk_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: trust_score
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: confidence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: samples
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: double
+                                            - expression_visible: false
+                                              name: source_diversity
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: age_seconds
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: sequence
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              name: message_instance
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: integer
+                                            - expression_visible: false
+                                              max_bytes: 32
+                                              name: hop_binding
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: bytes
+                                            - expression_visible: false
+                                              max_length: 253
+                                              name: signer_domain
+                                              provider_visibility:
+                                                - dkim2/plugin.dkim2_intelligence.assessment
+                                              required: false
+                                              type: string
+                                        id: dkim2_subjects_baseline
+                                        max_aggregate_bytes: 262144
+                                        max_fields: 16
+                                        max_records: 131
+                                        min_records: 1
+                                        version: v1
+                                      type: records

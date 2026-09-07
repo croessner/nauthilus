@@ -114,3 +114,15 @@ func validDomainLabel(label string) bool {
 
 	return true
 }
+
+// networkSubject derives the configured prefix from an already validated canonical IP.
+func (c *configuration) networkSubject(canonical string) string {
+	address := netip.MustParseAddr(canonical)
+
+	bits := c.raw.NetworkSubjects.IPv6Prefix
+	if address.Is4() {
+		bits = c.raw.NetworkSubjects.IPv4Prefix
+	}
+
+	return netip.PrefixFrom(address, bits).Masked().String()
+}

@@ -198,7 +198,7 @@ func (b *configuredNativeGenerationBuilder) prepareProvider(
 		}
 
 		b.factInputs = append(b.factInputs, nativebinding.DecisionFactBindingInput{
-			Definition: definition, ModuleName: configured.Module, ComponentName: name,
+			Definition: definition, ModuleName: configured.Module, ComponentName: configured.NativeComponent(name),
 		})
 
 		return nil
@@ -214,7 +214,7 @@ func (b *configuredNativeGenerationBuilder) prepareProvider(
 	}
 
 	b.effectInputs = append(b.effectInputs, nativebinding.DecisionEffectBindingInput{
-		Definition: effectDefinition, Effects: effects, ModuleName: configured.Module, ComponentName: name,
+		Definition: effectDefinition, Effects: effects, ModuleName: configured.Module, ComponentName: configured.NativeComponent(name),
 	})
 	group.effects = append(group.effects, effects...)
 

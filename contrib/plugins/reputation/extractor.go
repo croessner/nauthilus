@@ -1,10 +1,15 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
+
+// maximumAssessmentSubjects bounds read-only correlation independently of event write fanout.
+const maximumAssessmentSubjects = 160
+const deriveNetworkFromIP = "network_from_ip"
 
 type targetBindingConfig struct {
 	Component       string            `mapstructure:"component"`
@@ -15,14 +20,21 @@ type targetBindingConfig struct {
 }
 
 type extractorConfig struct {
-	CorrelationFields []string `mapstructure:"correlation_fields"`
-	Attribute         string   `mapstructure:"attribute"`
-	Field             string   `mapstructure:"field"`
-	Role              string   `mapstructure:"role"`
-	Kind              string   `mapstructure:"kind"`
+	Provider          string                                 `mapstructure:"provider"`
+	Category          pluginapi.DecisionFactCategory         `mapstructure:"category"`
+	CorrelationTypes  map[string]pluginapi.DecisionValueKind `mapstructure:"correlation_types"`
+	Optional          bool                                   `mapstructure:"optional"`
+	Derive            string                                 `mapstructure:"derive"`
+	InputKind         pluginapi.DecisionValueKind            `mapstructure:"input_kind"`
+	CorrelationFields []string                               `mapstructure:"correlation_fields"`
+	Attribute         string                                 `mapstructure:"attribute"`
+	Field             string                                 `mapstructure:"field"`
+	Role              string                                 `mapstructure:"role"`
+	Kind              string                                 `mapstructure:"kind"`
 }
 
 type extractedSubject struct {
+	unavailable bool
 	correlation map[string]pluginapi.DecisionRecordFieldValue
 	subjectInput
 }
@@ -86,6 +98,9 @@ func (c *configuration) compileExtractors() error {
 			}
 		}
 
+		if _, err := assessmentInputs(binding.Subjects); err != nil {
+			return err
+		}
 		c.bindings[target] = binding
 	}
 
@@ -94,6 +109,18 @@ func (c *configuration) compileExtractors() error {
 
 // validateExtractor rejects dynamic selectors, nested traversal and undeclared subject spaces.
 func validateExtractor(extractor extractorConfig) error {
+	if extractor.Optional && extractor.Field != "" {
+		return errConfiguration
+	}
+
+	if extractor.Derive != "" && (extractor.Derive != deriveNetworkFromIP || extractor.Kind != kindNetwork || extractor.InputKind == pluginapi.DecisionValueKindInteger) {
+		return errConfiguration
+	}
+
+	if extractor.InputKind != "" && extractor.InputKind != pluginapi.DecisionValueKindString && (extractor.InputKind != pluginapi.DecisionValueKindInteger || extractor.Kind != kindASN) {
+		return errConfiguration
+	}
+
 	if !validExtractorAttribute(extractor.Attribute) || !identifierPattern.MatchString(extractor.Role) || !subjectKind(extractor.Kind) {
 		return errConfiguration
 	}
@@ -106,8 +133,12 @@ func validateExtractor(extractor extractorConfig) error {
 		return errConfiguration
 	}
 
+	if len(extractor.CorrelationTypes) != len(extractor.CorrelationFields) {
+		return errConfiguration
+	}
 	for _, name := range extractor.CorrelationFields {
-		if assessmentField(name) {
+		kind := extractor.CorrelationTypes[name]
+		if assessmentField(name) || !kind.IsValid() || kind == pluginapi.DecisionValueKindRecords {
 			return errConfiguration
 		}
 	}
@@ -150,7 +181,13 @@ func (c *configuration) extractSubjects(target pluginapi.DecisionTargetSelector,
 	for _, extractor := range binding.Subjects {
 		value, exists := indexed[extractor.Attribute]
 		if !exists {
-			return nil, errObservationInput
+			if !extractor.Optional {
+				return nil, errObservationInput
+			}
+
+			result = append(result, extractedSubject{subjectInput: subjectInput{role: extractor.Role, kind: extractor.Kind}, unavailable: true})
+
+			continue
 		}
 
 		subjects, err := c.extractValues(extractor, value)
@@ -159,7 +196,7 @@ func (c *configuration) extractSubjects(target pluginapi.DecisionTargetSelector,
 		}
 
 		result = append(result, subjects...)
-		if len(result) > maximumExpandedSubjects {
+		if len(result) > maximumAssessmentSubjects {
 			return nil, errObservationInput
 		}
 	}
@@ -179,7 +216,7 @@ func (c *configuration) extractValues(extractor extractorConfig, value pluginapi
 	}
 
 	records, ok := value.Records()
-	if !ok || len(records.Records()) > maximumExpandedSubjects {
+	if !ok || len(records.Records()) > maximumAssessmentSubjects {
 		return nil, errObservationInput
 	}
 
@@ -200,12 +237,12 @@ func (c *configuration) extractValues(extractor extractorConfig, value pluginapi
 
 // extractedValue canonicalizes a typed value and retains only explicitly configured correlation fields.
 func (c *configuration) extractedValue(extractor extractorConfig, value pluginapi.DecisionValue, fields map[string]pluginapi.DecisionRecordFieldValue) (extractedSubject, error) {
-	text, ok := value.StringValue()
-	if !ok {
-		return extractedSubject{}, errObservationInput
+	text, err := extractorText(extractor, value)
+	if err != nil {
+		return extractedSubject{}, err
 	}
 
-	canonical, err := c.canonicalSubject(extractor.Kind, text)
+	canonical, err := c.extractionSubject(extractor, text)
 	if err != nil {
 		return extractedSubject{}, err
 	}
@@ -235,4 +272,37 @@ func validExtractorAttribute(attribute string) bool {
 	_, err = pluginapi.NewDecisionFactView(pluginapi.DecisionFactViewInput{ID: attribute, Category: pluginapi.DecisionFactCategoryResource, Value: value})
 
 	return err == nil
+}
+
+// extractorText accepts only the configured wire kind and canonicalizes a bounded integer ASN.
+func extractorText(extractor extractorConfig, value pluginapi.DecisionValue) (string, error) {
+	if extractor.InputKind == pluginapi.DecisionValueKindInteger {
+		number, valid := value.Integer()
+		if !valid || extractor.Kind != kindASN || number < 1 || number > 4294967295 {
+			return "", errObservationInput
+		}
+
+		return strconv.FormatInt(number, 10), nil
+	}
+
+	text, valid := value.StringValue()
+	if !valid {
+		return "", errObservationInput
+	}
+
+	return text, nil
+}
+
+// extractionSubject derives configured network identities from the same canonical IP used by learning.
+func (c *configuration) extractionSubject(extractor extractorConfig, value string) (string, error) {
+	if extractor.Derive == deriveNetworkFromIP {
+		canonical, err := canonicalIP(value)
+		if err != nil {
+			return "", err
+		}
+
+		return c.networkSubject(canonical), nil
+	}
+
+	return c.canonicalSubject(extractor.Kind, value)
 }

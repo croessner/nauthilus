@@ -14,11 +14,11 @@ import (
 )
 
 // testDecisionRequest creates one complete admitted v1 request.
-func testDecisionRequest(t *testing.T, clientIP string) pluginapi.DecisionFactRequest {
+func testDecisionRequest(t *testing.T, ClientIP string) pluginapi.DecisionFactRequest {
 	t.Helper()
 
 	return testDecisionRequestWithFlagStates(
-		t, clientIP, false, false, stateNotRequested, stateNotRequested,
+		t, ClientIP, false, false, stateNotRequested, stateNotRequested,
 	)
 }
 
@@ -27,21 +27,21 @@ func testDecisionRequest(t *testing.T, clientIP string) pluginapi.DecisionFactRe
 //nolint:funlen // The complete admitted fact fixture remains visible as one reviewable contract.
 func testDecisionRequestWithFlagStates(
 	t *testing.T,
-	clientIP string,
-	doNotModify bool,
-	doNotExplode bool,
-	doNotModifyState string,
-	doNotExplodeState string,
+	ClientIP string,
+	DoNotModify bool,
+	DoNotExplode bool,
+	DoNotModifyState string,
+	DoNotExplodeState string,
 ) pluginapi.DecisionFactRequest {
 	t.Helper()
 
-	projectionBinding, hopBinding, recipeDigest := testProjectionBindingsWithFlags(doNotModify, doNotExplode)
+	ProjectionBinding, HopBinding, RecipeDigest := testProjectionBindingsWithFlags(DoNotModify, DoNotExplode)
 
 	facts := []pluginapi.DecisionFactView{
 		testFact(t, "resource.dkim2.projection_schema", pluginapi.DecisionFactCategoryResource, testStringValue(t, projectionSchema)),
 		testFact(t, "resource.dkim2.draft", pluginapi.DecisionFactCategoryResource, testStringValue(t, draftVersion)),
 		testFact(t, "resource.dkim2.projection_binding_algorithm", pluginapi.DecisionFactCategoryResource, testStringValue(t, "sha-256")),
-		testFact(t, "resource.dkim2.projection_binding", pluginapi.DecisionFactCategoryResource, testBytesValue(t, projectionBinding)),
+		testFact(t, "resource.dkim2.projection_binding", pluginapi.DecisionFactCategoryResource, testBytesValue(t, ProjectionBinding)),
 		testFact(t, "resource.dkim2.verification_state", pluginapi.DecisionFactCategoryResource, testStringValue(t, "PASS")),
 		testFact(t, "resource.dkim2.verification_reason", pluginapi.DecisionFactCategoryResource, testStringValue(t, "none")),
 		testFact(t, "resource.dkim2.scope", pluginapi.DecisionFactCategoryResource, testStringValue(t, "chain")),
@@ -57,19 +57,19 @@ func testDecisionRequestWithFlagStates(
 		testFact(t, "resource.dkim2.local_policy_mode", pluginapi.DecisionFactCategoryResource, testStringValue(t, "strict")),
 		testFact(t, "resource.dkim2.local_policy_verdict", pluginapi.DecisionFactCategoryResource, testStringValue(t, "continue")),
 		testFact(t, "resource.dkim2.local_policy_reason", pluginapi.DecisionFactCategoryResource, testStringValue(t, "protocol_pass")),
-		testFact(t, "resource.dkim2.do_not_modify_state", pluginapi.DecisionFactCategoryResource, testStringValue(t, doNotModifyState)),
-		testFact(t, "resource.dkim2.do_not_explode_state", pluginapi.DecisionFactCategoryResource, testStringValue(t, doNotExplodeState)),
+		testFact(t, "resource.dkim2.do_not_modify_state", pluginapi.DecisionFactCategoryResource, testStringValue(t, DoNotModifyState)),
+		testFact(t, "resource.dkim2.do_not_explode_state", pluginapi.DecisionFactCategoryResource, testStringValue(t, DoNotExplodeState)),
 		testFact(t, "resource.dkim2.dns_testing_effective", pluginapi.DecisionFactCategoryResource, testBooleanValue(t, false)),
 		testFact(t, "resource.dkim2.disposition", pluginapi.DecisionFactCategoryResource, testStringValue(t, "continue")),
 		testFact(t, "resource.dkim2.chain", pluginapi.DecisionFactCategoryResource, testChainValueWithFlags(
-			t, hopBinding, recipeDigest, doNotModify, doNotExplode,
+			t, HopBinding, RecipeDigest, DoNotModify, DoNotExplode,
 		)),
 		testFact(t, "environment.rspamd.scan_action_before_policy", pluginapi.DecisionFactCategoryEnvironment, testStringValue(t, "greylist")),
 		testFact(t, "environment.rspamd.metric_score", pluginapi.DecisionFactCategoryEnvironment, testDoubleValue(t, 6.2)),
 		testFact(t, "environment.rspamd.reject_threshold", pluginapi.DecisionFactCategoryEnvironment, testDoubleValue(t, 15)),
 		testFact(t, "environment.rspamd.greylist_threshold", pluginapi.DecisionFactCategoryEnvironment, testDoubleValue(t, 4)),
 		testFact(t, "environment.rspamd.normalized_signals", pluginapi.DecisionFactCategoryEnvironment, testStringsValue(t, []string{"dmarc.fail", "spf.softfail"})),
-		testFact(t, "environment.rspamd.smtp_client_ip", pluginapi.DecisionFactCategoryEnvironment, testStringValue(t, clientIP)),
+		testFact(t, "environment.rspamd.smtp_client_ip", pluginapi.DecisionFactCategoryEnvironment, testStringValue(t, ClientIP)),
 		testFact(t, "environment.rspamd.client_class", pluginapi.DecisionFactCategoryEnvironment, testStringValue(t, "untrusted")),
 		testFact(t, "environment.rspamd.mail_from_class", pluginapi.DecisionFactCategoryEnvironment, testStringValue(t, "external")),
 		testFact(t, "environment.rspamd.recipient_classes", pluginapi.DecisionFactCategoryEnvironment, testStringsValue(t, []string{"local"})),
@@ -99,20 +99,20 @@ func testDecisionRequestWithFlagStates(
 //nolint:funlen // The exact wire record is intentionally visible in one test fixture.
 func testChainValueWithFlags(
 	t *testing.T,
-	hopBinding []byte,
-	recipeDigest []byte,
-	doNotModify bool,
-	doNotExplode bool,
+	HopBinding []byte,
+	RecipeDigest []byte,
+	DoNotModify bool,
+	DoNotExplode bool,
 ) pluginapi.DecisionValue {
 	t.Helper()
 
 	return testChainValue(t, []verifierHop{{
-		signerDomain: "relay.example", signatureAlgorithms: []string{"ed25519-sha256"}, hopBinding: hopBinding,
-		recipeDigest: recipeDigest, signatureState: "pass", custodyTransition: custodyOrigin, recipeMode: "unchanged",
-		recipeBodyMode: recipeBodyAbsent, changeClasses: []string{}, affectedHeaders: []string{},
-		historyHeaderState: historyMatched, historyBodyState: historyMatched,
-		bodyAvailability: "known", sequence: 1, messageInstance: 1, doNotModify: doNotModify,
-		doNotExplode: doNotExplode,
+		SignerDomain: "relay.example", SignatureAlgorithms: []string{"ed25519-sha256"}, HopBinding: HopBinding,
+		RecipeDigest: RecipeDigest, SignatureState: "pass", CustodyTransition: custodyOrigin, RecipeMode: "unchanged",
+		RecipeBodyMode: recipeBodyAbsent, ChangeClasses: []string{}, AffectedHeaders: []string{},
+		HistoryHeaderState: historyMatched, HistoryBodyState: historyMatched,
+		BodyAvailability: "known", Sequence: 1, MessageInstance: 1, DoNotModify: DoNotModify,
+		DoNotExplode: DoNotExplode,
 	}})
 }
 
@@ -146,29 +146,29 @@ func testChainRecord(t *testing.T, hop verifierHop) pluginapi.DecisionRecord {
 		name  string
 		value pluginapi.DecisionValue
 	}{
-		{"sequence", testIntegerValue(t, hop.sequence)},
-		{"message_instance", testIntegerValue(t, hop.messageInstance)},
-		{"hop_binding", testBytesValue(t, hop.hopBinding)},
-		{"signer_domain", testStringValue(t, hop.signerDomain)},
-		{"signature_algorithms", testStringsValue(t, hop.signatureAlgorithms)},
-		{"signature_state", testStringValue(t, hop.signatureState)},
-		{"custody_transition", testStringValue(t, hop.custodyTransition)},
-		{"do_not_modify", testBooleanValue(t, hop.doNotModify)},
-		{"do_not_explode", testBooleanValue(t, hop.doNotExplode)},
-		{"feedback", testBooleanValue(t, hop.feedback)},
-		{"feed_here", testBooleanValue(t, hop.feedHere)},
-		{"exploded", testBooleanValue(t, hop.exploded)},
-		{"recipe_mode", testStringValue(t, hop.recipeMode)},
-		{"recipe_has_header_changes", testBooleanValue(t, hop.recipeHasHeaders)},
-		{"recipe_body_mode", testStringValue(t, hop.recipeBodyMode)},
-		{"recipe_digest", testBytesValue(t, hop.recipeDigest)},
-		{"change_classes", testStringsValue(t, hop.changeClasses)},
-		{"affected_headers", testStringsValue(t, hop.affectedHeaders)},
-		{"history_header_state", testStringValue(t, hop.historyHeaderState)},
-		{"history_body_state", testStringValue(t, hop.historyBodyState)},
-		{"body_availability", testStringValue(t, hop.bodyAvailability)},
-		{"change_count", testIntegerValue(t, hop.changeCount)},
-		{"affected_header_count", testIntegerValue(t, hop.affectedHeaderCount)},
+		{"sequence", testIntegerValue(t, hop.Sequence)},
+		{"message_instance", testIntegerValue(t, hop.MessageInstance)},
+		{"hop_binding", testBytesValue(t, hop.HopBinding)},
+		{"signer_domain", testStringValue(t, hop.SignerDomain)},
+		{"signature_algorithms", testStringsValue(t, hop.SignatureAlgorithms)},
+		{"signature_state", testStringValue(t, hop.SignatureState)},
+		{"custody_transition", testStringValue(t, hop.CustodyTransition)},
+		{"do_not_modify", testBooleanValue(t, hop.DoNotModify)},
+		{"do_not_explode", testBooleanValue(t, hop.DoNotExplode)},
+		{"feedback", testBooleanValue(t, hop.Feedback)},
+		{"feed_here", testBooleanValue(t, hop.FeedHere)},
+		{"exploded", testBooleanValue(t, hop.Exploded)},
+		{"recipe_mode", testStringValue(t, hop.RecipeMode)},
+		{"recipe_has_header_changes", testBooleanValue(t, hop.RecipeHasHeaders)},
+		{"recipe_body_mode", testStringValue(t, hop.RecipeBodyMode)},
+		{"recipe_digest", testBytesValue(t, hop.RecipeDigest)},
+		{"change_classes", testStringsValue(t, hop.ChangeClasses)},
+		{"affected_headers", testStringsValue(t, hop.AffectedHeaders)},
+		{"history_header_state", testStringValue(t, hop.HistoryHeaderState)},
+		{"history_body_state", testStringValue(t, hop.HistoryBodyState)},
+		{"body_availability", testStringValue(t, hop.BodyAvailability)},
+		{"change_count", testIntegerValue(t, hop.ChangeCount)},
+		{"affected_header_count", testIntegerValue(t, hop.AffectedHeaderCount)},
 	}
 
 	recordFields := make([]pluginapi.DecisionRecordField, 0, len(fields))
@@ -195,15 +195,15 @@ func testChainRecord(t *testing.T, hop verifierHop) pluginapi.DecisionRecord {
 }
 
 // testProjectionBindingsWithFlags returns producer-compatible bindings for explicit protection flags.
-func testProjectionBindingsWithFlags(doNotModify bool, doNotExplode bool) ([]byte, []byte, []byte) {
+func testProjectionBindingsWithFlags(DoNotModify bool, DoNotExplode bool) ([]byte, []byte, []byte) {
 	hop := verifierHop{
-		signerDomain: "relay.example", signatureAlgorithms: []string{"ed25519-sha256"}, signatureState: "pass",
-		custodyTransition: custodyOrigin, recipeMode: "unchanged", recipeBodyMode: recipeBodyAbsent,
-		historyHeaderState: historyMatched, historyBodyState: historyMatched, bodyAvailability: "known",
-		sequence: 1, messageInstance: 1, doNotModify: doNotModify, doNotExplode: doNotExplode,
+		SignerDomain: "relay.example", SignatureAlgorithms: []string{"ed25519-sha256"}, SignatureState: "pass",
+		CustodyTransition: custodyOrigin, RecipeMode: "unchanged", RecipeBodyMode: recipeBodyAbsent,
+		HistoryHeaderState: historyMatched, HistoryBodyState: historyMatched, BodyAvailability: "known",
+		Sequence: 1, MessageInstance: 1, DoNotModify: DoNotModify, DoNotExplode: DoNotExplode,
 	}
 	recipe := calculateRecipeDescriptorDigest(hop)
-	hop.recipeDigest = recipe[:]
+	hop.RecipeDigest = recipe[:]
 	projection := calculateProjectionBinding([]verifierHop{hop})
 	bound := calculateBoundHopBinding(projection, hop)
 

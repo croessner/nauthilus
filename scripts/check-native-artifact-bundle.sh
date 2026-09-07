@@ -10,7 +10,7 @@ trap 'rm -rf "$bundle_dir"' EXIT HUP INT TERM
 native_flags=$(go run -mod=vendor ./scripts/native_artifact_fingerprint)
 go build -mod=vendor -trimpath -ldflags "$native_flags" -o "$bundle_dir/check" ./server/pluginloader/testdata/nativebundle
 set --
-for component in sample geoip dkim2-reputation reputation; do
+for component in sample geoip dkim2-reputation reputation dkim2-intelligence; do
   case "$component" in
     sample) package=./pluginapi/v1/testdata/sampleplugin ;;
     *) package=./contrib/plugins/$component ;;

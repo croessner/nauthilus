@@ -87,9 +87,9 @@ func assessmentDecisionValue(assessments []hopAssessment) (pluginapi.DecisionVal
 // assessmentRecord constructs the exact ten-field policy-facing record.
 func assessmentRecord(assessment hopAssessment) (pluginapi.DecisionRecord, error) {
 	specifications := []recordFieldSpecification{
-		{name: fieldSequence, value: decisionInteger(assessment.hop.sequence)},
-		{name: fieldMessageInstance, value: decisionInteger(assessment.hop.messageInstance)},
-		{name: fieldHopBinding, value: decisionBytes(assessment.hop.hopBinding)},
+		{name: fieldSequence, value: decisionInteger(assessment.hop.Sequence)},
+		{name: fieldMessageInstance, value: decisionInteger(assessment.hop.MessageInstance)},
+		{name: fieldHopBinding, value: decisionBytes(assessment.hop.HopBinding)},
 		{name: "signer_reputation", value: decisionString(assessment.domainReputation)},
 		{name: "smtp_peer_reputation", value: decisionString(assessment.clientIPReputation)},
 		{name: "contract_state", value: decisionString(assessment.contractState)},
