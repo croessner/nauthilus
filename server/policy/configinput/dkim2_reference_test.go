@@ -23,6 +23,34 @@ import (
 
 const dkim2ReferencePath = "../../docs/examples/policy_dkim2_rspamd_verifier.yml"
 
+// TestDKIM2ObservationReferenceCompilesEffectFreeProposal keeps calibration at the consumer without server-side effects.
+func TestDKIM2ObservationReferenceCompilesEffectFreeProposal(t *testing.T) {
+	t.Parallel()
+
+	document := decodeDKIM2Reference(t)
+	overlay := decodePolicyReferenceFile(t, "../../docs/examples/policy_dkim2_observe.yml")
+
+	for index := range document.Policy.Targets {
+		if document.Policy.Targets[index].Namespace == "dkim2" {
+			document.Policy.Targets[index].Mode = overlay.Policy.Targets[0].Mode
+		}
+	}
+
+	input, err := Normalize(t.Context(), document)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compiled := compileDKIM2ReferenceTarget(t, input)
+	if compiled.AuthorityMode() != registry.AuthorityModeEnforce {
+		t.Fatal("generic proposal target changed authority semantics")
+	}
+
+	if len(compiled.EffectIDs()) != 0 {
+		t.Fatal("consumer calibration cannot suppress reachable server-side effects")
+	}
+}
+
 func TestDKIM2RspamdReferenceCompilesExactGenericTargetAndNativeAssessment(t *testing.T) {
 	t.Parallel()
 
@@ -345,13 +373,20 @@ func compileDKIM2ReferenceTarget(t *testing.T, input UnifiedPolicyInput) policyr
 func decodeDKIM2Reference(t *testing.T) policyconfig.Document {
 	t.Helper()
 
-	file, err := os.Open(dkim2ReferencePath)
+	return decodePolicyReferenceFile(t, dkim2ReferencePath)
+}
+
+// decodePolicyReferenceFile reads a tracked policy or overlay through the production decoder.
+func decodePolicyReferenceFile(t *testing.T, path string) policyconfig.Document {
+	t.Helper()
+
+	file, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("Open(%s) error = %v", dkim2ReferencePath, err)
+		t.Fatalf("Open(%s) error = %v", path, err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			t.Errorf("Close(%s) error = %v", dkim2ReferencePath, closeErr)
+			t.Errorf("Close(%s) error = %v", path, closeErr)
 		}
 	}()
 
