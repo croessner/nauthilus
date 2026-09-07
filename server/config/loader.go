@@ -1025,6 +1025,12 @@ func applyMergedConfigSettingsTo(
 		return fmt.Errorf("read merged config: %w", err)
 	}
 
+	// Restore authored scalar kinds after Viper's JSON decoder converts every number to float64.
+	// Viper owns and normalizes this detached copy; the validated loader tree remains unchanged.
+	if err := target.MergeConfigMap(policyconfig.CloneSettings(settings)); err != nil {
+		return fmt.Errorf("preserve merged config scalar kinds: %w", err)
+	}
+
 	target.SetConfigType(configType)
 
 	return nil

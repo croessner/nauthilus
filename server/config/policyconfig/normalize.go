@@ -57,6 +57,11 @@ func defaultAdmissionLimit(value int, fallback int) int {
 	return value
 }
 
+// CloneSettings detaches an already bounded decoded settings tree while preserving scalar kinds.
+func CloneSettings(settings map[string]any) map[string]any {
+	return cloneConfigValue(reflect.ValueOf(settings)).Interface().(map[string]any)
+}
+
 // cloneDocument deeply owns mutable standalone configuration state before defaults are applied.
 func cloneDocument(document Document) Document {
 	return cloneConfigValue(reflect.ValueOf(document)).Interface().(Document)
