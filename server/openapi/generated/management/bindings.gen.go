@@ -147,12 +147,12 @@ func (e ReputationAllocationViewMode) Valid() bool {
 
 // Defines values for ReputationAuditKind.
 const (
-	ReputationAuditKindAccount ReputationAuditKind = "account"
-	ReputationAuditKindAsn     ReputationAuditKind = "asn"
-	ReputationAuditKindDomain  ReputationAuditKind = "domain"
-	ReputationAuditKindIp      ReputationAuditKind = "ip"
-	ReputationAuditKindNetwork ReputationAuditKind = "network"
-	ReputationAuditKindService ReputationAuditKind = "service"
+	ReputationAuditKindAccount   ReputationAuditKind = "account"
+	ReputationAuditKindAsn       ReputationAuditKind = "asn"
+	ReputationAuditKindDnsDomain ReputationAuditKind = "dns_domain"
+	ReputationAuditKindIp        ReputationAuditKind = "ip"
+	ReputationAuditKindNetwork   ReputationAuditKind = "network"
+	ReputationAuditKindService   ReputationAuditKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReputationAuditKind enum.
@@ -162,7 +162,7 @@ func (e ReputationAuditKind) Valid() bool {
 		return true
 	case ReputationAuditKindAsn:
 		return true
-	case ReputationAuditKindDomain:
+	case ReputationAuditKindDnsDomain:
 		return true
 	case ReputationAuditKindIp:
 		return true
@@ -210,12 +210,12 @@ func (e ReputationAuditSchema) Valid() bool {
 
 // Defines values for ReputationEvidenceKind.
 const (
-	ReputationEvidenceKindAccount ReputationEvidenceKind = "account"
-	ReputationEvidenceKindAsn     ReputationEvidenceKind = "asn"
-	ReputationEvidenceKindDomain  ReputationEvidenceKind = "domain"
-	ReputationEvidenceKindIp      ReputationEvidenceKind = "ip"
-	ReputationEvidenceKindNetwork ReputationEvidenceKind = "network"
-	ReputationEvidenceKindService ReputationEvidenceKind = "service"
+	ReputationEvidenceKindAccount   ReputationEvidenceKind = "account"
+	ReputationEvidenceKindAsn       ReputationEvidenceKind = "asn"
+	ReputationEvidenceKindDnsDomain ReputationEvidenceKind = "dns_domain"
+	ReputationEvidenceKindIp        ReputationEvidenceKind = "ip"
+	ReputationEvidenceKindNetwork   ReputationEvidenceKind = "network"
+	ReputationEvidenceKindService   ReputationEvidenceKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReputationEvidenceKind enum.
@@ -225,7 +225,7 @@ func (e ReputationEvidenceKind) Valid() bool {
 		return true
 	case ReputationEvidenceKindAsn:
 		return true
-	case ReputationEvidenceKindDomain:
+	case ReputationEvidenceKindDnsDomain:
 		return true
 	case ReputationEvidenceKindIp:
 		return true
@@ -276,12 +276,12 @@ func (e ReputationEvidenceState) Valid() bool {
 
 // Defines values for ReputationLookupRequestKind.
 const (
-	ReputationLookupRequestKindAccount ReputationLookupRequestKind = "account"
-	ReputationLookupRequestKindAsn     ReputationLookupRequestKind = "asn"
-	ReputationLookupRequestKindDomain  ReputationLookupRequestKind = "domain"
-	ReputationLookupRequestKindIp      ReputationLookupRequestKind = "ip"
-	ReputationLookupRequestKindNetwork ReputationLookupRequestKind = "network"
-	ReputationLookupRequestKindService ReputationLookupRequestKind = "service"
+	ReputationLookupRequestKindAccount   ReputationLookupRequestKind = "account"
+	ReputationLookupRequestKindAsn       ReputationLookupRequestKind = "asn"
+	ReputationLookupRequestKindDnsDomain ReputationLookupRequestKind = "dns_domain"
+	ReputationLookupRequestKindIp        ReputationLookupRequestKind = "ip"
+	ReputationLookupRequestKindNetwork   ReputationLookupRequestKind = "network"
+	ReputationLookupRequestKindService   ReputationLookupRequestKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReputationLookupRequestKind enum.
@@ -291,7 +291,7 @@ func (e ReputationLookupRequestKind) Valid() bool {
 		return true
 	case ReputationLookupRequestKindAsn:
 		return true
-	case ReputationLookupRequestKindDomain:
+	case ReputationLookupRequestKindDnsDomain:
 		return true
 	case ReputationLookupRequestKindIp:
 		return true
@@ -327,12 +327,12 @@ func (e ReputationOverrideBand) Valid() bool {
 
 // Defines values for ReputationOverrideDeleteRequestKind.
 const (
-	ReputationOverrideDeleteRequestKindAccount ReputationOverrideDeleteRequestKind = "account"
-	ReputationOverrideDeleteRequestKindAsn     ReputationOverrideDeleteRequestKind = "asn"
-	ReputationOverrideDeleteRequestKindDomain  ReputationOverrideDeleteRequestKind = "domain"
-	ReputationOverrideDeleteRequestKindIp      ReputationOverrideDeleteRequestKind = "ip"
-	ReputationOverrideDeleteRequestKindNetwork ReputationOverrideDeleteRequestKind = "network"
-	ReputationOverrideDeleteRequestKindService ReputationOverrideDeleteRequestKind = "service"
+	ReputationOverrideDeleteRequestKindAccount   ReputationOverrideDeleteRequestKind = "account"
+	ReputationOverrideDeleteRequestKindAsn       ReputationOverrideDeleteRequestKind = "asn"
+	ReputationOverrideDeleteRequestKindDnsDomain ReputationOverrideDeleteRequestKind = "dns_domain"
+	ReputationOverrideDeleteRequestKindIp        ReputationOverrideDeleteRequestKind = "ip"
+	ReputationOverrideDeleteRequestKindNetwork   ReputationOverrideDeleteRequestKind = "network"
+	ReputationOverrideDeleteRequestKindService   ReputationOverrideDeleteRequestKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReputationOverrideDeleteRequestKind enum.
@@ -342,7 +342,7 @@ func (e ReputationOverrideDeleteRequestKind) Valid() bool {
 		return true
 	case ReputationOverrideDeleteRequestKindAsn:
 		return true
-	case ReputationOverrideDeleteRequestKindDomain:
+	case ReputationOverrideDeleteRequestKindDnsDomain:
 		return true
 	case ReputationOverrideDeleteRequestKindIp:
 		return true
@@ -396,12 +396,12 @@ func (e ReputationOverridePutRequestBand) Valid() bool {
 
 // Defines values for ReputationOverridePutRequestKind.
 const (
-	ReputationOverridePutRequestKindAccount ReputationOverridePutRequestKind = "account"
-	ReputationOverridePutRequestKindAsn     ReputationOverridePutRequestKind = "asn"
-	ReputationOverridePutRequestKindDomain  ReputationOverridePutRequestKind = "domain"
-	ReputationOverridePutRequestKindIp      ReputationOverridePutRequestKind = "ip"
-	ReputationOverridePutRequestKindNetwork ReputationOverridePutRequestKind = "network"
-	ReputationOverridePutRequestKindService ReputationOverridePutRequestKind = "service"
+	ReputationOverridePutRequestKindAccount   ReputationOverridePutRequestKind = "account"
+	ReputationOverridePutRequestKindAsn       ReputationOverridePutRequestKind = "asn"
+	ReputationOverridePutRequestKindDnsDomain ReputationOverridePutRequestKind = "dns_domain"
+	ReputationOverridePutRequestKindIp        ReputationOverridePutRequestKind = "ip"
+	ReputationOverridePutRequestKindNetwork   ReputationOverridePutRequestKind = "network"
+	ReputationOverridePutRequestKindService   ReputationOverridePutRequestKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReputationOverridePutRequestKind enum.
@@ -411,7 +411,7 @@ func (e ReputationOverridePutRequestKind) Valid() bool {
 		return true
 	case ReputationOverridePutRequestKindAsn:
 		return true
-	case ReputationOverridePutRequestKindDomain:
+	case ReputationOverridePutRequestKindDnsDomain:
 		return true
 	case ReputationOverridePutRequestKindIp:
 		return true
@@ -516,12 +516,12 @@ func (e ReputationProfileState) Valid() bool {
 
 // Defines values for ReputationViewKind.
 const (
-	ReputationViewKindAccount ReputationViewKind = "account"
-	ReputationViewKindAsn     ReputationViewKind = "asn"
-	ReputationViewKindDomain  ReputationViewKind = "domain"
-	ReputationViewKindIp      ReputationViewKind = "ip"
-	ReputationViewKindNetwork ReputationViewKind = "network"
-	ReputationViewKindService ReputationViewKind = "service"
+	ReputationViewKindAccount   ReputationViewKind = "account"
+	ReputationViewKindAsn       ReputationViewKind = "asn"
+	ReputationViewKindDnsDomain ReputationViewKind = "dns_domain"
+	ReputationViewKindIp        ReputationViewKind = "ip"
+	ReputationViewKindNetwork   ReputationViewKind = "network"
+	ReputationViewKindService   ReputationViewKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReputationViewKind enum.
@@ -531,7 +531,7 @@ func (e ReputationViewKind) Valid() bool {
 		return true
 	case ReputationViewKindAsn:
 		return true
-	case ReputationViewKindDomain:
+	case ReputationViewKindDnsDomain:
 		return true
 	case ReputationViewKindIp:
 		return true

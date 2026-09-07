@@ -20,6 +20,7 @@ class ReputationClientTest(unittest.TestCase):
     def test_reputation_operations_use_exact_authenticated_body_contracts(self):
         """Keep subjects out of URLs and preserve explicit TTL and audit fields."""
         cases = [
+            (["lookup", "dns_domain", "example.test"], "POST", "lookup", {"kind": "dns_domain", "subject": "example.test"}),
             (["lookup", "ip", "192.0.2.8"], "POST", "lookup", {"kind": "ip", "subject": "192.0.2.8"}),
             (["override", "put", "ip", "192.0.2.8", "--band", "blocked", "--ttl-seconds", "0", "--reason", "incident", "--origin", "operator", "--audit-id", "ticket"], "PUT", "override", {"kind":"ip","subject":"192.0.2.8","band":"blocked","ttl_seconds":0,"reason":"incident","origin":"operator","audit_id":"ticket","slot":"active"}),
             (["override", "delete", "ip", "192.0.2.8", "--previous-audit", "ticket", "--reason", "resolved", "--origin", "operator", "--audit-id", "next"], "DELETE", "override", {"kind":"ip","subject":"192.0.2.8","previous_audit":"ticket","reason":"resolved","origin":"operator","audit_id":"next","slot":"active"}),

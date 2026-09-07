@@ -1709,7 +1709,7 @@ components:
             - "ip"
             - "network"
             - "asn"
-            - "domain"
+            - "dns_domain"
             - "account"
             - "service"
         subject:
@@ -1734,7 +1734,7 @@ components:
             - "ip"
             - "network"
             - "asn"
-            - "domain"
+            - "dns_domain"
             - "account"
             - "service"
         subject:
@@ -1792,7 +1792,7 @@ components:
             - "ip"
             - "network"
             - "asn"
-            - "domain"
+            - "dns_domain"
             - "account"
             - "service"
         subject:
@@ -1846,7 +1846,7 @@ components:
             - "ip"
             - "network"
             - "asn"
-            - "domain"
+            - "dns_domain"
             - "account"
             - "service"
         operation:
@@ -2042,7 +2042,7 @@ components:
             - "ip"
             - "network"
             - "asn"
-            - "domain"
+            - "dns_domain"
             - "account"
             - "service"
         slot:
@@ -2103,7 +2103,7 @@ components:
             - "ip"
             - "network"
             - "asn"
-            - "domain"
+            - "dns_domain"
             - "account"
             - "service"
         model_id:

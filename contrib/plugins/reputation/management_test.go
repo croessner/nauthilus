@@ -30,7 +30,7 @@ func TestManagementInputRejectsEnumerationAndCallerActor(t *testing.T) {
 		`{"kind":"ip","subject":"192.0.2.8","creator":"admin"}`,
 		`{"kind":"ip","subject":"192.0.2.8"} {}`,
 		`{"kind":"ip","subject":"192.0.2.8","subject":"192.0.2.9"}`,
-		`{"kind":"domain","subject":"*"}`,
+		`{"kind":"dns_domain","subject":"*"}`,
 		`{"kind":"ip","subject":""}`,
 	} {
 		_, err := decodeManagementInput([]byte(body), managementLookup, testConfig(t))

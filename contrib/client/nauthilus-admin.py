@@ -1015,7 +1015,7 @@ def add_reputation_arguments(parser: argparse.ArgumentParser, *, subject: bool, 
 
     fields = []
     if subject:
-        parser.add_argument("kind", choices=("ip", "network", "asn", "domain", "account", "service"))
+        parser.add_argument("kind", choices=("ip", "network", "asn", "dns_domain", "account", "service"))
         parser.add_argument("subject", nargs="?", help="exact subject; use --subject-file to keep it out of process arguments")
         parser.add_argument("--subject-file", help="read one exact subject from a private UTF-8 file")
         fields.append("kind")

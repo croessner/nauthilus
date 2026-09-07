@@ -112,3 +112,19 @@ func assertManagementResponseSchema(t *testing.T, value managementView) {
 	requireNoError(t, json.Unmarshal(encoded, &decoded))
 	requireNoError(t, managementContract(t).Components.Schemas["ReputationView"].Value.VisitJSON(decoded))
 }
+
+func TestReputationRedisManagementDomainUsesCanonicalContract(t *testing.T) {
+	_, facade := localReputationRedis(t)
+	cfg := testConfig(t)
+	owner, err := newStateOwner(cfg, manifestTestTagger(t, false), facade)
+	requireNoError(t, err)
+	requireNoError(t, owner.start(t.Context()))
+	ttl := int64(0)
+	input := managementInput{Kind: kindDomain, Subject: "example.test", Band: bandNeutral, Reason: "static.classification", Origin: "operator", AuditID: "domain-import", TTLSeconds: &ttl}
+	result, err := owner.manage(t.Context(), managementPut, input, "verified-admin")
+	requireNoError(t, err)
+	assertManagementResponseSchema(t, result)
+	if result.Kind != kindDomain || result.Audit == nil || result.Audit.Kind != kindDomain {
+		t.Fatal("DNS domain contract differs from primary audit state")
+	}
+}

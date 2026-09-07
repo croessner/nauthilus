@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -49,6 +50,18 @@ func TestManagementOpenAPIMatchesActualRegisteredHooks(t *testing.T) {
 
 		if _, ok := (*operation.Security)[0]["backchannelBearer"]; !ok {
 			t.Fatal("management allows non-backchannel authority")
+		}
+	}
+}
+
+func TestManagementContractUsesCanonicalSubjectKinds(t *testing.T) {
+	document := managementContract(t)
+	expected := []any{kindIP, kindNetwork, kindASN, kindDomain, kindAccount, kindService}
+
+	for _, name := range []string{"ReputationLookupRequest", "ReputationOverridePutRequest", "ReputationOverrideDeleteRequest", "ReputationAudit", "ReputationEvidence", "ReputationView"} {
+		actual := document.Components.Schemas[name].Value.Properties["kind"].Value.Enum
+		if !reflect.DeepEqual(actual, expected) {
+			t.Fatalf("%s subject kinds do not match the runtime contract: %v", name, actual)
 		}
 	}
 }

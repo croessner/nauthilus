@@ -226,7 +226,7 @@ supply `creator`. No unauthenticated route, local command or public alias is
 provided. These optional routes return 404 when the plugin is absent.
 
 Requests use `application/json` with a maximum 4096-byte body. Lookup accepts
-only `kind` and `subject`; supported kinds are `ip`, `network`, `asn`, `domain`,
+only `kind` and `subject`; supported kinds are `ip`, `network`, `asn`, `dns_domain`,
 `account` and `service`. Subjects are canonicalized under the same model rules
 and resolved through the host HMAC service. Query parameters, unknown or duplicate
 fields, nulls, trailing JSON and wildcard searches are rejected. Put additionally
