@@ -8,7 +8,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG NAUTHILUS_CONF_DIR=/etc/nauthilus
 ARG NAUTHILUS_PLUGINS_DIR=/usr/app/lua-plugins.d
-ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd"
+ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd reputation dkim2-intelligence"
 
 WORKDIR /build
 

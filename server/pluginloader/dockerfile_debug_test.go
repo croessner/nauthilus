@@ -9,7 +9,7 @@ import (
 const (
 	dockerfilePluginSignatureBuildArg      = "ARG REQUIRE_PLUGIN_SIGNATURE=false"
 	dockerfilePluginBuildTagsArg           = `ARG BUILD_TAGS=""`
-	dockerfileBundledNativePluginsArg      = `ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd"`
+	dockerfileBundledNativePluginsArg      = `ARG BUNDLED_NATIVE_PLUGINS="geoip clickhouse haveibeenpwnd reputation dkim2-intelligence"`
 	dockerfilePluginSigningSecretMount     = "--mount=type=secret,id=plugin_signing_private_key"
 	dockerfilePluginSigningSecretCheck     = "test -s /run/secrets/plugin_signing_private_key"
 	dockerfilePluginSigningCommand         = "./server/pluginloader/cmd/nauthilus-plugin-sign sign"
@@ -22,7 +22,7 @@ const (
 	dockerfileRuntimePluginCopy            = `COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]`
 )
 
-var dockerfileBundledNativePlugins = []string{"geoip", "clickhouse", "haveibeenpwnd"}
+var dockerfileBundledNativePlugins = []string{"geoip", "clickhouse", "haveibeenpwnd", "reputation", "dkim2-intelligence"}
 
 // TestDockerfileDebugBuildsPluginsWithServerTags prevents debug image plugin ABI drift.
 func TestDockerfileDebugBuildsPluginsWithServerTags(t *testing.T) {
