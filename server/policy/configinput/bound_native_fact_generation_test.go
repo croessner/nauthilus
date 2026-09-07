@@ -74,6 +74,17 @@ const boundNativeAuthnPolicyFixture = `policy:
 
 // TestBoundNativeFactGenerationProjectsRealAuthnDescriptorBeforeCatalogCompilation proves descriptor-first authority.
 func TestBoundNativeFactGenerationProjectsRealAuthnDescriptorBeforeCatalogCompilation(t *testing.T) {
+	for _, records := range []bool{false, true} {
+		t.Run(map[bool]string{false: "scalar", true: "records"}[records], func(t *testing.T) {
+			assertBoundNativeDescriptorCompilation(t, records)
+		})
+	}
+}
+
+// assertBoundNativeDescriptorCompilation exercises descriptor capture, binding and builtin schema composition.
+func assertBoundNativeDescriptorCompilation(t *testing.T, records bool) {
+	t.Helper()
+
 	configured := decodePolicy(t, boundNativeAuthnPolicyFixture).Policy
 	if len(configured.Namespaces[policy.AuthnNamespace].SchemaContributions.Static) != 0 {
 		t.Fatal("authn fixture contains an authored static schema")
@@ -85,6 +96,16 @@ func TestBoundNativeFactGenerationProjectsRealAuthnDescriptorBeforeCatalogCompil
 	}
 
 	descriptor := boundGeoIPFactDescriptor()
+	if records {
+		descriptor.Outputs[1].Kind = pluginapi.DecisionValueKindRecords
+		descriptor.Outputs[1].MaxLength = 0
+		descriptor.Outputs[1].RecordSchema = &pluginapi.DecisionRecordSchemaDescriptor{
+			ID: "countries", Version: "v1", MaxRecords: 4, MaxFields: 1, MaxAggregateBytes: 128,
+			Fields: []pluginapi.DecisionRecordFieldDescriptor{{Name: "country", Kind: pluginapi.DecisionValueKindString,
+				MaxLength: 2, Required: true, ExpressionVisible: true}},
+		}
+	}
+
 	capability := mustBoundNativeCapability(t, "geoip", descriptor)
 	bindings, nativeModule := boundGeoIPGenerationBindings(t, descriptor)
 	resource := &boundNativeCandidateResource{}
@@ -107,7 +128,71 @@ func TestBoundNativeFactGenerationProjectsRealAuthnDescriptorBeforeCatalogCompil
 		t.Fatalf("PreparedPolicy.CompileWithExtensions() error = %v", err)
 	}
 
-	assertBoundNativeAuthnCatalog(t, catalog)
+	if !records {
+		assertBoundNativeAuthnCatalog(t, catalog)
+	} else {
+		assertBoundNativeRecordAdmission(t, catalog)
+	}
+}
+
+// assertBoundNativeRecordAdmission exercises runtime bounds and plugin-only provenance after real compilation.
+func assertBoundNativeRecordAdmission(t *testing.T, catalog *policyruntime.TargetCatalog) {
+	t.Helper()
+
+	compiled, exists := catalog.Lookup(mustBoundNativeAuthnTarget(t, "authenticate"))
+	if !exists {
+		t.Fatal("authentication target missing")
+	}
+
+	for _, test := range []struct {
+		name, field, text string
+		valid             bool
+	}{
+		{"valid", "country", "DE", true},
+		{"unknown field", "unknown", "DE", false},
+		{"oversized", "country", "DEU", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			leaf, err := decision.NewValue(decision.ValueInput{String: &test.text})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			fieldValue, _ := decision.NewRecordFieldValueFromValue(leaf)
+			field, _ := decision.NewRecordField(test.field, fieldValue)
+			record, _ := decision.NewRecord([]decision.RecordField{field})
+			list, _ := decision.NewRecordList([]decision.Record{record})
+			value, _ := decision.NewValue(decision.ValueInput{Records: &list})
+
+			_, err = compiled.Schema().NormalizeValue("plugin.geoip.country_iso", value)
+			if (err == nil) != test.valid {
+				t.Fatal("record admission disagrees with descriptor", err)
+			}
+
+			if !test.valid {
+				return
+			}
+
+			for _, source := range []decision.FactSource{decision.FactSourcePlugin, decision.FactSourceCaller} {
+				provenance, _ := decision.NewProvenance(source, "geoip", "request")
+				fact, factErr := decision.NewFact("plugin.geoip.country_iso", decision.FactCategoryEnvironment, value, provenance)
+
+				err = factErr
+				if err == nil {
+					facts, setErr := decision.NewFactSet([]decision.Fact{fact})
+					if setErr != nil {
+						t.Fatal(setErr)
+					}
+
+					_, err = compiled.Schema().NormalizeFacts(facts)
+				}
+
+				if (err == nil) != (source == decision.FactSourcePlugin) {
+					t.Fatal("descriptor changed source authority", err)
+				}
+			}
+		})
+	}
 }
 
 // TestBoundNativeFactGenerationRejectsConfigurationOutsideCapturedCapability proves exact selection validation.
@@ -253,8 +338,14 @@ func mustBoundNativeCapability(
 
 	outputs := make([]registry.NativeFactOutputCapabilityInput, 0, len(descriptor.Outputs))
 	for _, output := range descriptor.Outputs {
+		recordSchema, err := pluginregistry.ProjectDecisionRecordSchema(output.RecordSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		outputs = append(outputs, registry.NativeFactOutputCapabilityInput{
-			Name: output.Name, Category: decision.FactCategory(output.Category), Kind: decision.ValueKind(output.Kind),
+			RecordSchema: recordSchema,
+			Name:         output.Name, Category: decision.FactCategory(output.Category), Kind: decision.ValueKind(output.Kind),
 			MaxLength: output.MaxLength, MaxItems: output.MaxItems, MaxBytes: output.MaxBytes,
 		})
 	}

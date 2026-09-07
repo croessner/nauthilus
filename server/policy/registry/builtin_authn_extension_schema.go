@@ -255,6 +255,7 @@ func extensionProviderFactSchemas(owner string, provider ProviderDefinition) ([]
 
 	for _, output := range outputs {
 		fact, factErr := NewFactSchema(FactSchemaInput{
+			RecordSchema:   output.RecordSchema(),
 			ID:             output.ID(),
 			AllowedSources: []decision.FactSource{source},
 			Category:       output.Category(),
@@ -449,6 +450,13 @@ func rejectExistingAuthnFactCollision(
 
 // sameFactSchemaShape compares the complete immutable value contract.
 func sameFactSchemaShape(left FactSchema, right FactSchema) bool {
+	leftRecord, leftHasRecord := left.RecordSchema()
+
+	rightRecord, rightHasRecord := right.RecordSchema()
+	if leftHasRecord != rightHasRecord || (leftHasRecord && !leftRecord.Equivalent(rightRecord)) {
+		return false
+	}
+
 	return left.Category() == right.Category() && left.Kind() == right.Kind() &&
 		left.MaxLength() == right.MaxLength() && left.MaxItems() == right.MaxItems() &&
 		left.MaxBytes() == right.MaxBytes() && left.Required() == right.Required() &&

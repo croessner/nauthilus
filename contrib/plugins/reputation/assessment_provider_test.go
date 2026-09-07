@@ -5,6 +5,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
@@ -73,6 +74,7 @@ func TestAssessmentProviderRegistersConfiguredNamespacesAndEmitsAllProfiles(t *t
 	plugin := NewPlugin()
 	requireNoError(t, plugin.Register(registrar))
 	requireNoError(t, registrar.Commit())
+	assertAssessmentAuthnSchema(t, registry)
 
 	caller, err := pluginapi.NewDecisionCallerView(pluginapi.DecisionCallerViewInput{Principal: "worker", AuthenticationKind: "internal"})
 	requireNoError(t, err)
@@ -109,5 +111,40 @@ func TestAssessmentProviderRegistersConfiguredNamespacesAndEmitsAllProfiles(t *t
 
 	if found != len(expected) {
 		t.Fatal("configured namespace component not registered")
+	}
+}
+
+// assertAssessmentAuthnSchema proves the actual registered reputation output extends builtin authentication safely.
+func assertAssessmentAuthnSchema(t *testing.T, registered *pluginregistry.Registry) {
+	t.Helper()
+
+	owner, err := policyregistry.NewNamespaceOwnership("plugin.reputation", []string{"authn", "workflow", "reputation"})
+	requireNoError(t, err)
+	extension, err := pluginregistry.NewNativeDecisionContribution(registered, "reputation", owner)
+	requireNoError(t, err)
+	builtin, err := policyregistry.NewBuiltinTargetContributor().Contribute(t.Context())
+	requireNoError(t, err)
+	extended, err := policyregistry.ExtendBuiltinAuthnSchemas(builtin, extension)
+	requireNoError(t, err)
+
+	found := 0
+
+	for _, schema := range extended.Schemas() {
+		for _, fact := range schema.Facts() {
+			if fact.ID() != "plugin.reputation.auth_subjects" {
+				continue
+			}
+
+			records, present := fact.RecordSchema()
+			if !present || len(records.Fields()) != 12 || records.MaxRecords() != maximumAssessmentSubjects {
+				t.Fatal("authentication lost the complete bounded assessment tuple")
+			}
+
+			found++
+		}
+	}
+
+	if found != 1 {
+		t.Fatal("assessment output was absent or leaked into another authentication target")
 	}
 }

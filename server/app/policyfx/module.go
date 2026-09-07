@@ -847,8 +847,14 @@ func nativeFactCapabilities(
 
 			outputs := make([]registry.NativeFactOutputCapabilityInput, 0, len(descriptor.Outputs))
 			for _, output := range descriptor.Outputs {
+				recordSchema, err := pluginregistry.ProjectDecisionRecordSchema(output.RecordSchema)
+				if err != nil {
+					return nil, err
+				}
+
 				outputs = append(outputs, registry.NativeFactOutputCapabilityInput{
-					Name: output.Name, Category: decision.FactCategory(output.Category),
+					RecordSchema: recordSchema,
+					Name:         output.Name, Category: decision.FactCategory(output.Category),
 					Kind: decision.ValueKind(output.Kind), MaxLength: output.MaxLength,
 					MaxItems: output.MaxItems, MaxBytes: output.MaxBytes,
 				})

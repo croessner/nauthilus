@@ -63,12 +63,13 @@ type DecisionTargetSelector struct {
 
 // DecisionFactOutputDescriptor declares one host-qualifiable local fact output.
 type DecisionFactOutputDescriptor struct {
-	Name      string
-	Category  DecisionFactCategory
-	Kind      DecisionValueKind
-	MaxLength int
-	MaxItems  int
-	MaxBytes  int
+	RecordSchema *DecisionRecordSchemaDescriptor
+	Name         string
+	Category     DecisionFactCategory
+	Kind         DecisionValueKind
+	MaxLength    int
+	MaxItems     int
+	MaxBytes     int
 }
 
 // DecisionFactProviderDescriptor declares one target-aware fact provider capability.

@@ -187,6 +187,14 @@ func validateDecisionFactOutputs(outputs []DecisionFactOutputDescriptor) error {
 			return invalidDecisionContract("fact outputs", "contains bounds incompatible with its value kind")
 		}
 
+		if output.RecordSchema != nil && output.Kind != DecisionValueKindRecords {
+			return invalidDecisionContract("fact outputs", "record metadata requires records kind")
+		}
+
+		if err := ValidateDecisionRecordSchemaDescriptor(output.RecordSchema); err != nil {
+			return err
+		}
+
 		if _, exists := seen[output.Name]; exists {
 			return invalidDecisionContract("fact outputs", "contains a duplicate local output name")
 		}

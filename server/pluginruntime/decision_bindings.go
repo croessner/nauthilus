@@ -1095,6 +1095,14 @@ func nativeFactOutputMatches(
 	configured policyregistry.ProviderFactOutput,
 	declared pluginapi.DecisionFactOutputDescriptor,
 ) bool {
+	declaredRecord, err := pluginregistry.ProjectDecisionRecordSchema(declared.RecordSchema)
+
+	configuredRecord := configured.RecordSchema()
+	if err != nil || (declaredRecord == nil) != (configuredRecord == nil) ||
+		(declaredRecord != nil && !declaredRecord.Equivalent(*configuredRecord)) {
+		return false
+	}
+
 	return configured.Category() == decision.FactCategory(declared.Category) &&
 		configured.Kind() == decision.ValueKind(declared.Kind) &&
 		configured.MaxLength() == declared.MaxLength &&

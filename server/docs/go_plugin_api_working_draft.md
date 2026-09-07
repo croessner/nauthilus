@@ -63,6 +63,12 @@ not define a statically linked plugin deployment model or an interpreted Go plug
 
 ## Design Goals
 
+Native fact outputs can supply an optional `DecisionRecordSchemaDescriptor` for closed record fields and collection
+bounds. The host captures this metadata deeply and uses it to extend only the selected builtin authentication targets;
+operator-authored static authentication schemas remain forbidden. Field requiredness and expression/provider visibility
+survive registration, candidate generation and exact runtime binding. Generic targets may retain their catalog-owned
+record schemas when a descriptor omits record metadata. Supplying record metadata on a scalar output is invalid.
+
 - Provide the same conceptual extension points for Lua and Go.
 - Keep policy as the decision authority. Plugins emit facts, backend results, obligation results, and status details;
   policy decides.

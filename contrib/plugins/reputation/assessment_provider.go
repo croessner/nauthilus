@@ -86,7 +86,8 @@ func (p *Plugin) registerAssessments(registrar pluginapi.DecisionRegistrar, cfg 
 		provider.descriptor.Targets = append(provider.descriptor.Targets, target)
 		for _, name := range assessmentOutputNames(binding.OutputFact) {
 			provider.descriptor.Outputs = append(provider.descriptor.Outputs, pluginapi.DecisionFactOutputDescriptor{
-				Name: name, Category: pluginapi.DecisionFactCategoryResource, Kind: pluginapi.DecisionValueKindRecords})
+				RecordSchema: assessmentOutputSchema(name, binding),
+				Name:         name, Category: pluginapi.DecisionFactCategoryResource, Kind: pluginapi.DecisionValueKindRecords})
 		}
 	}
 

@@ -18,12 +18,13 @@ const nativeFactAuthorityPrefix = "plugin."
 
 // NativeFactOutputCapabilityInput carries one descriptor-owned local output through the inward boundary.
 type NativeFactOutputCapabilityInput struct {
-	Name      string
-	Category  decision.FactCategory
-	Kind      decision.ValueKind
-	MaxLength int
-	MaxItems  int
-	MaxBytes  int
+	RecordSchema *RecordSchema
+	Name         string
+	Category     decision.FactCategory
+	Kind         decision.ValueKind
+	MaxLength    int
+	MaxItems     int
+	MaxBytes     int
 }
 
 // NativeFactProviderCapabilityInput carries one captured generic native descriptor without plugin runtime types.
@@ -123,7 +124,8 @@ func nativeFactCapabilityOutputs(
 		}
 
 		output, err := NewProviderFactOutput(ProviderFactOutputInput{
-			ID: factID, Category: configured.Category, Kind: configured.Kind,
+			RecordSchema: configured.RecordSchema,
+			ID:           factID, Category: configured.Category, Kind: configured.Kind,
 			MaxLength: configured.MaxLength, MaxItems: configured.MaxItems, MaxBytes: configured.MaxBytes,
 		})
 		if err != nil {

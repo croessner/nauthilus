@@ -22,22 +22,24 @@ import (
 
 // ProviderFactOutputInput carries one typed provider output through its immutable constructor.
 type ProviderFactOutputInput struct {
-	ID        string
-	Category  decision.FactCategory
-	Kind      decision.ValueKind
-	MaxLength int
-	MaxItems  int
-	MaxBytes  int
+	RecordSchema *RecordSchema
+	ID           string
+	Category     decision.FactCategory
+	Kind         decision.ValueKind
+	MaxLength    int
+	MaxItems     int
+	MaxBytes     int
 }
 
 // ProviderFactOutput preserves capability metadata; the active target schema remains catalog authority.
 type ProviderFactOutput struct {
-	id        string
-	category  decision.FactCategory
-	kind      decision.ValueKind
-	maxLength int
-	maxItems  int
-	maxBytes  int
+	recordSchema *RecordSchema
+	id           string
+	category     decision.FactCategory
+	kind         decision.ValueKind
+	maxLength    int
+	maxItems     int
+	maxBytes     int
 }
 
 // NewProviderFactOutput validates one qualified provider output without activating a catalog schema.
@@ -66,14 +68,36 @@ func NewProviderFactOutput(input ProviderFactOutputInput) (ProviderFactOutput, e
 		)
 	}
 
+	if input.RecordSchema != nil && (input.Kind != decision.ValueKindRecords || !input.RecordSchema.valid()) {
+		return ProviderFactOutput{}, newValidationError(ErrInvalidProviderDefinition,
+			"provider.outputs."+input.ID, input.ID, "record metadata requires a validated records schema")
+	}
+
 	return ProviderFactOutput{
-		id:        input.ID,
-		category:  input.Category,
-		kind:      input.Kind,
-		maxLength: input.MaxLength,
-		maxItems:  input.MaxItems,
-		maxBytes:  input.MaxBytes,
+		recordSchema: cloneOptionalRecordSchema(input.RecordSchema),
+		id:           input.ID,
+		category:     input.Category,
+		kind:         input.Kind,
+		maxLength:    input.MaxLength,
+		maxItems:     input.MaxItems,
+		maxBytes:     input.MaxBytes,
 	}, nil
+}
+
+// RecordSchema returns detached optional descriptor-owned record metadata.
+func (o ProviderFactOutput) RecordSchema() *RecordSchema {
+	return cloneOptionalRecordSchema(o.recordSchema)
+}
+
+// cloneOptionalRecordSchema preserves absent metadata and deeply owns a supplied schema.
+func cloneOptionalRecordSchema(schema *RecordSchema) *RecordSchema {
+	if schema == nil {
+		return nil
+	}
+
+	owned := schema.clone()
+
+	return &owned
 }
 
 // ID returns the fully qualified canonical fact identity.
@@ -109,11 +133,12 @@ func (o ProviderFactOutput) MaxBytes() int {
 // input returns the complete constructor state for validation and cloning.
 func (o ProviderFactOutput) input() ProviderFactOutputInput {
 	return ProviderFactOutputInput{
-		ID:        o.id,
-		Category:  o.category,
-		Kind:      o.kind,
-		MaxLength: o.maxLength,
-		MaxItems:  o.maxItems,
-		MaxBytes:  o.maxBytes,
+		RecordSchema: o.RecordSchema(),
+		ID:           o.id,
+		Category:     o.category,
+		Kind:         o.kind,
+		MaxLength:    o.maxLength,
+		MaxItems:     o.maxItems,
+		MaxBytes:     o.maxBytes,
 	}
 }

@@ -259,13 +259,19 @@ func nativeDecisionFactOutputs(
 ) ([]policyregistry.ProviderFactOutput, error) {
 	outputs := make([]policyregistry.ProviderFactOutput, 0, len(descriptors))
 	for _, descriptor := range descriptors {
+		recordSchema, err := ProjectDecisionRecordSchema(descriptor.RecordSchema)
+		if err != nil {
+			return nil, err
+		}
+
 		output, err := policyregistry.NewProviderFactOutput(policyregistry.ProviderFactOutputInput{
-			ID:        nativeDecisionFactPrefix(moduleName) + descriptor.Name,
-			Category:  decision.FactCategory(descriptor.Category),
-			Kind:      decision.ValueKind(descriptor.Kind),
-			MaxLength: descriptor.MaxLength,
-			MaxItems:  descriptor.MaxItems,
-			MaxBytes:  descriptor.MaxBytes,
+			RecordSchema: recordSchema,
+			ID:           nativeDecisionFactPrefix(moduleName) + descriptor.Name,
+			Category:     decision.FactCategory(descriptor.Category),
+			Kind:         decision.ValueKind(descriptor.Kind),
+			MaxLength:    descriptor.MaxLength,
+			MaxItems:     descriptor.MaxItems,
+			MaxBytes:     descriptor.MaxBytes,
 		})
 		if err != nil {
 			return nil, err
@@ -454,6 +460,9 @@ func cloneDecisionFactProviderDescriptor(input pluginapi.DecisionFactProviderDes
 
 	input.Targets = append([]pluginapi.DecisionTargetSelector(nil), input.Targets...)
 	input.Outputs = append([]pluginapi.DecisionFactOutputDescriptor(nil), input.Outputs...)
+	for index := range input.Outputs {
+		input.Outputs[index].RecordSchema = input.Outputs[index].RecordSchema.Clone()
+	}
 
 	return input
 }
