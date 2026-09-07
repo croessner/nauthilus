@@ -78,6 +78,11 @@ func (s *stateOwner) applyNetworkOverride(ctx context.Context, address string, p
 		return emptyProfiles(assessmentUnavailable)
 	}
 
+	return overlayOverrideBand(profiles, band)
+}
+
+// overlayOverrideBand shares the selected network authority between Policy and operator views.
+func overlayOverrideBand(profiles map[string]assessmentTuple, band string) map[string]assessmentTuple {
 	if band == overrideNone {
 		return profiles
 	}

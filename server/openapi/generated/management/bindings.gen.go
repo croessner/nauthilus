@@ -97,6 +97,468 @@ func (e PolicyDecisionResponseEffect) Valid() bool {
 	}
 }
 
+// Defines values for ReputationAllocationRequest0Action.
+const (
+	Status ReputationAllocationRequest0Action = "status"
+)
+
+// Valid indicates whether the value is a known member of the ReputationAllocationRequest0Action enum.
+func (e ReputationAllocationRequest0Action) Valid() bool {
+	switch e {
+	case Status:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationAllocationRequest1Action.
+const (
+	Drain ReputationAllocationRequest1Action = "drain"
+)
+
+// Valid indicates whether the value is a known member of the ReputationAllocationRequest1Action enum.
+func (e ReputationAllocationRequest1Action) Valid() bool {
+	switch e {
+	case Drain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationAllocationViewMode.
+const (
+	ReputationAllocationViewModeActive   ReputationAllocationViewMode = "active"
+	ReputationAllocationViewModeDraining ReputationAllocationViewMode = "draining"
+)
+
+// Valid indicates whether the value is a known member of the ReputationAllocationViewMode enum.
+func (e ReputationAllocationViewMode) Valid() bool {
+	switch e {
+	case ReputationAllocationViewModeActive:
+		return true
+	case ReputationAllocationViewModeDraining:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationAuditKind.
+const (
+	ReputationAuditKindAccount ReputationAuditKind = "account"
+	ReputationAuditKindAsn     ReputationAuditKind = "asn"
+	ReputationAuditKindDomain  ReputationAuditKind = "domain"
+	ReputationAuditKindIp      ReputationAuditKind = "ip"
+	ReputationAuditKindNetwork ReputationAuditKind = "network"
+	ReputationAuditKindService ReputationAuditKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReputationAuditKind enum.
+func (e ReputationAuditKind) Valid() bool {
+	switch e {
+	case ReputationAuditKindAccount:
+		return true
+	case ReputationAuditKindAsn:
+		return true
+	case ReputationAuditKindDomain:
+		return true
+	case ReputationAuditKindIp:
+		return true
+	case ReputationAuditKindNetwork:
+		return true
+	case ReputationAuditKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationAuditOperation.
+const (
+	OverrideDelete ReputationAuditOperation = "override_delete"
+	OverridePut    ReputationAuditOperation = "override_put"
+)
+
+// Valid indicates whether the value is a known member of the ReputationAuditOperation enum.
+func (e ReputationAuditOperation) Valid() bool {
+	switch e {
+	case OverrideDelete:
+		return true
+	case OverridePut:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationAuditSchema.
+const (
+	ReputationOperatorAuditV1 ReputationAuditSchema = "reputation-operator-audit.v1"
+)
+
+// Valid indicates whether the value is a known member of the ReputationAuditSchema enum.
+func (e ReputationAuditSchema) Valid() bool {
+	switch e {
+	case ReputationOperatorAuditV1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationEvidenceKind.
+const (
+	ReputationEvidenceKindAccount ReputationEvidenceKind = "account"
+	ReputationEvidenceKindAsn     ReputationEvidenceKind = "asn"
+	ReputationEvidenceKindDomain  ReputationEvidenceKind = "domain"
+	ReputationEvidenceKindIp      ReputationEvidenceKind = "ip"
+	ReputationEvidenceKindNetwork ReputationEvidenceKind = "network"
+	ReputationEvidenceKindService ReputationEvidenceKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReputationEvidenceKind enum.
+func (e ReputationEvidenceKind) Valid() bool {
+	switch e {
+	case ReputationEvidenceKindAccount:
+		return true
+	case ReputationEvidenceKindAsn:
+		return true
+	case ReputationEvidenceKindDomain:
+		return true
+	case ReputationEvidenceKindIp:
+		return true
+	case ReputationEvidenceKindNetwork:
+		return true
+	case ReputationEvidenceKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationEvidenceSlot.
+const (
+	ReputationEvidenceSlotActive   ReputationEvidenceSlot = "active"
+	ReputationEvidenceSlotPrevious ReputationEvidenceSlot = "previous"
+)
+
+// Valid indicates whether the value is a known member of the ReputationEvidenceSlot enum.
+func (e ReputationEvidenceSlot) Valid() bool {
+	switch e {
+	case ReputationEvidenceSlotActive:
+		return true
+	case ReputationEvidenceSlotPrevious:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationEvidenceState.
+const (
+	ReputationEvidenceStateFresh    ReputationEvidenceState = "fresh"
+	ReputationEvidenceStateNotFound ReputationEvidenceState = "not_found"
+)
+
+// Valid indicates whether the value is a known member of the ReputationEvidenceState enum.
+func (e ReputationEvidenceState) Valid() bool {
+	switch e {
+	case ReputationEvidenceStateFresh:
+		return true
+	case ReputationEvidenceStateNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationLookupRequestKind.
+const (
+	ReputationLookupRequestKindAccount ReputationLookupRequestKind = "account"
+	ReputationLookupRequestKindAsn     ReputationLookupRequestKind = "asn"
+	ReputationLookupRequestKindDomain  ReputationLookupRequestKind = "domain"
+	ReputationLookupRequestKindIp      ReputationLookupRequestKind = "ip"
+	ReputationLookupRequestKindNetwork ReputationLookupRequestKind = "network"
+	ReputationLookupRequestKindService ReputationLookupRequestKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReputationLookupRequestKind enum.
+func (e ReputationLookupRequestKind) Valid() bool {
+	switch e {
+	case ReputationLookupRequestKindAccount:
+		return true
+	case ReputationLookupRequestKindAsn:
+		return true
+	case ReputationLookupRequestKindDomain:
+		return true
+	case ReputationLookupRequestKindIp:
+		return true
+	case ReputationLookupRequestKindNetwork:
+		return true
+	case ReputationLookupRequestKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationOverrideBand.
+const (
+	ReputationOverrideBandBlocked ReputationOverrideBand = "blocked"
+	ReputationOverrideBandNeutral ReputationOverrideBand = "neutral"
+	ReputationOverrideBandTrusted ReputationOverrideBand = "trusted"
+)
+
+// Valid indicates whether the value is a known member of the ReputationOverrideBand enum.
+func (e ReputationOverrideBand) Valid() bool {
+	switch e {
+	case ReputationOverrideBandBlocked:
+		return true
+	case ReputationOverrideBandNeutral:
+		return true
+	case ReputationOverrideBandTrusted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationOverrideDeleteRequestKind.
+const (
+	ReputationOverrideDeleteRequestKindAccount ReputationOverrideDeleteRequestKind = "account"
+	ReputationOverrideDeleteRequestKindAsn     ReputationOverrideDeleteRequestKind = "asn"
+	ReputationOverrideDeleteRequestKindDomain  ReputationOverrideDeleteRequestKind = "domain"
+	ReputationOverrideDeleteRequestKindIp      ReputationOverrideDeleteRequestKind = "ip"
+	ReputationOverrideDeleteRequestKindNetwork ReputationOverrideDeleteRequestKind = "network"
+	ReputationOverrideDeleteRequestKindService ReputationOverrideDeleteRequestKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReputationOverrideDeleteRequestKind enum.
+func (e ReputationOverrideDeleteRequestKind) Valid() bool {
+	switch e {
+	case ReputationOverrideDeleteRequestKindAccount:
+		return true
+	case ReputationOverrideDeleteRequestKindAsn:
+		return true
+	case ReputationOverrideDeleteRequestKindDomain:
+		return true
+	case ReputationOverrideDeleteRequestKindIp:
+		return true
+	case ReputationOverrideDeleteRequestKindNetwork:
+		return true
+	case ReputationOverrideDeleteRequestKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationOverrideDeleteRequestSlot.
+const (
+	ReputationOverrideDeleteRequestSlotActive   ReputationOverrideDeleteRequestSlot = "active"
+	ReputationOverrideDeleteRequestSlotPrevious ReputationOverrideDeleteRequestSlot = "previous"
+)
+
+// Valid indicates whether the value is a known member of the ReputationOverrideDeleteRequestSlot enum.
+func (e ReputationOverrideDeleteRequestSlot) Valid() bool {
+	switch e {
+	case ReputationOverrideDeleteRequestSlotActive:
+		return true
+	case ReputationOverrideDeleteRequestSlotPrevious:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationOverridePutRequestBand.
+const (
+	ReputationOverridePutRequestBandBlocked ReputationOverridePutRequestBand = "blocked"
+	ReputationOverridePutRequestBandNeutral ReputationOverridePutRequestBand = "neutral"
+	ReputationOverridePutRequestBandTrusted ReputationOverridePutRequestBand = "trusted"
+)
+
+// Valid indicates whether the value is a known member of the ReputationOverridePutRequestBand enum.
+func (e ReputationOverridePutRequestBand) Valid() bool {
+	switch e {
+	case ReputationOverridePutRequestBandBlocked:
+		return true
+	case ReputationOverridePutRequestBandNeutral:
+		return true
+	case ReputationOverridePutRequestBandTrusted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationOverridePutRequestKind.
+const (
+	ReputationOverridePutRequestKindAccount ReputationOverridePutRequestKind = "account"
+	ReputationOverridePutRequestKindAsn     ReputationOverridePutRequestKind = "asn"
+	ReputationOverridePutRequestKindDomain  ReputationOverridePutRequestKind = "domain"
+	ReputationOverridePutRequestKindIp      ReputationOverridePutRequestKind = "ip"
+	ReputationOverridePutRequestKindNetwork ReputationOverridePutRequestKind = "network"
+	ReputationOverridePutRequestKindService ReputationOverridePutRequestKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReputationOverridePutRequestKind enum.
+func (e ReputationOverridePutRequestKind) Valid() bool {
+	switch e {
+	case ReputationOverridePutRequestKindAccount:
+		return true
+	case ReputationOverridePutRequestKindAsn:
+		return true
+	case ReputationOverridePutRequestKindDomain:
+		return true
+	case ReputationOverridePutRequestKindIp:
+		return true
+	case ReputationOverridePutRequestKindNetwork:
+		return true
+	case ReputationOverridePutRequestKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationOverridePutRequestSlot.
+const (
+	ReputationOverridePutRequestSlotActive   ReputationOverridePutRequestSlot = "active"
+	ReputationOverridePutRequestSlotPrevious ReputationOverridePutRequestSlot = "previous"
+)
+
+// Valid indicates whether the value is a known member of the ReputationOverridePutRequestSlot enum.
+func (e ReputationOverridePutRequestSlot) Valid() bool {
+	switch e {
+	case ReputationOverridePutRequestSlotActive:
+		return true
+	case ReputationOverridePutRequestSlotPrevious:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationProfileBand.
+const (
+	ReputationProfileBandBlocked    ReputationProfileBand = "blocked"
+	ReputationProfileBandNeutral    ReputationProfileBand = "neutral"
+	ReputationProfileBandPositive   ReputationProfileBand = "positive"
+	ReputationProfileBandSuspicious ReputationProfileBand = "suspicious"
+	ReputationProfileBandTrusted    ReputationProfileBand = "trusted"
+	ReputationProfileBandUnknown    ReputationProfileBand = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ReputationProfileBand enum.
+func (e ReputationProfileBand) Valid() bool {
+	switch e {
+	case ReputationProfileBandBlocked:
+		return true
+	case ReputationProfileBandNeutral:
+		return true
+	case ReputationProfileBandPositive:
+		return true
+	case ReputationProfileBandSuspicious:
+		return true
+	case ReputationProfileBandTrusted:
+		return true
+	case ReputationProfileBandUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationProfileOverride.
+const (
+	ReputationProfileOverrideBlocked ReputationProfileOverride = "blocked"
+	ReputationProfileOverrideNeutral ReputationProfileOverride = "neutral"
+	ReputationProfileOverrideNone    ReputationProfileOverride = "none"
+	ReputationProfileOverrideTrusted ReputationProfileOverride = "trusted"
+)
+
+// Valid indicates whether the value is a known member of the ReputationProfileOverride enum.
+func (e ReputationProfileOverride) Valid() bool {
+	switch e {
+	case ReputationProfileOverrideBlocked:
+		return true
+	case ReputationProfileOverrideNeutral:
+		return true
+	case ReputationProfileOverrideNone:
+		return true
+	case ReputationProfileOverrideTrusted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationProfileState.
+const (
+	ReputationProfileStateFresh    ReputationProfileState = "fresh"
+	ReputationProfileStateNotFound ReputationProfileState = "not_found"
+)
+
+// Valid indicates whether the value is a known member of the ReputationProfileState enum.
+func (e ReputationProfileState) Valid() bool {
+	switch e {
+	case ReputationProfileStateFresh:
+		return true
+	case ReputationProfileStateNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationViewKind.
+const (
+	ReputationViewKindAccount ReputationViewKind = "account"
+	ReputationViewKindAsn     ReputationViewKind = "asn"
+	ReputationViewKindDomain  ReputationViewKind = "domain"
+	ReputationViewKindIp      ReputationViewKind = "ip"
+	ReputationViewKindNetwork ReputationViewKind = "network"
+	ReputationViewKindService ReputationViewKind = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReputationViewKind enum.
+func (e ReputationViewKind) Valid() bool {
+	switch e {
+	case ReputationViewKindAccount:
+		return true
+	case ReputationViewKindAsn:
+		return true
+	case ReputationViewKindDomain:
+		return true
+	case ReputationViewKindIp:
+		return true
+	case ReputationViewKindNetwork:
+		return true
+	case ReputationViewKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReputationViewSchema.
+const (
+	ReputationManagementV1 ReputationViewSchema = "reputation-management.v1"
+)
+
+// Valid indicates whether the value is a known member of the ReputationViewSchema enum.
+func (e ReputationViewSchema) Valid() bool {
+	switch e {
+	case ReputationManagementV1:
+		return true
+	default:
+		return false
+	}
+}
+
 // AsyncAcceptedPayload defines model for AsyncAcceptedPayload.
 type AsyncAcceptedPayload struct {
 	JobId string `json:"jobId"`
@@ -424,6 +886,222 @@ type PolicyValue7 = interface{}
 // PolicyValueMap defines model for PolicyValueMap.
 type PolicyValueMap map[string]PolicyValue
 
+// ReputationAllocationAudit defines model for ReputationAllocationAudit.
+type ReputationAllocationAudit struct {
+	AuditId string `json:"audit_id"`
+	Creator string `json:"creator"`
+	Origin  string `json:"origin"`
+	Reason  string `json:"reason"`
+}
+
+// ReputationAllocationRequest defines model for ReputationAllocationRequest.
+type ReputationAllocationRequest struct {
+	union json.RawMessage
+}
+
+// ReputationAllocationRequest0 defines model for ReputationAllocationRequest.0.
+type ReputationAllocationRequest0 struct {
+	Action ReputationAllocationRequest0Action `json:"action"`
+}
+
+// ReputationAllocationRequest0Action defines model for ReputationAllocationRequest.0.Action.
+type ReputationAllocationRequest0Action string
+
+// ReputationAllocationRequest1 defines model for ReputationAllocationRequest.1.
+type ReputationAllocationRequest1 struct {
+	Action  ReputationAllocationRequest1Action `json:"action"`
+	AuditId string                             `json:"audit_id"`
+	Origin  string                             `json:"origin"`
+	Reason  string                             `json:"reason"`
+}
+
+// ReputationAllocationRequest1Action defines model for ReputationAllocationRequest.1.Action.
+type ReputationAllocationRequest1Action string
+
+// ReputationAllocationView defines model for ReputationAllocationView.
+type ReputationAllocationView struct {
+	Audit          *ReputationAllocationAudit   `json:"audit,omitempty"`
+	DrainedAt      float32                      `json:"drained_at"`
+	FencedShards   int                          `json:"fenced_shards"`
+	Generation     int                          `json:"generation"`
+	Mode           ReputationAllocationViewMode `json:"mode"`
+	NextGeneration int                          `json:"next_generation"`
+	ObservedAt     float32                      `json:"observed_at"`
+	Retention      float32                      `json:"retention"`
+}
+
+// ReputationAllocationViewMode defines model for ReputationAllocationView.Mode.
+type ReputationAllocationViewMode string
+
+// ReputationAudit defines model for ReputationAudit.
+type ReputationAudit struct {
+	AuditId       string                   `json:"audit_id"`
+	CreatedAt     float32                  `json:"created_at"`
+	Creator       string                   `json:"creator"`
+	Kind          ReputationAuditKind      `json:"kind"`
+	Operation     ReputationAuditOperation `json:"operation"`
+	Origin        string                   `json:"origin"`
+	PreviousAudit string                   `json:"previous_audit"`
+	Reason        string                   `json:"reason"`
+	Schema        ReputationAuditSchema    `json:"schema"`
+}
+
+// ReputationAuditKind defines model for ReputationAudit.Kind.
+type ReputationAuditKind string
+
+// ReputationAuditOperation defines model for ReputationAudit.Operation.
+type ReputationAuditOperation string
+
+// ReputationAuditSchema defines model for ReputationAudit.Schema.
+type ReputationAuditSchema string
+
+// ReputationEvidence defines model for ReputationEvidence.
+type ReputationEvidence struct {
+	AuthoritativeAt float32                 `json:"authoritative_at"`
+	Kind            ReputationEvidenceKind  `json:"kind"`
+	LastChange      *ReputationAudit        `json:"last_change,omitempty"`
+	ObservedAt      float32                 `json:"observed_at"`
+	Override        *ReputationOverride     `json:"override,omitempty"`
+	RiskAt          float32                 `json:"risk_at"`
+	Slot            ReputationEvidenceSlot  `json:"slot"`
+	SourceClasses   ReputationSourceClasses `json:"source_classes"`
+	State           ReputationEvidenceState `json:"state"`
+	TrustAt         float32                 `json:"trust_at"`
+	UpdatedAt       float32                 `json:"updated_at"`
+}
+
+// ReputationEvidenceKind defines model for ReputationEvidence.Kind.
+type ReputationEvidenceKind string
+
+// ReputationEvidenceSlot defines model for ReputationEvidence.Slot.
+type ReputationEvidenceSlot string
+
+// ReputationEvidenceState defines model for ReputationEvidence.State.
+type ReputationEvidenceState string
+
+// ReputationLookupRequest defines model for ReputationLookupRequest.
+type ReputationLookupRequest struct {
+	Kind    ReputationLookupRequestKind `json:"kind"`
+	Subject string                      `json:"subject"`
+}
+
+// ReputationLookupRequestKind defines model for ReputationLookupRequest.Kind.
+type ReputationLookupRequestKind string
+
+// ReputationManagementError defines model for ReputationManagementError.
+type ReputationManagementError struct {
+	Error string `json:"error"`
+}
+
+// ReputationOverride defines model for ReputationOverride.
+type ReputationOverride struct {
+	AuditId   string                 `json:"audit_id"`
+	Band      ReputationOverrideBand `json:"band"`
+	CreatedAt float32                `json:"created_at"`
+	Creator   string                 `json:"creator"`
+	ExpiresAt float32                `json:"expires_at"`
+	Origin    string                 `json:"origin"`
+	Reason    string                 `json:"reason"`
+}
+
+// ReputationOverrideBand defines model for ReputationOverride.Band.
+type ReputationOverrideBand string
+
+// ReputationOverrideDeleteRequest defines model for ReputationOverrideDeleteRequest.
+type ReputationOverrideDeleteRequest struct {
+	AuditId       string                               `json:"audit_id"`
+	Kind          ReputationOverrideDeleteRequestKind  `json:"kind"`
+	Origin        string                               `json:"origin"`
+	PreviousAudit string                               `json:"previous_audit"`
+	Reason        string                               `json:"reason"`
+	Slot          *ReputationOverrideDeleteRequestSlot `json:"slot,omitempty"`
+	Subject       string                               `json:"subject"`
+}
+
+// ReputationOverrideDeleteRequestKind defines model for ReputationOverrideDeleteRequest.Kind.
+type ReputationOverrideDeleteRequestKind string
+
+// ReputationOverrideDeleteRequestSlot defines model for ReputationOverrideDeleteRequest.Slot.
+type ReputationOverrideDeleteRequestSlot string
+
+// ReputationOverridePutRequest defines model for ReputationOverridePutRequest.
+type ReputationOverridePutRequest struct {
+	AuditId       string                            `json:"audit_id"`
+	Band          ReputationOverridePutRequestBand  `json:"band"`
+	Kind          ReputationOverridePutRequestKind  `json:"kind"`
+	Origin        string                            `json:"origin"`
+	PreviousAudit *string                           `json:"previous_audit,omitempty"`
+	Reason        string                            `json:"reason"`
+	Slot          *ReputationOverridePutRequestSlot `json:"slot,omitempty"`
+	Subject       string                            `json:"subject"`
+	TtlSeconds    int64                             `json:"ttl_seconds"`
+}
+
+// ReputationOverridePutRequestBand defines model for ReputationOverridePutRequest.Band.
+type ReputationOverridePutRequestBand string
+
+// ReputationOverridePutRequestKind defines model for ReputationOverridePutRequest.Kind.
+type ReputationOverridePutRequestKind string
+
+// ReputationOverridePutRequestSlot defines model for ReputationOverridePutRequest.Slot.
+type ReputationOverridePutRequestSlot string
+
+// ReputationProfile defines model for ReputationProfile.
+type ReputationProfile struct {
+	Band     ReputationProfileBand     `json:"band"`
+	Details  *ReputationScores         `json:"details,omitempty"`
+	Override ReputationProfileOverride `json:"override"`
+	State    ReputationProfileState    `json:"state"`
+}
+
+// ReputationProfileBand defines model for ReputationProfile.Band.
+type ReputationProfileBand string
+
+// ReputationProfileOverride defines model for ReputationProfile.Override.
+type ReputationProfileOverride string
+
+// ReputationProfileState defines model for ReputationProfile.State.
+type ReputationProfileState string
+
+// ReputationScores defines model for ReputationScores.
+type ReputationScores struct {
+	AgeSeconds      int64   `json:"age_seconds"`
+	Confidence      float32 `json:"confidence"`
+	RiskScore       float32 `json:"risk_score"`
+	Samples         float32 `json:"samples"`
+	SourceDiversity int     `json:"source_diversity"`
+	TrustScore      float32 `json:"trust_score"`
+}
+
+// ReputationSourceClasses defines model for ReputationSourceClasses.
+type ReputationSourceClasses struct {
+	Baseline    *[]string `json:"baseline,omitempty"`
+	Fast        *[]string `json:"fast,omitempty"`
+	Operational *[]string `json:"operational,omitempty"`
+}
+
+// ReputationView defines model for ReputationView.
+type ReputationView struct {
+	ConfigRevision string               `json:"config_revision"`
+	Evidence       []ReputationEvidence `json:"evidence"`
+	Kind           ReputationViewKind   `json:"kind"`
+	ModelId        string               `json:"model_id"`
+	ModelRevision  string               `json:"model_revision"`
+	Profiles       struct {
+		Baseline    ReputationProfile `json:"baseline"`
+		Fast        ReputationProfile `json:"fast"`
+		Operational ReputationProfile `json:"operational"`
+	} `json:"profiles"`
+	Schema         ReputationViewSchema `json:"schema"`
+	VerifiedChange *ReputationAudit     `json:"verified_change,omitempty"`
+}
+
+// ReputationViewKind defines model for ReputationView.Kind.
+type ReputationViewKind string
+
+// ReputationViewSchema defines model for ReputationView.Schema.
+type ReputationViewSchema string
+
 // ResultEnvelope defines model for ResultEnvelope.
 type ResultEnvelope struct {
 	Object    string      `json:"object"`
@@ -514,6 +1192,18 @@ type FlushUserCacheJSONRequestBody = CacheFlushRequest
 
 // EnqueueUserCacheFlushJSONRequestBody defines body for EnqueueUserCacheFlush for application/json ContentType.
 type EnqueueUserCacheFlushJSONRequestBody = CacheFlushRequest
+
+// ManageReputationAllocationJSONRequestBody defines body for ManageReputationAllocation for application/json ContentType.
+type ManageReputationAllocationJSONRequestBody = ReputationAllocationRequest
+
+// LookupReputationJSONRequestBody defines body for LookupReputation for application/json ContentType.
+type LookupReputationJSONRequestBody = ReputationLookupRequest
+
+// DeleteReputationOverrideJSONRequestBody defines body for DeleteReputationOverride for application/json ContentType.
+type DeleteReputationOverrideJSONRequestBody = ReputationOverrideDeleteRequest
+
+// PutReputationOverrideJSONRequestBody defines body for PutReputationOverride for application/json ContentType.
+type PutReputationOverrideJSONRequestBody = ReputationOverridePutRequest
 
 // EvaluatePolicyDecisionJSONRequestBody defines body for EvaluatePolicyDecision for application/json ContentType.
 type EvaluatePolicyDecisionJSONRequestBody = PolicyDecisionRequest
@@ -1178,6 +1868,68 @@ func (t *PolicyValue) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsReputationAllocationRequest0 returns the union data inside the ReputationAllocationRequest as a ReputationAllocationRequest0
+func (t ReputationAllocationRequest) AsReputationAllocationRequest0() (ReputationAllocationRequest0, error) {
+	var body ReputationAllocationRequest0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReputationAllocationRequest0 overwrites any union data inside the ReputationAllocationRequest as the provided ReputationAllocationRequest0
+func (t *ReputationAllocationRequest) FromReputationAllocationRequest0(v ReputationAllocationRequest0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReputationAllocationRequest0 performs a merge with any union data inside the ReputationAllocationRequest, using the provided ReputationAllocationRequest0
+func (t *ReputationAllocationRequest) MergeReputationAllocationRequest0(v ReputationAllocationRequest0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsReputationAllocationRequest1 returns the union data inside the ReputationAllocationRequest as a ReputationAllocationRequest1
+func (t ReputationAllocationRequest) AsReputationAllocationRequest1() (ReputationAllocationRequest1, error) {
+	var body ReputationAllocationRequest1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReputationAllocationRequest1 overwrites any union data inside the ReputationAllocationRequest as the provided ReputationAllocationRequest1
+func (t *ReputationAllocationRequest) FromReputationAllocationRequest1(v ReputationAllocationRequest1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReputationAllocationRequest1 performs a merge with any union data inside the ReputationAllocationRequest, using the provided ReputationAllocationRequest1
+func (t *ReputationAllocationRequest) MergeReputationAllocationRequest1(v ReputationAllocationRequest1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ReputationAllocationRequest) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ReputationAllocationRequest) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsErrorResponse returns the union data inside the JSONValidationError as a ErrorResponse
 func (t JSONValidationError) AsErrorResponse() (ErrorResponse, error) {
 	var body ErrorResponse
@@ -1393,6 +2145,78 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/cache/flush/async (the `EnqueueUserCacheFlush` operationId).
 	EnqueueUserCacheFlush(ctx context.Context, body EnqueueUserCacheFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManageReputationAllocationWithBody Inspect or fence the current allocation generation.
+	//
+	// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+	ManageReputationAllocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManageReputationAllocation Inspect or fence the current allocation generation.
+	//
+	// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+	ManageReputationAllocation(ctx context.Context, body ManageReputationAllocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LookupReputationWithBody Inspect one exact reputation subject.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+	LookupReputationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LookupReputation Inspect one exact reputation subject.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+	LookupReputation(ctx context.Context, body LookupReputationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteReputationOverrideWithBody Remove one selected operator override revision.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+	DeleteReputationOverrideWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteReputationOverride Remove one selected operator override revision.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+	DeleteReputationOverride(ctx context.Context, body DeleteReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutReputationOverrideWithBody Create or replace one audited operator override.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+	PutReputationOverrideWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutReputationOverride Create or replace one audited operator override.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+	PutReputationOverride(ctx context.Context, body PutReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteOIDCSessions Delete all OIDC sessions for a user.
 	//
@@ -1628,6 +2452,158 @@ func (c *Client) EnqueueUserCacheFlushWithBody(ctx context.Context, contentType 
 // Corresponds with DELETE /api/v1/cache/flush/async (the `EnqueueUserCacheFlush` operationId).
 func (c *Client) EnqueueUserCacheFlush(ctx context.Context, body EnqueueUserCacheFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnqueueUserCacheFlushRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManageReputationAllocationWithBody Inspect or fence the current allocation generation.
+//
+// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+func (c *Client) ManageReputationAllocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManageReputationAllocationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManageReputationAllocation Inspect or fence the current allocation generation.
+//
+// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+func (c *Client) ManageReputationAllocation(ctx context.Context, body ManageReputationAllocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManageReputationAllocationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LookupReputationWithBody Inspect one exact reputation subject.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+func (c *Client) LookupReputationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupReputationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LookupReputation Inspect one exact reputation subject.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+func (c *Client) LookupReputation(ctx context.Context, body LookupReputationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupReputationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteReputationOverrideWithBody Remove one selected operator override revision.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+func (c *Client) DeleteReputationOverrideWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteReputationOverrideRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteReputationOverride Remove one selected operator override revision.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+func (c *Client) DeleteReputationOverride(ctx context.Context, body DeleteReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteReputationOverrideRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutReputationOverrideWithBody Create or replace one audited operator override.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+func (c *Client) PutReputationOverrideWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReputationOverrideRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutReputationOverride Create or replace one audited operator override.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+func (c *Client) PutReputationOverride(ctx context.Context, body PutReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutReputationOverrideRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2090,6 +3066,166 @@ func NewEnqueueUserCacheFlushRequestWithBody(server string, contentType string, 
 	return req, nil
 }
 
+// NewManageReputationAllocationRequest calls the generic ManageReputationAllocation builder with application/json body
+func NewManageReputationAllocationRequest(server string, body ManageReputationAllocationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewManageReputationAllocationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewManageReputationAllocationRequestWithBody constructs an http.Request for the ManageReputationAllocation method, with any body, and a specified content type
+func NewManageReputationAllocationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/custom/reputation/allocation")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewLookupReputationRequest calls the generic LookupReputation builder with application/json body
+func NewLookupReputationRequest(server string, body LookupReputationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLookupReputationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLookupReputationRequestWithBody constructs an http.Request for the LookupReputation method, with any body, and a specified content type
+func NewLookupReputationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/custom/reputation/lookup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteReputationOverrideRequest calls the generic DeleteReputationOverride builder with application/json body
+func NewDeleteReputationOverrideRequest(server string, body DeleteReputationOverrideJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeleteReputationOverrideRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewDeleteReputationOverrideRequestWithBody constructs an http.Request for the DeleteReputationOverride method, with any body, and a specified content type
+func NewDeleteReputationOverrideRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/custom/reputation/override")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPutReputationOverrideRequest calls the generic PutReputationOverride builder with application/json body
+func NewPutReputationOverrideRequest(server string, body PutReputationOverrideJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutReputationOverrideRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPutReputationOverrideRequestWithBody constructs an http.Request for the PutReputationOverride method, with any body, and a specified content type
+func NewPutReputationOverrideRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/custom/reputation/override")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDeleteOIDCSessionsRequest constructs an http.Request for the DeleteOIDCSessions method
 func NewDeleteOIDCSessionsRequest(server string, userId string) (*http.Request, error) {
 	var err error
@@ -2420,6 +3556,78 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/cache/flush/async (the `EnqueueUserCacheFlush` operationId).
 	EnqueueUserCacheFlushWithResponse(ctx context.Context, body EnqueueUserCacheFlushJSONRequestBody, reqEditors ...RequestEditorFn) (*EnqueueUserCacheFlushResponse, error)
+
+	// ManageReputationAllocationWithBodyWithResponse Inspect or fence the current allocation generation.
+	//
+	// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+	ManageReputationAllocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManageReputationAllocationResponse, error)
+
+	// ManageReputationAllocationWithResponse Inspect or fence the current allocation generation.
+	//
+	// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+	ManageReputationAllocationWithResponse(ctx context.Context, body ManageReputationAllocationJSONRequestBody, reqEditors ...RequestEditorFn) (*ManageReputationAllocationResponse, error)
+
+	// LookupReputationWithBodyWithResponse Inspect one exact reputation subject.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+	LookupReputationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LookupReputationResponse, error)
+
+	// LookupReputationWithResponse Inspect one exact reputation subject.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+	LookupReputationWithResponse(ctx context.Context, body LookupReputationJSONRequestBody, reqEditors ...RequestEditorFn) (*LookupReputationResponse, error)
+
+	// DeleteReputationOverrideWithBodyWithResponse Remove one selected operator override revision.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+	DeleteReputationOverrideWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteReputationOverrideResponse, error)
+
+	// DeleteReputationOverrideWithResponse Remove one selected operator override revision.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+	DeleteReputationOverrideWithResponse(ctx context.Context, body DeleteReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*DeleteReputationOverrideResponse, error)
+
+	// PutReputationOverrideWithBodyWithResponse Create or replace one audited operator override.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+	PutReputationOverrideWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReputationOverrideResponse, error)
+
+	// PutReputationOverrideWithResponse Create or replace one audited operator override.
+	//
+	// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+	PutReputationOverrideWithResponse(ctx context.Context, body PutReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReputationOverrideResponse, error)
 
 	// DeleteOIDCSessionsWithResponse Delete all OIDC sessions for a user.
 	//
@@ -2938,6 +4146,471 @@ func (r EnqueueUserCacheFlushResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r EnqueueUserCacheFlushResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ManageReputationAllocationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReputationAllocationView
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ReputationManagementError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ReputationManagementError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ReputationManagementError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ReputationManagementError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ReputationManagementError
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ReputationManagementError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *ReputationManagementError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ReputationManagementError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ReputationManagementError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *ReputationManagementError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON200() *ReputationAllocationView {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON400() *ReputationManagementError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON401() *ReputationManagementError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON403() *ReputationManagementError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON404() *ReputationManagementError {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON409() *ReputationManagementError {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON413() *ReputationManagementError {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON415() *ReputationManagementError {
+	return r.JSON415
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON500() *ReputationManagementError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON503() *ReputationManagementError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r ManageReputationAllocationResponse) GetJSON504() *ReputationManagementError {
+	return r.JSON504
+}
+
+// GetBody returns the raw response body bytes
+func (r ManageReputationAllocationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManageReputationAllocationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManageReputationAllocationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManageReputationAllocationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// LookupReputationResponse200Headers the declared response headers of an HTTP 200 response for LookupReputation
+type LookupReputationResponse200Headers struct {
+	CacheControl *string
+}
+
+type LookupReputationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReputationView
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ReputationManagementError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ReputationManagementError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ReputationManagementError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ReputationManagementError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ReputationManagementError
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ReputationManagementError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *ReputationManagementError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ReputationManagementError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ReputationManagementError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *ReputationManagementError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *LookupReputationResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LookupReputationResponse) GetJSON200() *ReputationView {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LookupReputationResponse) GetJSON400() *ReputationManagementError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LookupReputationResponse) GetJSON401() *ReputationManagementError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r LookupReputationResponse) GetJSON403() *ReputationManagementError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LookupReputationResponse) GetJSON404() *ReputationManagementError {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r LookupReputationResponse) GetJSON409() *ReputationManagementError {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r LookupReputationResponse) GetJSON413() *ReputationManagementError {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r LookupReputationResponse) GetJSON415() *ReputationManagementError {
+	return r.JSON415
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r LookupReputationResponse) GetJSON500() *ReputationManagementError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r LookupReputationResponse) GetJSON503() *ReputationManagementError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r LookupReputationResponse) GetJSON504() *ReputationManagementError {
+	return r.JSON504
+}
+
+// GetBody returns the raw response body bytes
+func (r LookupReputationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LookupReputationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LookupReputationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LookupReputationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteReputationOverrideResponse200Headers the declared response headers of an HTTP 200 response for DeleteReputationOverride
+type DeleteReputationOverrideResponse200Headers struct {
+	CacheControl *string
+}
+
+type DeleteReputationOverrideResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReputationView
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ReputationManagementError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ReputationManagementError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ReputationManagementError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ReputationManagementError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ReputationManagementError
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ReputationManagementError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *ReputationManagementError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ReputationManagementError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ReputationManagementError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *ReputationManagementError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *DeleteReputationOverrideResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON200() *ReputationView {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON400() *ReputationManagementError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON401() *ReputationManagementError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON403() *ReputationManagementError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON404() *ReputationManagementError {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON409() *ReputationManagementError {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON413() *ReputationManagementError {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON415() *ReputationManagementError {
+	return r.JSON415
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON500() *ReputationManagementError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON503() *ReputationManagementError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r DeleteReputationOverrideResponse) GetJSON504() *ReputationManagementError {
+	return r.JSON504
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteReputationOverrideResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteReputationOverrideResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteReputationOverrideResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteReputationOverrideResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutReputationOverrideResponse200Headers the declared response headers of an HTTP 200 response for PutReputationOverride
+type PutReputationOverrideResponse200Headers struct {
+	CacheControl *string
+}
+
+type PutReputationOverrideResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReputationView
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ReputationManagementError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *ReputationManagementError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ReputationManagementError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ReputationManagementError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ReputationManagementError
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ReputationManagementError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *ReputationManagementError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ReputationManagementError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ReputationManagementError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *ReputationManagementError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *PutReputationOverrideResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON200() *ReputationView {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON400() *ReputationManagementError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON401() *ReputationManagementError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON403() *ReputationManagementError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON404() *ReputationManagementError {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON409() *ReputationManagementError {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON413() *ReputationManagementError {
+	return r.JSON413
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON415() *ReputationManagementError {
+	return r.JSON415
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON500() *ReputationManagementError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON503() *ReputationManagementError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r PutReputationOverrideResponse) GetJSON504() *ReputationManagementError {
+	return r.JSON504
+}
+
+// GetBody returns the raw response body bytes
+func (r PutReputationOverrideResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutReputationOverrideResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutReputationOverrideResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutReputationOverrideResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3465,6 +5138,126 @@ func (c *ClientWithResponses) EnqueueUserCacheFlushWithResponse(ctx context.Cont
 	return ParseEnqueueUserCacheFlushResponse(rsp)
 }
 
+// ManageReputationAllocationWithBodyWithResponse Inspect or fence the current allocation generation.
+//
+// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+func (c *ClientWithResponses) ManageReputationAllocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManageReputationAllocationResponse, error) {
+	rsp, err := c.ManageReputationAllocationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManageReputationAllocationResponse(rsp)
+}
+
+// ManageReputationAllocationWithResponse Inspect or fence the current allocation generation.
+//
+// Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/custom/reputation/allocation (the `ManageReputationAllocation` operationId).
+func (c *ClientWithResponses) ManageReputationAllocationWithResponse(ctx context.Context, body ManageReputationAllocationJSONRequestBody, reqEditors ...RequestEditorFn) (*ManageReputationAllocationResponse, error) {
+	rsp, err := c.ManageReputationAllocation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManageReputationAllocationResponse(rsp)
+}
+
+// LookupReputationWithBodyWithResponse Inspect one exact reputation subject.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+func (c *ClientWithResponses) LookupReputationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LookupReputationResponse, error) {
+	rsp, err := c.LookupReputationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupReputationResponse(rsp)
+}
+
+// LookupReputationWithResponse Inspect one exact reputation subject.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/custom/reputation/lookup (the `LookupReputation` operationId).
+func (c *ClientWithResponses) LookupReputationWithResponse(ctx context.Context, body LookupReputationJSONRequestBody, reqEditors ...RequestEditorFn) (*LookupReputationResponse, error) {
+	rsp, err := c.LookupReputation(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupReputationResponse(rsp)
+}
+
+// DeleteReputationOverrideWithBodyWithResponse Remove one selected operator override revision.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+func (c *ClientWithResponses) DeleteReputationOverrideWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteReputationOverrideResponse, error) {
+	rsp, err := c.DeleteReputationOverrideWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteReputationOverrideResponse(rsp)
+}
+
+// DeleteReputationOverrideWithResponse Remove one selected operator override revision.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/custom/reputation/override (the `DeleteReputationOverride` operationId).
+func (c *ClientWithResponses) DeleteReputationOverrideWithResponse(ctx context.Context, body DeleteReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*DeleteReputationOverrideResponse, error) {
+	rsp, err := c.DeleteReputationOverride(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteReputationOverrideResponse(rsp)
+}
+
+// PutReputationOverrideWithBodyWithResponse Create or replace one audited operator override.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+func (c *ClientWithResponses) PutReputationOverrideWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutReputationOverrideResponse, error) {
+	rsp, err := c.PutReputationOverrideWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReputationOverrideResponse(rsp)
+}
+
+// PutReputationOverrideWithResponse Create or replace one audited operator override.
+//
+// Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/custom/reputation/override (the `PutReputationOverride` operationId).
+func (c *ClientWithResponses) PutReputationOverrideWithResponse(ctx context.Context, body PutReputationOverrideJSONRequestBody, reqEditors ...RequestEditorFn) (*PutReputationOverrideResponse, error) {
+	rsp, err := c.PutReputationOverride(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutReputationOverrideResponse(rsp)
+}
+
 // DeleteOIDCSessionsWithResponse Delete all OIDC sessions for a user.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3919,6 +5712,429 @@ func ParseEnqueueUserCacheFlushResponse(rsp *http.Response) (*EnqueueUserCacheFl
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseManageReputationAllocationResponse parses an HTTP response from a ManageReputationAllocationWithResponse call
+func ParseManageReputationAllocationResponse(rsp *http.Response) (*ManageReputationAllocationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManageReputationAllocationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReputationAllocationView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLookupReputationResponse parses an HTTP response from a LookupReputationWithResponse call
+func ParseLookupReputationResponse(rsp *http.Response) (*LookupReputationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LookupReputationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReputationView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers LookupReputationResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteReputationOverrideResponse parses an HTTP response from a DeleteReputationOverrideWithResponse call
+func ParseDeleteReputationOverrideResponse(rsp *http.Response) (*DeleteReputationOverrideResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteReputationOverrideResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReputationView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers DeleteReputationOverrideResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePutReputationOverrideResponse parses an HTTP response from a PutReputationOverrideWithResponse call
+func ParsePutReputationOverrideResponse(rsp *http.Response) (*PutReputationOverrideResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutReputationOverrideResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReputationView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest ReputationManagementError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers PutReputationOverrideResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

@@ -12,6 +12,8 @@ import (
 )
 
 const overrideSchema = "reputation-override.v1"
+const overrideOperationPut = "put"
+const overrideOperationDelete = "delete"
 
 var errOverrideConflict = errors.New("reputation override changed")
 
@@ -39,6 +41,7 @@ type overrideRecord struct {
 }
 
 type overrideRequest struct {
+	Audit         bool    `json:"audit"`
 	Operation     string  `json:"operation"`
 	Tag           string  `json:"tag"`
 	Kind          string  `json:"kind"`
@@ -62,7 +65,7 @@ func (s *stateOwner) putOverride(ctx context.Context, subject subjectInput, inpu
 		return overrideRecord{}, err
 	}
 
-	request := overrideRequest{Operation: "put", Tag: tag, Kind: subject.kind, Band: input.Band, Reason: input.Reason,
+	request := overrideRequest{Operation: overrideOperationPut, Tag: tag, Kind: subject.kind, Band: input.Band, Reason: input.Reason,
 		Creator: input.Creator, AuditID: input.AuditID, Origin: input.Origin, PreviousAudit: input.PreviousAudit, TTL: input.TTL.Seconds()}
 
 	response, err := s.run(ctx, scriptOverride, []string{s.keys.subject(tag, s.models[0].id).Override}, request)
@@ -152,7 +155,7 @@ func (s *stateOwner) deleteOverride(ctx context.Context, subject subjectInput, p
 	}
 
 	response, err := s.run(ctx, scriptOverride, []string{s.keys.subject(tag, s.models[0].id).Override}, overrideRequest{
-		Operation: "delete", Tag: tag, Kind: subject.kind, PreviousAudit: previousAudit})
+		Operation: overrideOperationDelete, Tag: tag, Kind: subject.kind, PreviousAudit: previousAudit})
 	if err != nil {
 		return err
 	}

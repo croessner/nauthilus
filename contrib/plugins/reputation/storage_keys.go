@@ -11,6 +11,11 @@ type stateKeyspace struct{ builder pluginapi.RedisKeyBuilder }
 
 type subjectKeyset struct{ State, Seen, Override string }
 
+// audit retains one bounded operator receipt beside its exact opaque subject, independently of models.
+func (k stateKeyspace) audit(tag string) string {
+	return k.builder.Key("reputation:{" + tag + "}:operator-audit")
+}
+
 // subject keeps a model's state and deduplication set beside its model-independent override in one hash slot.
 func (k stateKeyspace) subject(tag, model string) subjectKeyset {
 	base := "reputation:{" + tag + "}:"

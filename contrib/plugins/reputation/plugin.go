@@ -35,7 +35,7 @@ func NauthilusPlugin() (pluginapi.Plugin, error) { return NewPlugin(), nil }
 // Metadata declares the coherent native artifact and explicitly Policy-selected fact/effect capabilities.
 func (*Plugin) Metadata() pluginapi.Metadata {
 	return pluginapi.Metadata{Build: pluginapi.BuildInfo{ArtifactIdentity: pluginapi.NativeArtifactIdentity()}, Name: pluginName, Version: "0.1.0", APIVersion: pluginapi.APIVersion,
-		Description: "Configuration-bound independent evidence admission and reputation.", Features: []pluginapi.Feature{"decision_fact_provider", "decision_effect_provider", extensionPostAction}}
+		Description: "Configuration-bound independent evidence admission and reputation.", Features: []pluginapi.Feature{"decision_fact_provider", "decision_effect_provider", extensionPostAction, "hook"}}
 }
 
 // Register validates the complete catalog before exposing observation, assessment and selected storage capabilities.
@@ -74,6 +74,10 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	}
 
 	if err := p.registerAuthentication(registrar, cfg); err != nil {
+		return err
+	}
+
+	if err := p.registerManagement(registrar); err != nil {
 		return err
 	}
 

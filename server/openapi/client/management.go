@@ -98,6 +98,10 @@ type SupportedManagementClient interface {
 		string,
 		...management.RequestEditorFn,
 	) (*management.DeleteOIDCSessionResponse, error)
+	LookupReputation(context.Context, management.LookupReputationJSONRequestBody, ...management.RequestEditorFn) (*management.LookupReputationResponse, error)
+	PutReputationOverride(context.Context, management.PutReputationOverrideJSONRequestBody, ...management.RequestEditorFn) (*management.PutReputationOverrideResponse, error)
+	DeleteReputationOverride(context.Context, management.DeleteReputationOverrideJSONRequestBody, ...management.RequestEditorFn) (*management.DeleteReputationOverrideResponse, error)
+	ManageReputationAllocation(context.Context, management.ManageReputationAllocationJSONRequestBody, ...management.RequestEditorFn) (*management.ManageReputationAllocationResponse, error)
 }
 
 type generatedManagementClient interface {

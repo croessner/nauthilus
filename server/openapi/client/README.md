@@ -22,6 +22,10 @@ Management API:
 - `ManagementClient.ListOIDCSessions`
 - `ManagementClient.DeleteOIDCSessions`
 - `ManagementClient.DeleteOIDCSession`
+- `ManagementClient.ManageReputationAllocation`
+- `ManagementClient.LookupReputation`
+- `ManagementClient.PutReputationOverride`
+- `ManagementClient.DeleteReputationOverride`
 - `BearerToken`
 - `BasicCredentials`
 
@@ -142,3 +146,15 @@ The full server gate is:
 ```sh
 GOEXPERIMENT=runtimesecret GOCACHE=/tmp/nauthilus-go-cache make guardrails
 ```
+
+## Reputation administration
+
+The reputation operations require `BearerToken` with the exact backchannel
+resource and `nauthilus:admin` scope. Management Basic credentials and Policy
+credentials do not authorize these native administrative hooks. The plugin
+must be loaded; an absent plugin returns 404. Exact subjects remain in JSON
+request bodies and are omitted from responses. Mutation success includes a
+primary-backed verification receipt; a transport error or 503 leaves the
+outcome unknown and requires lookup before retry. See the
+[reputation operator guide](../../../contrib/plugins/reputation/README.md#administrative-management-api)
+for audit fields, optimistic revision checks and expiration semantics.

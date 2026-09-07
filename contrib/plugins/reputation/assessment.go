@@ -10,6 +10,7 @@ import (
 )
 
 type assessmentRequest struct {
+	Details        bool                `json:"details"`
 	Profiles       []profileDefinition `json:"profiles"`
 	Classes        []classDefinition   `json:"classes"`
 	Fingerprint    string              `json:"fingerprint"`
@@ -20,14 +21,17 @@ type assessmentRequest struct {
 }
 
 type assessmentSnapshot struct {
-	UpdatedAt       float64       `json:"updated_at"`
-	Profiles        []profileMass `json:"profiles"`
-	State           string        `json:"state"`
-	Override        string        `json:"override"`
-	Now             float64       `json:"now"`
-	RiskAt          float64       `json:"risk_at"`
-	TrustAt         float64       `json:"trust_at"`
-	AuthoritativeAt float64       `json:"authoritative_at"`
+	Sources          map[string]map[string]bool `json:"sources,omitempty"`
+	OperatorOverride *overrideRecord            `json:"operator_override,omitempty"`
+	Audit            *managementAuditRecord     `json:"audit,omitempty"`
+	UpdatedAt        float64                    `json:"updated_at"`
+	Profiles         []profileMass              `json:"profiles"`
+	State            string                     `json:"state"`
+	Override         string                     `json:"override"`
+	Now              float64                    `json:"now"`
+	RiskAt           float64                    `json:"risk_at"`
+	TrustAt          float64                    `json:"trust_at"`
+	AuthoritativeAt  float64                    `json:"authoritative_at"`
 }
 
 // assess selects one profile from the complete, independently validated multi-profile snapshot.
@@ -41,49 +45,63 @@ func (s *stateOwner) assess(ctx context.Context, subject subjectInput, profile s
 
 // assessProfiles requires every configured tag version and never exposes a partial rotation snapshot.
 func (s *stateOwner) assessProfiles(ctx context.Context, subject subjectInput) map[string]assessmentTuple {
+	result, _, err := s.readAssessment(ctx, subject, false)
+	if err != nil {
+		return emptyProfiles(assessmentUnavailable)
+	}
+
+	if subject.kind == kindIP {
+		canonical, _ := s.config.canonicalSubject(subject.kind, subject.value)
+		return s.applyNetworkOverride(ctx, canonical, result)
+	}
+
+	return result
+}
+
+// readAssessment shares primary reads and conservative rotation merging with the exact operator view.
+func (s *stateOwner) readAssessment(ctx context.Context, subject subjectInput, details bool) (map[string]assessmentTuple, []assessmentSnapshot, error) {
 	unavailable := emptyProfiles(assessmentUnavailable)
 	if !s.ready.Load() {
-		return unavailable
+		return unavailable, nil, errStateUnavailable
 	}
 
 	canonical, err := s.config.canonicalSubject(subject.kind, subject.value)
 	if err != nil {
-		return unavailable
+		return unavailable, nil, err
 	}
 
 	tags, err := s.planner.tagger.Candidates(ctx, pluginapi.OpaqueIdentifierInput{Scope: s.config.raw.SubjectScope, Kind: subject.kind, Value: canonical})
 	if err != nil || len(tags) < 1 || len(tags) > 2 {
-		return unavailable
+		return unavailable, nil, errStateUnavailable
 	}
 
 	result := emptyProfiles(assessmentMissing)
+	snapshots := make([]assessmentSnapshot, 0, len(tags))
 
 	for _, tag := range tags {
-		snapshot, err := s.snapshotTag(ctx, tag.String(), subject.kind)
+		snapshot, err := s.snapshotTagDetails(ctx, tag.String(), subject.kind, details)
 		if err != nil {
-			return unavailable
+			return unavailable, nil, err
 		}
 
 		for _, profile := range assessmentProfileNames() {
 			current, err := snapshot.assessment(profile, s.config.raw.Score, s.config.raw.Bands)
 			if err != nil {
-				return unavailable
+				return unavailable, nil, err
 			}
 
 			merged := mergeAssessments(result[profile], current)
 			if merged.validate() != nil {
-				return unavailable
+				return unavailable, nil, errAssessment
 			}
 
 			result[profile] = merged
 		}
+
+		snapshots = append(snapshots, snapshot)
 	}
 
-	if subject.kind == kindIP {
-		return s.applyNetworkOverride(ctx, canonical, result)
-	}
-
-	return result
+	return result, snapshots, nil
 }
 
 // emptyProfiles creates all closed profile tuples together so failures cannot leave partially trusted output.
@@ -103,12 +121,22 @@ func assessmentProfileNames() []string {
 
 // snapshotTag obtains one atomic primary snapshot for the active model and its model-independent override.
 func (s *stateOwner) snapshotTag(ctx context.Context, tag, kind string) (assessmentSnapshot, error) {
+	return s.snapshotTagDetails(ctx, tag, kind, false)
+}
+
+// snapshotTagDetails adds protected operator metadata only when explicitly requested by management.
+func (s *stateOwner) snapshotTagDetails(ctx context.Context, tag, kind string, details bool) (assessmentSnapshot, error) {
 	model := s.models[0]
 	keys := s.keys.subject(tag, model.id)
-	request := assessmentRequest{Profiles: model.profiles, Classes: model.classes, Fingerprint: model.fingerprint, Kind: kind, Tag: tag,
+	request := assessmentRequest{Details: details, Profiles: model.profiles, Classes: model.classes, Fingerprint: model.fingerprint, Kind: kind, Tag: tag,
 		Retention: s.config.retention.Seconds(), DiversityFloor: s.config.raw.Bands.DiversityMassFloor}
 
-	response, err := s.run(ctx, scriptAssessment, []string{keys.State, keys.Seen, keys.Override}, request)
+	scriptKeys := []string{keys.State, keys.Seen, keys.Override}
+	if details {
+		scriptKeys = append(scriptKeys, s.keys.audit(tag))
+	}
+
+	response, err := s.run(ctx, scriptAssessment, scriptKeys, request)
 	if err != nil || len(response) != 2 || response[0] != storageSnapshot {
 		return assessmentSnapshot{}, errStateUnavailable
 	}
@@ -124,6 +152,10 @@ func (s *stateOwner) snapshotTag(ctx context.Context, tag, kind string) (assessm
 	decoder.DisallowUnknownFields()
 
 	if decoder.Decode(&snapshot) != nil {
+		return assessmentSnapshot{}, errStateUnavailable
+	}
+
+	if details && snapshot.validateManagement(s.config, tag, kind) != nil {
 		return assessmentSnapshot{}, errStateUnavailable
 	}
 

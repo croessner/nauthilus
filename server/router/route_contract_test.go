@@ -111,6 +111,19 @@ func TestManagementRoutesMatchOpenAPIContract(t *testing.T) {
 	assertManagementOIDCSessionsUseBackchannelGuard(t, buildManagementContractRouter(t))
 }
 
+func TestManagementRouteContractRequiresMatchingWildcardMethod(t *testing.T) {
+	gate := routeDriftGate{routes: routeOperationSet(routeOperation{method: contractMethodPost, path: "/api/v1/custom/*hook"}),
+		documented: routeOperationSet(routeOperation{method: contractMethodPost, path: "/api/v1/custom/reputation/lookup"})}
+	if len(gate.documentedOperationsMissingRoutes()) != 0 {
+		t.Fatal("documented native endpoint is handled by the registered wildcard")
+	}
+
+	gate.documented = routeOperationSet(routeOperation{method: contractMethodDelete, path: "/api/v1/custom/reputation/override"})
+	if len(gate.documentedOperationsMissingRoutes()) != 1 {
+		t.Fatal("wildcard masked a missing HTTP method")
+	}
+}
+
 func TestManagementRoutesDoNotExposeConfigLoad(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -438,12 +451,28 @@ func (gate routeDriftGate) documentedOperationsMissingRoutes() []routeOperation 
 			continue
 		}
 
+		if gate.hasWildcardRoute(operation) {
+			continue
+		}
+
 		missing = append(missing, operation)
 	}
 
 	sortRouteOperations(missing)
 
 	return missing
+}
+
+// hasWildcardRoute recognizes concrete operations handled by an actually registered method-specific catch-all.
+func (gate routeDriftGate) hasWildcardRoute(operation routeOperation) bool {
+	for route := range gate.routes {
+		prefix, _, wildcard := strings.Cut(route.path, "/*")
+		if wildcard && route.method == operation.method && strings.HasPrefix(operation.path, prefix+"/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (gate routeDriftGate) isRouteException(route routeOperation) bool {

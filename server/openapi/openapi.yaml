@@ -41,7 +41,352 @@ tags:
   - name: Policy
     x-displayName: /api/v1/policy/decisions
     description: Unary Policy decision evaluation endpoint.
+  - name: Reputation
+    x-displayName: /api/v1/custom/reputation
+    description: Optional authenticated native reputation administration.
 paths:
+  "/api/v1/custom/reputation/allocation":
+    post:
+      tags:
+        - "Reputation"
+      operationId: "manageReputationAllocation"
+      summary: "Inspect or fence the current allocation generation."
+      description: "Requires backchannel bearer nauthilus:admin. Status reads the primary and all 16 shard fences without mutation. Drain requires audit fields and fences writers before starting the retained maximum event lifetime. Retry uses the identical audit fields and actor; a different in-progress change conflicts. After a process restart, allocation_maintenance must be explicitly enabled with the original key and generation to retain administration without activating writers. Status and retry remain available while writers are unready. Do not rotate before every shard is fenced and observed_at is at least drained_at plus retention. This API never changes keys, generations, retention or learned evidence."
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ReputationAllocationRequest"
+      responses:
+        200:
+          description: "Verified current generation, shard fences and optional durable operator receipt."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationAllocationView"
+        400:
+          description: "Invalid or duplicate fields, unsupported subject, or query parameters."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        401:
+          description: "Missing or invalid backchannel access token."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        403:
+          description: "Administrative authority or suitable authenticated actor missing."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        404:
+          description: "Reputation plugin or custom hook surface unavailable."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        409:
+          description: "Selected override revision changed; read current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        413:
+          description: "Body exceeds 4096 bytes."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        415:
+          description: "Expected application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        500:
+          description: "Host execution failed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        503:
+          description: "Primary state or verified readback unavailable; a mutation outcome may be unknown."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        504:
+          description: "Management timeout; inspect current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+  "/api/v1/custom/reputation/lookup":
+    post:
+      tags:
+        - "Reputation"
+      operationId: "lookupReputation"
+      summary: "Inspect one exact reputation subject."
+      description: "Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history."
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ReputationLookupRequest"
+      responses:
+        200:
+          description: "Sanitized primary-backed state. Mutation success includes the independently verified change receipt."
+          headers:
+            "Cache-Control":
+              schema:
+                type: "string"
+                const: "no-store"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationView"
+        400:
+          description: "Invalid or duplicate fields, unsupported subject, or query parameters."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        401:
+          description: "Missing or invalid backchannel access token."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        403:
+          description: "Administrative authority or suitable authenticated actor missing."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        404:
+          description: "Reputation plugin or custom hook surface unavailable."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        409:
+          description: "Selected override revision changed; read current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        413:
+          description: "Body exceeds 4096 bytes."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        415:
+          description: "Expected application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        500:
+          description: "Host execution failed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        503:
+          description: "Primary state or verified readback unavailable; a mutation outcome may be unknown."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        504:
+          description: "Management timeout; inspect current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+  "/api/v1/custom/reputation/override":
+    put:
+      tags:
+        - "Reputation"
+      operationId: "putReputationOverride"
+      summary: "Create or replace one audited operator override."
+      description: "Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history."
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ReputationOverridePutRequest"
+      responses:
+        200:
+          description: "Sanitized primary-backed state. Mutation success includes the independently verified change receipt."
+          headers:
+            "Cache-Control":
+              schema:
+                type: "string"
+                const: "no-store"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationView"
+        400:
+          description: "Invalid or duplicate fields, unsupported subject, or query parameters."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        401:
+          description: "Missing or invalid backchannel access token."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        403:
+          description: "Administrative authority or suitable authenticated actor missing."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        404:
+          description: "Reputation plugin or custom hook surface unavailable."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        409:
+          description: "Selected override revision changed; read current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        413:
+          description: "Body exceeds 4096 bytes."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        415:
+          description: "Expected application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        500:
+          description: "Host execution failed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        503:
+          description: "Primary state or verified readback unavailable; a mutation outcome may be unknown."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        504:
+          description: "Management timeout; inspect current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+    delete:
+      tags:
+        - "Reputation"
+      operationId: "deleteReputationOverride"
+      summary: "Remove one selected operator override revision."
+      description: "Optional native reputation management endpoint. Requires a backchannel access token with nauthilus:admin, even when additional hook scopes are configured. Subjects are accepted only in the JSON body; enumeration and query parameters are prohibited. Actor identity is host-derived and cannot be supplied in the body. Reads use primary Redis and conservative active/previous key merging. Override changes target one named slot; they do not erase other slots or learned evidence. The latest per-slot operator receipt is retained for 90 days; this is not a complete audit history."
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ReputationOverrideDeleteRequest"
+      responses:
+        200:
+          description: "Sanitized primary-backed state. Mutation success includes the independently verified change receipt."
+          headers:
+            "Cache-Control":
+              schema:
+                type: "string"
+                const: "no-store"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationView"
+        400:
+          description: "Invalid or duplicate fields, unsupported subject, or query parameters."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        401:
+          description: "Missing or invalid backchannel access token."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        403:
+          description: "Administrative authority or suitable authenticated actor missing."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        404:
+          description: "Reputation plugin or custom hook surface unavailable."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        409:
+          description: "Selected override revision changed; read current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        413:
+          description: "Body exceeds 4096 bytes."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        415:
+          description: "Expected application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        500:
+          description: "Host execution failed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        503:
+          description: "Primary state or verified readback unavailable; a mutation outcome may be unknown."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
+        504:
+          description: "Management timeout; inspect current state before retrying."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/ReputationManagementError"
   /api/v1/policy/decisions:
     post:
       tags:
@@ -1244,6 +1589,566 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    ReputationAllocationRequest:
+      oneOf:
+        - type: "object"
+          additionalProperties: false
+          required:
+            - "action"
+          properties:
+            action:
+              type: "string"
+              enum:
+                - "status"
+        - type: "object"
+          additionalProperties: false
+          required:
+            - "action"
+            - "reason"
+            - "origin"
+            - "audit_id"
+          properties:
+            action:
+              type: "string"
+              enum:
+                - "drain"
+            reason:
+              type: "string"
+              minLength: 1
+              maxLength: 64
+              pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+            origin:
+              type: "string"
+              minLength: 1
+              maxLength: 64
+              pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+            audit_id:
+              type: "string"
+              minLength: 1
+              maxLength: 128
+    ReputationAllocationView:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "mode"
+        - "generation"
+        - "next_generation"
+        - "fenced_shards"
+        - "drained_at"
+        - "retention"
+        - "observed_at"
+      properties:
+        mode:
+          type: "string"
+          enum:
+            - "active"
+            - "draining"
+        generation:
+          type: "integer"
+          minimum: 0
+          maximum: 1000000
+        next_generation:
+          type: "integer"
+          minimum: 1
+          maximum: 1000001
+        fenced_shards:
+          type: "integer"
+          minimum: 0
+          maximum: 16
+        drained_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        retention:
+          type: "number"
+          minimum: 1
+          maximum: 31536000
+        observed_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        audit:
+          "$ref": "#/components/schemas/ReputationAllocationAudit"
+    ReputationAllocationAudit:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "reason"
+        - "origin"
+        - "audit_id"
+        - "creator"
+      properties:
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        origin:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        audit_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        creator:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+    ReputationLookupRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "kind"
+        - "subject"
+      properties:
+        kind:
+          type: "string"
+          enum:
+            - "ip"
+            - "network"
+            - "asn"
+            - "domain"
+            - "account"
+            - "service"
+        subject:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+    ReputationOverridePutRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "kind"
+        - "subject"
+        - "reason"
+        - "audit_id"
+        - "origin"
+        - "band"
+        - "ttl_seconds"
+      properties:
+        kind:
+          type: "string"
+          enum:
+            - "ip"
+            - "network"
+            - "asn"
+            - "domain"
+            - "account"
+            - "service"
+        subject:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        audit_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        origin:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        previous_audit:
+          type: "string"
+          maxLength: 128
+        slot:
+          type: "string"
+          enum:
+            - "active"
+            - "previous"
+          default: "active"
+        band:
+          type: "string"
+          enum:
+            - "blocked"
+            - "trusted"
+            - "neutral"
+        ttl_seconds:
+          type: "integer"
+          format: "int64"
+          minimum: 0
+          maximum: 31536000
+    ReputationOverrideDeleteRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "kind"
+        - "subject"
+        - "reason"
+        - "audit_id"
+        - "origin"
+        - "previous_audit"
+      properties:
+        kind:
+          type: "string"
+          enum:
+            - "ip"
+            - "network"
+            - "asn"
+            - "domain"
+            - "account"
+            - "service"
+        subject:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        audit_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        origin:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        previous_audit:
+          type: "string"
+          maxLength: 128
+        slot:
+          type: "string"
+          enum:
+            - "active"
+            - "previous"
+          default: "active"
+    ReputationAudit:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "schema"
+        - "kind"
+        - "operation"
+        - "reason"
+        - "creator"
+        - "audit_id"
+        - "previous_audit"
+        - "origin"
+        - "created_at"
+      properties:
+        schema:
+          type: "string"
+          enum:
+            - "reputation-operator-audit.v1"
+        kind:
+          type: "string"
+          enum:
+            - "ip"
+            - "network"
+            - "asn"
+            - "domain"
+            - "account"
+            - "service"
+        operation:
+          type: "string"
+          enum:
+            - "override_put"
+            - "override_delete"
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        creator:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        audit_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        previous_audit:
+          type: "string"
+          maxLength: 128
+        origin:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        created_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+    ReputationOverride:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "band"
+        - "reason"
+        - "creator"
+        - "audit_id"
+        - "origin"
+        - "created_at"
+        - "expires_at"
+      properties:
+        band:
+          type: "string"
+          enum:
+            - "blocked"
+            - "trusted"
+            - "neutral"
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        creator:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        audit_id:
+          type: "string"
+          minLength: 1
+          maxLength: 128
+        origin:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        created_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        expires_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+    ReputationScores:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "risk_score"
+        - "trust_score"
+        - "confidence"
+        - "samples"
+        - "source_diversity"
+        - "age_seconds"
+      properties:
+        risk_score:
+          type: "number"
+          minimum: 0
+          maximum: 1
+        trust_score:
+          type: "number"
+          minimum: 0
+          maximum: 1
+        confidence:
+          type: "number"
+          minimum: 0
+          maximum: 1
+        samples:
+          type: "number"
+          minimum: 0
+          maximum: 8000000
+        source_diversity:
+          type: "integer"
+          minimum: 0
+          maximum: 8
+        age_seconds:
+          type: "integer"
+          format: "int64"
+          minimum: 0
+          maximum: 100000000000
+    ReputationProfile:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "state"
+        - "band"
+        - "override"
+      properties:
+        state:
+          type: "string"
+          enum:
+            - "fresh"
+            - "not_found"
+        band:
+          type: "string"
+          enum:
+            - "unknown"
+            - "trusted"
+            - "positive"
+            - "neutral"
+            - "suspicious"
+            - "blocked"
+        override:
+          type: "string"
+          enum:
+            - "none"
+            - "trusted"
+            - "neutral"
+            - "blocked"
+        details:
+          "$ref": "#/components/schemas/ReputationScores"
+    ReputationSourceClasses:
+      type: "object"
+      additionalProperties: false
+      required: []
+      properties:
+        fast:
+          type: "array"
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: "string"
+            minLength: 1
+            maxLength: 64
+            pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        operational:
+          type: "array"
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: "string"
+            minLength: 1
+            maxLength: 64
+            pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        baseline:
+          type: "array"
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: "string"
+            minLength: 1
+            maxLength: 64
+            pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+    ReputationEvidence:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "kind"
+        - "slot"
+        - "state"
+        - "source_classes"
+        - "observed_at"
+        - "updated_at"
+        - "risk_at"
+        - "trust_at"
+        - "authoritative_at"
+      properties:
+        kind:
+          type: "string"
+          enum:
+            - "ip"
+            - "network"
+            - "asn"
+            - "domain"
+            - "account"
+            - "service"
+        slot:
+          type: "string"
+          enum:
+            - "active"
+            - "previous"
+        state:
+          type: "string"
+          enum:
+            - "fresh"
+            - "not_found"
+        source_classes:
+          "$ref": "#/components/schemas/ReputationSourceClasses"
+        override:
+          "$ref": "#/components/schemas/ReputationOverride"
+        last_change:
+          "$ref": "#/components/schemas/ReputationAudit"
+        observed_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        updated_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        risk_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        trust_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+        authoritative_at:
+          type: "number"
+          minimum: 0
+          maximum: 100000000000
+    ReputationView:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "schema"
+        - "kind"
+        - "model_id"
+        - "model_revision"
+        - "config_revision"
+        - "profiles"
+        - "evidence"
+      properties:
+        schema:
+          type: "string"
+          enum:
+            - "reputation-management.v1"
+        kind:
+          type: "string"
+          enum:
+            - "ip"
+            - "network"
+            - "asn"
+            - "domain"
+            - "account"
+            - "service"
+        model_id:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        model_revision:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        config_revision:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        profiles:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "fast"
+            - "operational"
+            - "baseline"
+          properties:
+            fast:
+              "$ref": "#/components/schemas/ReputationProfile"
+            operational:
+              "$ref": "#/components/schemas/ReputationProfile"
+            baseline:
+              "$ref": "#/components/schemas/ReputationProfile"
+        evidence:
+          type: "array"
+          minItems: 1
+          maxItems: 4
+          items:
+            "$ref": "#/components/schemas/ReputationEvidence"
+        verified_change:
+          "$ref": "#/components/schemas/ReputationAudit"
+    ReputationManagementError:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "error"
+      properties:
+        error:
+          type: "string"
+          minLength: 1
+          maxLength: 128
     PolicyAdvice:
       type: object
       additionalProperties: false

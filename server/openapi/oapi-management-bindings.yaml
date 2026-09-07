@@ -11,4 +11,5 @@ output-options:
     - Config
     - OIDCSessions
     - Policy
+    - Reputation
 output: server/openapi/generated/management/bindings.gen.go

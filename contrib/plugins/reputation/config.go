@@ -28,6 +28,7 @@ const (
 )
 
 type rawConfig struct {
+	AllocationMaintenance           bool                     `mapstructure:"allocation_maintenance"`
 	IPOverrideNetworks              []string                 `mapstructure:"ip_override_networks"`
 	AuthLearning                    *authLearningConfig      `mapstructure:"auth_learning"`
 	Bands                           bandConfig               `mapstructure:"bands"`

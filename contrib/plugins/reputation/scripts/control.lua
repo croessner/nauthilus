@@ -4,6 +4,11 @@ if not request or #KEYS ~= 1 then return {'invalid_state'} end
 local current = hash(KEYS[1], 8)
 if not current or not closed(current, {'schema','identity','mode'}) then return {'invalid_state'} end
 if current.schema and current.schema ~= request.schema then return {'allocation_mismatch'} end
+if request.operation == 'status' then
+    if current.schema ~= request.schema or current.identity ~= request.identity or (current.mode ~= 'active' and current.mode ~= 'draining') or
+       redis.call('PTTL', KEYS[1]) ~= -1 then return {'allocation_mismatch'} end
+    return {current.mode}
+end
 if request.operation == 'drain' then
     if current.identity and current.identity ~= request.identity then return {'allocation_mismatch'} end
     redis.call('HSET', KEYS[1], 'schema', request.schema, 'identity', request.identity, 'mode', 'draining')

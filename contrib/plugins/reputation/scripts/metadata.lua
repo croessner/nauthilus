@@ -10,7 +10,8 @@ if not generation then return {'invalid_state'} end
 if (next(metadata) == nil) ~= (next(models) == nil) then return {'invalid_state'} end
 if next(metadata) ~= nil then
     local allowed = {schema=true,identity=true,shards=true,generation=true,mode=true,retention=true,
-        drain_generation=true,drained_at=true,previous_identity=true}
+        drain_generation=true,drained_at=true,previous_identity=true,
+        audit_reason=true,audit_origin=true,audit_id=true,audit_creator=true}
     for field in pairs(metadata) do if not allowed[field] then return {'invalid_state'} end end
     if not text(metadata.schema, 64) or not text(metadata.identity, 128) or
        not number(metadata.retention, 1, 31536000) or not number(metadata.shards, 1, 256) or
@@ -23,10 +24,33 @@ if metadata.schema and (metadata.schema ~= request.schema or tonumber(metadata.s
     return {'allocation_mismatch'}
 end
 
+if request.operation == 'status' then
+    if metadata.identity ~= request.identity or generation ~= request.generation then return {'allocation_mismatch'} end
+    local audit = nil
+    if metadata.audit_id then
+        if not audit_text(metadata.audit_id) or not audit_text(metadata.audit_creator) or
+           not identifier(metadata.audit_reason) or not identifier(metadata.audit_origin) then return {'invalid_state'} end
+        audit = {reason=metadata.audit_reason,origin=metadata.audit_origin,audit_id=metadata.audit_id,creator=metadata.audit_creator}
+    end
+    return {'snapshot', cjson.encode({mode=metadata.mode,generation=generation,
+        next_generation=tonumber(metadata.drain_generation) or generation + 1,
+        drained_at=tonumber(metadata.drained_at) or 0,retention=tonumber(metadata.retention),observed_at=now,audit=audit})}
+end
+
 if request.operation == 'begin_drain' or request.operation == 'finish_drain' then
     if metadata.identity ~= request.identity or generation ~= request.generation then return {'allocation_mismatch'} end
     if request.operation == 'begin_drain' then
         if metadata.mode ~= 'active' and metadata.mode ~= 'draining' then return {'invalid_state'} end
+        local audit = request.audit
+        if audit then
+            if not closed(audit, {'reason','origin','audit_id','creator'}) or not identifier(audit.reason) or
+               not identifier(audit.origin) or not audit_text(audit.audit_id) or not audit_text(audit.creator) then return {'invalid_state'} end
+            if metadata.mode == 'draining' and metadata.audit_id and
+               (metadata.audit_id ~= audit.audit_id or metadata.audit_creator ~= audit.creator or
+                metadata.audit_reason ~= audit.reason or metadata.audit_origin ~= audit.origin) then return {'override_conflict'} end
+            redis.call('HSET', KEYS[1], 'audit_reason', audit.reason, 'audit_origin', audit.origin,
+                'audit_id', audit.audit_id, 'audit_creator', audit.creator)
+        elseif metadata.audit_id and metadata.mode == 'draining' then return {'override_conflict'} end
         if metadata.mode == 'active' then
             redis.call('HSET', KEYS[1], 'mode', 'draining', 'drain_generation', generation + 1, 'drained_at', 0)
         end
@@ -63,5 +87,6 @@ if count > 64 then return {'quota_exceeded'} end
 local retained = math.max(tonumber(metadata.retention) or 0, request.retention)
 redis.call('HSET', KEYS[1], 'schema', request.schema, 'identity', request.identity, 'shards', request.shards,
     'generation', request.generation, 'mode', 'active', 'retention', retained, 'previous_identity', previous)
+redis.call('HDEL', KEYS[1], 'audit_reason', 'audit_origin', 'audit_id', 'audit_creator', 'drain_generation', 'drained_at')
 for id, fingerprint in pairs(request.models) do redis.call('HSET', KEYS[2], id, fingerprint) end
 return {'active', previous}

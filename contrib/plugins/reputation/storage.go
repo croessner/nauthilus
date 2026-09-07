@@ -51,6 +51,7 @@ type stateOwner struct {
 }
 
 type metadataRequest struct {
+	Audit      *allocationAudit  `json:"audit,omitempty"`
 	Models     map[string]string `json:"models"`
 	Operation  string            `json:"operation"`
 	Schema     string            `json:"schema"`
@@ -108,6 +109,11 @@ func (s *stateOwner) start(ctx context.Context) error {
 		}
 	}
 
+	if s.config.raw.AllocationMaintenance {
+		_, err := s.allocationStatus(ctx)
+		return err
+	}
+
 	response, err := s.run(ctx, scriptMetadata, s.keys.metadata(), s.metadataRequest("activate"))
 	if err != nil {
 		return err
@@ -147,14 +153,19 @@ func (s *stateOwner) metadataRequest(operation string) metadataRequest {
 
 // quiesce fences every shard before recording the start of the maximum-retention allocation-key drain.
 func (s *stateOwner) quiesce(ctx context.Context) error {
+	return s.quiesceAudited(ctx, nil)
+}
+
+// quiesceAudited preserves one operator receipt while retrying every shard fence before completing the drain clock.
+func (s *stateOwner) quiesceAudited(ctx context.Context, audit *allocationAudit) error {
 	s.ready.Store(false)
 
-	if _, err := s.run(ctx, scriptMetadata, s.keys.metadata(), s.metadataRequest("begin_drain")); err != nil {
+	if _, err := s.run(ctx, scriptMetadata, s.keys.metadata(), s.auditedMetadataRequest("begin_drain", audit)); err != nil {
 		return err
 	}
 
 	for shard := range manifestShardCount {
-		if _, err := s.run(ctx, scriptControl, []string{s.keys.control(shard)}, controlRequest{Operation: "drain", Schema: manifestSchema, Identity: s.identity}); err != nil {
+		if _, err := s.run(ctx, scriptControl, []string{s.keys.control(shard)}, controlRequest{Operation: allocationDrainOperation, Schema: manifestSchema, Identity: s.identity}); err != nil {
 			return err
 		}
 	}
@@ -201,7 +212,7 @@ func (s *stateOwner) run(ctx context.Context, name string, keys []string, reques
 // storageStatusError preserves the closed state-machine outcomes without Redis keys or evidence in errors.
 func storageStatusError(status string) error {
 	switch status {
-	case assessmentMissing, storageOverrideRead, storageOverrideMissing, storageOverrideWritten, storageOverrideDeleted, storageSnapshot, storageActive, "draining", storageAdmitted, storageApplied, storageDuplicate:
+	case assessmentMissing, storageOverrideRead, storageOverrideMissing, storageOverrideWritten, storageOverrideDeleted, storageSnapshot, storageActive, storageDraining, storageAdmitted, storageApplied, storageDuplicate:
 		return nil
 	case storageOverrideConflict:
 		return errOverrideConflict

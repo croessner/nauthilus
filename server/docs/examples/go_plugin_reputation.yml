@@ -16,6 +16,8 @@ plugins:
       config:
         state_schema: reputation-state.v1
         model_id: baseline-test
+        allocation_maintenance: false
+        allocation_drain_generation: 0
         subject_scope: reputation-subject
         manifest_scope: reputation-manifest
         retention: 2160h

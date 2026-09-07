@@ -43,7 +43,7 @@ const (
 
 // reputationScripts returns named sources for host-owned upload, routing and bounded NOSCRIPT recovery.
 func reputationScripts() map[string]string {
-	preamble := fmt.Sprintf("local state_schema = %q\nlocal manifest_schema = %q\nlocal override_schema = %q\n", stateSchema, manifestSchema, overrideSchema)
+	preamble := fmt.Sprintf("local state_schema = %q\nlocal manifest_schema = %q\nlocal override_schema = %q\nlocal audit_schema = %q\n", stateSchema, manifestSchema, overrideSchema, managementAuditSchema)
 	shared := preamble + commonScript + stateScript + overrideStateScript
 
 	return map[string]string{

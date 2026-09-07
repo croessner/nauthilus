@@ -122,8 +122,27 @@ time, wait the largest registered manifest retention, increment
 Startup cannot skip this durable fence or reopen an older generation. Partial
 shard activation can resume after restart, but readiness is published only when
 all shards are active. Ordinary plugin shutdown only stops its local writer;
-it does not drain other writers. The management integration must own the
-explicit drain operation.
+it does not drain other writers.
+
+Use `POST /api/v1/custom/reputation/allocation` with an administrative backchannel
+token and `{"action":"drain","reason":"key_rotation","origin":"operator","audit_id":"rotation-ticket"}`.
+The actor comes from the authenticated host identity. Retry with the same
+actor and audit fields; another change cannot replace an in-progress receipt.
+`{"action":"status"}` is read-only and returns the current generation, Redis
+clock, completed drain clock, retained maximum lifetime, fenced shard count and
+operator receipt. It never returns the allocation identity or key material.
+
+After a process interruption, retain the original key and generation and set
+`allocation_maintenance: true` in the reputation plugin configuration. This
+explicit mode starts only administrative access: writers and ordinary subject
+management stay unavailable. Status and the same audited drain request can
+resume partial fences; retry does not reset a completed retention clock.
+Verify `fenced_shards: 16`, a positive `drained_at`, and
+`observed_at >= drained_at + retention` before changing the key. Then increment
+`allocation_drain_generation`, disable maintenance and restart writers
+coherently. The durable startup checks still reject an early key change or
+old generation. A 503 or timeout leaves progress unknown; inspect status and
+retry the same change. Do not manually clear fences or shorten retention.
 
 Run `GOEXPERIMENT=runtimesecret make reputation-redis-check` for the dedicated
 integration gate. It starts and reaps only test-owned Redis/Valkey processes:
@@ -187,24 +206,75 @@ scores. Fresh state requires all bounded numeric details, including valid zero
 mass. Providers emit reputation facts only; Policy retains permit/deny authority
 and all external hard failures remain independent.
 
-## Operator override service
+## Administrative management API
 
-The internal management service supports primary readback and compare-and-set
-creation, replacement and removal. It accepts bounded kind/subject, band
-(`blocked`, `trusted`, `neutral`), reason, creator, audit correlation and origin,
-plus optional bounded lifetime. Redis supplies creation and expiry times.
-Replacement/removal must name the previously read audit correlation, preventing
-a stale operator action from overwriting a newer revision. Override keys are
-model-independent and contain their typed opaque subject identity and complete
-audit metadata. Non-expiring overrides are explicit; expired entries lose their
-authority.
+The registered native hooks extend the existing Management API:
 
-Across rotation slots, precedence is `blocked`, then `trusted`, then `neutral`,
-then learned state. Any required read failure still makes the result unavailable.
-Management writes the active slot only; rotation requires explicit copies and
-readback verification. The operator-facing authenticated management surface
-owns authorization and is connected separately. This module adds no management
-HTTP route or implicit external authority.
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/custom/reputation/lookup` | Inspect one exact subject |
+| `PUT /api/v1/custom/reputation/override` | Create or replace one override |
+| `DELETE /api/v1/custom/reputation/override` | Remove the explicitly selected revision |
+
+All three require a valid backchannel access token with `nauthilus:admin`.
+Policy observation credentials and authenticate-only tokens do not authorize
+management. Configured hook scopes cannot replace the administrative minimum.
+The host checks authority before reading the body or invoking the plugin.
+The authenticated subject, or client identity when no subject exists, supplies
+the creator. A missing or unsuitable identity is rejected; callers cannot
+supply `creator`. No unauthenticated route, local command or public alias is
+provided. These optional routes return 404 when the plugin is absent.
+
+Requests use `application/json` with a maximum 4096-byte body. Lookup accepts
+only `kind` and `subject`; supported kinds are `ip`, `network`, `asn`, `domain`,
+`account` and `service`. Subjects are canonicalized under the same model rules
+and resolved through the host HMAC service. Query parameters, unknown or duplicate
+fields, nulls, trailing JSON and wildcard searches are rejected. Put additionally
+requires `band` (`blocked`, `trusted`, `neutral`), `reason`, `audit_id`, `origin`
+and explicit `ttl_seconds` (0 means non-expiring; otherwise at most one year).
+Replacement and deletion require the existing `previous_audit`; creating a
+missing override uses an empty previous revision. Reason and origin are bounded
+lower-case identifiers. Audit IDs are bounded opaque operator correlations.
+
+Mutation `slot` selects `active` by default or the explicit `previous` HMAC
+slot when present. The caller never supplies a tag, key or model-storage path.
+A change affects only that slot: removing an active override does not silently
+remove a previous-slot block. Across slots, precedence remains blocked, trusted,
+neutral, then learned state. Any required primary read failure prevents a
+successful view or acknowledgement. Explicit copies during key rotation require
+separate requests and verified readback for each selected slot.
+
+The response contains all three decayed profiles, conditional scores, confidence,
+effective samples, freshness and source-class membership. Per-slot evidence
+shows Redis observation time, last update and independent/authoritative evidence
+times plus active override metadata. IP lookups additionally show metadata for
+the selected configured network override when one applies. Values are timestamps
+in Unix seconds. No subject, HMAC tag, raw event history or Redis key is returned.
+Absent evidence has no invented numeric scores. The immutable model revision and
+separate configuration revision distinguish ingestion semantics from changed
+read-time calibration. Reads neither write learned state nor refresh retention.
+
+Override mutations and their operator receipt execute in one primary Redis
+script and hash slot. Before returning success, a separate primary assessment
+must confirm the selected override, complete metadata and lifetime alongside the
+matching receipt. Conflict returns 409. Storage failure, a divergent readback or
+a timeout may leave the mutation outcome unknown: read current state and the
+receipt before retrying, and never replace `previous_audit` blindly.
+Responses are `Cache-Control: no-store` and error bodies contain only fixed
+classes. Subjects must stay in the body, never URLs or diagnostic labels.
+
+One model-independent `operator-audit` hash is retained per subject slot for
+90 days. It contains the latest bounded change receipt, including deletion,
+authenticated creator, reason, origin, previous revision and Redis time. It is
+not a complete audit history and never grants reputation authority. Override
+expiry removes authority independently of this receipt. Existing state with
+invalid receipt structure fails management operations before a mutation; normal
+Policy assessment does not consume administrative receipts.
+
+The shipped Management OpenAPI document and generated client include these
+optional operations. Local tests cover actual native registration, host bearer
+authorization, actor projection, Redis mutation/readback, expiry, rotation,
+read-time decay, response schema and the rejected observation-caller path.
 
 ## Observation storage and authentication learning
 
