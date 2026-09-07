@@ -110,6 +110,7 @@ type Component struct {
 	LocalName                        string
 	Kind                             ComponentKind
 	Origin                           ComponentOrigin
+	PostActionAdmissionLimits        pluginapi.PostActionAdmissionLimits
 }
 
 // DebugModule describes one registered plugin debug selector.
@@ -506,12 +507,22 @@ func (r *Registrar) RegisterPostActionTarget(target pluginapi.PostActionTarget) 
 		return ErrNilComponent
 	}
 
+	var limits pluginapi.PostActionAdmissionLimits
+
+	if bounded, ok := target.(pluginapi.BoundedPostActionTarget); ok {
+		limits.RequestsPerSecond, limits.MaxConcurrency = bounded.AdmissionLimits()
+		if err := limits.Validate(); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidDescriptor, err)
+		}
+	}
+
 	return r.registerComponent(Component{
-		Value:      target,
-		ModuleName: r.module.Name,
-		LocalName:  target.Name(),
-		Kind:       ComponentKindPostActionTarget,
-		Origin:     ComponentOriginNative,
+		Value:                     target,
+		PostActionAdmissionLimits: limits,
+		ModuleName:                r.module.Name,
+		LocalName:                 target.Name(),
+		Kind:                      ComponentKindPostActionTarget,
+		Origin:                    ComponentOriginNative,
 	})
 }
 

@@ -127,6 +127,7 @@ type runtimeReport struct {
 	comparisonRule      string
 	comparisonEffect    decision.Effect
 	outcomeCode         decision.StatusCode
+	replayUnsafe        bool
 }
 
 // newCheckpointRuntime constructs the package-private catalog-bound evaluator.
@@ -998,6 +999,13 @@ func (r *checkpointRuntime) indeterminate(
 	report runtimeReport,
 ) runtimeEvaluation {
 	status, _ := decision.NewStatus(code, "The admitted policy evaluation could not complete reliably.", nil)
+	if report.replayUnsafe && status.Retryable() {
+		code = decision.StatusCodeEffectReplayUnsafe
+		status, _ = decision.NewStatus(code, "The admitted policy evaluation cannot be repeated safely.", nil)
+	}
+
+	report.outcomeCode = code
+
 	metadata := policyMetadata(target, input.generation, report.policySet, report.rule)
 	diagnostics := sanitizeDiagnostics(input.request, target, input.checkpoint.Name(), input.generation, code, report)
 	response, _ := decision.NewDecisionResponse(decision.DecisionResponseInput{

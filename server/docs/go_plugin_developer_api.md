@@ -911,8 +911,17 @@ been dispatched but its result cannot be established. When this effect and all p
 effects declare idempotence, the public status is `effect_outcome_unknown_replay_safe`, with
 `retryable: true`. The caller may repeat the complete request with identical payload and all original
 idempotency values. An earlier unsafe effect prevents this status. Unsafe ambiguity remains
-`effect_outcome_unknown`, with `retryable: false`. A definite failure retains its existing behavior.
+`effect_outcome_unknown`, with `retryable: false`. A later definite failure, cancellation or
+acceptance rejection after an earlier non-idempotent success produces `effect_replay_unsafe`,
+with `retryable: false`. Failure before any unsafe completion retains its retry guidance.
 Accepted asynchronous post-actions cannot change an already finalized response.
+
+`BoundedPostActionTarget` optionally declares `AdmissionLimits()` as requests per second and
+maximum concurrent callbacks. The registrar captures these scalar bounds once; the host enforces
+them before invoking the callback. The token bucket burst equals the configured per-second rate.
+Exhaustion returns a temporary callback failure and cannot rewrite a finalized authentication
+response. Limits apply per registered component within one runtime generation, across its targets.
+Internal reputation learning declares the strictest configured source bounds through this contract.
 
 `DecisionEffectRequest`, `ObligationRequest`, and `PostActionRequest` expose an immutable
 `ExecutionIdentity()` view. It contains the configured module, registered component, callback

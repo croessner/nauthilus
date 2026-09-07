@@ -87,6 +87,9 @@ const (
 
 	// StatusCodeEffectAcceptanceRejected reports rejected mandatory post-action ownership.
 	StatusCodeEffectAcceptanceRejected StatusCode = "effect_acceptance_rejected"
+
+	// StatusCodeEffectReplayUnsafe forbids repeating a request with an already completed non-idempotent effect.
+	StatusCodeEffectReplayUnsafe StatusCode = "effect_replay_unsafe"
 )
 
 // NewValidationDetail constructs a safe field-level detail for later status validation.
@@ -447,6 +450,7 @@ func (c StatusCode) valid() bool {
 		StatusCodeProviderUnavailable,
 		StatusCodeEffectOutcomeUnknown,
 		StatusCodeEffectOutcomeUnknownReplaySafe,
+		StatusCodeEffectReplayUnsafe,
 		StatusCodeEffectAcceptanceRejected:
 		return true
 	default:

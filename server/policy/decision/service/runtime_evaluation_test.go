@@ -720,8 +720,8 @@ func TestDecisionRuntimeEffectOwnershipFailureAndAmbiguity(t *testing.T) {
 		t.Fatalf("acceptance failure effect/sync/accept = %q/%d/%d", outcome.response.Effect(), syncProvider.callCount(), acceptor.callCount())
 	}
 
-	if outcome.response.Status().Code() != decision.StatusCodeEffectAcceptanceRejected {
-		t.Fatalf("acceptance failure status = %q, want %q", outcome.response.Status().Code(), decision.StatusCodeEffectAcceptanceRejected)
+	if outcome.response.Status().Code() != decision.StatusCodeEffectReplayUnsafe {
+		t.Fatalf("acceptance failure after unsafe success = %q, want %q", outcome.response.Status().Code(), decision.StatusCodeEffectReplayUnsafe)
 	}
 
 	if work.cleanupCount() != 1 {
@@ -1747,6 +1747,16 @@ func evaluateRuntimeOutcomeWithFinalization(
 ) runtimeEvaluation {
 	t.Helper()
 
+	return evaluateRuntimeOutcomeContext(context.Background(), t, evaluator, target, supervisor, finalization)
+}
+
+// evaluateRuntimeOutcomeContext exercises finalization with a caller-owned cancellation boundary.
+func evaluateRuntimeOutcomeContext(
+	ctx context.Context, t *testing.T, evaluator checkpointEvaluator, target decision.Target,
+	supervisor effectsupervisor.Acceptor, finalization decision.EvaluationFinalization,
+) runtimeEvaluation {
+	t.Helper()
+
 	caller := mustAuthorityCaller(t, false)
 
 	request, err := decision.NewDecisionRequest(decision.DecisionRequestInput{
@@ -1759,7 +1769,7 @@ func evaluateRuntimeOutcomeWithFinalization(
 	empty, _ := decision.NewFactSet(nil)
 	checkpoint, _ := decision.NewCheckpoint(decision.CheckpointFinalDecision, empty)
 
-	outcome, err := evaluator.Evaluate(context.Background(), checkpointEvaluation{
+	outcome, err := evaluator.Evaluate(ctx, checkpointEvaluation{
 		request: request, checkpoint: checkpoint, supervisor: supervisor, generation: 1, finalization: finalization,
 	})
 	if err != nil {

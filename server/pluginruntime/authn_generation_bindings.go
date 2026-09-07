@@ -105,6 +105,7 @@ type nativeAuthnObligationProvider struct {
 
 type nativeAuthnPostActionProvider struct {
 	target       pluginapi.PostActionTarget
+	admission    *postActionAdmission
 	capabilities []pluginapi.Capability
 	call         nativeAuthnComponentCall
 	id           string
@@ -694,6 +695,7 @@ func (b *AuthenticationBindings) bindAuthenticationEffectOwner(
 
 		b.postActions[identity] = &nativeAuthnPostActionProvider{
 			target: target, capabilities: slices.Clone(module.capabilities), id: identity,
+			admission: newPostActionAdmission(component.PostActionAdmissionLimits),
 			call: newNativeAuthnComponentCall(
 				input.Observer, module.moduleName, component.LocalName, authnNativePostActionExtension, "Enqueue",
 			),
@@ -963,6 +965,11 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 	if err != nil {
 		return result, err
 	}
+
+	if !p.admission.acquire(ctx) {
+		return pluginapi.PostActionEnqueueResult{Temporary: true}, errPostActionAdmissionLimited
+	}
+	defer p.admission.release()
 
 	return invokeAuthenticationComponent(
 		ctx, p.call,

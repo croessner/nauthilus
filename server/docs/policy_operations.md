@@ -149,6 +149,7 @@ The public effect and status are authoritative for the synchronous response:
 | accepted post-action later fails | original response is immutable; failure is operational | reconcile the external system from audit and provider evidence |
 | partial effect execution | completed ordinals stay completed; remaining work is not replayed | reconcile externally, preserving original order evidence |
 | `effect_outcome_unknown` | an unsafe external dispatch may have happened | reconcile before another domain action; never assume absence |
+| `effect_replay_unsafe` | an earlier non-idempotent effect completed or was accepted before a later failure | reconcile the partial execution; do not repeat the complete request |
 | `effect_outcome_unknown_replay_safe` | all attempted effects explicitly tolerate replay | retry the complete identical request with its original admitted idempotency keys |
 
 The host attempts each selected effect ordinal at most once. It provides no

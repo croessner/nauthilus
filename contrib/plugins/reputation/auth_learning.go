@@ -20,10 +20,39 @@ type authLearningConfig struct {
 	BadCredentialsSignal string `mapstructure:"bad_credentials_signal"`
 }
 
-type authenticationLearner struct{ plugin *Plugin }
+type authenticationLearner struct {
+	plugin *Plugin
+	limits pluginapi.PostActionAdmissionLimits
+}
 
 // Name declares the sole Policy-selected backend learning callback.
 func (authenticationLearner) Name() string { return componentLearnOutcome }
+
+// AdmissionLimits delegates the strictest internal source bounds to the host callback gate.
+func (p authenticationLearner) AdmissionLimits() (int, int) {
+	return p.limits.RequestsPerSecond, p.limits.MaxConcurrency
+}
+
+// learningAdmissionLimits preserves every source bound when several identities share the callback.
+func (c *configuration) learningAdmissionLimits() pluginapi.PostActionAdmissionLimits {
+	var limits pluginapi.PostActionAdmissionLimits
+
+	for identity, source := range c.internalSources {
+		if identity.component != componentLearnOutcome {
+			continue
+		}
+
+		if limits.RequestsPerSecond == 0 || source.config.RequestsPerSecond < limits.RequestsPerSecond {
+			limits.RequestsPerSecond = source.config.RequestsPerSecond
+		}
+
+		if limits.MaxConcurrency == 0 || source.config.MaxConcurrency < limits.MaxConcurrency {
+			limits.MaxConcurrency = source.config.MaxConcurrency
+		}
+	}
+
+	return limits
+}
 
 // validateAuthLearning confines authentication evidence to exact host callbacks and conservative subjects.
 func (c *configuration) validateAuthLearning() error {
@@ -92,7 +121,7 @@ func (p *Plugin) registerAuthentication(registrar pluginapi.Registrar, cfg *conf
 		return nil
 	}
 
-	if err := registrar.RegisterPostActionTarget(authenticationLearner{plugin: p}); err != nil {
+	if err := registrar.RegisterPostActionTarget(authenticationLearner{plugin: p, limits: cfg.learningAdmissionLimits()}); err != nil {
 		return err
 	}
 

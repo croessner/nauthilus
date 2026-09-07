@@ -5,8 +5,29 @@ import (
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	serverconfig "github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 )
+
+// TestAuthenticationLearningRegistersHostAdmissionBounds proves source configuration reaches the host gate.
+func TestAuthenticationLearningRegistersHostAdmissionBounds(t *testing.T) {
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(learningConfigMap(t)))
+	requireNoError(t, err)
+
+	for _, source := range cfg.internalSources {
+		source.config.RequestsPerSecond = 1
+		source.config.MaxConcurrency = 1
+	}
+
+	registrar := pluginregistry.NewRegistry().NewRegistrar(serverconfig.PluginModule{Name: pluginName})
+	p := &Plugin{registered: make(map[executionKey]struct{})}
+	requireNoError(t, p.registerAuthentication(registrar, cfg))
+
+	components := registrar.Components()
+	if len(components) != 1 || components[0].PostActionAdmissionLimits != (pluginapi.PostActionAdmissionLimits{RequestsPerSecond: 1, MaxConcurrency: 1}) {
+		t.Fatal("internal source bounds did not reach host-owned callback admission")
+	}
+}
 
 // learningConfigMap extends the canonical example with conservative independent authentication signals.
 func learningConfigMap(t *testing.T) map[string]any {

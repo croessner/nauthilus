@@ -1427,7 +1427,17 @@ type PostActionTarget interface {
     Name() string
     Enqueue(context.Context, PostActionRequest) (PostActionEnqueueResult, error)
 }
+
+type BoundedPostActionTarget interface {
+    PostActionTarget
+    AdmissionLimits() (requestsPerSecond, maxConcurrency int)
+}
 ```
+
+Optional admission limits are scalar registration metadata, captured once and enforced by the host before callback
+invocation. The per-generation component gate uses a token bucket with burst equal to the requested rate, plus a
+concurrency ceiling. Invalid explicit limits reject registration; overload returns a temporary failure without invoking
+the plugin or changing an already finalized authentication response.
 
 Post-action targets mirror the existing Lua post-action enqueue path. They are selected by policy as post-decision
 effects, receive a host-built request snapshot, and run inside one detached post-action plan with host-owned deadlines,

@@ -209,6 +209,10 @@ func (r *checkpointRuntime) executePreparedEffects(
 
 		execution := r.executeEffect(ctx, input, planned)
 		state := execution.state
+		if execution.accepted && !replaySafeEffectPrefix(plan[index:index+1]) {
+			report.replayUnsafe = true
+		}
+
 		report.effects = append(report.effects, effectRecord{
 			id: planned.definition.ID(), provider: planned.definition.Provider(), state: state, ordinal: planned.execution.ordinal,
 		})
