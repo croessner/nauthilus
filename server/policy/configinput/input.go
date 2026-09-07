@@ -592,12 +592,21 @@ func validatePreparedExtensionMetadata(
 	return nil
 }
 
-// sameConfiguredProviderSchedule compares operator-owned scheduling while recognizing the synthetic fact placeholder.
+// sameConfiguredProviderSchedule compares exact binding metadata after removing structural placeholder scheduling.
 func sameConfiguredProviderSchedule(
 	configured policyconfig.ProviderConfig,
 	expected registry.ProviderDefinition,
 	actual registry.ProviderDefinition,
 ) bool {
+	if len(configured.ProducedFacts) == 0 {
+		var err error
+
+		expected, err = configuredEffectProviderDefinition(expected, expected.PostActionAcceptance())
+		if err != nil {
+			return false
+		}
+	}
+
 	executionsMatch := reflect.DeepEqual(expected.Executions(), actual.Executions())
 	if len(configured.ProducedFacts) > 0 &&
 		slices.Equal(expected.Executions(), []registry.ExecutionClass{registry.ExecutionHostSync}) &&

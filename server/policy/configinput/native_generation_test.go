@@ -163,6 +163,90 @@ func TestConfiguredNativeProviderBindingsValidateSharedTargetCatalog(t *testing.
 	}
 }
 
+func TestConfiguredNativeMixedProvidersCompilePreparedCatalog(t *testing.T) {
+	configured := decodePolicy(t, configuredNativePolicyFixture).Policy
+	acceptor := &nativeGenerationAcceptor{}
+
+	prepared, err := PreparePolicy(t.Context(), 1, configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	extensions, err := PrepareConfiguredNativeGeneration(t.Context(), ConfiguredNativeGenerationInput{
+		Policy:               configured,
+		Bindings:             configuredNativeBindings(t, nativeFactDescriptor(), nativeEffectDescriptor(), true),
+		PostActionAcceptance: acceptor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = prepared.CompileWithExtensions(t.Context(), acceptor, extensions.Definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfiguredEffectMetadataRejectsPreparedDrift(t *testing.T) {
+	filter, err := decision.NewTarget("mail", "filter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	observe, err := decision.NewTarget("mail", "observe")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := registry.ProviderDefinitionInput{
+		ID:           "mail/plugin.reputation.notifier",
+		Targets:      []decision.Target{filter},
+		Executions:   []registry.ExecutionClass{registry.ExecutionHostSync},
+		DiagnosticID: "native-notifier", Failure: registry.ProviderFailureIndeterminate, Timeout: 50 * time.Millisecond,
+	}
+
+	expected, err := registry.NewProviderDefinition(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*registry.ProviderDefinitionInput)
+	}{
+		{"fact schedule", func(actual *registry.ProviderDefinitionInput) {
+			actual.Failure = registry.ProviderFailureIndeterminate
+			actual.Timeout = time.Second
+		}},
+		{"target", func(actual *registry.ProviderDefinitionInput) {
+			actual.Targets = []decision.Target{observe}
+		}},
+		{"execution", func(actual *registry.ProviderDefinitionInput) {
+			actual.Executions = []registry.ExecutionClass{registry.ExecutionHostPostAction}
+		}},
+		{"diagnostic", func(actual *registry.ProviderDefinitionInput) {
+			actual.DiagnosticID = "different-notifier"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actualInput := input
+			actualInput.Failure = ""
+			actualInput.Timeout = 0
+			test.mutate(&actualInput)
+
+			actual, err := registry.NewProviderDefinition(actualInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if sameConfiguredProviderSchedule(policyconfig.ProviderConfig{}, expected, actual) {
+				t.Fatal("prepared effect metadata drift was accepted")
+			}
+		})
+	}
+}
+
 func TestConfiguredNativeProviderGenerationRejectsFrozenCapabilityMismatch(t *testing.T) {
 	tests := []struct {
 		factDescriptor   pluginapi.DecisionFactProviderDescriptor

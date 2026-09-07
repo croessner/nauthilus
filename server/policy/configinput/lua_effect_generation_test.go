@@ -116,6 +116,15 @@ end
 		providers[0].Failure() != "" {
 		t.Fatalf("Lua effect-only provider retained fact schedule metadata: %#v", providers)
 	}
+
+	prepared, err := PreparePolicy(t.Context(), 1, configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := prepared.CompileWithExtensions(t.Context(), &nativeGenerationAcceptor{}, preparation.Definitions); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestConfiguredLuaGenerationSkipsUnownedNativeFacts proves empty Lua preparation does not validate native owners.
