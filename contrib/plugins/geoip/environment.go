@@ -100,6 +100,9 @@ func (s geoIPLookupService) evaluateClientIP(
 		return geoIPLookupResult{}, fmt.Errorf("geoip lookup has no plugin")
 	}
 
+	freshness := lookupStateUnavailable
+	defer func() { s.plugin.recordFreshness(ctx, freshness) }()
+
 	config, ok := s.plugin.currentConfig()
 	if !ok {
 		return geoIPLookupResult{}, fmt.Errorf("geoip database is not loaded")
@@ -120,16 +123,16 @@ func (s geoIPLookupService) evaluateClientIP(
 
 	result, record, lookupResult, err := s.lookupGeoIPResult(spanCtx, span, addr, start, config.Freshness)
 	if err != nil {
-		return geoIPLookupResult{}, err
+		return geoIPLookupResult{}, redactedLookupError(err)
 	}
 
 	if config.Privacy.Enabled {
 		privacy, privacyErr := s.lookupPrivacy(spanCtx, config.Privacy, addr, record)
 		if privacyErr != nil {
-			span.RecordError(privacyErr)
+			span.RecordError(errTelemetryLookup)
 			s.plugin.recordLookup(spanCtx, resultError, time.Since(start))
 
-			return geoIPLookupResult{}, privacyErr
+			return geoIPLookupResult{}, redactedLookupError(privacyErr)
 		}
 
 		result = enrichPrivacyResult(result, privacy)
@@ -138,6 +141,16 @@ func (s geoIPLookupService) evaluateClientIP(
 			pluginapi.TraceAttribute{Key: "geoip.privacy_primary_class", Value: string(privacy.PrimaryClass)},
 			pluginapi.TraceAttribute{Key: "geoip.privacy_stale", Value: privacy.Stale},
 		)
+	}
+
+	for _, fact := range result.Facts {
+		if fact.Name == factLookupState {
+			if state, ok := fact.Value.(string); ok {
+				freshness = state
+			}
+
+			break
+		}
 	}
 
 	s.plugin.recordLookup(spanCtx, lookupResult, time.Since(start))
@@ -185,7 +198,7 @@ func (s geoIPLookupService) lookupGeoIPResult(
 ) (geoIPLookupResult, geoRecord, string, error) {
 	record, matched, err := s.plugin.lookupRecord(ctx, addr)
 	if err != nil {
-		span.RecordError(err)
+		span.RecordError(errTelemetryLookup)
 		s.plugin.recordLookup(ctx, resultError, time.Since(start))
 
 		return geoIPLookupResult{}, geoRecord{}, "", err

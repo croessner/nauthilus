@@ -27,7 +27,9 @@ type subjectUpdate struct {
 }
 
 // ingest establishes one immutable manifest before independently idempotent same-subject updates.
-func (s *stateOwner) ingest(ctx context.Context, admitted admittedObservation) (ingestionResult, error) {
+func (s *stateOwner) ingest(ctx context.Context, admitted admittedObservation) (result ingestionResult, err error) {
+	defer func() { s.telemetry.recordObservation(ctx, admitted, result, err) }()
+
 	if !s.ready.Load() {
 		return ingestionResult{}, errStateUnavailable
 	}
@@ -41,8 +43,6 @@ func (s *stateOwner) ingest(ctx context.Context, admitted admittedObservation) (
 	if err != nil {
 		return ingestionResult{}, err
 	}
-
-	var result ingestionResult
 
 	for _, model := range payload.Models {
 		for _, subject := range model.Subjects {
@@ -106,7 +106,20 @@ func decodeManifestAdmission(response []any, request manifestRequest) (manifestP
 }
 
 // updateSubject uses only the admitted manifest model and subject, never a caller-expanded fact list.
-func (s *stateOwner) updateSubject(ctx context.Context, payload manifestPayload, model manifestModel, subject manifestSubject, expiry float64) (bool, error) {
+func (s *stateOwner) updateSubject(ctx context.Context, payload manifestPayload, model manifestModel, subject manifestSubject, expiry float64) (duplicate bool, err error) {
+	defer func() {
+		if s.telemetry != nil {
+			outcome := storageApplied
+			if err != nil {
+				outcome = learningUnavailable
+			} else if duplicate {
+				outcome = storageDuplicate
+			}
+
+			s.telemetry.subject.Add(ctx, subject.Kind, outcome)
+		}
+	}()
+
 	keys := s.keys.subject(subject.Tag, model.ID)
 	request := subjectUpdate{Profiles: model.Profiles, Classes: model.Classes, EligibleProfiles: model.EligibleProfiles,
 		Kind: subject.Kind, Fingerprint: model.Fingerprint, SourceClass: payload.SourceClass, Direction: model.Direction, SeenTag: payload.SeenTag,

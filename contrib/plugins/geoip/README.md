@@ -281,3 +281,16 @@ request values:
 Each executed child span sets `geoip.lookup.result` to `matched`, `miss`, or `error`. Optional child spans are
 absent when their corresponding lookup source is not configured, and a primary database miss ends location enrichment
 before the ASN steps.
+
+## Operational telemetry
+
+The host-scoped `freshness_total` counter uses only the closed `state` values
+`fresh`, `stale`, `not_found`, and `unavailable`. It records the actual lookup
+result without an IP, ASN, country, database path or caller label. Missing or
+stale evidence retains its existing Policy semantics; telemetry does not make
+it usable. Exporter failures cannot change a lookup result.
+
+Database failures are reduced to a fixed unavailable error before reaching
+ordinary logs, local spans or the parent Policy collector. Cancellation and
+deadline errors retain their control-flow identity. No raw database error is
+exported, since it can contain queried addresses or private paths.

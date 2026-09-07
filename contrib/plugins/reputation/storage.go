@@ -11,6 +11,12 @@ import (
 )
 
 const (
+	storageAllocationMismatch = "allocation_mismatch"
+	storageEventTime          = "event_time"
+	storageModelMismatch      = "model_mismatch"
+	storageQuotaExceeded      = "quota_exceeded"
+	storageOverrideConflict   = "override_conflict"
+
 	storageSnapshot        = "snapshot"
 	storageOverrideWritten = "override_written"
 	storageOverrideRead    = "override_read"
@@ -34,13 +40,14 @@ var (
 )
 
 type stateOwner struct {
-	config   *configuration
-	planner  *manifestPlanner
-	redis    pluginapi.Redis
-	models   []*modelDefinition
-	identity string
-	keys     stateKeyspace
-	ready    atomic.Bool
+	telemetry *reputationTelemetry
+	config    *configuration
+	planner   *manifestPlanner
+	redis     pluginapi.Redis
+	models    []*modelDefinition
+	identity  string
+	keys      stateKeyspace
+	ready     atomic.Bool
 }
 
 type metadataRequest struct {
@@ -158,7 +165,12 @@ func (s *stateOwner) quiesce(ctx context.Context) error {
 }
 
 // run routes every script through the host's primary-backed registry and exposes only closed failure classes.
-func (s *stateOwner) run(ctx context.Context, name string, keys []string, request any) ([]any, error) {
+func (s *stateOwner) run(ctx context.Context, name string, keys []string, request any) (output []any, err error) {
+	defer func() {
+		if s.telemetry != nil {
+			s.telemetry.storage.Add(ctx, name, storageMetricResult(err))
+		}
+	}()
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return nil, errStateUnavailable
@@ -191,17 +203,17 @@ func storageStatusError(status string) error {
 	switch status {
 	case assessmentMissing, storageOverrideRead, storageOverrideMissing, storageOverrideWritten, storageOverrideDeleted, storageSnapshot, storageActive, "draining", storageAdmitted, storageApplied, storageDuplicate:
 		return nil
-	case "override_conflict":
+	case storageOverrideConflict:
 		return errOverrideConflict
 	case "event_conflict":
 		return errEventConflict
-	case "event_time":
+	case storageEventTime:
 		return errEventTime
-	case "model_mismatch":
+	case storageModelMismatch:
 		return errModelMismatch
-	case "allocation_mismatch", "allocation_draining":
+	case storageAllocationMismatch, "allocation_draining":
 		return errAllocationMismatch
-	case "quota_exceeded":
+	case storageQuotaExceeded:
 		return errQuotaExceeded
 	default:
 		return errStateUnavailable

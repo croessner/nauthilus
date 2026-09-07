@@ -192,7 +192,7 @@ func TestRedisScriptFacadeUploadsAndRunsByName(t *testing.T) {
 }
 
 // TestRedisScriptFacadeRecoversNoScriptOnce bounds both successful recovery and persistent script-cache failure.
-func TestRedisScriptFacadeRecoversNoScriptOnce(t *testing.T) {
+func TestRedisScriptFacadeMetricsRecoverNoScriptOnce(t *testing.T) {
 	for _, persistent := range []bool{false, true} {
 		name := "recovered"
 		if persistent {
@@ -204,6 +204,8 @@ func TestRedisScriptFacadeRecoversNoScriptOnce(t *testing.T) {
 
 			db, mock := redismock.NewClientMock()
 			facade := NewRedisFacade(rediscli.NewTestClient(db))
+			metricRegistry := prometheus.NewRegistry()
+			facade.Scripts().(*redisScriptRegistry).telemetry = newRedisScriptTelemetry(NewMetricsFacadeWithRegisterer("redis_runtime", metricRegistry))
 			ctx := context.Background()
 			noScript := facadeRedisMockError("NOSCRIPT No matching script. Please use EVAL.")
 
@@ -231,6 +233,8 @@ func TestRedisScriptFacadeRecoversNoScriptOnce(t *testing.T) {
 			} else if err != nil || result != int64(1) {
 				t.Fatalf("recovered result/error = %v/%v", result, err)
 			}
+
+			assertRedisReloadMetrics(t, metricRegistry, persistent)
 
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
@@ -553,4 +557,50 @@ func (e *recordingLDAPExecutor) Modify(_ context.Context, request pluginapi.LDAP
 	e.modifyRequests = append(e.modifyRequests, request)
 
 	return nil
+}
+
+// assertRedisReloadMetrics checks exactly one bounded reload observation for the actual Redis outcome.
+func assertRedisReloadMetrics(t *testing.T, metricRegistry *prometheus.Registry, persistent bool) {
+	t.Helper()
+
+	families, gatherErr := metricRegistry.Gather()
+	if gatherErr != nil {
+		t.Fatal(gatherErr)
+	}
+
+	reloads := 0.0
+
+	for _, family := range families {
+		if family.GetType() != dto.MetricType_COUNTER {
+			continue
+		}
+
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+
+			if len(labels) != 3 || labels["plugin_scope"] != "redis_runtime" {
+				t.Fatal("unexpected script telemetry dimensions")
+			}
+
+			if labels["operation"] == "reload" {
+				expected := "success"
+				if persistent {
+					expected = "noscript"
+				}
+
+				if labels["result"] != expected {
+					t.Fatal("incorrect reload result metric")
+				}
+
+				reloads += metric.GetCounter().GetValue()
+			}
+		}
+	}
+
+	if reloads != 1 {
+		t.Fatal("missing or duplicate NOSCRIPT reload metric")
+	}
 }

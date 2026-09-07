@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"sync"
 )
 
 // Plugin owns immutable operator configuration and fact-only composition registration.
 type Plugin struct {
-	config *configuration
-	mu     sync.RWMutex
+	compositionCounter *telemetry.Counter
+	config             *configuration
+	mu                 sync.RWMutex
 }
 
 // NauthilusPlugin exposes the native artifact factory.
@@ -53,11 +55,20 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	return nil
 }
 
-// Start requires registration but acquires no resources.
-func (p *Plugin) Start(context.Context, pluginapi.Host) error {
-	if p.snapshot() == nil {
+// Start requires registration and obtains only a bounded host-owned telemetry collector.
+func (p *Plugin) Start(_ context.Context, host pluginapi.Host) error {
+	if p.snapshot() == nil || host == nil {
 		return errConfig
 	}
+
+	counter, err := registerCompositionMetric(host.Metrics("dkim2_intelligence"))
+	if err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	p.compositionCounter = counter
+	p.mu.Unlock()
 
 	return nil
 }

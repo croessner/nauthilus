@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
@@ -61,27 +62,28 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates lifecycle, state, and generic Decision Fact registration.
 type Plugin struct {
-	databaseOwner  *geoDatabaseOwner
-	host           pluginapi.Host
-	logger         pluginapi.Logger
-	tracer         pluginapi.Tracer
-	asnRegistry    *asnRegistrySnapshot
-	asnLookup      *asnLookupService
-	privacy        *privacyEngine
-	databaseLoad   databaseLoader
-	asnFetch       asnRegistryFetcher
-	asnRouteFetch  asnRouteFetcher
-	lookupCounter  pluginapi.Counter
-	lookupLatency  pluginapi.Histogram
-	recordGauge    pluginapi.Gauge
-	privacyRefresh pluginapi.Counter
-	privacyEntries pluginapi.Gauge
-	refreshCancel  context.CancelFunc
-	asnCancel      context.CancelFunc
-	asnRouteCancel context.CancelFunc
-	privacyCancel  []context.CancelFunc
-	config         moduleConfig
-	mu             sync.RWMutex
+	databaseOwner    *geoDatabaseOwner
+	host             pluginapi.Host
+	logger           pluginapi.Logger
+	tracer           pluginapi.Tracer
+	asnRegistry      *asnRegistrySnapshot
+	asnLookup        *asnLookupService
+	privacy          *privacyEngine
+	databaseLoad     databaseLoader
+	asnFetch         asnRegistryFetcher
+	asnRouteFetch    asnRouteFetcher
+	freshnessCounter *telemetry.Counter
+	lookupCounter    pluginapi.Counter
+	lookupLatency    pluginapi.Histogram
+	recordGauge      pluginapi.Gauge
+	privacyRefresh   pluginapi.Counter
+	privacyEntries   pluginapi.Gauge
+	refreshCancel    context.CancelFunc
+	asnCancel        context.CancelFunc
+	asnRouteCancel   context.CancelFunc
+	privacyCancel    []context.CancelFunc
+	config           moduleConfig
+	mu               sync.RWMutex
 }
 
 // NewPlugin creates a GeoIP reference plugin instance.
@@ -163,6 +165,11 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 		return err
 	}
 
+	freshnessCounter, err := registerFreshnessMetric(metrics)
+	if err != nil {
+		return err
+	}
+
 	privacyRefresh, privacyEntries, err := registerPrivacyMetrics(metrics)
 	if err != nil {
 		return err
@@ -173,6 +180,7 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.logger = logger
 	p.tracer = tracer
 	p.lookupCounter = lookupCounter
+	p.freshnessCounter = freshnessCounter
 	p.lookupLatency = lookupLatency
 	p.recordGauge = recordGauge
 	p.privacyRefresh = privacyRefresh
@@ -791,14 +799,14 @@ func (p *Plugin) recordLookup(ctx context.Context, result string, duration time.
 	}
 }
 
-// logError writes an error through the host logger when available.
-func (p *Plugin) logError(ctx context.Context, message string, err error) {
+// logError reports a fixed failure class without exporting database or transport error details.
+func (p *Plugin) logError(ctx context.Context, message string, _ error) {
 	p.mu.RLock()
 	logger := p.logger
 	p.mu.RUnlock()
 
 	if logger != nil {
-		logger.Error(ctx, message, pluginapi.LogField{Key: "error", Value: err})
+		logger.Error(ctx, message, pluginapi.LogField{Key: "error_class", Value: lookupStateUnavailable})
 	}
 }
 

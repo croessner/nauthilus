@@ -50,7 +50,7 @@ func traceGeoIPLookup[T any](
 	if err != nil {
 		result = resultError
 
-		span.RecordError(err)
+		span.RecordError(errTelemetryLookup)
 	} else if matched {
 		result = resultMatched
 	}

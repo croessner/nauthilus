@@ -50,7 +50,7 @@ func transportObservation(now time.Time, extra string, protobuf bool) map[string
 func TestReputationObserveHTTPAndGRPCShareAdmissionAndIdempotency(t *testing.T) {
 	service, plugin := newReputationTransportService(t)
 	counter := &learningTestCounter{}
-	plugin.learningCounter = counter
+	bindLearningTestCounter(t, plugin, counter)
 	engine, grpcHandler := reputationTransportHandlers(service)
 
 	now := time.Now().UTC()

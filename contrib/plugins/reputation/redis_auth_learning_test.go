@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
+
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
@@ -15,6 +17,15 @@ import (
 )
 
 type learningTestCounter struct{ results []string }
+
+// bindLearningTestCounter preserves the production allowlist around a deterministic integration sink.
+func bindLearningTestCounter(t *testing.T, plugin *Plugin, counter *learningTestCounter) {
+	t.Helper()
+
+	wrapped, err := telemetry.BindCounter(counter, learningMetricDimensions())
+	requireNoError(t, err)
+	plugin.learningCounter = wrapped
+}
 
 // Add retains only bounded outcomes for deterministic callback assertions.
 func (c *learningTestCounter) Add(_ context.Context, _ float64, labels ...pluginapi.LabelValue) {
@@ -37,7 +48,7 @@ func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 	requireNoError(t, plugin.Start(t.Context(), host))
 
 	counter := &learningTestCounter{}
-	plugin.learningCounter = counter
+	bindLearningTestCounter(t, plugin, counter)
 	learner := registry.PostActionTargets()[0].Value.(pluginapi.PostActionTarget)
 
 	subject := subjectInput{role: "auth_client", kind: kindIP, value: "192.0.2.7"}

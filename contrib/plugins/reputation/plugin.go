@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
@@ -13,7 +14,8 @@ var observeTarget = pluginapi.DecisionTargetSelector{Namespace: pluginName, Acti
 
 // Plugin owns immutable admission semantics and process-bound opaque services.
 type Plugin struct {
-	learningCounter pluginapi.Counter
+	learningCounter *telemetry.Counter
+	telemetry       *reputationTelemetry
 	state           *stateOwner
 	config          *configuration
 	tagger          pluginapi.OpaqueIdentifierTagger
@@ -110,10 +112,19 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 		return err
 	}
 
+	metrics, err := newReputationTelemetry(p.config, host.Metrics(pluginName))
+	if err != nil {
+		return err
+	}
+
+	p.telemetry = metrics
+
 	state, err := newStateOwner(p.config, tagger, host.Redis())
 	if err != nil {
 		return err
 	}
+
+	state.telemetry = metrics
 
 	if err := state.start(ctx); err != nil {
 		return err

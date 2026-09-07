@@ -96,3 +96,13 @@ provider integration and native-bundle checks. Build host and plugin from one
 coherent source/compiler identity with the repository artifact tooling;
 `scripts/check-native-artifact-bundle.sh` includes this module and rejects
 stale and unmarked binaries.
+
+## Operational telemetry
+
+The host-scoped `composition_total` counter has one additional `result` label:
+`completed`, `unavailable`, `projection_invalid`, `reputation_invalid`,
+`correlation_invalid`, `geoip_invalid`, or `composition_invalid`. It follows
+the actual enrichment callback and never labels signers, peer addresses, hop
+identities, Recipe data or caller input. `completed` means composition passed
+its contract checks; the selected Policy still owns the delivery decision.
+Exporter failure does not change composition results.

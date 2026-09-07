@@ -164,10 +164,11 @@ func (b redisKeyBuilder) SameSlot(keys []string, hashTag string) []string {
 }
 
 type redisScriptRegistry struct {
-	client  rediscli.Client
-	timeout time.Duration
-	scripts map[string]registeredRedisScript
-	mu      sync.RWMutex
+	telemetry *redisScriptTelemetry
+	client    rediscli.Client
+	timeout   time.Duration
+	scripts   map[string]registeredRedisScript
+	mu        sync.RWMutex
 }
 
 type registeredRedisScript struct {
@@ -178,14 +179,22 @@ type registeredRedisScript struct {
 // newRedisScriptRegistry creates a named script registry for a Redis facade.
 func newRedisScriptRegistry(client rediscli.Client, timeout time.Duration) pluginapi.RedisScriptRegistry {
 	return &redisScriptRegistry{
-		client:  client,
-		timeout: timeout,
-		scripts: make(map[string]registeredRedisScript),
+		telemetry: newRedisScriptTelemetry(NewMetricsFacade("redis_runtime")),
+		client:    client,
+		timeout:   timeout,
+		scripts:   make(map[string]registeredRedisScript),
 	}
 }
 
 // Upload loads source into Redis and stores SHA plus source under name.
-func (r *redisScriptRegistry) Upload(ctx context.Context, name string, source string) (string, error) {
+func (r *redisScriptRegistry) Upload(ctx context.Context, name string, source string) (output string, err error) {
+	started := time.Now()
+
+	defer func() {
+		if r != nil {
+			r.telemetry.finish(ctx, "upload", started, err)
+		}
+	}()
 	if err := validateRedisScript(name, source); err != nil {
 		return "", err
 	}
@@ -210,7 +219,14 @@ func (r *redisScriptRegistry) Upload(ctx context.Context, name string, source st
 }
 
 // Run executes a previously uploaded script by name.
-func (r *redisScriptRegistry) Run(ctx context.Context, name string, keys []string, args ...any) (any, error) {
+func (r *redisScriptRegistry) Run(ctx context.Context, name string, keys []string, args ...any) (output any, err error) {
+	started := time.Now()
+
+	defer func() {
+		if r != nil {
+			r.telemetry.finish(ctx, "run", started, err)
+		}
+	}()
 	if !redisScriptNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("%w: %q", pluginapi.ErrInvalidRedisScriptName, name)
 	}
@@ -295,7 +311,9 @@ func (r *redisScriptRegistry) operationContext(ctx context.Context) (context.Con
 }
 
 // reloadAndRun restores a named script after Redis lost its script cache and retries once.
-func (r *redisScriptRegistry) reloadAndRun(ctx context.Context, name string, source string, keys []string, args ...any) (any, error) {
+func (r *redisScriptRegistry) reloadAndRun(ctx context.Context, name string, source string, keys []string, args ...any) (output any, err error) {
+	started := time.Now()
+	defer func() { r.telemetry.finish(ctx, "reload", started, err) }()
 	sha, err := r.loadScript(ctx, source)
 	if err != nil {
 		return nil, err

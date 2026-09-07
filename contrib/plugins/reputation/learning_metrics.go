@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
@@ -14,14 +15,13 @@ const (
 	learningRejected       = "rejected"
 	learningUnavailable    = "unavailable"
 	learningSkipped        = "skipped"
+	learningPartial        = "partial"
 )
 
 // initializeLearningMetrics requires one host-owned bounded collector before accepting evidence.
 func (p *Plugin) initializeLearningMetrics(host pluginapi.Host) error {
-	counter, err := host.Metrics(pluginName).Counter(pluginapi.MetricDefinition{
-		Name: "learning_total", Help: "Reputation learning attempts by bounded channel and outcome.",
-		Type: pluginapi.MetricTypeCounter, Labels: []string{metricChannel, metricResult},
-	})
+	counter, err := telemetry.RegisterCounter(host.Metrics(pluginName), "learning_total", "Reputation learning attempts by bounded channel and outcome.",
+		learningMetricDimensions()...)
 	if err != nil {
 		return err
 	}
@@ -29,6 +29,14 @@ func (p *Plugin) initializeLearningMetrics(host pluginapi.Host) error {
 	p.learningCounter = counter
 
 	return nil
+}
+
+// learningMetricDimensions supplies the single closed learning vocabulary to registration and test sinks.
+func learningMetricDimensions() []telemetry.Dimension {
+	return []telemetry.Dimension{
+		{Name: metricChannel, Values: []string{learningExternal, learningAuthentication}},
+		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, storageApplied, storageDuplicate}},
+	}
 }
 
 // recordLearning emits no caller identifiers, raw subjects, event IDs or contribution details.
@@ -42,7 +50,7 @@ func (p *Plugin) recordLearning(ctx context.Context, channel, result string) {
 	p.mu.RUnlock()
 
 	if counter != nil {
-		counter.Add(ctx, 1, pluginapi.LabelValue{Name: metricChannel, Value: channel}, pluginapi.LabelValue{Name: metricResult, Value: result})
+		counter.Add(ctx, channel, result)
 	}
 }
 
@@ -50,7 +58,7 @@ func (p *Plugin) recordLearning(ctx context.Context, channel, result string) {
 func learningIngestionResult(result ingestionResult, err error) string {
 	if err != nil {
 		if result.Applied > 0 || result.Duplicates > 0 {
-			return "partial"
+			return learningPartial
 		}
 
 		return learningUnavailable

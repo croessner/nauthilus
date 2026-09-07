@@ -6,13 +6,15 @@ import (
 	view "github.com/croessner/nauthilus/v4/contrib/plugins/internal/reputationview"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	"github.com/croessner/nauthilus/v4/server/policy/testsupport"
+	"github.com/prometheus/client_golang/prometheus"
 	"strconv"
 	"testing"
 )
 
 // TestProviderCollectsTrackedVerifierProjectionAndRejectsCorrelatedForgery exercises the actual native callback.
-func TestProviderCollectsTrackedVerifierProjectionAndRejectsCorrelatedForgery(t *testing.T) {
+func TestProviderMetricsTrackProjectionAndCorrelatedForgery(t *testing.T) {
 	request := trackedRequest(t)
 
 	source, err := projection.Decode(request)
@@ -25,7 +27,14 @@ func TestProviderCollectsTrackedVerifierProjectionAndRejectsCorrelatedForgery(t 
 		t.Fatal(err)
 	}
 
-	plugin := &Plugin{config: cfg}
+	metricRegistry := prometheus.NewRegistry()
+
+	counter, err := registerCompositionMetric(pluginruntime.NewMetricsFacadeWithRegisterer("dkim2_intelligence", metricRegistry))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plugin := &Plugin{config: cfg, compositionCounter: counter}
 	provider := decisionProvider{plugin: plugin, config: cfg}
 
 	for _, forged := range []bool{false, true} {
@@ -51,6 +60,49 @@ func TestProviderCollectsTrackedVerifierProjectionAndRejectsCorrelatedForgery(t 
 		} else if result.ErrorClass != "" || len(result.Facts) != 3 {
 			t.Fatalf("complete projection failed: %#v", result)
 		}
+	}
+
+	assertCompositionMetrics(t, metricRegistry)
+}
+
+// assertCompositionMetrics verifies fixed host scope and the two real composition outcomes.
+func assertCompositionMetrics(t *testing.T, metricRegistry *prometheus.Registry) {
+	t.Helper()
+
+	families, err := metricRegistry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results := map[string]float64{}
+
+	for _, family := range families {
+		for _, metric := range family.Metric {
+			if len(metric.Label) != 2 {
+				t.Fatal("unexpected composition metric dimensions")
+			}
+
+			result := ""
+
+			for _, label := range metric.Label {
+				switch label.GetName() {
+				case "plugin_scope":
+					if label.GetValue() != "dkim2_intelligence" {
+						t.Fatal("unexpected metric scope")
+					}
+				case "result":
+					result = label.GetValue()
+				default:
+					t.Fatal("unexpected composition metric dimension")
+				}
+			}
+
+			results[result] += metric.GetCounter().GetValue()
+		}
+	}
+
+	if results["completed"] != 1 || results["correlation_invalid"] != 1 || len(results) != 2 {
+		t.Fatal("composition metrics do not match actual callback outcomes")
 	}
 }
 

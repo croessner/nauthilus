@@ -7,12 +7,14 @@ import (
 )
 
 // admitForPolicy validates source-owned contributions and probes the immutable manifest without allocating any state.
-func (s *stateOwner) admitForPolicy(ctx context.Context, source *sourcePolicy, input observationInput, resolver asnResolver) (admittedObservation, string, error) {
+func (s *stateOwner) admitForPolicy(ctx context.Context, source *sourcePolicy, input observationInput, resolver asnResolver) (admitted admittedObservation, reason string, err error) {
+	defer func() { s.telemetry.recordAdmission(ctx, source, input.signal, reason, err) }()
+
 	if !s.ready.Load() {
 		return admittedObservation{}, reasonInput, errStateUnavailable
 	}
 
-	admitted, reason, err := s.config.admitCandidate(ctx, source, input, s.planner.tagger, resolver)
+	admitted, reason, err = s.config.admitCandidate(ctx, source, input, s.planner.tagger, resolver)
 	if err != nil || reason != reasonValid {
 		return admitted, reason, err
 	}

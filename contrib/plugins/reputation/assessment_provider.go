@@ -27,9 +27,7 @@ func (p assessmentProvider) Collect(ctx context.Context, request pluginapi.Decis
 	}
 
 	binding := p.config.bindings[request.Target()]
-	p.plugin.mu.RLock()
-	state := p.plugin.state
-	p.plugin.mu.RUnlock()
+	state, metrics := p.plugin.observedState()
 
 	collections := make(map[string][]pluginapi.DecisionRecord, 4)
 	for _, output := range assessmentOutputNames(binding.OutputFact) {
@@ -40,6 +38,11 @@ func (p assessmentProvider) Collect(ctx context.Context, request pluginapi.Decis
 		profiles := emptyProfiles(assessmentUnavailable)
 		if state != nil && !subject.unavailable {
 			profiles = state.assessProfiles(ctx, subject.subjectInput)
+		}
+
+		if metrics != nil {
+			selected := profiles[binding.DecisionProfile]
+			metrics.assessment.Add(ctx, request.Target().Namespace+"/"+request.Target().Action, subject.kind, selected.State, selected.Band, selected.Override)
 		}
 
 		for output, profile := range assessmentOutputProfiles(binding) {

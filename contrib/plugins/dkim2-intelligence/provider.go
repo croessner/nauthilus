@@ -73,6 +73,8 @@ func providerFactPrefix(provider string) string {
 
 // Collect validates the verifier projection, exact signer correlation and peer evidence before publishing any fact.
 func (p decisionProvider) Collect(ctx context.Context, request pluginapi.DecisionFactRequest) (pluginapi.DecisionFactResult, error) {
+	metric := valueUnavailable
+	defer func() { p.plugin.recordComposition(ctx, metric) }()
 	if err := ctx.Err(); err != nil {
 		return pluginapi.DecisionFactResult{}, err
 	}
@@ -88,6 +90,7 @@ func (p decisionProvider) Collect(ctx context.Context, request pluginapi.Decisio
 
 	source, err := projection.Decode(request)
 	if err != nil {
+		metric = metricProjectionInvalid
 		return invalidComposition(), nil
 	}
 
@@ -98,11 +101,13 @@ func (p decisionProvider) Collect(ctx context.Context, request pluginapi.Decisio
 
 	subjects, err := decodeSubjects(facts[cfg.raw.ReputationFact])
 	if err != nil {
+		metric = metricReputationInvalid
 		return invalidComposition(), nil
 	}
 
 	correlated, err := correlateSubjects(source, subjects, cfg.raw.DecisionProfile)
 	if err != nil {
+		metric = metricCorrelationInvalid
 		return invalidComposition(), nil
 	}
 
@@ -116,15 +121,24 @@ func (p decisionProvider) Collect(ctx context.Context, request pluginapi.Decisio
 
 	geo, err := decodeGeographic(geographic, source.ClientIP)
 	if err != nil {
+		metric = metricGeoIPInvalid
 		return invalidComposition(), nil
 	}
 
 	composed, err := cfg.compose(source, correlated, geo)
 	if err != nil {
+		metric = metricCompositionInvalid
 		return invalidComposition(), nil
 	}
 
-	return composed.facts()
+	result, err := composed.facts()
+	if err != nil {
+		metric = metricCompositionInvalid
+	} else {
+		metric = metricCompleted
+	}
+
+	return result, err
 }
 
 // invalidComposition returns an explicit atomic failure with no partial chain or peer view.

@@ -36,23 +36,23 @@ func (p observationProvider) Collect(ctx context.Context, request pluginapi.Deci
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassInvalidInput}, nil
 	}
 
-	p.plugin.mu.RLock()
-	state := p.plugin.state
-	p.plugin.mu.RUnlock()
+	state, metrics := p.plugin.observedState()
+	source := p.plugin.config.sourceForCaller(request.Caller())
 
 	if state == nil || !state.ready.Load() {
+		metrics.recordAdmission(ctx, source, metricUnknown, learningUnavailable, nil)
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassUnavailable}, nil
 	}
 
-	source := state.config.sourceForCaller(request.Caller())
-
 	facts, resolver, err := state.config.splitASNProviderFacts(source, request.Facts())
 	if err != nil {
+		metrics.recordAdmission(ctx, source, metricUnknown, learningUnavailable, nil)
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassUnavailable}, nil
 	}
 
 	input, err := decodeObservationFacts(facts)
 	if err != nil {
+		state.telemetry.recordAdmission(ctx, source, metricUnknown, reasonInput, nil)
 		return observationResult(admittedObservation{}, reasonInput)
 	}
 
