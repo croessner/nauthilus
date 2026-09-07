@@ -27,6 +27,7 @@ import (
 
 const (
 	nativeHookErrorField               = "error"
+	nativeHookInsufficientPermissions  = "insufficient permissions"
 	nativeHookHeaderAuthorization      = "Authorization"
 	nativeHookHeaderConnection         = "Connection"
 	nativeHookHeaderCookie             = "Cookie"
@@ -310,6 +311,19 @@ func authorizeNativeHook(
 	validator oidcbearer.TokenValidator,
 	descriptor pluginapi.HookDescriptor,
 ) bool {
+	if descriptor.Auth == pluginapi.HookAuthAdmin || descriptor.Scope == pluginapi.HookScopeAdmin {
+		if !enforceNativeHookAdmin(ctx, cfg, validator) {
+			return false
+		}
+
+		if len(descriptor.RequiredScopes) > 0 && !oidcbearer.HasAnyScope(oidcbearer.GetClaimsFromContext(ctx), descriptor.RequiredScopes...) {
+			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{nativeHookErrorField: nativeHookInsufficientPermissions})
+			return false
+		}
+
+		return true
+	}
+
 	if len(descriptor.RequiredScopes) > 0 {
 		return enforceNativeHookToken(ctx, cfg, validator, descriptor.RequiredScopes)
 	}
@@ -359,7 +373,7 @@ func enforceNativeHookToken(
 
 	_, ok := oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
 		RequiredScopes:         requiredScopes,
-		MissingScopeMessage:    "insufficient permissions",
+		MissingScopeMessage:    nativeHookInsufficientPermissions,
 		ThrottleOnMissingToken: false,
 	})
 

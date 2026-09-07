@@ -315,6 +315,11 @@ into the effective descriptor during registration. Non-empty lists use any-of be
 `HookAuthToken` on a non-public hook. Empty lists retain the descriptor's coarse scope/auth behavior. Invalid, duplicate,
 unmatched, or conflicting entries fail closed and changes require a process restart.
 
+An administrative descriptor (`HookScopeAdmin` or `HookAuthAdmin`) always requires
+the backchannel `nauthilus:admin` scope. Configured scope alternatives can narrow
+that requirement but never replace it: the caller must have admin authority
+and, when configured, at least one additional allowed scope.
+
 The plugin is responsible for interpreting, validating, defaulting, and documenting its own `config` keys. This avoids a
 false shared schema across unrelated plugin types such as GeoIP sources, customer-specific backends, and background
 workers.

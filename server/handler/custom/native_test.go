@@ -311,6 +311,31 @@ func TestNativeHookAdminAuthAllowsAdminScopeToken(t *testing.T) {
 	assertNativeHookAdminAuthStatus(t, definitions.ScopeAdmin, http.StatusOK, 1)
 }
 
+func TestNativeHookConfiguredScopesCannotWeakenAdminAuthority(t *testing.T) {
+	for _, auth := range []pluginapi.HookAuth{pluginapi.HookAuthAdmin, pluginapi.HookAuthToken} {
+		for _, scopes := range []string{definitions.ScopeAuthenticate, definitions.ScopeAuthenticate + " " + definitions.ScopeAdmin} {
+			t.Run(string(auth)+"/"+scopes, func(t *testing.T) {
+				runner := &nativeHookTestRunner{response: pluginapi.HookResponse{StatusCode: http.StatusOK}}
+				router := newNativeHookTestRouter(t, nativeHookTestConfig{
+					validator: &nativeHookTokenValidator{claims: nativeHookAccessClaims(scopes)},
+					hook: nativeHookTestBinding(runner, pluginapi.HookDescriptor{
+						Name: nativeHookTestName, Method: http.MethodGet, Path: nativeHookTestPath,
+						Scope: pluginapi.HookScopeAdmin, Auth: auth, MaxBodyBytes: 32,
+						RequiredScopes: []string{definitions.ScopeAuthenticate},
+					}),
+				})
+
+				response := performNativeHookRequest(router, http.MethodGet, nativeHookTestAPIPath, "", "Bearer token")
+
+				allowed := scopes != definitions.ScopeAuthenticate
+				if (response.Code == http.StatusOK) != allowed || (runner.calls == 1) != allowed {
+					t.Fatal("configured scopes replaced mandatory administrative authority")
+				}
+			})
+		}
+	}
+}
+
 func TestNativeHookBodyLimitRejectsBeforePlugin(t *testing.T) {
 	runner, router := newNativeHookTestRouterForMethod(t, http.MethodPost, 3)
 	rec := performNativeHookRequest(router, http.MethodPost, nativeHookTestAPIPath, "toolarge", "")
