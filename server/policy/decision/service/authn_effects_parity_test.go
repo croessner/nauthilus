@@ -1227,14 +1227,14 @@ type cancelingAuthnSyncEffectProvider struct {
 	cancel context.CancelFunc
 }
 
-// Execute cancels the admitted request after one successful synchronous attempt.
+// Execute cancels the admitted request while the synchronous attempt's outcome remains unknown.
 func (p cancelingAuthnSyncEffectProvider) Execute(
 	context.Context,
 	effectExecution,
 ) effectsupervisor.Result {
 	p.cancel()
 
-	return effectsupervisor.Succeeded()
+	return effectsupervisor.OutcomeUnknown("request_cancelled")
 }
 
 type cancelingAuthnSupervisorAcceptor struct {
