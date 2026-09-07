@@ -362,14 +362,16 @@ func NewTestClient(db *redis.Client) Client {
 	return NewTestClientWithSecurity(db, nil)
 }
 
-// NewTestClientWithSecurity initializes and returns a new testClient instance with a custom security manager.
+// NewTestClientWithSecurity publishes a test client and returns that same instance independently of concurrent publishers.
 func NewTestClientWithSecurity(db *redis.Client, sm *SecurityManager) Client {
-	clientMu.Lock()
-	client = &testClient{
+	injected := &testClient{
 		client:          db,
 		securityManager: sm,
 	}
+
+	clientMu.Lock()
+	client = injected
 	clientMu.Unlock()
 
-	return client
+	return injected
 }
