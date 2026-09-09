@@ -16,6 +16,35 @@ import (
 
 const idpMFALogTrustedProxyIP = "198.51.100.10"
 
+func TestLogIDPMFAuthResultDoesNotLogRequestSecrets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, logBuf := newIDPMFALogContext(t)
+	requestSecrets := map[string]string{
+		"Authorization": "Bearer private-mfa-access-token",
+		"Cookie":        "session=private-mfa-session-cookie",
+		"X-API-Key":     "private-mfa-api-key",
+	}
+
+	for header, value := range requestSecrets {
+		ctx.Request.Header.Set(header, value)
+	}
+
+	LogIDPMFAuthResult(
+		ctx,
+		AuthDeps{Cfg: newIDPMFALogConfig(), Logger: newIDPMFALogger(logBuf)},
+		IDPMFAProtocolContext{Protocol: definitions.ProtoOIDC, OIDCClientID: "test-client"},
+		"alice", definitions.MFAMethodTOTP, "", true,
+	)
+
+	output := logBuf.String()
+	assert.Contains(t, output, "Second-factor authentication was successful")
+
+	for header, value := range requestSecrets {
+		assert.NotContains(t, output, value, "request header %s must remain private", header)
+	}
+}
+
 func TestLogIDPMFAuthResult_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
