@@ -2,7 +2,7 @@
 set -euo pipefail
 
 alpine_image="${ALPINE_IMAGE:-alpine:3.24}"
-golang_image="${GOLANG_IMAGE:-golang:1.27.0-alpine3.24}"
+golang_image="${GOLANG_IMAGE:-golang:1.27.1-alpine3.24}"
 
 # Read one literal upstream image per family from the selected source Dockerfile.
 dockerfile_image() {

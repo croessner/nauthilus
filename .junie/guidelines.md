@@ -30,7 +30,7 @@ This document captures practical, project-specific details to build, configure, 
 1. Build and configuration
 
 - Toolchain and modules
-  - Go version: the module sets go 1.27 (see go.mod). Use exactly Go 1.27.0; changing the toolchain requires an explicit contract update.
+  - Go version: the module sets go 1.27 (see go.mod). Use exactly Go 1.27.1; changing the toolchain requires an explicit contract update.
   - Lint version: local and CI guardrails require golangci-lint 2.13.1.
   - Vendor mode: the Makefile builds with -mod=vendor. Keep vendor/ in sync (go mod vendor) when updating deps.
 - Makefile targets (preferred workflow)

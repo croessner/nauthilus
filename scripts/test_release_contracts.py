@@ -32,7 +32,7 @@ class ReleaseContractTests(unittest.TestCase):
                 result = subprocess.run(
                     [str(REPOSITORY_ROOT / "scripts/docker-base-digests.sh"), "--dockerfile", str(dockerfile)],
                     env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
-                             FAIL_REGISTRY=str(int(fails)), GOLANG_IMAGE="golang:1.27.0-alpine3.24"),
+                             FAIL_REGISTRY=str(int(fails)), GOLANG_IMAGE="golang:1.27.1-alpine3.24"),
                     capture_output=True, text=True, check=False,
                 )
                 if fails:

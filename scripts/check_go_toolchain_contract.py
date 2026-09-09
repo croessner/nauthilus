@@ -11,35 +11,35 @@ def validate(root):
     """Return bounded diagnostics for missing or inconsistent build contracts."""
     errors = []
     module = (root / "go.mod").read_text()
-    for declaration in ("go 1.27", "toolchain go1.27.0"):
+    for declaration in ("go 1.27", "toolchain go1.27.1"):
         if declaration not in module.splitlines():
             errors.append("go.mod: missing " + declaration)
     result = subprocess.run(["go", "version"], cwd=root, capture_output=True, text=True)
-    if result.returncode or not re.match(r"go version go1\.27\.0\s", result.stdout):
-        errors.append("resolved toolchain must be exactly go1.27.0")
+    if result.returncode or not re.match(r"go version go1\.27\.1\s", result.stdout):
+        errors.append("resolved toolchain must be exactly go1.27.1")
     for path in sorted(root.glob("Dockerfile*")):
         content = path.read_text()
         images = re.findall(r"golang:([^\s]+)", content)
-        if any(not re.match(r"1\.27\.0(?:-|$)", image) for image in images):
-            errors.append(path.name + ": builder must use Go 1.27.0")
+        if any(not re.match(r"1\.27\.1(?:-|$)", image) for image in images):
+            errors.append(path.name + ": builder must use Go 1.27.1")
     for path in sorted((root / ".github/workflows").glob("*")):
         content = path.read_text()
         versions = re.findall(r"go-version(?:-input)?:\s*([^\n]+)", content)
-        if any(value.strip(" '\"") != "1.27.0" for value in versions):
-            errors.append(path.name + ": CI must use Go 1.27.0")
+        if any(value.strip(" '\"") != "1.27.1" for value in versions):
+            errors.append(path.name + ": CI must use Go 1.27.1")
         if versions and "runtimesecret" not in content:
             errors.append(path.name + ": CI experiment missing")
     for name in ("README.md", ".junie/guidelines.md", "AGENTS.md"):
         content = (root / name).read_text()
-        if "Go 1.27.0" not in content or "newer stable Go 1.27 patch" in content:
-            errors.append(name + ": exact Go 1.27.0 requirement missing")
+        if "Go 1.27.1" not in content or "newer stable Go 1.27 patch" in content:
+            errors.append(name + ": exact Go 1.27.1 requirement missing")
         if re.search(r"Go 1\.26", content):
             errors.append(name + ": obsolete Go declaration")
     makefile = (root / "Makefile").read_text()
     if "export GOEXPERIMENT := runtimesecret" not in makefile:
         errors.append("Makefile: internal experiment export missing")
     provenance = (root / "scripts/docker-base-digests.sh").read_text()
-    if "golang:1.27.0-" not in provenance:
+    if "golang:1.27.1-" not in provenance:
         errors.append("builder provenance: exact Go image missing")
     for directory in (root / "scripts", root / "contrib"):
         for path in sorted(directory.rglob("*")):
@@ -62,4 +62,4 @@ if __name__ == "__main__":
         print(failure, file=sys.stderr)
     if failures:
         sys.exit(1)
-    print("Exact Go 1.27.0 toolchain contract verified")
+    print("Exact Go 1.27.1 toolchain contract verified")
