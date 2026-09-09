@@ -223,7 +223,7 @@ func (f *HTTPFacade) Do(ctx context.Context, request pluginapi.HTTPRequest) (plu
 
 	body, err := readBoundedHTTPBody(response.Body, prepared.maxResponseBytes)
 	if err != nil {
-		return f.failHTTP(callCtx, span, prepared, httpResultBodyTooLarge, response.StatusCode, started, err)
+		return f.failHTTP(callCtx, span, prepared, httpErrorResult(err), response.StatusCode, started, err)
 	}
 
 	return f.completeHTTP(callCtx, span, prepared, response, body, started), nil
@@ -569,9 +569,11 @@ func httpStatusResult(status int) string {
 	return fmt.Sprintf("%dxx", status/100)
 }
 
-// httpErrorResult maps transport errors to bounded labels.
+// httpErrorResult maps transport and response-body errors to bounded labels.
 func httpErrorResult(err error) string {
 	switch {
+	case errors.Is(err, pluginapi.ErrHTTPResponseTooLarge):
+		return httpResultBodyTooLarge
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):

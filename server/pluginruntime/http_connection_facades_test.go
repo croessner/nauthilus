@@ -105,6 +105,10 @@ func TestHostHTTPFacadeRejectsOversizedResponseAndRedactsLogs(t *testing.T) {
 
 	line := logs.String()
 
+	if !strings.Contains(line, `"http_result":"body_too_large"`) {
+		t.Fatalf("Oversized response mislabeled: %s", line)
+	}
+
 	if !strings.Contains(line, httpLogMessageFailure) {
 		t.Fatalf("HTTP facade log missing failure message: %s", line)
 	}
@@ -114,6 +118,49 @@ func TestHostHTTPFacadeRejectsOversizedResponseAndRedactsLogs(t *testing.T) {
 			t.Fatalf("HTTP facade log leaked %q: %s", secret, line)
 		}
 	}
+}
+
+// TestHostHTTPFacadeClassifiesBodyReadFailures verifies bounded labels and error preservation.
+func TestHostHTTPFacadeClassifiesBodyReadFailures(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		result string
+	}{
+		{name: "incomplete", err: io.ErrUnexpectedEOF, result: "error"},
+		{name: "canceled", err: context.Canceled, result: "canceled"},
+		{name: "timeout", err: context.DeadlineExceeded, result: "timeout"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bodyFailureReader{err: test.err})}, nil
+			})}
+			host := NewHost(WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))), WithHTTPClient(client))
+
+			_, err := host.HTTP(facadeHTTPService).Do(context.Background(), pluginapi.HTTPRequest{
+				Method: http.MethodGet, URL: facadeHTTPURL, Service: facadeHTTPService,
+			})
+			if !errors.Is(err, test.err) {
+				t.Fatalf("HTTP Do() error = %v, want %v", err, test.err)
+			}
+
+			if !strings.Contains(logs.String(), `"http_result":"`+test.result+`"`) {
+				t.Fatalf("HTTP body failure mislabeled: %s", logs.String())
+			}
+		})
+	}
+}
+
+// bodyFailureReader simulates a response interrupted while its body is read.
+type bodyFailureReader struct {
+	err error
+}
+
+// Read returns the original download failure without a completed body.
+func (r bodyFailureReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func TestPluginHTTPRedirectPolicyRejectsUnsafeTargets(t *testing.T) {
