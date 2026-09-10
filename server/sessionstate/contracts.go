@@ -260,6 +260,8 @@ type EnrollmentRecord struct {
 	CurrentStep       string
 	Continuation      string
 	Completed         bool
+	// SelfService binds an optional enrollment to the authenticated session instead of a protocol flow.
+	SelfService bool
 }
 
 // StepUpRecord owns one dynamic assurance or self-service proof operation.

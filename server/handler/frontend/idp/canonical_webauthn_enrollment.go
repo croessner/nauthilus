@@ -34,7 +34,9 @@ type canonicalWebAuthnEnrollmentFinish func(
 func (h *FrontendHandler) renderCanonicalWebAuthnEnrollment(ctx *gin.Context) {
 	selection, err := h.canonicalEnrollmentSelection(ctx, definitions.MFAMethodWebAuthn)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		if !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusConflict)
+		}
 
 		return
 	}
@@ -59,8 +61,10 @@ func (h *FrontendHandler) renderCanonicalWebAuthnEnrollment(ctx *gin.Context) {
 		string(selection.enrollment.Value.Handle),
 	)
 	data["WebAuthnNextEndpoint"] = safeLocalIDPResumeTarget(selection.enrollment.Value.Continuation)
-	data["RequireMFAFlow"] = true
+	data["RequireMFAFlow"] = !selection.enrollment.Value.SelfService
 	data["RequireMFAMessage"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Your application requires this authentication method to be set up before you can continue")
+	data["Back"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Back")
+	data["BackURL"] = selection.enrollment.Value.Continuation
 	data["Cancel"] = frontend.GetLocalized(ctx, h.deps.Cfg, h.deps.Logger, "Cancel")
 	data["CancelMFAEndpoint"] = flowdomain.AppendTicket(
 		localizedMFARootPath(ctx, definitions.MFARoot+"/register/cancel"),
@@ -74,7 +78,9 @@ func (h *FrontendHandler) renderCanonicalWebAuthnEnrollment(ctx *gin.Context) {
 func (h *FrontendHandler) BeginWebAuthnRegistration(ctx *gin.Context) {
 	selection, err := h.canonicalEnrollmentSelection(ctx, definitions.MFAMethodWebAuthn)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		if !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusConflict)
+		}
 
 		return
 	}
@@ -98,7 +104,9 @@ func (h *FrontendHandler) BeginWebAuthnRegistration(ctx *gin.Context) {
 func (h *FrontendHandler) FinishWebAuthnRegistration(ctx *gin.Context) {
 	selection, err := h.canonicalEnrollmentSelection(ctx, definitions.MFAMethodWebAuthn)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		if !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusConflict)
+		}
 
 		return
 	}
@@ -136,14 +144,18 @@ func (h *FrontendHandler) FinishWebAuthnRegistration(ctx *gin.Context) {
 		ctx.Request.Context(), selection.enrollment.Value.Handle, definitions.MFAMethodWebAuthn,
 	)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		if !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusConflict)
+		}
 
 		return
 	}
 
 	target := canonicalEnrollmentNextTarget(advanced.Value)
 	if target == "" {
-		ctx.AbortWithStatus(http.StatusConflict)
+		if !ctx.Writer.Written() {
+			ctx.AbortWithStatus(http.StatusConflict)
+		}
 
 		return
 	}
@@ -152,6 +164,7 @@ func (h *FrontendHandler) FinishWebAuthnRegistration(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, webAuthnFinishResponse{Redirect: target})
 }
 
+// beginCanonicalWebAuthnEnrollment creates a ceremony using the selected enrollment identity.
 func (h *FrontendHandler) beginCanonicalWebAuthnEnrollment(
 	ctx *gin.Context,
 	selection canonicalEnrollmentSelectionState,
@@ -169,11 +182,12 @@ func (h *FrontendHandler) beginCanonicalWebAuthnEnrollment(
 		selection.session,
 		selection.enrollment.Value.Handle,
 		selection.identity.Reference,
-		string(selection.parent.Protocol),
+		canonicalWebAuthnEnrollmentProtocol(selection),
 		user,
 	)
 }
 
+// finishCanonicalWebAuthnEnrollment persists a ceremony using the selected enrollment identity.
 func (h *FrontendHandler) finishCanonicalWebAuthnEnrollment(
 	ctx *gin.Context,
 	selection canonicalEnrollmentSelectionState,
@@ -191,12 +205,13 @@ func (h *FrontendHandler) finishCanonicalWebAuthnEnrollment(
 		ceremony,
 		selection.enrollment.Value.Handle,
 		selection.identity.Reference,
-		string(selection.parent.Protocol),
+		canonicalWebAuthnEnrollmentProtocol(selection),
 		canonicalWebAuthnEnrollmentUser(data),
 		data.AuthState,
 	)
 }
 
+// canonicalWebAuthnEnrollmentUser returns existing credentials or an empty registration user.
 func canonicalWebAuthnEnrollmentUser(data *UserBackendData) *backend.User {
 	if data == nil {
 		return nil

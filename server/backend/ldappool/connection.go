@@ -384,8 +384,13 @@ func (l *LDAPConnectionImpl) resolveModifyDN(ctx context.Context, cfg config.Fil
 }
 
 // newModifyRequest builds an LDAP modify request for the configured subcommand.
+// newModifyRequest combines exact-value deletions and attribute changes into one atomic LDAP request.
 func newModifyRequest(distinguishedName string, ldapRequest *bktype.LDAPRequest) *ldap.ModifyRequest {
 	modifyRequest := ldap.NewModifyRequest(distinguishedName, nil)
+
+	for attributeName, attributeValues := range ldapRequest.DeleteAttributes {
+		modifyRequest.Delete(attributeName, attributeValues)
+	}
 
 	for attributeName, attributeValues := range ldapRequest.ModifyAttributes {
 		switch ldapRequest.SubCommand {

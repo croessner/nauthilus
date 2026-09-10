@@ -137,3 +137,14 @@ func TestUpdateWebAuthnCredentialAfterLoginRejectsStaleSignCount(t *testing.T) {
 	assert.Nil(t, oldCredential)
 	assert.Nil(t, updatedCredential)
 }
+
+// TestWebAuthnLoginCompactsCachedVersions keeps one device after repairing duplicate persisted versions.
+func TestWebAuthnLoginCompactsCachedVersions(t *testing.T) {
+	old := mfa.PersistentCredential{Credential: webauthn.Credential{ID: []byte("device-a")}}
+	updated := old
+	updated.Authenticator.SignCount = 3
+	other := mfa.PersistentCredential{Credential: webauthn.Credential{ID: []byte("device-b")}}
+	user := &backend.User{Credentials: []mfa.PersistentCredential{old, old, other}}
+	assert.NoError(t, persistWebAuthnLoginUpdate(failingWebAuthnCredentialUpdater{}, user, &old, &updated))
+	assert.Equal(t, []mfa.PersistentCredential{updated, other}, user.Credentials)
+}

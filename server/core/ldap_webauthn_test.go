@@ -433,79 +433,28 @@ func TestLDAPSaveWebAuthnCredential(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestLDAPDeleteWebAuthnCredential(t *testing.T) {
-	protocol := &config.LDAPSearchProtocol{
-		LDAPAttributeMapping: config.LDAPAttributeMapping{
-			WebAuthnCredentialField: "nauthilusFido2Credential",
-			WebAuthnObjectClass:     "nauthilusFido2Account",
-		},
-		BaseDN: "dc=example,dc=com",
-		Scope:  "sub",
-		LDAPFilter: config.LDAPFilter{
-			User: "(uid={{.Username}})",
-		},
-	}
-	mcfg := new(mockConfig)
-	mcfg.On("GetLDAPSearchProtocol", mock.Anything, "test").Return(protocol, nil)
-
-	deps := ldapQueueTestDeps(mcfg)
-	lm := &ldapManagerImpl{
-		poolName: "test",
-		deps:     deps,
-	}
-
-	priorityqueue.LDAPQueue.AddPoolName("test")
-
-	cred := &mfa.PersistentCredential{
-		Credential: webauthn.Credential{
-			ID: []byte("test-id"),
-		},
-		Name: "Test Key",
-	}
-
-	ctx := context.Background()
-	req, _ := http.NewRequestWithContext(ctx, "GET", "/", nil)
-
-	auth := &AuthState{
-		deps: deps,
-		Request: AuthRequest{
-			Username:          "jdoe",
-			Protocol:          new(config.Protocol),
-			HTTPClientRequest: req,
-		},
-	}
-	auth.Request.Protocol.Set("oidc")
-
-	go func() {
-		req := priorityqueue.LDAPQueue.Pop("test")
-		assertLDAPWebAuthnCredentialModifyRequest(t, req, definitions.LDAPModifyDelete)
-	}()
-
-	err := lm.DeleteWebAuthnCredential(auth, cred)
-	assert.NoError(t, err)
-}
-
+// TestLDAPUpdateWebAuthnCredential replaces exact stored JSON in one LDAP operation.
 func TestLDAPUpdateWebAuthnCredential(t *testing.T) {
-	lm, deps, _ := newLDAPWebAuthnTestManager("test", "oidc")
-	oldCredValue, _ := newLDAPWebAuthnTestCredential(t, "Old Key")
-	newCredValue, _ := newLDAPWebAuthnTestCredential(t, "New Key")
-	oldCred := &oldCredValue
-	newCred := &newCredValue
+	lm, deps, _ := newLDAPWebAuthnTestManager(t.Name(), "oidc")
+	oldCred, raw := newLDAPWebAuthnTestCredential(t, "Old Key")
+	newCred, _ := newLDAPWebAuthnTestCredential(t, "New Key")
 	auth := newLDAPWebAuthnTestAuth(deps, "oidc")
-
+	requests := make(chan *bktype.LDAPRequest, 1)
 	go func() {
-		replyLDAPWebAuthnObjectClassSearch(t, "test")
-		replyLDAPWebAuthnObjectClassAdd(t, "test")
+		req := priorityqueue.LDAPQueue.Pop(t.Name())
+		req.LDAPReplyChan <- &bktype.LDAPReply{Result: bktype.AttributeMapping{"nauthilusFido2Credential": {raw}}}
 
-		req := priorityqueue.LDAPQueue.Pop("test")
-		assertLDAPWebAuthnCredentialModifyRequest(t, req, definitions.LDAPModifyAdd)
+		req = priorityqueue.LDAPQueue.Pop(t.Name())
+		requests <- req
 
-		req = priorityqueue.LDAPQueue.Pop("test")
-		assertLDAPWebAuthnCredentialModifyRequest(t, req, definitions.LDAPModifyDelete)
+		req.LDAPReplyChan <- &bktype.LDAPReply{}
 	}()
 
-	err := lm.UpdateWebAuthnCredential(auth, oldCred, newCred)
-	assert.NoError(t, err)
+	assert.NoError(t, lm.UpdateWebAuthnCredential(auth, &oldCred, &newCred))
+
+	req := <-requests
+	assert.Equal(t, []string{raw}, req.DeleteAttributes["nauthilusFido2Credential"])
+	assert.Equal(t, definitions.LDAPModifyAdd, req.SubCommand)
 }
 
 // assertLDAPWebAuthnCredentialModifyRequest verifies and acknowledges one credential modify request.

@@ -52,6 +52,10 @@
             <div class="form-control mt-3 w-full">
                 <a class="btn btn-ghost" href="{{ .CancelMFAEndpoint }}">{{ .Cancel }}</a>
             </div>
+            {{else}}
+            <div class="form-control mt-3 w-full">
+                <a class="btn btn-ghost" href="{{ .BackURL }}">{{ .Back }}</a>
+            </div>
             {{end}}
         </div>
     </div>

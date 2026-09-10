@@ -73,6 +73,9 @@ type LDAPRequest struct {
 	// ModifyAttributes contains attributes information used in modify command.
 	ModifyAttributes LDAPModifyAttributes
 
+	// DeleteAttributes removes exact old values atomically before ModifyAttributes are applied.
+	DeleteAttributes LDAPModifyAttributes
+
 	// LDAPReplyChan is the channel where reply from LDAP server is sent.
 	LDAPReplyChan chan *LDAPReply
 

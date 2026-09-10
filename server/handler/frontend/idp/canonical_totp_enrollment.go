@@ -87,9 +87,17 @@ func (h *FrontendHandler) canonicalEnrollmentSelection(
 	}
 
 	value := enrollment.Value
-	if value.Completed || value.CurrentStep != method || value.Flow == "" ||
+	if value.Completed || value.CurrentStep != method ||
 		value.AccountReference != identity.Account || value.IdentityReference != identity.Reference {
 		return canonicalEnrollmentSelectionState{}, sessionstate.ErrBindingMismatch
+	}
+
+	if value.SelfService {
+		if !validSelfServiceWebAuthnEnrollment(value) || h.requireCanonicalSelfServiceAssurance(ctx, session, identity) {
+			return canonicalEnrollmentSelectionState{}, sessionstate.ErrBindingMismatch
+		}
+
+		return canonicalEnrollmentSelectionState{session: session, identity: identity, enrollment: enrollment}, nil
 	}
 
 	parent, err := flowdomain.NewProtocolAggregate(session.Stores, session.Handle, 0).
@@ -517,6 +525,10 @@ func (h *FrontendHandler) canonicalEnrollmentContinuation(
 // canonicalEnrollmentNextTarget selects the next typed method or the stored safe continuation.
 func canonicalEnrollmentNextTarget(record sessionstate.EnrollmentRecord) string {
 	if record.Completed {
+		if record.SelfService && validSelfServiceWebAuthnEnrollment(record) {
+			return record.Continuation
+		}
+
 		return flowdomain.AppendTicket(definitions.MFARoot+"/register/continue", string(record.Handle))
 	}
 

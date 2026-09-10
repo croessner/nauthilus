@@ -1413,11 +1413,45 @@ async function runMFASelfServiceDirectLogin(browser, webAuthnCredentials) {
     await expectPageText(page, /2FA Self-Service/);
   });
 
+  await verifySelfServiceWebAuthnDevices(page, authenticator);
+
   const updatedCredentials = await exportVirtualAuthenticatorCredentials(authenticator);
   console.log('ok mfa-self-service-direct-login-step-up');
   await context.close();
 
   return updatedCredentials;
+}
+
+// verifySelfServiceWebAuthnDevices exercises visible add/delete controls and proves immediate list refresh.
+async function verifySelfServiceWebAuthnDevices(page, authenticator) {
+  await page.goto(`${edgeA}/mfa/webauthn/devices/en`);
+  const devices = page.locator('button[hx-delete^="/mfa/webauthn/device/"]');
+  const originalCount = await devices.count();
+  assert.equal(originalCount, 1, 'WebAuthn login must not register another device');
+  await page.locator('a[href="/mfa/webauthn/register/en"]').click();
+  await page.waitForSelector('#device-name');
+  await authenticator.cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+    authenticatorId: authenticator.authenticatorId, enabled: false,
+  });
+  const additionalAuthenticator = await installVirtualAuthenticator(page);
+  await completeWebAuthnRegistration(page, {deviceName: 'Self-service additional key'});
+  await page.waitForURL(/\/mfa\/webauthn\/devices\/en$/);
+  assert.equal(await devices.count(), originalCount + 1, 'registration must add exactly one device');
+  const added = page.locator('form').filter({has: page.locator('input[value="Self-service additional key"]')}).locator('..');
+  await added.locator('button[hx-delete]').click();
+  await page.locator('[data-action="confirm-yes"]').click();
+  await page.waitForFunction(expected => document.querySelectorAll('button[hx-delete^="/mfa/webauthn/device/"]').length === expected, originalCount);
+  assert.equal(await page.locator('input[value="Self-service additional key"]').count(), 0,
+    'deleted device must disappear without navigating away');
+  await additionalAuthenticator.cdp.send('WebAuthn.removeVirtualAuthenticator', {
+    authenticatorId: additionalAuthenticator.authenticatorId,
+  });
+  await authenticator.cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+    authenticatorId: authenticator.authenticatorId, enabled: true,
+  });
+  const credentials = await exportVirtualAuthenticatorCredentials(authenticator);
+  assert.equal(credentials.length, originalCount, 'original virtual authenticator remains unchanged');
+  console.log('ok mfa-self-service-webauthn-register-delete-refresh');
 }
 
 // establishSelfServiceOIDCSession creates an authenticated browser session whose
@@ -2720,7 +2754,7 @@ async function completeWebAuthnRegistration(page, options = {}) {
     await page.goto(`${edgeA}/mfa/webauthn/register`);
   }
 
-  await page.fill('#device-name', 'CDP virtual key');
+  await page.fill('#device-name', options.deviceName || 'CDP virtual key');
   const beginResponsePromise = page.waitForResponse((response) =>
     response.url().includes('/mfa/webauthn/register/begin') &&
       response.request().method() === 'GET' &&
@@ -2780,7 +2814,7 @@ async function completeWebAuthnRegistration(page, options = {}) {
     );
   }
 
-  await page.waitForURL(/callback|\/mfa\/register\/continue|\/mfa\/register\/home|\/mfa\/recovery\/register/, {timeout: 15000});
+  await page.waitForURL(/callback|\/mfa\/register\/continue|\/mfa\/register\/home|\/mfa\/recovery\/register|\/mfa\/webauthn\/devices/, {timeout: 15000});
   if (/\/mfa\/register\/continue/.test(page.url())) {
     await page.goto(`${edgeA}/mfa/register/continue`);
     await page.waitForURL(/callback|\/mfa\/recovery\/register|\/mfa\/register\/home/, {timeout: 15000});

@@ -2121,6 +2121,12 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 
 // RegisterWebAuthn renders the WebAuthn registration page.
 func (h *FrontendHandler) RegisterWebAuthn(ctx *gin.Context) {
+	if !ctx.Request.URL.Query().Has(flowdomain.FlowTicketParameter) {
+		h.startSelfServiceWebAuthnEnrollment(ctx)
+
+		return
+	}
+
 	h.renderCanonicalWebAuthnEnrollment(ctx)
 }
 
@@ -2272,7 +2278,7 @@ func (h *FrontendHandler) DeleteWebAuthnDevice(ctx *gin.Context) {
 		return
 	}
 
-	h.finishLocalWebAuthnDeviceDelete(ctx, userData, targetIndex)
+	h.finishLocalWebAuthnDeviceDelete(ctx, userData)
 }
 
 // webAuthnDeviceID decodes the URL credential ID for WebAuthn device mutations.
@@ -2294,20 +2300,9 @@ func (h *FrontendHandler) webAuthnDeviceID(ctx *gin.Context) ([]byte, bool) {
 	return decodedID, true
 }
 
-// finishLocalWebAuthnDeviceDelete updates local cache state after deleting a credential.
-func (h *FrontendHandler) finishLocalWebAuthnDeviceDelete(
-	ctx *gin.Context,
-	userData *UserBackendData,
-	targetIndex int,
-) {
-	if len(userData.WebAuthnUser.Credentials) <= 1 {
-		_ = h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), webAuthnRedisUserKey(h.deps.Cfg, userData.UniqueUserID)).Err()
-	} else {
-		userData.WebAuthnUser.Credentials = slices.Delete(userData.WebAuthnUser.Credentials, targetIndex, targetIndex+1)
-		_ = backend.SaveWebAuthnToRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.WebAuthnUser, h.deps.Cfg.GetServer().GetTimeouts().GetRedisWrite())
-	}
-
-	userData.AuthState.PurgeCacheFor(userData.Username)
+// finishLocalWebAuthnDeviceDelete invalidates stale credential versions before refreshing the list.
+func (h *FrontendHandler) finishLocalWebAuthnDeviceDelete(ctx *gin.Context, userData *UserBackendData) {
+	h.finishRemoteWebAuthnAuthorityChange(ctx, userData)
 	redirectWebAuthnDevices(ctx)
 }
 
@@ -2486,13 +2481,5 @@ func (h *FrontendHandler) finishRemoteWebAuthnAuthorityChange(ctx *gin.Context, 
 
 // redirectWebAuthnDevices returns browser and HTMX callers to the localized device list.
 func redirectWebAuthnDevices(ctx *gin.Context) {
-	target := localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices")
-	if ctx.GetHeader("HX-Request") != "" {
-		ctx.Header("HX-Redirect", target)
-		ctx.Status(http.StatusOK)
-
-		return
-	}
-
-	ctx.Redirect(http.StatusSeeOther, target)
+	redirectCanonicalBrowserMutation(ctx, localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices"))
 }

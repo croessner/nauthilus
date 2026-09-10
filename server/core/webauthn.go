@@ -444,6 +444,7 @@ type webAuthnCredentialUpdater interface {
 	UpdateWebAuthnCredential(oldCredential *mfa.PersistentCredential, newCredential *mfa.PersistentCredential) error
 }
 
+// persistWebAuthnLoginUpdate publishes the backend update before replacing cached versions of its credential.
 func persistWebAuthnLoginUpdate(
 	updater webAuthnCredentialUpdater,
 	user *backend.User,
@@ -458,13 +459,24 @@ func persistWebAuthnLoginUpdate(
 		return err
 	}
 
-	for index, credential := range user.Credentials {
-		if bytes.Equal(credential.ID, newCredential.ID) {
-			user.Credentials[index] = *newCredential
+	retained := user.Credentials[:0]
+	replaced := false
 
-			break
+	for _, credential := range user.Credentials {
+		if bytes.Equal(credential.ID, newCredential.ID) {
+			if !replaced {
+				retained = append(retained, *newCredential)
+				replaced = true
+			}
+
+			continue
 		}
+
+		retained = append(retained, credential)
 	}
+
+	clear(user.Credentials[len(retained):])
+	user.Credentials = retained
 
 	return nil
 }

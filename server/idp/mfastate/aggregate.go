@@ -184,8 +184,9 @@ func validateNewEnrollment(record *sessionstate.EnrollmentRecord) error {
 	return nil
 }
 
+// validateNewEnrollmentBinding requires exactly one protocol or self-service enrollment owner.
 func validateNewEnrollmentBinding(record *sessionstate.EnrollmentRecord) error {
-	if record == nil || record.Revision != 0 || record.Flow == "" ||
+	if record == nil || record.Revision != 0 || (record.Flow == "") != record.SelfService ||
 		strings.TrimSpace(record.AccountReference) == "" || strings.TrimSpace(record.IdentityReference) == "" ||
 		len(record.RequiredMethods) == 0 || len(record.CompletedMethods) != 0 || record.Completed ||
 		len(record.Continuation) > maxEnrollmentContinuationBytes {
