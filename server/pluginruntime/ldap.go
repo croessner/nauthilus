@@ -269,6 +269,7 @@ func newLDAPModifyQueueRequest(ctx context.Context, request pluginapi.LDAPModify
 	return &bktype.LDAPRequest{
 		PoolName:          backend.LDAPWorkerPoolName(request.PoolName),
 		ModifyDN:          request.DN,
+		AssertionFilter:   request.AssertionFilter,
 		SubCommand:        subCommand,
 		ModifyAttributes:  bktype.LDAPModifyAttributes(cloneStringSliceMap(request.Attributes)),
 		Command:           definitions.LDAPModify,

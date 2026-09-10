@@ -67,6 +67,9 @@ type LDAPRequest struct {
 	// ModifyDN specifies the distinguished name (DN) to be modified during an LDAP modify operation.
 	ModifyDN string
 
+	// AssertionFilter is an optional critical RFC 4528 precondition.
+	AssertionFilter string
+
 	// ModifyAttributes contains attributes information used in modify command.
 	ModifyAttributes LDAPModifyAttributes
 

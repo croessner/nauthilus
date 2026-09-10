@@ -336,3 +336,33 @@ func TestLuaLDAPEndpoint_DefaultAndLDAPI(t *testing.T) {
 		assert.Equal(t, lua.LNil, L.Get(-1))
 	})
 }
+
+// TestLuaLDAPModifyAssertCarriesPrecondition verifies the Lua boundary preserves CAS authority.
+func TestLuaLDAPModifyAssertCarriesPrecondition(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	bindLDAPRuntimeContextForTest(context.Background(), L)
+
+	enqueuer := &testLDAPEnqueuer{t: t, reply: &bktype.LDAPReply{}}
+
+	SetLuaLDAPQueue(enqueuer)
+	defer SetLuaLDAPQueue(nil)
+
+	table := newModifyTable(L)
+	L.SetField(table, "assertion_filter", lua.LString("(entryCSN=version)"))
+	L.Push(table)
+	LuaLDAPModifyAssert(context.Background())(L)
+	assert.NotNil(t, enqueuer.request)
+	assert.Equal(t, "(entryCSN=version)", enqueuer.request.AssertionFilter)
+}
+
+// TestLuaLDAPModifyAssertRejectsMissingPrecondition prevents accidental unconditional writes.
+func TestLuaLDAPModifyAssertRejectsMissingPrecondition(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	L.SetGlobal("modify", L.NewFunction(LuaLDAPModifyAssert(context.Background())))
+	L.SetGlobal("request", newModifyTable(L))
+	assert.ErrorContains(t, L.DoString("modify(request)"), "assertion_filter is required")
+}

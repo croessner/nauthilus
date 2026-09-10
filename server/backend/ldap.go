@@ -500,7 +500,7 @@ func prepareAndValidateModifyFields(L *lua.LState, table *lua.LTable) map[string
 		fieldValues[field] = L.GetField(table, field)
 	}
 
-	if !collectOptionalLDAPStringFields(L, table, fieldValues, luaLDAPFieldAllowedBase) {
+	if !collectOptionalLDAPStringFields(L, table, fieldValues, luaLDAPFieldAllowedBase, "assertion_filter") {
 		return nil
 	}
 
@@ -644,6 +644,8 @@ func applyLDAPModifyRequestFields(L *lua.LState, ldapRequest *bktype.LDAPRequest
 	}
 
 	ldapRequest.ModifyDN = fieldValues["dn"].String()
+
+	ldapRequest.AssertionFilter = luaStringField(fieldValues, "assertion_filter")
 	if err := enforceLuaLDAPSubtree(ldapRequest.ModifyDN, luaStringField(fieldValues, luaLDAPFieldAllowedBase), luaBoolField(fieldValues, luaLDAPFieldTrusted)); err != nil {
 		L.RaiseError("%s", err.Error())
 

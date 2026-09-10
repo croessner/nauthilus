@@ -207,10 +207,12 @@ type LDAPSearchResult struct {
 // LDAPModifyRequest describes one queued LDAP modify operation.
 // An empty PoolName or "default" selects the default LDAP pool.
 type LDAPModifyRequest struct {
-	Attributes map[string][]string
-	PoolName   string
-	DN         string
-	Operation  LDAPModifyOperation
+	// AssertionFilter is an optional critical RFC 4528 precondition.
+	AssertionFilter string
+	Attributes      map[string][]string
+	PoolName        string
+	DN              string
+	Operation       LDAPModifyOperation
 }
 
 // LDAPEntry contains one LDAP search result entry.

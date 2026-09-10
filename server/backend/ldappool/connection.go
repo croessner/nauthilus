@@ -352,7 +352,12 @@ func (l *LDAPConnectionImpl) Modify(ctx context.Context, cfg config.File, logger
 		return nil
 	}
 
-	err = l.conn.Modify(newModifyRequest(distinguishedName, ldapRequest))
+	modifyRequest := newModifyRequest(distinguishedName, ldapRequest)
+	if err = addModifyAssertion(modifyRequest, ldapRequest.AssertionFilter); err != nil {
+		return err
+	}
+
+	err = l.conn.Modify(modifyRequest)
 	l.closeOnTransportError(err)
 
 	return err

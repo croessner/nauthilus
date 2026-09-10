@@ -86,6 +86,7 @@ func LoaderModLDAP(ctx context.Context, cfg config.File) lua.LGFunction {
 		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 			definitions.LuaFnLDAPSearch:   LDAPSearchWithCtx(ctx),
 			definitions.LuaFnLDAPModify:   LDAPModifyWithCtx(ctx),
+			"ldap_modify_assert":          LuaLDAPModifyAssert(ctx),
 			definitions.LuaFnLDAPEndpoint: LDAPEndpointWithCtx(cfg),
 		})
 
