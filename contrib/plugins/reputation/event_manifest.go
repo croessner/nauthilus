@@ -143,7 +143,7 @@ func (p *manifestPlanner) allocationRequest(ctx context.Context, admitted admitt
 	return manifestRequest{AllocationTag: allocation, SourceTag: source.String(), AllocationIdentity: identity,
 		ObservedAt: float64(admitted.input.observedAt.UnixNano()) / 1e9, Lateness: min(admitted.source.lateness, admitted.signal.maxAge).Seconds(),
 		FutureSkew: admitted.source.futureSkew.Seconds(), Retention: p.config.manifestTTL.Seconds(), MaximumNewSubjects: p.config.raw.MaximumNewSubjectsPerSourceHour,
-		MaximumEvents: p.config.raw.MaximumEventManifestsPerSource}, nil
+		MaximumEvents: p.config.raw.eventManifestCapacity()}, nil
 }
 
 // candidate produces one key-version-specific canonical contribution without retaining any raw identifiers.

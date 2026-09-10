@@ -108,6 +108,18 @@ Per-source event and new-subject quotas divide their total budget over the fixed
 shards; their sum never exceeds the configured total. This is conservative:
 one subject observed in several shards can consume several quota entries, and
 an uneven distribution can exhaust one shard before the total is reached.
+Optional `event_manifest_capacity_per_source` adds operational storage headroom
+without changing the existing model fingerprint, accumulators, manifest identity
+or deduplication. Omit it (or use zero) to retain the original
+`maximum_event_manifests_per_source` budget. An explicit value must be at least
+that original budget and at most 100,000; it remains divided over 16 shards.
+Size it for the entire manifest TTL and allow for uneven shard distribution.
+Apply increases coherently to all writers sharing the prefix. Do not lower or
+remove an expanded capacity until active entries have expired below the reduced
+per-shard bounds; older binaries still enforce their smaller original budget.
+This override changes only allocation capacity, never the evidence contribution
+rules. The original fingerprinted budget remains unchanged for compatibility.
+
 Mass, samples, source classes and expanded subjects are bounded independently.
 Manifest and seen retention cover lateness plus the retry horizon; seen
 retention is at least manifest retention, and both fit within state retention.
@@ -326,8 +338,12 @@ payloads can still be archived; they do not provide assessment or learning.
 
 The host-owned `learning_total` counter has only `channel` and `result` labels.
 Channels are `external` and `authentication`; results are `applied`, `duplicate`,
-`partial`, `rejected`, `unavailable` or `skipped`. No event identity, subject,
+`partial`, `rejected`, `quota_exceeded`, `unavailable` or `skipped`. No event identity, subject,
 principal, raw payload or contribution detail appears in these labels.
+`quota_exceeded` also appears in ingestion telemetry and identifies exhausted
+resource admission, independently of Redis availability. Partial writes retain
+`partial` even when a quota stops the remaining work. Quota failures are still
+returned to the caller; they are never acknowledged as successful learning.
 
 ## Bounded operational telemetry
 

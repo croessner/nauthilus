@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
@@ -35,7 +36,7 @@ func (p *Plugin) initializeLearningMetrics(host pluginapi.Host) error {
 func learningMetricDimensions() []telemetry.Dimension {
 	return []telemetry.Dimension{
 		{Name: metricChannel, Values: []string{learningExternal, learningAuthentication}},
-		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, storageApplied, storageDuplicate}},
+		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, storageQuotaExceeded, storageApplied, storageDuplicate}},
 	}
 }
 
@@ -59,6 +60,10 @@ func learningIngestionResult(result ingestionResult, err error) string {
 	if err != nil {
 		if result.Applied > 0 || result.Duplicates > 0 {
 			return learningPartial
+		}
+
+		if errors.Is(err, errQuotaExceeded) {
+			return storageQuotaExceeded
 		}
 
 		return learningUnavailable

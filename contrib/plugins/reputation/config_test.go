@@ -202,3 +202,22 @@ func testYAMLMap(t *testing.T, path string) map[string]any {
 
 	return raw
 }
+
+// TestConfigManifestCapacityPreservesBoundedExpansion rejects reductions and unbounded operational headroom.
+func TestConfigManifestCapacityPreservesBoundedExpansion(t *testing.T) {
+	for _, capacity := range []int{-1, 0, 1, 50000, 100000, 100001} {
+		raw := testConfigMap(t)
+		raw["maximum_event_manifests_per_source"] = 10000
+		raw["event_manifest_capacity_per_source"] = capacity
+		cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
+
+		valid := capacity == 0 || (capacity >= 10000 && capacity <= maximumManifestCapacity)
+		if (err == nil) != valid {
+			t.Fatalf("capacity %d validation = %v", capacity, err)
+		}
+
+		if valid && cfg.raw.eventManifestCapacity() != max(10000, capacity) {
+			t.Fatal("effective capacity lost its configured bound")
+		}
+	}
+}

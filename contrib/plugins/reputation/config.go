@@ -27,7 +27,10 @@ const (
 	originAuthoritative     = "authoritative_external"
 )
 
+const maximumManifestCapacity = 100000
+
 type rawConfig struct {
+	EventManifestCapacityPerSource  int                      `mapstructure:"event_manifest_capacity_per_source"`
 	AllocationMaintenance           bool                     `mapstructure:"allocation_maintenance"`
 	IPOverrideNetworks              []string                 `mapstructure:"ip_override_networks"`
 	AuthLearning                    *authLearningConfig      `mapstructure:"auth_learning"`
@@ -299,6 +302,21 @@ func validateClassCaps(caps map[string]sourceCap) error {
 
 // validStateCardinality requires explicit finite event-history ceilings in addition to transport limits.
 func validStateCardinality(raw rawConfig) bool {
-	return raw.AllocationDrainGeneration >= 0 && raw.AllocationDrainGeneration <= 1000000 && raw.MaximumEventManifestsPerSource >= manifestShardCount && raw.MaximumEventManifestsPerSource <= 100000 &&
+	return raw.AllocationDrainGeneration >= 0 && raw.AllocationDrainGeneration <= 1000000 && raw.MaximumEventManifestsPerSource >= manifestShardCount && raw.MaximumEventManifestsPerSource <= maximumManifestCapacity && raw.validManifestCapacity() &&
 		raw.MaximumSeenEventsPerSubject >= 1 && raw.MaximumSeenEventsPerSubject <= 100000
+}
+
+// eventManifestCapacity resolves optional operational headroom without changing immutable model semantics.
+func (r rawConfig) eventManifestCapacity() int {
+	if r.EventManifestCapacityPerSource != 0 {
+		return r.EventManifestCapacityPerSource
+	}
+
+	return r.MaximumEventManifestsPerSource
+}
+
+// validManifestCapacity permits only bounded expansion of the model's original storage admission budget.
+func (r rawConfig) validManifestCapacity() bool {
+	return r.EventManifestCapacityPerSource == 0 ||
+		(r.EventManifestCapacityPerSource >= r.MaximumEventManifestsPerSource && r.EventManifestCapacityPerSource <= maximumManifestCapacity)
 }

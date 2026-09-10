@@ -586,7 +586,7 @@ func sameShardObservation(t *testing.T, owner *stateOwner, admitted admittedObse
 
 	for index := range 1000 {
 		input := admitted.input
-		input.eventID = fmt.Sprintf("same-shard-%d", index)
+		input.eventID = fmt.Sprintf("%s-same-shard-%d", admitted.input.eventID, index)
 
 		input.subjects = append([]subjectInput(nil), input.subjects...)
 		if changeSubject {
@@ -678,5 +678,48 @@ func TestReputationRedisProducerLocalIDsRemainIndependent(t *testing.T) {
 		if result.Applied != 2 || result.Duplicates != 0 {
 			t.Fatal("independent source-local ID was treated as a duplicate")
 		}
+	}
+}
+
+// TestReputationRedisCapacityIncreasePreservesModelAndDeduplication expands storage admission without resetting evidence.
+func TestReputationRedisCapacityIncreasePreservesModelAndDeduplication(t *testing.T) {
+	_, facade := localReputationRedis(t)
+	raw := testConfigMap(t)
+	raw["maximum_event_manifests_per_source"] = manifestShardCount
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
+	requireNoError(t, err)
+	tagger := manifestTestTagger(t, false)
+	owner, err := newStateOwner(cfg, tagger, facade)
+	requireNoError(t, err)
+	requireNoError(t, owner.start(t.Context()))
+	first := integrationObservation(t, cfg, tagger, "capacity-event")
+	_, err = owner.ingest(t.Context(), first)
+	requireNoError(t, err)
+	next := sameShardObservation(t, owner, first, false)
+	_, err = owner.ingest(t.Context(), next)
+	if !errors.Is(err, errQuotaExceeded) {
+		t.Fatal("initial quota not enforced")
+	}
+	raw["event_manifest_capacity_per_source"] = 2 * manifestShardCount
+	expanded, err := decodeConfig(pluginregistry.NewConfigView(raw))
+	requireNoError(t, err)
+	replacement, err := newStateOwner(expanded, tagger, facade)
+	requireNoError(t, err)
+	requireNoError(t, replacement.start(t.Context()))
+	replay, err := replacement.ingest(t.Context(), first)
+	requireNoError(t, err)
+	if replay.Applied != 0 || replay.Duplicates == 0 {
+		t.Fatal("capacity expansion reset deduplication")
+	}
+	applied, err := replacement.ingest(t.Context(), next)
+	requireNoError(t, err)
+	if applied.Applied == 0 {
+		t.Fatal("additional capacity did not admit evidence")
+	}
+
+	third := sameShardObservation(t, replacement, next, false)
+	_, err = replacement.ingest(t.Context(), third)
+	if !errors.Is(err, errQuotaExceeded) {
+		t.Fatal("expanded quota was not enforced")
 	}
 }

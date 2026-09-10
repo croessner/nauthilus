@@ -48,7 +48,7 @@ func newReputationTelemetry(cfg *configuration, host pluginapi.Metrics) (*reputa
 	classes := telemetry.Dimension{Name: "source_class", Values: metricCatalog(cfg.raw.SourceClassCaps)}
 	signals := telemetry.Dimension{Name: "signal", Values: metricCatalog(cfg.signals)}
 	kinds := telemetry.Dimension{Name: "kind", Values: []string{kindIP, kindNetwork, kindASN, kindDomain, kindAccount, kindService}}
-	results := telemetry.Dimension{Name: metricResult, Values: []string{storageApplied, storageDuplicate, learningRejected, learningUnavailable, learningPartial}}
+	results := telemetry.Dimension{Name: metricResult, Values: []string{storageApplied, storageDuplicate, learningRejected, learningUnavailable, learningPartial, storageQuotaExceeded}}
 
 	targets := map[string]struct{}{}
 	for target := range cfg.bindings {
