@@ -517,7 +517,9 @@ func TestInternalLookupUsesASNRoutingSnapshotForRecordsWithoutASN(t *testing.T) 
 	defer stopRunner(t, runner)
 
 	config, _ := plugin.currentConfig()
-	plugin.refreshASNLookupOnce(context.Background(), config.ASNLookup)
+	if err := plugin.refreshASNLookupOnce(context.Background(), config.ASNLookup); err != nil {
+		t.Fatal(err)
+	}
 
 	result := lookupGeoIP(t, plugin, testClientIP)
 
@@ -578,12 +580,14 @@ func TestASNRegistryRefreshPublishesSnapshot(t *testing.T) {
 		},
 	}
 
-	plugin.refreshASNRegistryOnce(context.Background(), asnRegistryConfig{
+	if err := plugin.refreshASNRegistryOnce(context.Background(), asnRegistryConfig{
 		Enabled:         true,
 		RefreshInterval: time.Hour,
 		Timeout:         time.Second,
 		SourceURLs:      []string{testRegistrySourceURL},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	plugin.mu.RLock()
 	snapshot := plugin.asnRegistry

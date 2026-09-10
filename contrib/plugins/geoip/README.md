@@ -294,3 +294,13 @@ Database failures are reduced to a fixed unavailable error before reaching
 ordinary logs, local spans or the parent Policy collector. Cancellation and
 deadline errors retain their control-flow identity. No raw database error is
 exported, since it can contain queried addresses or private paths.
+
+### ASN download recovery
+
+Routing and registry downloads retain the last completely validated snapshot when
+any source fails. Both workers retry after 30–60 seconds, exponentially increasing
+the delay to at most 15 minutes with jitter across replicas. A shorter configured
+refresh interval also caps the retry delay. Retries continue until recovery or
+worker shutdown; a successful refresh resets backoff and resumes the configured
+regular interval. A pod with no successful initial snapshot has no ASN enrichment
+for that source until a retry succeeds; the primary GeoIP database remains usable.

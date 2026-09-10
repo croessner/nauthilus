@@ -601,38 +601,18 @@ func (p *Plugin) refreshLoop(ctx context.Context, interval time.Duration) error 
 	}
 }
 
-// asnLookupLoop refreshes routing prefixes immediately and then periodically.
+// asnLookupLoop refreshes routing prefixes with bounded retries after failed downloads.
 func (p *Plugin) asnLookupLoop(ctx context.Context, config asnLookupConfig) error {
-	p.refreshASNLookupOnce(ctx, config)
-
-	ticker := time.NewTicker(config.RefreshInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.refreshASNLookupOnce(ctx, config)
-		}
-	}
+	return runASNRefresh(ctx, config.RefreshInterval, func(ctx context.Context) error {
+		return p.refreshASNLookupOnce(ctx, config)
+	})
 }
 
-// asnRegistryLoop refreshes delegated registry data immediately and then periodically.
+// asnRegistryLoop refreshes registry metadata with the same recovery schedule as routing prefixes.
 func (p *Plugin) asnRegistryLoop(ctx context.Context, config asnRegistryConfig) error {
-	p.refreshASNRegistryOnce(ctx, config)
-
-	ticker := time.NewTicker(config.RefreshInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			p.refreshASNRegistryOnce(ctx, config)
-		}
-	}
+	return runASNRefresh(ctx, config.RefreshInterval, func(ctx context.Context) error {
+		return p.refreshASNRegistryOnce(ctx, config)
+	})
 }
 
 // refreshOnce reloads the current database path without replacing state on failure.
@@ -654,12 +634,16 @@ func (p *Plugin) refreshOnce(ctx context.Context) {
 }
 
 // refreshASNLookupOnce fetches and publishes local ASN routing prefixes.
-func (p *Plugin) refreshASNLookupOnce(ctx context.Context, config asnLookupConfig) {
+func (p *Plugin) refreshASNLookupOnce(ctx context.Context, config asnLookupConfig) error {
 	snapshot, err := fetchASNLookupSnapshot(ctx, p.asnLookupFetcher(), config.SourceURLs, config.Timeout)
 	if err != nil {
 		p.logError(ctx, "geoip ASN routing refresh failed", err)
 
-		return
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	p.mu.Lock()
@@ -685,15 +669,21 @@ func (p *Plugin) refreshASNLookupOnce(ctx context.Context, config asnLookupConfi
 			pluginapi.LogField{Key: logFieldLoadedAt, Value: snapshot.loadedAt.Format(time.RFC3339)},
 		)
 	}
+
+	return nil
 }
 
 // refreshASNRegistryOnce fetches and publishes delegated ASN registry metadata.
-func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryConfig) {
+func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryConfig) error {
 	snapshot, err := fetchASNRegistrySnapshot(ctx, p.asnRegistryFetcher(), config.SourceURLs, config.Timeout)
 	if err != nil {
 		p.logError(ctx, "geoip ASN registry refresh failed", err)
 
-		return
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	p.mu.Lock()
@@ -709,6 +699,8 @@ func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryC
 			pluginapi.LogField{Key: logFieldLoadedAt, Value: snapshot.loadedAt.Format(time.RFC3339)},
 		)
 	}
+
+	return nil
 }
 
 // closeDatabases releases database resources and intentionally ignores close errors during replacement.
