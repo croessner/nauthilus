@@ -4,9 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(cd "${ROOT_DIR}/../.." && pwd)"
 COMPOSE=(docker compose --project-directory "${ROOT_DIR}" -f "${ROOT_DIR}/docker-compose.yml")
+PGO_DIR="${ROOT_DIR}/.work/pgo"
+PGO_PIDS=()
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage: contrib/identity-proxy-e2e/scripts/run.sh <command>
 
 Commands:
@@ -25,7 +27,106 @@ Environment:
   NAUTHILUS_E2E_IMAGE=...      Image used by docker-compose.
   NAUTHILUS_E2E_FORCE=1        Regenerate key material in prepare.
   NAUTHILUS_E2E_SAML_URL=...   Override the SAML SP login URL; set empty to skip SAML.
-EOF
+  NAUTHILUS_E2E_PGO=1          Capture and merge CPU profiles while the smoke workload runs.
+  NAUTHILUS_E2E_PGO_SECONDS=N  CPU profile duration per Nauthilus instance (default: 30).
+USAGE
+}
+
+pgo_enabled() {
+  [[ "${NAUTHILUS_E2E_PGO:-0}" == "1" ]]
+}
+
+prepare_pgo_capture() {
+  if ! pgo_enabled; then
+    return
+  fi
+
+  if ! [[ "${NAUTHILUS_E2E_PGO_SECONDS:-30}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "NAUTHILUS_E2E_PGO_SECONDS must be a positive integer." >&2
+    return 2
+  fi
+
+  export NAUTHILUS_E2E_ENABLE_PPROF=true
+  mkdir -p "${PGO_DIR}"
+  rm -f \
+    "${PGO_DIR}/authority.pprof" \
+    "${PGO_DIR}/edge-a.pprof" \
+    "${PGO_DIR}/edge-b.pprof" \
+    "${PGO_DIR}/candidate.pgo" \
+    "${PGO_DIR}/candidate.pgo.tmp"
+}
+
+start_pgo_capture() {
+  if ! pgo_enabled; then
+    return
+  fi
+
+  local seconds="${NAUTHILUS_E2E_PGO_SECONDS:-30}"
+  local max_time=$((seconds + 15))
+
+  echo "Capturing ${seconds}s PGO CPU profiles from authority, edge-a, and edge-b."
+
+  curl -fsS --max-time "${max_time}" \
+    "http://127.0.0.1:18081/debug/pprof/profile?seconds=${seconds}" \
+    -o "${PGO_DIR}/authority.pprof" &
+  PGO_PIDS+=("$!")
+
+  curl -kfsS --max-time "${max_time}" \
+    "https://127.0.0.1:18080/debug/pprof/profile?seconds=${seconds}" \
+    -o "${PGO_DIR}/edge-a.pprof" &
+  PGO_PIDS+=("$!")
+
+  curl -kfsS --max-time "${max_time}" \
+    "https://127.0.0.1:18082/debug/pprof/profile?seconds=${seconds}" \
+    -o "${PGO_DIR}/edge-b.pprof" &
+  PGO_PIDS+=("$!")
+}
+
+cancel_pgo_capture() {
+  local pid
+
+  for pid in "${PGO_PIDS[@]}"; do
+    kill "${pid}" >/dev/null 2>&1 || true
+  done
+
+  for pid in "${PGO_PIDS[@]}"; do
+    wait "${pid}" >/dev/null 2>&1 || true
+  done
+
+  PGO_PIDS=()
+}
+
+finish_pgo_capture() {
+  if ! pgo_enabled; then
+    return
+  fi
+
+  local status=0
+  local pid
+
+  for pid in "${PGO_PIDS[@]}"; do
+    wait "${pid}" || status=$?
+  done
+  PGO_PIDS=()
+
+  if [[ "${status}" -ne 0 ]]; then
+    echo "Failed to collect one or more PGO CPU profiles." >&2
+    return "${status}"
+  fi
+
+  (
+    cd "${REPO_DIR}"
+    go tool pprof -proto \
+      "${PGO_DIR}/authority.pprof" \
+      "${PGO_DIR}/edge-a.pprof" \
+      "${PGO_DIR}/edge-b.pprof" \
+      > "${PGO_DIR}/candidate.pgo.tmp"
+    mv "${PGO_DIR}/candidate.pgo.tmp" "${PGO_DIR}/candidate.pgo"
+    go tool pprof -top "${PGO_DIR}/candidate.pgo" >/dev/null
+  )
+
+  echo "PGO candidate written to ${PGO_DIR}/candidate.pgo"
+  echo "Review it before promoting it to server/default.pgo."
 }
 
 prepare() {
@@ -115,16 +216,36 @@ reset_stack() {
 }
 
 smoke() {
+  local status=0
+
   profile_check
   reset_stack
+  prepare_pgo_capture
   up
-  rpc_pre_browser
-  redis_check
-  browser
-  rpc_post_browser
+  start_pgo_capture
+
+  rpc_pre_browser || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    redis_check || status=$?
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    browser || status=$?
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    rpc_post_browser || status=$?
+  fi
+
+  if [[ "${status}" -eq 0 ]]; then
+    finish_pgo_capture || status=$?
+  else
+    cancel_pgo_capture
+  fi
+
+  return "${status}"
 }
 
 down() {
+  cancel_pgo_capture
   "${COMPOSE[@]}" down -v --remove-orphans
 }
 
