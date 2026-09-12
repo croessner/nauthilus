@@ -1,0 +1,109 @@
+name: PGO Profile Refresh
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GOEXPERIMENT: runtimesecret
+
+jobs:
+  refresh-profile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout profiled revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version: 1.27.1
+          check-latest: true
+
+      - name: Install browser E2E dependencies
+        run: |
+          npm ci --prefix contrib/identity-proxy-e2e
+          npx --prefix contrib/identity-proxy-e2e playwright install --with-deps chromium
+
+      - name: Capture PGO candidate from release E2E
+        run: make release-identity-proxy-e2e
+
+      - name: Validate PGO candidate
+        run: |
+          test -s contrib/identity-proxy-e2e/.work/pgo/candidate.pgo
+          go tool pprof -top contrib/identity-proxy-e2e/.work/pgo/candidate.pgo >/dev/null
+
+      - name: Upload PGO candidate
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pgo-candidate-${{ github.ref_name }}
+          path: contrib/identity-proxy-e2e/.work/pgo/candidate.pgo
+          if-no-files-found: error
+
+      - name: Prepare N+1 PGO refresh branch
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          candidate="${GITHUB_WORKSPACE}/contrib/identity-proxy-e2e/.work/pgo/candidate.pgo"
+          cp "${candidate}" /tmp/default.pgo
+
+          git fetch origin features
+
+          safe_ref="${GITHUB_REF_NAME//\//-}"
+          branch="automation/pgo-${safe_ref}"
+          git checkout -B "${branch}" origin/features
+
+          cp /tmp/default.pgo server/default.pgo
+          go tool pprof -top server/default.pgo >/dev/null
+
+          # Prove that the profile can be consumed by the next server build.
+          go build -mod=vendor -pgo=server/default.pgo -trimpath -o /tmp/nauthilus-pgo ./server
+
+          if git ls-files --error-unmatch server/default.pgo >/dev/null 2>&1 && \
+             git diff --quiet -- server/default.pgo; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+            echo "Committed PGO profile already matches the generated candidate."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/default.pgo
+          git commit -m "Chore: Refresh PGO profile from ${GITHUB_REF_NAME}"
+          git push --force-with-lease origin "HEAD:refs/heads/${branch}"
+
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Open N+1 PGO refresh pull request
+        if: steps.prepare.outputs.changed == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PGO_BRANCH: ${{ steps.prepare.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          if gh pr view "${PGO_BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq '.url' >/dev/null 2>&1; then
+            gh pr view "${PGO_BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq '.url'
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base features \
+            --head "${PGO_BRANCH}" \
+            --title "Chore: Refresh PGO profile from ${GITHUB_REF_NAME}" \
+            --body "Refreshes \`server/default.pgo\` from the release E2E workload for use by the next Nauthilus build. Go automatically applies this profile to the \`./server\` main package via the default \`-pgo=auto\` behavior. The generated profile was validated with \`go tool pprof\` and a PGO-enabled server build before this PR was opened."
