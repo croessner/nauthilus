@@ -99,7 +99,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 	redisHandle = redis.NewFailoverClient(fo)
 
 	// Attach OpenTelemetry Redis tracing if enabled
-	instrumentRedisIfEnabled(redisHandle)
+	instrumentRedisIfEnabled(cfg, redisHandle)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(cfg, logger, redisHandle)
@@ -107,10 +107,7 @@ func newRedisFailoverClient(cfg config.File, logger *slog.Logger, redisCfg *conf
 	return
 }
 
-// newRedisClient returns a new Redis client that is configured with the provided address and authentication credentials.
-// The client is created using the redis.NewClient function from the "github.com/go-redis/redis" package.
-// The address is used to specify the network address of the Redis server.
-// The remaining configuration properties such as username, password, database number, pool size, and TLS options are obtained from the "config.GetFile().GetServer().Redis.Master" and
+// newRedisClient builds a standalone Redis client from injected configuration, TLS and logging dependencies.
 func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis, address string, tlsConfig *tls.Config) *redis.Client {
 	masterPassword := ""
 
@@ -157,7 +154,7 @@ func newRedisClient(cfg config.File, logger *slog.Logger, redisCfg *config.Redis
 	c := redis.NewClient(opts)
 
 	// Attach OpenTelemetry Redis tracing if enabled
-	instrumentRedisIfEnabled(c)
+	instrumentRedisIfEnabled(cfg, c)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(cfg, logger, c)
@@ -182,7 +179,7 @@ func newRedisClusterClient(cfg config.File, logger *slog.Logger, redisCfg *confi
 	c := redis.NewClusterClient(options)
 
 	// Attach OpenTelemetry Redis tracing if enabled
-	instrumentRedisIfEnabled(c)
+	instrumentRedisIfEnabled(cfg, c)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(cfg, logger, c)
@@ -261,9 +258,9 @@ func setRedisClusterClientTracking(options *redis.ClusterOptions, redisCfg *conf
 	}
 }
 
-// instrumentRedisIfEnabled enables OpenTelemetry tracing for Redis clients when configured.
-func instrumentRedisIfEnabled(c redis.UniversalClient) {
-	tr := config.GetFile().GetServer().GetInsights().GetTracing()
+// instrumentRedisIfEnabled binds Redis tracing to the injected, potentially unpublished configuration.
+func instrumentRedisIfEnabled(cfg config.File, c redis.UniversalClient) {
+	tr := cfg.GetServer().GetInsights().GetTracing()
 	if tr.IsEnabled() && tr.IsRedisEnabled() {
 		// Ignore error to avoid impacting runtime if instrumentation fails
 		_ = redisotel.InstrumentTracing(c)
@@ -287,7 +284,7 @@ func newRedisClusterClientReadOnly(cfg config.File, logger *slog.Logger, redisCf
 	c := redis.NewClusterClient(options)
 
 	// Attach OpenTelemetry Redis tracing if enabled
-	instrumentRedisIfEnabled(c)
+	instrumentRedisIfEnabled(cfg, c)
 
 	// Attach client-side batching hook if enabled
 	attachBatchingHookIfEnabled(cfg, logger, c)
