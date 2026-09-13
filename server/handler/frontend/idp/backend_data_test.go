@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
 	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
@@ -52,7 +53,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redismock/v9"
 	"github.com/go-webauthn/webauthn/webauthn"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -699,7 +699,7 @@ func (f *webAuthnFallbackFixture) expectedCachedWebAuthnUser(t *testing.T) map[s
 func (f *webAuthnFallbackFixture) encryptedCredentialsValue(t *testing.T) string {
 	t.Helper()
 
-	credentialsJSON, err := jsoniter.ConfigFastest.Marshal(f.provider.credentials)
+	credentialsJSON, err := json.Marshal(f.provider.credentials)
 	if err != nil {
 		t.Fatalf("failed to marshal credentials: %v", err)
 	}
@@ -998,7 +998,7 @@ func (f *backendDataLDAPFixture) expectEmptyWebAuthnCache(uniqueUserID string) {
 func (f *backendDataBaseFixture) expectSavedWebAuthnCache(t *testing.T, user *backend.User) {
 	t.Helper()
 
-	credentialsJSON, err := jsoniter.ConfigFastest.Marshal(user.Credentials)
+	credentialsJSON, err := json.Marshal(user.Credentials)
 	if err != nil {
 		t.Fatalf("failed to marshal credentials: %v", err)
 	}
@@ -1040,7 +1040,7 @@ func (f *backendDataLDAPFixture) replyToBackendDataSearches(
 ) <-chan error {
 	t.Helper()
 
-	credentialJSON, err := jsoniter.ConfigFastest.Marshal(credential)
+	credentialJSON, err := json.Marshal(credential)
 	if err != nil {
 		t.Fatalf("failed to marshal WebAuthn credential: %v", err)
 	}

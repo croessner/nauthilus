@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"time"
 
+	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp/signing"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/util"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 )
@@ -49,8 +49,6 @@ type SigningKeyEntry struct {
 	Algorithm string
 	PublicKey crypto.PublicKey
 }
-
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Manager handles OIDC signing keys.
 type Manager struct {

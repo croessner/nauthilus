@@ -20,14 +20,13 @@ import (
 	"log/slog"
 	"sync"
 
+	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/app/configfx"
 	"github.com/croessner/nauthilus/v4/server/app/redifx"
 	"github.com/croessner/nauthilus/v4/server/bruteforce"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
-
-	jsoniter "github.com/json-iterator/go"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -113,7 +112,7 @@ func (s *BruteForceSyncService) handleMessage(payload string) {
 	defer sp.End()
 
 	var msg bruteforce.BlockMessage
-	if err := jsoniter.ConfigFastest.Unmarshal([]byte(payload), &msg); err != nil {
+	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
 		level.Error(s.logger).Log(definitions.LogKeyMsg, "Failed to unmarshal brute-force sync message", definitions.LogKeyError, err)
 		return
 	}

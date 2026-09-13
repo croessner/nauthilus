@@ -36,8 +36,8 @@ import (
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
 
+	"encoding/json"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
@@ -57,7 +57,7 @@ func loadEncryptedStringSliceField(hashValues map[string]string, fieldName strin
 	decryptedValue, _ := securityManager.Decrypt(fieldValue)
 
 	var values []string
-	if err := jsoniter.ConfigFastest.Unmarshal([]byte(decryptedValue), &values); err != nil {
+	if err := json.Unmarshal([]byte(decryptedValue), &values); err != nil {
 		return nil, err
 	}
 
@@ -69,7 +69,7 @@ func storeEncryptedStringSliceField(hashFields map[string]any, fieldName string,
 		return nil
 	}
 
-	serialized, err := jsoniter.ConfigFastest.Marshal(values)
+	serialized, err := json.Marshal(values)
 	if err != nil {
 		return err
 	}
@@ -294,7 +294,7 @@ func loadPositiveCacheAttributes(
 	decryptedAttributesJSON, _ := sm.Decrypt(attributesJSON)
 
 	var attributes bktype.AttributeMapping
-	if err := jsoniter.ConfigFastest.Unmarshal([]byte(decryptedAttributesJSON), &attributes); err != nil {
+	if err := json.Unmarshal([]byte(decryptedAttributesJSON), &attributes); err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyMsg, "Failed to unmarshal attributes",
 			definitions.LogKeyError, err,
@@ -469,7 +469,7 @@ func addPositiveCacheAttributesHashField(
 		return true
 	}
 
-	attributesJSON, err := jsoniter.ConfigFastest.Marshal(cache.Attributes)
+	attributesJSON, err := json.Marshal(cache.Attributes)
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, guid,
@@ -625,7 +625,7 @@ func GetWebAuthnFromRedis(ctx context.Context, cfg config.File, logger *slog.Log
 		decryptedCredentialsJSON, _ := sm.Decrypt(credentialsJSON)
 
 		var credentials []mfa.PersistentCredential
-		if err = jsoniter.ConfigFastest.Unmarshal([]byte(decryptedCredentialsJSON), &credentials); err != nil {
+		if err = json.Unmarshal([]byte(decryptedCredentialsJSON), &credentials); err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to unmarshal credentials",
 				definitions.LogKeyError, err,
@@ -658,7 +658,7 @@ func SaveWebAuthnToRedis(ctx context.Context, logger *slog.Logger, cfg config.Fi
 
 	// Serialize the credentials as JSON since it's a complex slice
 	if len(user.Credentials) > 0 {
-		credentialsJSON, err := jsoniter.ConfigFastest.Marshal(user.Credentials)
+		credentialsJSON, err := json.Marshal(user.Credentials)
 		if err != nil {
 			level.Error(logger).Log(
 				definitions.LogKeyMsg, "Failed to marshal credentials",

@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -57,7 +58,7 @@ func (s *canonicalWebAuthnCeremonyStore) Store(
 		return "", err
 	}
 
-	payload, err := jsonIter.Marshal(data)
+	payload, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("canonical webauthn ceremony: encode: %w", err)
 	}
@@ -109,7 +110,7 @@ func (s *canonicalWebAuthnCeremonyStore) Take(
 	}
 
 	data := &webauthn.SessionData{}
-	if err = jsonIter.Unmarshal(record.Payload, data); err != nil {
+	if err = json.Unmarshal(record.Payload, data); err != nil {
 		return nil, errors.Join(sessionstate.ErrBindingMismatch, err)
 	}
 

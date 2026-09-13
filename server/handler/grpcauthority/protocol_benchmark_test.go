@@ -46,8 +46,8 @@ import (
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/util"
 
+	"encoding/json"
 	"github.com/gin-gonic/gin"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
 	"google.golang.org/grpc"
@@ -67,7 +67,6 @@ type authProtocolBenchmarkFixture struct {
 	grpcWithoutRef authv1.AuthServiceClient
 	grpcWithRef    authv1.AuthServiceClient
 	httpURL        string
-	jsonAPI        jsoniter.API
 }
 
 type authProtocolJSONResponse struct {
@@ -186,7 +185,6 @@ func newAuthProtocolBenchmarkFixture(b *testing.B) *authProtocolBenchmarkFixture
 		grpcWithoutRef: grpcWithoutRef,
 		grpcWithRef:    grpcWithRef,
 		httpURL:        httpServer.URL + "/api/v1/auth/json",
-		jsonAPI:        jsoniter.ConfigCompatibleWithStandardLibrary,
 	}
 
 	b.Cleanup(httpServer.Close)
@@ -380,7 +378,7 @@ func newAuthProtocolClientCredentials(b *testing.B, certificate tls.Certificate)
 
 // authenticateJSON performs one complete JSON request and validates the decision response.
 func (f *authProtocolBenchmarkFixture) authenticateJSON(ctx context.Context, username string) error {
-	payload, err := f.jsonAPI.Marshal(newAuthProtocolJSONRequest(username))
+	payload, err := json.Marshal(newAuthProtocolJSONRequest(username))
 	if err != nil {
 		return fmt.Errorf("marshal JSON auth request: %w", err)
 	}
@@ -409,7 +407,7 @@ func (f *authProtocolBenchmarkFixture) authenticateJSON(ctx context.Context, use
 	}
 
 	var decoded authProtocolJSONResponse
-	if err = f.jsonAPI.Unmarshal(body, &decoded); err != nil {
+	if err = json.Unmarshal(body, &decoded); err != nil {
 		return fmt.Errorf("decode JSON auth response: %w", err)
 	}
 

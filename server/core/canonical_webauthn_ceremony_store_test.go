@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
@@ -91,13 +92,13 @@ func TestWebAuthnSessionRoundTripPreservesTypedExtensions(t *testing.T) {
 		},
 	}
 
-	payload, err := jsonIter.Marshal(&data)
+	payload, err := json.Marshal(&data)
 	if err != nil {
 		t.Fatalf("marshal WebAuthn session: %v", err)
 	}
 
 	var decoded webauthn.SessionData
-	if err = jsonIter.Unmarshal(payload, &decoded); err != nil {
+	if err = json.Unmarshal(payload, &decoded); err != nil {
 		t.Fatalf("unmarshal WebAuthn session: %v", err)
 	}
 
