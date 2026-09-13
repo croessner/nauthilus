@@ -34,6 +34,7 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
+          import re
 
           root = Path('.')
           candidates = [p for p in root.rglob('*.go') if 'vendor' not in p.parts]
@@ -50,16 +51,19 @@ jobs:
               'fastJSON.Unmarshal': 'json.Unmarshal',
               'jsonIter.Marshal': 'json.Marshal',
               'jsonIter.Unmarshal': 'json.Unmarshal',
+              'f.jsonAPI.Marshal': 'json.Marshal',
+              'f.jsonAPI.Unmarshal': 'json.Unmarshal',
           }
 
-          alias_lines = {
-              'var json = jsoniter.ConfigFastest\n',
-              'var json = jsoniter.ConfigCompatibleWithStandardLibrary\n',
-              'var fastJSON = jsoniter.ConfigFastest\n',
-              'var fastJSON = jsoniter.ConfigCompatibleWithStandardLibrary\n',
-              'var jsonIter = jsoniter.ConfigFastest\n',
-              'var jsonIter = jsoniter.ConfigCompatibleWithStandardLibrary\n',
-          }
+          import_re = re.compile(r'(?m)^\s*jsoniter\s+"github\.com/json-iterator/go"\s*\n')
+          alias_re = re.compile(
+              r'(?m)^var\s+(?:json|fastJSON|jsonIter)\s*=\s*jsoniter\.'
+              r'(?:ConfigFastest|ConfigCompatibleWithStandardLibrary)\s*\n'
+          )
+          json_api_field_re = re.compile(r'(?m)^\s*jsonAPI\s+jsoniter\.API\s*\n')
+          json_api_init_re = re.compile(
+              r'(?m)^\s*jsonAPI:\s*jsoniter\.ConfigCompatibleWithStandardLibrary,?\s*\n'
+          )
 
           changed_go = []
           changed_other = []
@@ -67,19 +71,18 @@ jobs:
               text = path.read_text()
               original = text
 
-              if 'jsoniter "github.com/json-iterator/go"' in text:
+              if import_re.search(text):
                   if '"encoding/json"' in text:
-                      text = text.replace('\tjsoniter "github.com/json-iterator/go"\n', '')
-                      text = text.replace('jsoniter "github.com/json-iterator/go"\n', '')
+                      text = import_re.sub('', text)
                   else:
-                      text = text.replace('jsoniter "github.com/json-iterator/go"', '"encoding/json"')
+                      text = import_re.sub('\t"encoding/json"\n', text)
 
               for old, new in replacements.items():
                   text = text.replace(old, new)
 
-              for line in alias_lines:
-                  text = text.replace(line, '')
-
+              text = alias_re.sub('', text)
+              text = json_api_field_re.sub('', text)
+              text = json_api_init_re.sub('', text)
               text = text.replace('// jsonIter is a package-level variable for jsoniter with standard configuration\n', '')
 
               if text != original:
@@ -100,7 +103,13 @@ jobs:
           remaining = []
           for path in [p for p in root.rglob('*.go') if 'vendor' not in p.parts]:
               text = path.read_text()
-              if 'github.com/json-iterator/go' in text or 'jsoniter.' in text or 'jsonIter.' in text or 'fastJSON.' in text:
+              if (
+                  'github.com/json-iterator/go' in text
+                  or 'jsoniter.' in text
+                  or 'jsonIter.' in text
+                  or 'fastJSON.' in text
+                  or 'jsonAPI' in text
+              ):
                   remaining.append(str(path))
           if remaining:
               raise SystemExit('Unmigrated jsoniter references: ' + ', '.join(remaining))
@@ -115,12 +124,16 @@ jobs:
           go mod tidy
           go mod vendor
 
-      - name: Verify no Nauthilus code uses jsoniter
+      - name: Verify Nauthilus uses only the standard JSON package
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R --line-number --include='*.go' --exclude-dir=vendor 'json-iterator/go\|jsoniter\.\|jsonIter\.\|fastJSON\.' .; then
+          if grep -R --line-number --include='*.go' --exclude-dir=vendor 'json-iterator/go\|jsoniter\.\|jsonIter\.\|fastJSON\.\|jsonAPI' .; then
             echo 'jsoniter references remain in Nauthilus Go code' >&2
+            exit 1
+          fi
+          if grep -q 'github.com/json-iterator/go' go.mod; then
+            echo 'jsoniter remains in go.mod after tidy' >&2
             exit 1
           fi
 
