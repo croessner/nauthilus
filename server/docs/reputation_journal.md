@@ -118,8 +118,8 @@ restart. Kubernetes Secret rotation must trigger that restart.
 
 The outbox uses a shared persistent filesystem with cross-process advisory locks,
 file synchronization and atomic rename. Records are bounded by both count and
-bytes. A full or unavailable outbox rejects new durable acceptance after Kafka
-failure. Exact retry remains possible at the record limit. Filesystem scans and
+bytes. A full or unavailable outbox rejects new durable acceptance even when Kafka
+is reachable. Exact retry remains possible at the record limit. Filesystem scans and
 recovery are bounded but have not yet been qualified at sustained production load.
 
 Operational overrides preserve the model fingerprint:
