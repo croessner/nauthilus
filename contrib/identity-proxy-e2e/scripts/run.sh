@@ -32,10 +32,12 @@ Environment:
 USAGE
 }
 
+# Report whether this run requests CPU profile capture.
 pgo_enabled() {
   [[ "${NAUTHILUS_E2E_PGO:-0}" == "1" ]]
 }
 
+# Validate capture settings and discard candidates from earlier runs.
 prepare_pgo_capture() {
   if ! pgo_enabled; then
     return
@@ -56,46 +58,48 @@ prepare_pgo_capture() {
     "${PGO_DIR}/candidate.pgo.tmp"
 }
 
+# Start one bounded profile request and retain its process for cleanup.
+capture_pgo_profile() {
+  local name="$1"
+  local url="$2"
+  local seconds="${NAUTHILUS_E2E_PGO_SECONDS:-30}"
+  local max_time=$((seconds + 15))
+  shift 2
+
+  curl "$@" -fsS --max-time "${max_time}" \
+    "${url}/debug/pprof/profile?seconds=${seconds}" \
+    -o "${PGO_DIR}/${name}.pprof" &
+  PGO_PIDS+=("$!")
+}
+
+# Collect CPU profiles concurrently while the smoke workload executes.
 start_pgo_capture() {
   if ! pgo_enabled; then
     return
   fi
 
-  local seconds="${NAUTHILUS_E2E_PGO_SECONDS:-30}"
-  local max_time=$((seconds + 15))
-
-  echo "Capturing ${seconds}s PGO CPU profiles from authority, edge-a, and edge-b."
-
-  curl -fsS --max-time "${max_time}" \
-    "http://127.0.0.1:18081/debug/pprof/profile?seconds=${seconds}" \
-    -o "${PGO_DIR}/authority.pprof" &
-  PGO_PIDS+=("$!")
-
-  curl -kfsS --max-time "${max_time}" \
-    "https://127.0.0.1:18080/debug/pprof/profile?seconds=${seconds}" \
-    -o "${PGO_DIR}/edge-a.pprof" &
-  PGO_PIDS+=("$!")
-
-  curl -kfsS --max-time "${max_time}" \
-    "https://127.0.0.1:18082/debug/pprof/profile?seconds=${seconds}" \
-    -o "${PGO_DIR}/edge-b.pprof" &
-  PGO_PIDS+=("$!")
+  echo "Capturing ${NAUTHILUS_E2E_PGO_SECONDS:-30}s PGO CPU profiles from authority, edge-a, and edge-b."
+  capture_pgo_profile authority http://127.0.0.1:18081
+  capture_pgo_profile edge-a https://127.0.0.1:18080 -k
+  capture_pgo_profile edge-b https://127.0.0.1:18082 -k
 }
 
+# Stop and reap every outstanding profile request.
 cancel_pgo_capture() {
   local pid
 
-  for pid in "${PGO_PIDS[@]}"; do
+  for pid in ${PGO_PIDS[@]+"${PGO_PIDS[@]}"}; do
     kill "${pid}" >/dev/null 2>&1 || true
   done
 
-  for pid in "${PGO_PIDS[@]}"; do
+  for pid in ${PGO_PIDS[@]+"${PGO_PIDS[@]}"}; do
     wait "${pid}" >/dev/null 2>&1 || true
   done
 
   PGO_PIDS=()
 }
 
+# Publish a candidate only after capture, merge, and profile validation succeed.
 finish_pgo_capture() {
   if ! pgo_enabled; then
     return
@@ -104,7 +108,7 @@ finish_pgo_capture() {
   local status=0
   local pid
 
-  for pid in "${PGO_PIDS[@]}"; do
+  for pid in ${PGO_PIDS[@]+"${PGO_PIDS[@]}"}; do
     wait "${pid}" || status=$?
   done
   PGO_PIDS=()
@@ -115,15 +119,15 @@ finish_pgo_capture() {
   fi
 
   (
-    cd "${REPO_DIR}"
+    cd "${REPO_DIR}" || exit $?
     go tool pprof -proto \
       "${PGO_DIR}/authority.pprof" \
       "${PGO_DIR}/edge-a.pprof" \
       "${PGO_DIR}/edge-b.pprof" \
-      > "${PGO_DIR}/candidate.pgo.tmp"
-    mv "${PGO_DIR}/candidate.pgo.tmp" "${PGO_DIR}/candidate.pgo"
-    go tool pprof -top "${PGO_DIR}/candidate.pgo" >/dev/null
-  )
+      > "${PGO_DIR}/candidate.pgo.tmp" || exit $?
+    go tool pprof -top "${PGO_DIR}/candidate.pgo.tmp" >/dev/null || exit $?
+    mv "${PGO_DIR}/candidate.pgo.tmp" "${PGO_DIR}/candidate.pgo" || exit $?
+  ) || return $?
 
   echo "PGO candidate written to ${PGO_DIR}/candidate.pgo"
   echo "Review it before promoting it to server/default.pgo."
@@ -215,6 +219,7 @@ reset_stack() {
   "${COMPOSE[@]}" down -v --remove-orphans
 }
 
+# Run the complete smoke sequence and retain profile-capture failures.
 smoke() {
   local status=0
 
@@ -244,6 +249,7 @@ smoke() {
   return "${status}"
 }
 
+# Reap local capture processes before removing the isolated Compose stack.
 down() {
   cancel_pgo_capture
   "${COMPOSE[@]}" down -v --remove-orphans
