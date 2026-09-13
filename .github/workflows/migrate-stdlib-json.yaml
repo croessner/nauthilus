@@ -48,12 +48,9 @@ jobs:
               text = path.read_text()
               original = text
 
-              # Normalize the two package-local aliases used by Nauthilus.
               text = text.replace('fastJSON.', 'json.')
               text = text.replace('jsonIter.', 'json.')
 
-              # The protocol benchmark stored jsoniter.API in the fixture solely
-              # to call Marshal/Unmarshal. Standard package functions need no field.
               text = text.replace('f.jsonAPI.Marshal', 'json.Marshal')
               text = text.replace('f.jsonAPI.Unmarshal', 'json.Unmarshal')
               text = re.sub(r'(?m)^\s*jsonAPI\s+jsoniter\.API\s*\n', '', text)
@@ -63,8 +60,9 @@ jobs:
               text = text.replace('jsoniter.ConfigFastest.Unmarshal', 'json.Unmarshal')
               text = text.replace('jsoniter.ConfigCompatibleWithStandardLibrary.Marshal', 'json.Marshal')
               text = text.replace('jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal', 'json.Unmarshal')
+              text = text.replace('jsoniter.Marshal', 'json.Marshal')
+              text = text.replace('jsoniter.Unmarshal', 'json.Unmarshal')
 
-              # Remove aliases after references have been normalized.
               text = re.sub(
                   r'(?m)^var\s+(?:json|fastJSON|jsonIter)\s*=\s*jsoniter\.(?:ConfigFastest|ConfigCompatibleWithStandardLibrary)\s*\n',
                   '',
@@ -72,7 +70,6 @@ jobs:
               )
               text = text.replace('// jsonIter is a package-level variable for jsoniter with standard configuration\n', '')
 
-              # Replace/remove the third-party import.
               import_pattern = r'(?m)^\s*jsoniter\s+"github\.com/json-iterator/go"\s*\n'
               if re.search(import_pattern, text):
                   if '"encoding/json"' in text:
