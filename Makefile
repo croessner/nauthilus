@@ -131,7 +131,7 @@ generate-openapi-management-check: generate-openapi-bindings-check ## Verify com
 identity-proxy-e2e: ## Run the split identity-proxy smoke profile
 	contrib/identity-proxy-e2e/scripts/run.sh smoke
 
-release-identity-proxy-e2e: ## Run the release E2E gate and always remove its Compose stack
+release-identity-proxy-e2e: ## Run the release E2E gate, emit a PGO candidate, and always remove its Compose stack
 	@status=0; \
 		cleanup() { \
 			trap - EXIT HUP INT TERM; \
@@ -146,7 +146,7 @@ release-identity-proxy-e2e: ## Run the release E2E gate and always remove its Co
 		trap 'status=143; cleanup' TERM; \
 		contrib/identity-proxy-e2e/scripts/run.sh down || status=$$?; \
 		if [ "$$status" -eq 0 ]; then \
-			contrib/identity-proxy-e2e/scripts/run.sh smoke || status=$$?; \
+			NAUTHILUS_E2E_PGO=1 contrib/identity-proxy-e2e/scripts/run.sh smoke || status=$$?; \
 		fi; \
 		cleanup
 

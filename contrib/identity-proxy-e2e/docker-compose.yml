@@ -6,6 +6,8 @@ x-nauthilus-service: &nauthilus-service
   read_only: true
   tmpfs:
     - /tmp
+  environment:
+    NAUTHILUS_OBSERVABILITY_PROFILES_PPROF_ENABLED: "${NAUTHILUS_E2E_ENABLE_PPROF:-false}"
   volumes:
     - ./.work/certs:/etc/nauthilus/e2e/certs:ro
     - ./.work/keys:/etc/nauthilus/e2e/keys:ro
