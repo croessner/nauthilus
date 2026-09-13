@@ -18,6 +18,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -106,7 +107,7 @@ func decodeLDAPWebAuthnCredentials(values []any) []mfa.PersistentCredential {
 
 	for _, val := range values {
 		var cred mfa.PersistentCredential
-		if err := jsonIter.Unmarshal([]byte(val.(string)), &cred); err == nil {
+		if err := json.Unmarshal([]byte(val.(string)), &cred); err == nil {
 			credentials = append(credentials, cred)
 		}
 	}
@@ -352,7 +353,7 @@ func (lm *ldapManagerImpl) SaveWebAuthnCredential(auth *AuthState, credential *m
 		return err
 	}
 
-	credBytes, err := jsonIter.Marshal(credential)
+	credBytes, err := json.Marshal(credential)
 	if err != nil {
 		return err
 	}
@@ -447,7 +448,7 @@ func (lm *ldapManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredenti
 		return fmt.Errorf("WebAuthn credential changed or no longer exists")
 	}
 
-	encoded, err := jsonIter.Marshal(newCredential)
+	encoded, err := json.Marshal(newCredential)
 	if err != nil {
 		return err
 	}

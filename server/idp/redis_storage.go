@@ -24,17 +24,15 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/idp/clientauth"
 	"github.com/croessner/nauthilus/v4/server/idp/dcr"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/util"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 )
-
-var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 var (
 	// ErrClientAssertionReplayUnavailable indicates replay state could not be reserved.

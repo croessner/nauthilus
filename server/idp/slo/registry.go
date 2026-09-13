@@ -19,14 +19,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"net/url"
 	"strings"
 	"time"
-
-	jsoniter "github.com/json-iterator/go"
-	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -104,7 +103,7 @@ func (r *SessionRegistry) UpsertParticipant(ctx context.Context, session *Partic
 		session.AuthnInstant = session.AuthnInstant.UTC()
 	}
 
-	raw, err := jsoniter.ConfigFastest.Marshal(session)
+	raw, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("slo session registry: encode participant session: %w", err)
 	}
@@ -159,7 +158,7 @@ func (r *SessionRegistry) LookupParticipants(ctx context.Context, account string
 		}
 
 		var session ParticipantSession
-		if err = jsoniter.ConfigFastest.Unmarshal(raw, &session); err != nil {
+		if err = json.Unmarshal(raw, &session); err != nil {
 			return nil, fmt.Errorf("slo session registry: decode participant session: %w", err)
 		}
 

@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	"github.com/go-redis/redismock/v9"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,7 +42,7 @@ func TestSessionRegistry_UpsertParticipant(t *testing.T) {
 	participantKey := registry.participantKey(session.Account, session.SPEntityID)
 	indexKey := registry.accountIndexKey(session.Account)
 
-	expectedRaw, err := jsoniter.ConfigFastest.Marshal(session)
+	expectedRaw, err := json.Marshal(session)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -129,12 +129,12 @@ func TestSessionRegistry_LookupParticipants(t *testing.T) {
 		AuthnInstant: time.Date(2026, time.March, 18, 10, 30, 0, 0, time.UTC),
 	}
 
-	record1Raw, err := jsoniter.ConfigFastest.Marshal(record1)
+	record1Raw, err := json.Marshal(record1)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	record2Raw, err := jsoniter.ConfigFastest.Marshal(record2)
+	record2Raw, err := json.Marshal(record2)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -176,7 +176,7 @@ func TestSessionRegistry_LookupParticipants_RemovesStaleIndexMembers(t *testing.
 		AuthnInstant: time.Date(2026, time.March, 18, 10, 30, 0, 0, time.UTC),
 	}
 
-	recordRaw, err := jsoniter.ConfigFastest.Marshal(record)
+	recordRaw, err := json.Marshal(record)
 	if !assert.NoError(t, err) {
 		return
 	}

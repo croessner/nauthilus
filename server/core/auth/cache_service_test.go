@@ -16,11 +16,7 @@
 package auth
 
 import (
-	"testing"
-	"time"
-
-	jsoniter "github.com/json-iterator/go"
-
+	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -29,6 +25,8 @@ import (
 	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/go-redis/redismock/v9"
+	"testing"
+	"time"
 )
 
 // TestDefaultCacheService_OnSuccess verifies that a positive cache write uses the expected
@@ -74,7 +72,7 @@ func TestDefaultCacheService_OnSuccess_WritesRedisHashAndTTL(t *testing.T) {
 	key := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName
 
 	// Build expected hash map matching SaveUserDataToRedis behavior
-	attrsJSONBytes, _ := jsoniter.ConfigFastest.Marshal(auth.Attributes.Attributes)
+	attrsJSONBytes, _ := json.Marshal(auth.Attributes.Attributes)
 
 	preparedPassword, ok := util.PreparePasswordBytesWithConfig([]byte(auth.PasswordString()), cfg)
 	if !ok {

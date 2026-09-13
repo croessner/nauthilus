@@ -36,14 +36,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	jsoniter "github.com/json-iterator/go"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 var webAuthn *webauthn.WebAuthn
-
-// jsonIter is a package-level variable for jsoniter with standard configuration
-var jsonIter = jsoniter.ConfigFastest
 
 type webAuthnLoginAssertion struct {
 	credential          *webauthn.Credential
@@ -108,7 +104,7 @@ func parseRegistrationFinishResponse(ctx *gin.Context) (string, *protocol.Parsed
 	}
 
 	var response *protocol.ParsedCredentialCreationData
-	if err = jsonIter.Unmarshal(requestBody, &finishRequest); err == nil && len(finishRequest.Credential) > 0 {
+	if err = json.Unmarshal(requestBody, &finishRequest); err == nil && len(finishRequest.Credential) > 0 {
 		response, err = protocol.ParseCredentialCreationResponseBody(bytes.NewReader(finishRequest.Credential))
 
 		return strings.TrimSpace(finishRequest.Name), response, registrationParseOK(ctx, err)

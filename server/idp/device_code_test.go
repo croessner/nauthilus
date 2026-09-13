@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"

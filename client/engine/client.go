@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"math/rand/v2"
 	"net"
@@ -14,11 +15,7 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	jsoniter "github.com/json-iterator/go"
 )
-
-var fastJSON = jsoniter.ConfigFastest
 
 // AuthClient describes the exported AuthClient type.
 type AuthClient struct {
@@ -170,7 +167,7 @@ func (c *AuthClient) requestBody(row Row) []byte {
 		applyBadPassword(payload)
 	}
 
-	body, _ := fastJSON.Marshal(payload)
+	body, _ := json.Marshal(payload)
 
 	return body
 }
@@ -279,7 +276,7 @@ func (c *AuthClient) responseOK(statusCode int, body []byte) bool {
 		OK bool `json:"ok"`
 	}
 
-	_ = jsoniter.Unmarshal(body, &res)
+	_ = json.Unmarshal(body, &res)
 
 	return res.OK
 }

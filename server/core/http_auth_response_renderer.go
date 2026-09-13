@@ -27,8 +27,8 @@ import (
 	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 
+	"encoding/json"
 	"github.com/gin-gonic/gin"
-	jsoniter "github.com/json-iterator/go"
 )
 
 const (
@@ -239,7 +239,7 @@ func (r *HTTPAuthResponseRenderer) renderStructuredSuccess(
 		return
 	}
 
-	payload, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(response)
+	payload, err := json.Marshal(response)
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 

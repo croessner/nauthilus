@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -48,7 +49,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
-	jsoniter "github.com/json-iterator/go"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -926,7 +926,7 @@ func extractIssFromJWT(tokenString string) string {
 	// Simple JSON extraction without full parse
 	var claims map[string]any
 
-	if err := jsoniter.ConfigFastest.Unmarshal(payload, &claims); err != nil {
+	if err := json.Unmarshal(payload, &claims); err != nil {
 		return ""
 	}
 
@@ -1426,7 +1426,7 @@ func appendStateToLogoutTarget(target, state string) string {
 }
 
 func encodeFrontChannelLogoutTasks(tasks []frontChannelLogoutTask) string {
-	rawTasks, err := jsoniter.ConfigFastest.Marshal(tasks)
+	rawTasks, err := json.Marshal(tasks)
 	if err != nil {
 		return "[]"
 	}

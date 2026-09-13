@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	"github.com/go-webauthn/webauthn/webauthn"
-	jsoniter "github.com/json-iterator/go"
 )
 
 func TestPersistentCredentialMarshalIncludesSignCount(t *testing.T) {
@@ -35,13 +35,13 @@ func TestPersistentCredentialMarshalIncludesSignCount(t *testing.T) {
 		Name: "device",
 	}
 
-	data, err := jsoniter.ConfigFastest.Marshal(&credential)
+	data, err := json.Marshal(&credential)
 	if err != nil {
 		t.Fatalf("marshal credential: %v", err)
 	}
 
 	var raw map[string]any
-	if err := jsoniter.ConfigFastest.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("unmarshal credential to map: %v", err)
 	}
 
@@ -63,7 +63,7 @@ func TestPersistentCredentialUnmarshalLegacySignCount(t *testing.T) {
 	data := []byte(`{"id":"AQ==","name":"device","lastUsed":"2025-01-02T03:04:05Z","signCount":9}`)
 
 	var credential PersistentCredential
-	if err := jsoniter.ConfigFastest.Unmarshal(data, &credential); err != nil {
+	if err := json.Unmarshal(data, &credential); err != nil {
 		t.Fatalf("unmarshal legacy credential: %v", err)
 	}
 
@@ -97,13 +97,13 @@ func TestPersistentCredentialRoundTripPreservesWebAuthnExtensions(t *testing.T) 
 		Name: "passkey",
 	}
 
-	data, err := jsoniter.ConfigFastest.Marshal(&credential)
+	data, err := json.Marshal(&credential)
 	if err != nil {
 		t.Fatalf("marshal credential: %v", err)
 	}
 
 	var decoded PersistentCredential
-	if err = jsoniter.ConfigFastest.Unmarshal(data, &decoded); err != nil {
+	if err = json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal credential: %v", err)
 	}
 

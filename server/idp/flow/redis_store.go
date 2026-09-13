@@ -17,13 +17,12 @@ package flow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"strings"
 	"time"
-
-	jsoniter "github.com/json-iterator/go"
-	"github.com/redis/go-redis/v9"
 )
 
 const defaultRedisPrefix = "idp:flow"
@@ -76,7 +75,7 @@ func (s *RedisStore) Load(ctx context.Context, flowID string) (*State, error) {
 	}
 
 	state := &State{}
-	if err = jsoniter.ConfigFastest.Unmarshal(blob, state); err != nil {
+	if err = json.Unmarshal(blob, state); err != nil {
 		reportStoreRead("redis", "error")
 
 		return nil, fmt.Errorf("redis flow store: decode state %s: %w", flowID, err)
@@ -93,7 +92,7 @@ func (s *RedisStore) Save(ctx context.Context, state *State) error {
 		return nil
 	}
 
-	blob, err := jsoniter.ConfigFastest.Marshal(state)
+	blob, err := json.Marshal(state)
 	if err != nil {
 		reportStoreWrite("redis", "error")
 

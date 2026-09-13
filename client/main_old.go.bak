@@ -45,8 +45,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
-
-	jsoniter "github.com/json-iterator/go"
+	"encoding/json"
 	"github.com/mattn/go-isatty"
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/sys/unix"
@@ -143,8 +142,6 @@ func calcErrorRatePct(s Stats) float64 {
 
 	return (float64(err) / float64(s.Total)) * 100.0
 }
-
-var json = jsoniter.ConfigFastest
 
 // Latency histogram in milliseconds: 0..60000 ms; >60s counted into overflow and clamped to last bucket
 const maxLatencyMs = 60000

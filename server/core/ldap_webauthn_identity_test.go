@@ -4,6 +4,7 @@
 package core
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
@@ -21,7 +22,7 @@ func TestLDAPWebAuthnDeleteUsesStoredValues(t *testing.T) {
 		`{ "id": "dGVzdC1pZA==", "name": "Key", "signCount": 2 }`}
 
 	var credential mfa.PersistentCredential
-	assert.NoError(t, jsonIter.Unmarshal([]byte(values[0]), &credential))
+	assert.NoError(t, json.Unmarshal([]byte(values[0]), &credential))
 
 	requests := make(chan *bktype.LDAPRequest, 1)
 

@@ -45,9 +45,9 @@ import (
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
 
+	"encoding/json"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/dspinhirne/netaddr-go"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -86,7 +86,7 @@ func BroadcastBlock(ctx context.Context, redisClient rediscli.Client, cfg config
 		Block: true,
 	}
 
-	payload, err := jsoniter.ConfigFastest.Marshal(msg)
+	payload, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
