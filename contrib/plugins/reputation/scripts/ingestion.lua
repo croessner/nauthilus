@@ -4,7 +4,7 @@ if not request or #KEYS ~= 2 then return {'invalid_state'} end
 local now = clock()
 if not bounded(request.manifest_expiry, now, now + 31536000) or request.manifest_expiry <= now then return {'event_time'} end
 if not bounded(request.retention, 1, 31536000) or not bounded(request.seen_ttl, 1, request.retention) or
-   not bounded(request.weight, 0, 1000) or not bounded(request.maximum_seen, 1, 100000) or
+   not bounded(request.weight, 0, 1000) or not bounded(request.maximum_seen, 1, maximum_replay_capacity) or
    not bounded(request.observed_at, 0, now + 3600) or not text(request.seen_tag, 128) then return {'invalid_state'} end
 if request.direction ~= 'risk' and request.direction ~= 'trust' then return {'invalid_state'} end
 if type(request.profiles) ~= 'table' or #request.profiles ~= 3 or type(request.classes) ~= 'table' or
@@ -58,7 +58,7 @@ values.model_fingerprint = request.fingerprint
 values.kind = request.kind
 values.expires_at = now + request.retention
 values.seen_until = seen_until
-redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+prune_expired(KEYS[2], now)
 for field, value in pairs(values) do redis.call('HSET', KEYS[1], field, value) end
 redis.call('ZADD', KEYS[2], request.manifest_expiry, request.seen_tag)
 redis.call('PEXPIRE', KEYS[1], math.ceil(request.retention * 1000))

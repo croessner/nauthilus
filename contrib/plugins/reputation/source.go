@@ -39,6 +39,7 @@ type sourceConfig struct {
 }
 
 type sourcePolicy struct {
+	capacity   sourceAdmissionCapacity
 	asnMaxAge  time.Duration
 	config     sourceConfig
 	lateness   time.Duration
@@ -64,6 +65,10 @@ func (c *configuration) compileSources() error {
 		return errConfiguration
 	}
 
+	if err := c.validateSourceAdmissionCapacity(); err != nil {
+		return err
+	}
+
 	c.apiSources = make(map[string]*sourcePolicy)
 	c.asnFacts = make(map[string]string)
 	c.internalSources = make(map[executionKey]*sourcePolicy)
@@ -84,6 +89,8 @@ func (c *configuration) compileSources() error {
 		if err != nil {
 			return err
 		}
+
+		source.capacity = c.raw.SourceAdmissionCapacity[name]
 
 		if err := c.indexSource(source); err != nil {
 			return err

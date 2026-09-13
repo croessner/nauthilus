@@ -18,6 +18,7 @@ func TestLearningIngestionResultSeparatesQuotaFromOutage(t *testing.T) {
 		{name: "outage", err: errStateUnavailable, want: learningUnavailable},
 		{name: "partial quota", result: ingestionResult{Applied: 1}, err: errQuotaExceeded, want: learningPartial},
 		{name: "duplicate quota", result: ingestionResult{Duplicates: 1}, err: errQuotaExceeded, want: learningPartial},
+		{name: "queued", result: ingestionResult{Queued: true}, want: learningQueued},
 		{name: "applied", result: ingestionResult{Applied: 1}, want: storageApplied},
 		{name: "duplicate", result: ingestionResult{Duplicates: 1}, want: storageDuplicate},
 	} {

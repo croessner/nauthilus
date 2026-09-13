@@ -154,9 +154,11 @@ govulncheck: ## Run Go vulnerability analysis across all packages
 	@command -v $(GOVULNCHECK) >/dev/null 2>&1 || { echo "govulncheck not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
 	$(GOVULNCHECK) $(GO_PACKAGES)
 
-release-guardrails: ## Run mandatory local quality, vulnerability, and identity-proxy E2E gates
+release-guardrails: ## Run mandatory quality, vulnerability, reputation journal, and identity-proxy E2E gates
 	$(MAKE) guardrails
 	$(MAKE) govulncheck
+	$(MAKE) reputation-worker-check
+	$(MAKE) reputation-kafka-check
 	$(MAKE) release-identity-proxy-e2e
 
 install-hooks: ## Install Git hooks for development
@@ -201,6 +203,15 @@ guardrails: admin-client-check static-reputation-conversion-check sync-prompts-c
 .PHONY: reputation-redis-check
 reputation-redis-check:
 	sh scripts/check-reputation-redis.sh
+
+.PHONY: reputation-worker-check
+reputation-worker-check:
+	GOEXPERIMENT=runtimesecret $(GOLANGCI_LINT) run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --build-tags=reputation_worker ./contrib/plugins/reputation/...
+	GOEXPERIMENT=runtimesecret go test -mod=vendor -tags=reputation_worker ./contrib/plugins/reputation -count=1
+
+.PHONY: reputation-kafka-check
+reputation-kafka-check:
+	sh scripts/check-reputation-kafka.sh
 
 .PHONY: static-reputation-conversion-check
 static-reputation-conversion-check:

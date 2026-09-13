@@ -14,6 +14,7 @@ var observeTarget = pluginapi.DecisionTargetSelector{Namespace: pluginName, Acti
 
 // Plugin owns immutable admission semantics and process-bound opaque services.
 type Plugin struct {
+	journal         *journalRuntime
 	learningCounter *telemetry.Counter
 	telemetry       *reputationTelemetry
 	state           *stateOwner
@@ -134,21 +135,38 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 		return err
 	}
 
+	if p.config.raw.Journal != nil {
+		journal, err := newJournalRuntime(state, host)
+		if err != nil {
+			state.ready.Store(false)
+			return err
+		}
+
+		state.journal = journal
+		p.journal = journal
+		journal.start(host)
+	}
+
 	p.state = state
 	p.tagger = tagger
 
 	return nil
 }
 
-// Stop removes local readiness without quiescing independent writers or altering durable state.
-func (p *Plugin) Stop(context.Context) error {
+// Stop cancels journal workers and removes local readiness without altering durable state.
+func (p *Plugin) Stop(ctx context.Context) error {
 	p.mu.Lock()
 	if p.state != nil {
 		p.state.ready.Store(false)
 	}
 
 	p.tagger = nil
+	journal := p.journal
 	p.mu.Unlock()
+
+	if journal != nil {
+		return journal.stop(ctx)
+	}
 
 	return nil
 }

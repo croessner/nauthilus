@@ -129,3 +129,9 @@ local function audit_text(value)
     return text(value, 128) and not string.find(value, '%c') and
         not string.find(value, '^%s') and not string.find(value, '%s$')
 end
+
+-- Bound expiry work per invocation so a hot-key expiry wave cannot monopolize Redis.
+local function prune_expired(key, now)
+    local expired = redis.call('ZRANGEBYSCORE', key, '-inf', now, 'LIMIT', 0, maximum_expiry_prune)
+    if #expired > 0 then redis.call('ZREM', key, unpack(expired)) end
+end

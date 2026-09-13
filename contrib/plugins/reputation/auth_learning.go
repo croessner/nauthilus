@@ -42,12 +42,14 @@ func (c *configuration) learningAdmissionLimits() pluginapi.PostActionAdmissionL
 			continue
 		}
 
-		if limits.RequestsPerSecond == 0 || source.config.RequestsPerSecond < limits.RequestsPerSecond {
-			limits.RequestsPerSecond = source.config.RequestsPerSecond
+		sourceLimits := source.admissionLimits()
+
+		if limits.RequestsPerSecond == 0 || sourceLimits.RequestsPerSecond < limits.RequestsPerSecond {
+			limits.RequestsPerSecond = sourceLimits.RequestsPerSecond
 		}
 
-		if limits.MaxConcurrency == 0 || source.config.MaxConcurrency < limits.MaxConcurrency {
-			limits.MaxConcurrency = source.config.MaxConcurrency
+		if limits.MaxConcurrency == 0 || sourceLimits.MaxConcurrency < limits.MaxConcurrency {
+			limits.MaxConcurrency = sourceLimits.MaxConcurrency
 		}
 	}
 

@@ -79,10 +79,12 @@ func (c *configuration) validateAdmission(admission admissionSnapshot) error {
 
 // validAdmissionGrant ensures transport authority remains within the source policy's exact grant and limits.
 func validAdmissionGrant(profile admissionClientConfig, source *sourcePolicy) bool {
+	limits := source.admissionLimits()
+
 	return slices.Contains(profile.Targets, "reputation/observe") &&
 		(len(profile.Schemas) == 0 || slices.Contains(profile.Schemas, "reputation/observe/v1")) && !profile.Diagnostics &&
-		profile.MaxConcurrency >= 1 && profile.MaxConcurrency <= source.config.MaxConcurrency &&
-		profile.RequestsPerSecond >= 1 && profile.RequestsPerSecond <= source.config.RequestsPerSecond
+		profile.MaxConcurrency >= 1 && profile.MaxConcurrency <= limits.MaxConcurrency &&
+		profile.RequestsPerSecond >= 1 && profile.RequestsPerSecond <= limits.RequestsPerSecond
 }
 
 // admissionTargetConfig contains only the host's exact activation contract, never Policy expressions or credentials.

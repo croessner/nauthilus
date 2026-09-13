@@ -40,6 +40,7 @@ var (
 )
 
 type stateOwner struct {
+	journal   observationJournal
 	telemetry *reputationTelemetry
 	config    *configuration
 	planner   *manifestPlanner

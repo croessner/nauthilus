@@ -211,15 +211,16 @@ func TestConfigCapacityPreservesBoundedExpansion(t *testing.T) {
 	}{
 		{"maximum_event_manifests_per_source", "event_manifest_capacity_per_source", rawConfig.eventManifestCapacity},
 		{"maximum_seen_events_per_subject", "subject_seen_capacity_per_subject", rawConfig.subjectSeenCapacity},
+		{"maximum_new_subjects_per_source_hour", "new_subject_capacity_per_source_hour", rawConfig.newSubjectCapacity},
 	} {
 		t.Run(test.override, func(t *testing.T) {
-			for _, capacity := range []int{-1, 0, 1, 10000, 50000, 100000, 100001} {
+			for _, capacity := range []int{-1, 0, 1, 10000, 50000, 100000, 100001, maximumOperationalCardinality, maximumOperationalCardinality + 1} {
 				raw := testConfigMap(t)
 				raw[test.original] = 10000
 				raw[test.override] = capacity
 				cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
 
-				valid := capacity == 0 || (capacity >= 10000 && capacity <= 100000)
+				valid := capacity == 0 || (capacity >= 10000 && capacity <= maximumOperationalCardinality)
 				if (err == nil) != valid {
 					t.Fatalf("capacity %d validation = %v", capacity, err)
 				}

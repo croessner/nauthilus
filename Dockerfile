@@ -55,6 +55,8 @@ RUN for plugin in ${BUNDLED_NATIVE_PLUGINS}; do \
       fi; \
     done
 
+RUN go build -mod=vendor -tags="netgo reputation_worker ${BUILD_TAGS}" -trimpath -ldflags="-s -w -X main.workerVersion=$(git describe --tags --always)" -o /build/reputation-worker ./contrib/plugins/reputation
+
 RUN cd client && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o nauthilus-client . && upx --best --lzma nauthilus-client
 RUN cd contrib/oidctestclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o oidctestclient . && upx --best --lzma oidctestclient
 RUN cd contrib/saml2testclient && GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -mod=vendor -trimpath -ldflags="-s -w" -o saml2testclient . && upx --best --lzma saml2testclient
@@ -79,7 +81,7 @@ RUN addgroup -S -g 65532 nauthilus && \
     printf 'hosts: files dns\n' > /etc/nsswitch.conf
 
 # Copy binary to destination image
-COPY --from=builder ["/build/server/nauthilus", "/build/client/nauthilus-client", "/build/contrib/oidctestclient/oidctestclient", "/build/contrib/saml2testclient/saml2testclient", "./"]
+COPY --from=builder ["/build/reputation-worker", "/build/server/nauthilus", "/build/client/nauthilus-client", "/build/contrib/oidctestclient/oidctestclient", "/build/contrib/saml2testclient/saml2testclient", "./"]
 COPY --from=builder ["/build/server/resources", "./server/resources/"]
 COPY --from=builder ["/build/server/resources/security-policy.md", "./server/resources/security-policy.md"]
 COPY --from=builder ["/build/server/lua-plugins.d", "./server/lua-plugins.d/"]

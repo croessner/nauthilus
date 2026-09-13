@@ -27,39 +27,43 @@ const (
 	originAuthoritative     = "authoritative_external"
 )
 
-const maximumManifestCapacity = 100000
-const maximumSubjectSeenCapacity = 100000
+const maximumOperationalCardinality = 10000000
+const maximumManifestCapacity = maximumOperationalCardinality
+const maximumSubjectSeenCapacity = maximumOperationalCardinality
 
 type rawConfig struct {
-	SubjectSeenCapacityPerSubject   int                      `mapstructure:"subject_seen_capacity_per_subject"`
-	EventManifestCapacityPerSource  int                      `mapstructure:"event_manifest_capacity_per_source"`
-	AllocationMaintenance           bool                     `mapstructure:"allocation_maintenance"`
-	IPOverrideNetworks              []string                 `mapstructure:"ip_override_networks"`
-	AuthLearning                    *authLearningConfig      `mapstructure:"auth_learning"`
-	Bands                           bandConfig               `mapstructure:"bands"`
-	ShadowModel                     *shadowModelConfig       `mapstructure:"shadow_model"`
-	AllocationDrainGeneration       int                      `mapstructure:"allocation_drain_generation"`
-	MaximumEventManifestsPerSource  int                      `mapstructure:"maximum_event_manifests_per_source"`
-	MaximumSeenEventsPerSubject     int                      `mapstructure:"maximum_seen_events_per_subject"`
-	TargetBindings                  []targetBindingConfig    `mapstructure:"target_bindings"`
-	Sources                         map[string]sourceConfig  `mapstructure:"sources"`
-	Signals                         map[string]signalConfig  `mapstructure:"signals"`
-	Profiles                        map[string]profileConfig `mapstructure:"profiles"`
-	SourceClassCaps                 map[string]sourceCap     `mapstructure:"source_class_caps"`
-	Services                        []string                 `mapstructure:"services"`
-	StateSchema                     string                   `mapstructure:"state_schema"`
-	ModelID                         string                   `mapstructure:"model_id"`
-	SubjectScope                    string                   `mapstructure:"subject_scope"`
-	ManifestScope                   string                   `mapstructure:"manifest_scope"`
-	AccountNormalization            string                   `mapstructure:"account_normalization"`
-	Retention                       string                   `mapstructure:"retention"`
-	EventManifestTTL                string                   `mapstructure:"event_manifest_ttl"`
-	SubjectSeenTTL                  string                   `mapstructure:"subject_seen_ttl"`
-	MaximumRetryHorizon             string                   `mapstructure:"maximum_retry_horizon"`
-	NetworkSubjects                 networkConfig            `mapstructure:"network_subjects"`
-	Score                           scoreConfig              `mapstructure:"score"`
-	MaximumSourceClasses            int                      `mapstructure:"maximum_source_classes"`
-	MaximumNewSubjectsPerSourceHour int                      `mapstructure:"maximum_new_subjects_per_source_hour"`
+	NewSubjectCapacityPerSourceHour int                                `mapstructure:"new_subject_capacity_per_source_hour"`
+	SourceAdmissionCapacity         map[string]sourceAdmissionCapacity `mapstructure:"source_admission_capacity"`
+	Journal                         *journalConfig                     `mapstructure:"journal"`
+	SubjectSeenCapacityPerSubject   int                                `mapstructure:"subject_seen_capacity_per_subject"`
+	EventManifestCapacityPerSource  int                                `mapstructure:"event_manifest_capacity_per_source"`
+	AllocationMaintenance           bool                               `mapstructure:"allocation_maintenance"`
+	IPOverrideNetworks              []string                           `mapstructure:"ip_override_networks"`
+	AuthLearning                    *authLearningConfig                `mapstructure:"auth_learning"`
+	Bands                           bandConfig                         `mapstructure:"bands"`
+	ShadowModel                     *shadowModelConfig                 `mapstructure:"shadow_model"`
+	AllocationDrainGeneration       int                                `mapstructure:"allocation_drain_generation"`
+	MaximumEventManifestsPerSource  int                                `mapstructure:"maximum_event_manifests_per_source"`
+	MaximumSeenEventsPerSubject     int                                `mapstructure:"maximum_seen_events_per_subject"`
+	TargetBindings                  []targetBindingConfig              `mapstructure:"target_bindings"`
+	Sources                         map[string]sourceConfig            `mapstructure:"sources"`
+	Signals                         map[string]signalConfig            `mapstructure:"signals"`
+	Profiles                        map[string]profileConfig           `mapstructure:"profiles"`
+	SourceClassCaps                 map[string]sourceCap               `mapstructure:"source_class_caps"`
+	Services                        []string                           `mapstructure:"services"`
+	StateSchema                     string                             `mapstructure:"state_schema"`
+	ModelID                         string                             `mapstructure:"model_id"`
+	SubjectScope                    string                             `mapstructure:"subject_scope"`
+	ManifestScope                   string                             `mapstructure:"manifest_scope"`
+	AccountNormalization            string                             `mapstructure:"account_normalization"`
+	Retention                       string                             `mapstructure:"retention"`
+	EventManifestTTL                string                             `mapstructure:"event_manifest_ttl"`
+	SubjectSeenTTL                  string                             `mapstructure:"subject_seen_ttl"`
+	MaximumRetryHorizon             string                             `mapstructure:"maximum_retry_horizon"`
+	NetworkSubjects                 networkConfig                      `mapstructure:"network_subjects"`
+	Score                           scoreConfig                        `mapstructure:"score"`
+	MaximumSourceClasses            int                                `mapstructure:"maximum_source_classes"`
+	MaximumNewSubjectsPerSourceHour int                                `mapstructure:"maximum_new_subjects_per_source_hour"`
 }
 
 type networkConfig struct {
@@ -149,6 +153,10 @@ func compileConfiguration(raw rawConfig) (*configuration, error) {
 		return nil, err
 	}
 
+	if err := cfg.validateJournal(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 
@@ -206,7 +214,8 @@ func (c *configuration) compileProfilesAndCaps() error {
 	r := c.raw
 	if len(r.Profiles) != 3 || r.MaximumSourceClasses < 1 || r.MaximumSourceClasses > 8 ||
 		len(r.SourceClassCaps) < 1 || len(r.SourceClassCaps) > r.MaximumSourceClasses ||
-		r.MaximumNewSubjectsPerSourceHour < 1 || r.MaximumNewSubjectsPerSourceHour > 100000 {
+		r.MaximumNewSubjectsPerSourceHour < 1 || r.MaximumNewSubjectsPerSourceHour > 100000 ||
+		!validCapacityExpansion(r.MaximumNewSubjectsPerSourceHour, r.NewSubjectCapacityPerSourceHour, maximumOperationalCardinality) {
 		return errConfiguration
 	}
 
@@ -322,4 +331,9 @@ func (r rawConfig) subjectSeenCapacity() int {
 // validCapacityExpansion permits only bounded expansion of an original storage admission budget.
 func validCapacityExpansion(original, capacity, ceiling int) bool {
 	return capacity == 0 || (capacity >= original && capacity <= ceiling)
+}
+
+// newSubjectCapacity resolves bounded discovery headroom without resetting existing model identity.
+func (r rawConfig) newSubjectCapacity() int {
+	return max(r.MaximumNewSubjectsPerSourceHour, r.NewSubjectCapacityPerSourceHour)
 }

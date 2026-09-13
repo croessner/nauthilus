@@ -6,7 +6,10 @@ import (
 	"strconv"
 )
 
-type ingestionResult struct{ Applied, Duplicates int }
+type ingestionResult struct {
+	Applied, Duplicates int
+	Queued              bool
+}
 
 type subjectUpdate struct {
 	Profiles         []profileDefinition `json:"profiles"`
@@ -26,11 +29,11 @@ type subjectUpdate struct {
 	Authoritative    bool                `json:"authoritative"`
 }
 
-// ingest establishes one immutable manifest before independently idempotent same-subject updates.
+// ingest freezes an immutable manifest before durable journal acceptance or direct idempotent application.
 func (s *stateOwner) ingest(ctx context.Context, admitted admittedObservation) (result ingestionResult, err error) {
 	defer func() { s.telemetry.recordObservation(ctx, admitted, result, err) }()
 
-	if !s.ready.Load() {
+	if !s.ready.Load() || (s.config.raw.Journal != nil && s.config.raw.Journal.Role == journalConsumer) {
 		return ingestionResult{}, errStateUnavailable
 	}
 
@@ -42,6 +45,23 @@ func (s *stateOwner) ingest(ctx context.Context, admitted admittedObservation) (
 	payload, expiry, err := s.admitManifest(ctx, request)
 	if err != nil {
 		return ingestionResult{}, err
+	}
+
+	if s.journal != nil {
+		if err := s.journal.enqueue(ctx, request.AllocationTag, payload, expiry); err != nil {
+			return ingestionResult{}, err
+		}
+
+		return ingestionResult{Queued: true}, nil
+	}
+
+	return s.applyManifest(ctx, payload, expiry)
+}
+
+// applyManifest retries every frozen subject independently through atomic score and deduplication updates.
+func (s *stateOwner) applyManifest(ctx context.Context, payload manifestPayload, expiry float64) (result ingestionResult, err error) {
+	if !s.ready.Load() {
+		return result, errStateUnavailable
 	}
 
 	for _, model := range payload.Models {

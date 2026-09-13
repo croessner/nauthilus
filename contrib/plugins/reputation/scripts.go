@@ -32,6 +32,8 @@ var manifestScript string
 //go:embed scripts/ingestion.lua
 var ingestionScript string
 
+const maximumExpiryPrune = 512
+
 const (
 	scriptOverride   = "reputation.override.v1"
 	scriptAssessment = "reputation.assessment.v1"
@@ -44,6 +46,7 @@ const (
 // reputationScripts returns named sources for host-owned upload, routing and bounded NOSCRIPT recovery.
 func reputationScripts() map[string]string {
 	preamble := fmt.Sprintf("local state_schema = %q\nlocal manifest_schema = %q\nlocal override_schema = %q\nlocal audit_schema = %q\n", stateSchema, manifestSchema, overrideSchema, managementAuditSchema)
+	preamble += fmt.Sprintf("local maximum_replay_capacity = %d\nlocal maximum_expiry_prune = %d\n", maximumSubjectSeenCapacity, maximumExpiryPrune)
 	shared := preamble + commonScript + stateScript + overrideStateScript
 
 	return map[string]string{

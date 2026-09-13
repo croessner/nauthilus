@@ -61,8 +61,8 @@ local expiry = now + request.retention
 local manifest = cjson.encode({schema=manifest_schema, payload=candidate.payload,
     fingerprint=candidate.fingerprint, created=now, expires=expiry, retention=request.retention})
 if #manifest > 65536 then return {'invalid_state'} end
-redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', now)
-redis.call('ZREMRANGEBYSCORE', KEYS[4], '-inf', now)
+prune_expired(KEYS[3], now)
+prune_expired(KEYS[4], now)
 for tag in pairs(subjects) do redis.call('ZADD', KEYS[3], now + 3600, tag) end
 redis.call('ZADD', KEYS[4], expiry, request.allocation_tag)
 redis.call('PEXPIRE', KEYS[3], 3600000)

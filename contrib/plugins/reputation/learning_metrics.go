@@ -17,6 +17,7 @@ const (
 	learningUnavailable    = "unavailable"
 	learningSkipped        = "skipped"
 	learningPartial        = "partial"
+	learningQueued         = "queued"
 )
 
 // initializeLearningMetrics requires one host-owned bounded collector before accepting evidence.
@@ -36,7 +37,7 @@ func (p *Plugin) initializeLearningMetrics(host pluginapi.Host) error {
 func learningMetricDimensions() []telemetry.Dimension {
 	return []telemetry.Dimension{
 		{Name: metricChannel, Values: []string{learningExternal, learningAuthentication}},
-		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, storageQuotaExceeded, storageApplied, storageDuplicate}},
+		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, learningQueued, storageQuotaExceeded, storageApplied, storageDuplicate}},
 	}
 }
 
@@ -67,6 +68,10 @@ func learningIngestionResult(result ingestionResult, err error) string {
 		}
 
 		return learningUnavailable
+	}
+
+	if result.Queued {
+		return learningQueued
 	}
 
 	if result.Applied == 0 && result.Duplicates > 0 {
