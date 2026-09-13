@@ -3,8 +3,8 @@
 ## Implementation status
 
 This document tracks the Kafka integration while it is being implemented.
-The production baseline remains v4.0.0-alpha.28. Kafka is not yet deployed
-and no throughput or failure qualification has been completed.
+The production baseline remains v4.0.0-alpha.28. Only the Kafka namespace has been created; the operator and brokers are not
+yet deployed, and no throughput or failure qualification has been completed.
 
 ## Acceptance and replay contract
 
@@ -45,8 +45,8 @@ KRaft controllers, internal mutual TLS, explicit topic/user ACLs, replication
 factor three, minimum in-sync replicas two and disabled unclean elections.
 
 Read-only preflight on 2026-09-13 found worker memory reservations of 84%,
-65% and 86%, despite lower instantaneous usage. Additional worker capacity
-is required before qualifying this topology with a node failure reserve.
+65% and 86%, despite lower instantaneous usage. Capacity planning must account for guaranteed guest memory, not only the
+configured VM maximum, before qualifying this topology with a node failure reserve.
 Free Ceph storage does not resolve the worker memory constraint.
 
 ## Qualification gates
@@ -161,9 +161,14 @@ namespace requires operator approval. Kubernetes Secret RBAC cannot restrict a
 read to individual data keys, even though the proposed synchronizer copies only
 the metrics username/password. That extension has not been persisted or deployed.
 
-Additional worker resources and production TLS/ACL/failure qualification remain
-required. Do not label nodes for this workload or enable the journal before that
-capacity decision. Existing unrelated work in both manifest repositories remains
+The operator delegated pilot sizing on 2026-09-13. Worker VM normal and emergency
+balloon floors were increased from 18 to 21 GiB without a VM restart; the host
+retains its existing 48 GiB normal reserve. Three separate brokers and three
+controllers remain required, with smaller initial resource budgets recorded in
+the Kubernetes repository. Production TLS/ACL/failure qualification remains
+required. Operator installation and Secret synchronization are awaiting explicit
+security-setting approvals after automatic approval review rejected the general
+rollout delegation for those permissions. Existing unrelated work in both manifest repositories remains
 outside this change. No new release tag or production rollout is recorded for
 this integration yet.
 
