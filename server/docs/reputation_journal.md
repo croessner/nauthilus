@@ -3,8 +3,8 @@
 ## Implementation status
 
 This document tracks the Kafka integration while it is being implemented.
-The production baseline remains v4.0.0-alpha.28. Only the Kafka namespace has been created; the operator and brokers are not
-yet deployed, and no throughput or failure qualification has been completed.
+The production baseline remains v4.0.0-alpha.28. The simple single-broker pilot is being deployed. No million-user throughput
+or high-availability qualification is claimed.
 
 ## Acceptance and replay contract
 
@@ -32,22 +32,27 @@ not extend the safe Redis replay window.
 
 ## Kubernetes ownership and capacity
 
-Shared Kafka infrastructure belongs in the existing general Kubernetes
-repository under a dedicated kafka directory. Nauthilus configuration,
-outbox mounts, producer and consumer deployments belong in
-nauthilus-tests/kubernetes. Existing unrelated changes and unpublished
-commits in either repository must be preserved.
+Kafka infrastructure belongs in the general Kubernetes repository under `kafka`.
+Nauthilus configuration, outbox mounts and consumer deployments belong in
+nauthilus-tests/kubernetes. Preserve unrelated work and unpublished commits.
 
-The selected operator version is Strimzi 1.2.0, which lists Kafka 4.3.1 and
-Kubernetes 1.36 as supported. Installation must use pinned release artifacts.
-The intended production topology has three brokers and three independent
-KRaft controllers, internal mutual TLS, explicit topic/user ACLs, replication
-factor three, minimum in-sync replicas two and disabled unclean elections.
+The selected production pilot uses one Apache Kafka 4.3.1 StatefulSet, combining
+broker and controller roles, with replication factor one and minimum ISR one.
+It requests 512 MiB RAM with a 1 GiB limit and a 384 MiB JVM heap, and uses a
+16 GiB retained Ceph PVC. Synchronous log flushing reduces the durability gap
+of a single broker at the pilot's low event rate. There is no Strimzi operator,
+additional CRD installation or workload permission to read Kubernetes Secrets.
+The existing cert-manager CA issuer supplies separate broker and client leaves.
 
-Read-only preflight on 2026-09-13 found worker memory reservations of 84%,
-65% and 86%, despite lower instantaneous usage. Capacity planning must account for guaranteed guest memory, not only the
-configured VM maximum, before qualifying this topology with a node failure reserve.
-Free Ceph storage does not resolve the worker memory constraint.
+A broker outage pauses consumption; persistent producer outboxes retain newly
+accepted work until recovery. A lost Kafka volume is not protected by Kafka
+replication. Ceph storage protection and the application outbox do not make this
+a highly available Kafka service. Scale up only after measuring actual demand.
+
+The temporary increase of worker balloon floors was rolled back when the
+operator selected this smaller deployment. Existing host memory safeguards and
+worker budgets remain the sizing baseline. Each environment uses one consumer
+with a 128 MiB memory request and a 512 MiB limit.
 
 ## Qualification gates
 
@@ -58,10 +63,11 @@ Free Ceph storage does not resolve the worker memory constraint.
   raw identifiers in sample journal records without printing those records.
 - Measure sustained throughput, tail latency, Redis memory, hot-subject
   capacity, queue age, outbox occupancy and Kafka consumer lag.
-- Test a broker restart and a worker-node failure without losing accepted
-  evidence or double-counting scores.
-- Run the sustained qualification workload for its actual documented
-  duration. A started soak test is not a completed qualification.
+- Test broker restart, persistent record recovery and idempotent Redis replay.
+  Broker or worker loss is an expected temporary service interruption in this
+  single-broker pilot, not an HA failover qualification.
+- Record actual test duration and load. Do not claim a completed soak or
+  million-user qualification from a small functional pilot.
 - Apply Shadow before Prod, retain paired application/plugin rollback
   artifacts, and drain accepted work before disabling the journal.
 
@@ -142,40 +148,19 @@ quorum behavior or node failure recovery.
 
 `make reputation-worker-check` checks the worker build and diagnostic HTTP boundary.
 Both targets are part of `make release-guardrails`, alongside normal guardrails,
-vulnerability checking and identity E2E. Actual production throughput, TLS/ACL
-proof, three-broker failover and the sustained qualification remain deployment
-gates. No completed soak test or million-user capacity result is claimed here.
+vulnerability checking and identity E2E. Actual production throughput and sustained qualification remain deployment
+gates. The deployed single broker has no Kafka replica failover. No completed soak test or million-user capacity result is claimed here.
 
 ## Deployment status on 2026-09-13
 
-The general Kubernetes repository contains inactive pinned Strimzi manifests,
-three broker/controller node pools, topic and user definitions, certificate-sync
-manifests and alert rules. The application repository contains inactive producer
-and consumer components and a release-checked worker renderer. Neither active
-application overlay has enabled the journal.
+The single Kafka StatefulSet, retained PVC and broker certificate have been
+applied. The broker is Ready. Four environment-specific client certificates
+are managed directly in the application namespaces by the existing cert-manager;
+no cross-namespace Secret synchronization is needed. Topic/ACL provisioning, verified TLS hostname checking, eight topic-scope checks,
+four forbidden-write denials and persistent record readback after a broker restart
+passed. Journal activation in Shadow and production remains a separate gate.
 
-Authenticated Prometheus scraping needs additional integration: the existing
-Prometheus configuration has no authenticated Nauthilus scrape job. Extending
-credential synchronization to read the existing application Secret in each
-namespace requires operator approval. Kubernetes Secret RBAC cannot restrict a
-read to individual data keys, even though the proposed synchronizer copies only
-the metrics username/password. That extension has not been persisted or deployed.
-
-The operator delegated pilot sizing on 2026-09-13. Worker VM normal and emergency
-balloon floors were increased from 18 to 21 GiB without a VM restart; the host
-retains its existing 48 GiB normal reserve. Three separate brokers and three
-controllers remain required, with smaller initial resource budgets recorded in
-the Kubernetes repository. Production TLS/ACL/failure qualification remains
-required. Operator installation and Secret synchronization are awaiting explicit
-security-setting approvals after automatic approval review rejected the general
-rollout delegation for those permissions. Existing unrelated work in both manifest repositories remains
-outside this change. No new release tag or production rollout is recorded for
-this integration yet.
-
-Local `make release-guardrails` completed successfully on 2026-09-13, including
-normal guardrails, vulnerability analysis, worker checks, Kafka/Redis recovery
-and the complete identity Compose E2E gate. The stronger Kafka replay sample
-assertions also passed a subsequent focused run and integration-tag lint. The
-application repository validation, both producer component renders, worker
-renderer tests, eleven Strimzi schema checks and eleven Prometheus rule syntax
-checks passed. These results do not replace the pending production gates.
+The runtime commit passed local release guardrails and all seven CI workflows,
+including Kafka integration. Documentation changes do not change that runtime.
+The release and live journal activation remain incomplete until paired native
+artifacts, consumer readiness and actual learning/replay are verified.
