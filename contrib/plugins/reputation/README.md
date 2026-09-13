@@ -120,6 +120,18 @@ per-shard bounds; older binaries still enforce their smaller original budget.
 This override changes only allocation capacity, never the evidence contribution
 rules. The original fingerprinted budget remains unchanged for compatibility.
 
+Optional `subject_seen_capacity_per_subject` provides the same bounded expansion
+for a hot IP, network, or account's replay set. Omit it (or use zero) to keep
+`maximum_seen_events_per_subject`; an explicit value must be at least that
+original budget and at most 100,000. Size it for all sources contributing to the
+subject during the manifest TTL, including clients aggregated into one network.
+The override preserves model identity, existing scores and every unexpired seen
+tag. It neither evicts replay protection nor acknowledges rejected writes.
+Apply it coherently to all writers sharing state. Do not reduce it or roll back
+to an older writer until live seen sets are below the old capacity; old writers
+reject oversized sets rather than resetting them. Read-only `ZCARD` and `ZCOUNT`
+checks can verify the storage requirement without deleting evidence.
+
 Mass, samples, source classes and expanded subjects are bounded independently.
 Manifest and seen retention cover lateness plus the retry horizon; seen
 retention is at least manifest retention, and both fit within state retention.

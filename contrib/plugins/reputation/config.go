@@ -28,8 +28,10 @@ const (
 )
 
 const maximumManifestCapacity = 100000
+const maximumSubjectSeenCapacity = 100000
 
 type rawConfig struct {
+	SubjectSeenCapacityPerSubject   int                      `mapstructure:"subject_seen_capacity_per_subject"`
 	EventManifestCapacityPerSource  int                      `mapstructure:"event_manifest_capacity_per_source"`
 	AllocationMaintenance           bool                     `mapstructure:"allocation_maintenance"`
 	IPOverrideNetworks              []string                 `mapstructure:"ip_override_networks"`
@@ -302,21 +304,22 @@ func validateClassCaps(caps map[string]sourceCap) error {
 
 // validStateCardinality requires explicit finite event-history ceilings in addition to transport limits.
 func validStateCardinality(raw rawConfig) bool {
-	return raw.AllocationDrainGeneration >= 0 && raw.AllocationDrainGeneration <= 1000000 && raw.MaximumEventManifestsPerSource >= manifestShardCount && raw.MaximumEventManifestsPerSource <= maximumManifestCapacity && raw.validManifestCapacity() &&
-		raw.MaximumSeenEventsPerSubject >= 1 && raw.MaximumSeenEventsPerSubject <= 100000
+	return raw.AllocationDrainGeneration >= 0 && raw.AllocationDrainGeneration <= 1000000 && raw.MaximumEventManifestsPerSource >= manifestShardCount && raw.MaximumEventManifestsPerSource <= maximumManifestCapacity && validCapacityExpansion(raw.MaximumEventManifestsPerSource, raw.EventManifestCapacityPerSource, maximumManifestCapacity) &&
+		raw.MaximumSeenEventsPerSubject >= 1 && raw.MaximumSeenEventsPerSubject <= maximumSubjectSeenCapacity &&
+		validCapacityExpansion(raw.MaximumSeenEventsPerSubject, raw.SubjectSeenCapacityPerSubject, maximumSubjectSeenCapacity)
 }
 
 // eventManifestCapacity resolves optional operational headroom without changing immutable model semantics.
 func (r rawConfig) eventManifestCapacity() int {
-	if r.EventManifestCapacityPerSource != 0 {
-		return r.EventManifestCapacityPerSource
-	}
-
-	return r.MaximumEventManifestsPerSource
+	return max(r.MaximumEventManifestsPerSource, r.EventManifestCapacityPerSource)
 }
 
-// validManifestCapacity permits only bounded expansion of the model's original storage admission budget.
-func (r rawConfig) validManifestCapacity() bool {
-	return r.EventManifestCapacityPerSource == 0 ||
-		(r.EventManifestCapacityPerSource >= r.MaximumEventManifestsPerSource && r.EventManifestCapacityPerSource <= maximumManifestCapacity)
+// subjectSeenCapacity expands replay storage while preserving the original model fingerprint and live deduplication.
+func (r rawConfig) subjectSeenCapacity() int {
+	return max(r.MaximumSeenEventsPerSubject, r.SubjectSeenCapacityPerSubject)
+}
+
+// validCapacityExpansion permits only bounded expansion of an original storage admission budget.
+func validCapacityExpansion(original, capacity, ceiling int) bool {
+	return capacity == 0 || (capacity >= original && capacity <= ceiling)
 }

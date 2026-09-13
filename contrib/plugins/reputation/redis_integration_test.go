@@ -683,9 +683,25 @@ func TestReputationRedisProducerLocalIDsRemainIndependent(t *testing.T) {
 
 // TestReputationRedisCapacityIncreasePreservesModelAndDeduplication expands storage admission without resetting evidence.
 func TestReputationRedisCapacityIncreasePreservesModelAndDeduplication(t *testing.T) {
+	for _, test := range []struct {
+		name, original, override string
+		minimum                  int
+	}{
+		{"manifest", "maximum_event_manifests_per_source", "event_manifest_capacity_per_source", manifestShardCount},
+		{"subject seen", "maximum_seen_events_per_subject", "subject_seen_capacity_per_subject", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertReputationCapacityIncrease(t, test.original, test.override, test.minimum)
+		})
+	}
+}
+
+// assertReputationCapacityIncrease verifies bounded expansion against the original persisted model and replay history.
+func assertReputationCapacityIncrease(t *testing.T, original, override string, minimum int) {
+	t.Helper()
 	_, facade := localReputationRedis(t)
 	raw := testConfigMap(t)
-	raw["maximum_event_manifests_per_source"] = manifestShardCount
+	raw[original] = minimum
 	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)
 	tagger := manifestTestTagger(t, false)
@@ -700,7 +716,7 @@ func TestReputationRedisCapacityIncreasePreservesModelAndDeduplication(t *testin
 	if !errors.Is(err, errQuotaExceeded) {
 		t.Fatal("initial quota not enforced")
 	}
-	raw["event_manifest_capacity_per_source"] = 2 * manifestShardCount
+	raw[override] = 2 * minimum
 	expanded, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)
 	replacement, err := newStateOwner(expanded, tagger, facade)

@@ -203,21 +203,31 @@ func testYAMLMap(t *testing.T, path string) map[string]any {
 	return raw
 }
 
-// TestConfigManifestCapacityPreservesBoundedExpansion rejects reductions and unbounded operational headroom.
-func TestConfigManifestCapacityPreservesBoundedExpansion(t *testing.T) {
-	for _, capacity := range []int{-1, 0, 1, 50000, 100000, 100001} {
-		raw := testConfigMap(t)
-		raw["maximum_event_manifests_per_source"] = 10000
-		raw["event_manifest_capacity_per_source"] = capacity
-		cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
+// TestConfigCapacityPreservesBoundedExpansion rejects reductions and unbounded operational headroom.
+func TestConfigCapacityPreservesBoundedExpansion(t *testing.T) {
+	for _, test := range []struct {
+		original, override string
+		capacity           func(rawConfig) int
+	}{
+		{"maximum_event_manifests_per_source", "event_manifest_capacity_per_source", rawConfig.eventManifestCapacity},
+		{"maximum_seen_events_per_subject", "subject_seen_capacity_per_subject", rawConfig.subjectSeenCapacity},
+	} {
+		t.Run(test.override, func(t *testing.T) {
+			for _, capacity := range []int{-1, 0, 1, 10000, 50000, 100000, 100001} {
+				raw := testConfigMap(t)
+				raw[test.original] = 10000
+				raw[test.override] = capacity
+				cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
 
-		valid := capacity == 0 || (capacity >= 10000 && capacity <= maximumManifestCapacity)
-		if (err == nil) != valid {
-			t.Fatalf("capacity %d validation = %v", capacity, err)
-		}
+				valid := capacity == 0 || (capacity >= 10000 && capacity <= 100000)
+				if (err == nil) != valid {
+					t.Fatalf("capacity %d validation = %v", capacity, err)
+				}
 
-		if valid && cfg.raw.eventManifestCapacity() != max(10000, capacity) {
-			t.Fatal("effective capacity lost its configured bound")
-		}
+				if valid && test.capacity(cfg.raw) != max(10000, capacity) {
+					t.Fatal("effective capacity lost its configured bound")
+				}
+			}
+		})
 	}
 }

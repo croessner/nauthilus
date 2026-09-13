@@ -124,7 +124,7 @@ func (s *stateOwner) updateSubject(ctx context.Context, payload manifestPayload,
 	request := subjectUpdate{Profiles: model.Profiles, Classes: model.Classes, EligibleProfiles: model.EligibleProfiles,
 		Kind: subject.Kind, Fingerprint: model.Fingerprint, SourceClass: payload.SourceClass, Direction: model.Direction, SeenTag: payload.SeenTag,
 		Weight: subject.Weight, ObservedAt: payload.ObservedAt, ManifestExpiry: expiry, Retention: s.config.retention.Seconds(), SeenTTL: s.config.seenTTL.Seconds(),
-		MaximumSeen: s.config.raw.MaximumSeenEventsPerSubject, Authoritative: model.Authoritative}
+		MaximumSeen: s.config.raw.subjectSeenCapacity(), Authoritative: model.Authoritative}
 
 	response, err := s.run(ctx, scriptIngestion, []string{keys.State, keys.Seen}, request)
 	if err != nil {
