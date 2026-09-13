@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestJournalOutboxRetainsUnacknowledgedRecords reproduces lost learning during a broker outage.
@@ -71,4 +72,51 @@ func TestJournalOutboxRejectsSymlinkRecords(t *testing.T) {
 		t.Fatal("unsafe record was delivered")
 		return nil
 	}))
+}
+
+// TestJournalOutboxAdmissionDoesNotWaitForBroker prevents recovery from monopolizing the shared capacity lock.
+func TestJournalOutboxAdmissionDoesNotWaitForBroker(t *testing.T) {
+	box, err := openJournalOutbox(t.TempDir(), 4, 4096)
+	requireNoError(t, err)
+	requireNoError(t, box.put(t.Context(), "pending", []byte("first")))
+
+	started, release := make(chan struct{}), make(chan struct{})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- box.drain(t.Context(), func(context.Context, string, []byte) error {
+			close(started)
+			<-release
+
+			return errStateUnavailable
+		})
+	}()
+
+	t.Cleanup(func() { close(release); <-done })
+	<-started
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+
+	requireNoError(t, box.put(ctx, "new-event", []byte("second")))
+}
+
+// TestJournalOutboxAcknowledgementPreservesChangedRecord rejects stale receipts for replaced filesystem entries.
+func TestJournalOutboxAcknowledgementPreservesChangedRecord(t *testing.T) {
+	box, err := openJournalOutbox(t.TempDir(), 4, 4096)
+	requireNoError(t, err)
+	requireNoError(t, box.put(t.Context(), "event", []byte("original")))
+	requireNoError(t, os.Remove(filepath.Join(box.directory, recordName("event"))))
+	requireNoError(t, box.put(t.Context(), "event", []byte("replacement")))
+
+	if !errors.Is(box.acknowledge(t.Context(), outboxRecord{Key: "event", Value: []byte("original")}), errEventConflict) {
+		t.Fatal("a stale delivery receipt removed a different immutable record")
+	}
+
+	current, err := box.readRecord(recordName("event"))
+	requireNoError(t, err)
+
+	if string(current.Value) != "replacement" {
+		t.Fatal("the replacement record was not preserved")
+	}
 }

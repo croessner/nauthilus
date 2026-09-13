@@ -7,13 +7,17 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
@@ -73,4 +77,54 @@ func TestJournalRuntimeStopsWithLiveHost(t *testing.T) {
 	defer cancel()
 
 	requireNoError(t, runtime.stop(ctx))
+}
+
+// unavailableJournalRuntime isolates delivery failure without opening external sockets.
+func unavailableJournalRuntime(t *testing.T) *journalRuntime {
+	t.Helper()
+
+	client, err := kgo.NewClient(kgo.SeedBrokers("broker.invalid:9093"), kgo.Dialer(func(context.Context, string, string) (net.Conn, error) {
+		return nil, errStateUnavailable
+	}))
+	requireNoError(t, err)
+	t.Cleanup(client.Close)
+	box, err := openJournalOutbox(t.TempDir(), 4, 16384)
+	requireNoError(t, err)
+	metrics, err := newJournalTelemetry(pluginruntime.NewMetricsFacadeWithRegisterer(pluginName, prometheus.NewRegistry()))
+	requireNoError(t, err)
+
+	return &journalRuntime{client: client, outbox: box, config: &journalConfig{Topic: "test"}, timeout: time.Second,
+		metrics: metrics, codec: journalCodec{tagger: manifestTestTagger(t, false), scope: "reputation-manifest", topic: "test"}}
+}
+
+// TestJournalAcceptanceSurvivesBrokerDeadline distinguishes canceled admission from a durable receipt before delivery expiry.
+func TestJournalAcceptanceSurvivesBrokerDeadline(t *testing.T) {
+	for _, canceledBefore := range []bool{false, true} {
+		t.Run(strconv.FormatBool(canceledBefore), func(t *testing.T) {
+			runtime := unavailableJournalRuntime(t)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+			defer cancel()
+
+			if canceledBefore {
+				cancel()
+			}
+
+			err := runtime.enqueue(ctx, "allocation", manifestPayload{}, float64(time.Now().Add(time.Hour).Unix()))
+			if canceledBefore {
+				requireError(t, err)
+
+				_, readErr := runtime.outbox.readRecord(recordName("allocation"))
+				if !errors.Is(readErr, os.ErrNotExist) {
+					t.Fatal("canceled admission created a durable record")
+				}
+
+				return
+			}
+
+			requireNoError(t, err)
+			_, err = runtime.outbox.readRecord(recordName("allocation"))
+			requireNoError(t, err)
+		})
+	}
 }

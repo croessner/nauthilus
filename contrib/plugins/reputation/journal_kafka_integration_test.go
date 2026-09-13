@@ -61,7 +61,7 @@ func testJournalCounter(t *testing.T) *telemetry.Counter {
 	t.Helper()
 
 	counter, err := telemetry.RegisterCounter(&metricCapture{}, "journal_total", "Journal integration outcomes.",
-		telemetry.Dimension{Name: metricResult, Values: []string{"published", "outboxed", storageApplied, storageDuplicate, "retry", "quarantined", "outbox_full"}})
+		telemetry.Dimension{Name: metricResult, Values: []string{"published", "outboxed", storageApplied, storageDuplicate, journalOutcomeRetry, "quarantined", journalOutcomeOutboxFull}})
 	requireNoError(t, err)
 
 	return counter

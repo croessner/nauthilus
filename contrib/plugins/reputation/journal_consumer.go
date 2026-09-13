@@ -12,7 +12,7 @@ func (j *journalRuntime) consume(ctx context.Context) error {
 	for ctx.Err() == nil {
 		err := j.consumeSession(ctx)
 		if err != nil && ctx.Err() == nil {
-			j.metrics.outcome.Add(ctx, "retry")
+			j.metrics.outcome.Add(ctx, journalOutcomeRetry)
 		}
 
 		if !journalPause(ctx) {

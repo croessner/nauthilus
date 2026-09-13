@@ -8,6 +8,11 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
+const (
+	journalOutcomeRetry      = "retry"
+	journalOutcomeOutboxFull = "outbox_full"
+)
+
 type journalTelemetry struct {
 	outcome           *telemetry.Counter
 	outboxRecords     pluginapi.Gauge
@@ -25,7 +30,7 @@ func newJournalTelemetry(host pluginapi.Metrics) (*journalTelemetry, error) {
 	metrics := &journalTelemetry{}
 
 	counter, err := telemetry.RegisterCounter(host, "journal_total", "Durable reputation journal outcomes.",
-		telemetry.Dimension{Name: metricResult, Values: []string{"published", "outboxed", storageApplied, storageDuplicate, "retry", "quarantined", "outbox_full"}})
+		telemetry.Dimension{Name: metricResult, Values: []string{"published", "outboxed", storageApplied, storageDuplicate, journalOutcomeRetry, "quarantined", journalOutcomeOutboxFull}})
 	if err != nil {
 		return nil, err
 	}

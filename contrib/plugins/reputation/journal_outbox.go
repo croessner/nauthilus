@@ -240,37 +240,76 @@ func (b *journalOutbox) readRecord(name string) (outboxRecord, error) {
 	return record, nil
 }
 
-// drain removes each record only after the downstream sink confirms durable acceptance.
-func (b *journalOutbox) drain(ctx context.Context, deliver func(context.Context, string, []byte) error) error {
+// pendingRecords snapshots bounded inventory while holding only the filesystem accounting lock.
+func (b *journalOutbox) pendingRecords(ctx context.Context) ([]string, error) {
+	var records []string
+
+	err := b.withLock(ctx, func() error {
+		var err error
+
+		records, _, err = b.inventory()
+
+		return err
+	})
+
+	return records, err
+}
+
+// acknowledge removes only the exact immutable record confirmed by the downstream broker.
+func (b *journalOutbox) acknowledge(ctx context.Context, delivered outboxRecord) error {
 	return b.withLock(ctx, func() error {
-		records, _, err := b.inventory()
+		name := recordName(delivered.Key)
+
+		current, err := b.readRecord(name)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+
 		if err != nil {
 			return err
 		}
 
-		for _, name := range records {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-
-			record, err := b.readRecord(name)
-			if err != nil {
-				return err
-			}
-
-			if err := deliver(ctx, record.Key, record.Value); err != nil {
-				return err
-			}
-
-			if err := os.Remove(filepath.Join(b.directory, name)); err != nil {
-				return errStateUnavailable
-			}
-
-			if err := b.syncDirectory(); err != nil {
-				return err
-			}
+		if current.Key != delivered.Key || !bytes.Equal(current.Value, delivered.Value) {
+			return errEventConflict
 		}
 
-		return nil
+		if err := os.Remove(filepath.Join(b.directory, name)); err != nil {
+			return errStateUnavailable
+		}
+
+		return b.syncDirectory()
 	})
+}
+
+// drain performs network delivery outside the shared admission lock; duplicate receipts remain safe.
+func (b *journalOutbox) drain(ctx context.Context, deliver func(context.Context, string, []byte) error) error {
+	records, err := b.pendingRecords(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		record, err := b.readRecord(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if err := deliver(ctx, record.Key, record.Value); err != nil {
+			return err
+		}
+
+		if err := b.acknowledge(ctx, record); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

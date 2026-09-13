@@ -12,11 +12,16 @@ Policy remains the only authority selecting learning. Producers freeze only
 independent observations and opaque HMAC identifiers. Credentials, raw account
 names and raw IP addresses must never enter Kafka, outbox files or metrics.
 
-An acceptance receipt requires either Kafka acknowledgement with all in-sync
-replicas or a synced record on a persistent outbox volume. Process memory and
+Producers sync every immutable record to the persistent outbox before spending
+the caller deadline on Kafka delivery. This preserves acceptance even if the
+broker consumes the remaining request budget. Process memory and
 client-side Kafka buffers are not durable acceptance. An outbox record is
 removed only after confirmed Kafka acknowledgement. A failed or ambiguous
-send can therefore be repeated.
+send can therefore be repeated. Recovery never holds the shared admission lock
+while waiting for Kafka. Acknowledgement checks the exact immutable record before
+removal, so concurrent recovery cannot delete a different record. This design
+adds filesystem synchronization to the healthy path; benchmark that cost before
+raising the pilot load.
 
 Redis remains the score and deduplication authority. Kafka consumer offsets
 advance only after every subject contribution has been applied or recognized

@@ -67,7 +67,7 @@ func newJournalRuntime(state *stateOwner, host pluginapi.Host) (*journalRuntime,
 	return runtime, nil
 }
 
-// enqueue confirms Kafka durability or a synced fallback record before reporting acceptance.
+// enqueue syncs the immutable receipt before spending the caller budget on broker delivery.
 func (j *journalRuntime) enqueue(ctx context.Context, allocation string, payload manifestPayload, expiry float64) error {
 	if j.outbox == nil {
 		return errStateUnavailable
@@ -83,16 +83,26 @@ func (j *journalRuntime) enqueue(ctx context.Context, allocation string, payload
 		return err
 	}
 
-	if err := j.publish(ctx, allocation, encoded); err == nil {
-		return nil
-	}
-
 	if err := j.outbox.put(ctx, allocation, encoded); err != nil {
-		j.metrics.outcome.Add(ctx, "outbox_full")
+		outcome := journalOutcomeRetry
+		if errors.Is(err, errQuotaExceeded) {
+			outcome = journalOutcomeOutboxFull
+		}
+
+		j.metrics.outcome.Add(ctx, outcome)
+
 		return err
 	}
 
-	j.metrics.outcome.Add(ctx, "outboxed")
+	if err := j.publish(ctx, allocation, encoded); err != nil {
+		j.metrics.outcome.Add(ctx, "outboxed")
+
+		return nil
+	}
+
+	if err := j.outbox.acknowledge(ctx, outboxRecord{Key: allocation, Value: encoded}); err != nil {
+		j.metrics.outcome.Add(ctx, journalOutcomeRetry)
+	}
 
 	return nil
 }
@@ -141,7 +151,7 @@ func (j *journalRuntime) recoverOutbox(ctx context.Context) error {
 		cancel()
 
 		if err != nil && ctx.Err() == nil {
-			j.metrics.outcome.Add(ctx, "retry")
+			j.metrics.outcome.Add(ctx, journalOutcomeRetry)
 		}
 
 		if !journalPause(ctx) {
