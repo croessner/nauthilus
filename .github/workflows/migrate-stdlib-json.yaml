@@ -111,14 +111,28 @@ jobs:
           go mod tidy
           go mod vendor
 
-      - name: Verify dependency removal
+      - name: Verify stdlib JSON migration
+        shell: bash
         run: |
           set -euo pipefail
+
           if grep -R --line-number --include='*.go' --exclude-dir=vendor 'json-iterator/go\|jsoniter\.\|jsonIter\.\|fastJSON\.\|jsonAPI' .; then
+            echo 'Direct jsoniter references remain in Nauthilus code' >&2
             exit 1
           fi
+
           if grep -q 'github.com/json-iterator/go' go.mod; then
-            echo 'jsoniter remains a module dependency' >&2
+            grep 'github.com/json-iterator/go' go.mod
+            if ! grep -Eq '^[[:space:]]*github\.com/json-iterator/go[[:space:]].*// indirect$' go.mod; then
+              echo 'jsoniter is still a direct module dependency' >&2
+              exit 1
+            fi
+            echo 'jsoniter remains only as an indirect dependency (required by another module).'
+            go mod why -m github.com/json-iterator/go || true
+          fi
+
+          if go list -deps ./server ./client | grep -qx 'github.com/json-iterator/go'; then
+            echo 'jsoniter is present in the default compiled server/client dependency graph' >&2
             exit 1
           fi
 
