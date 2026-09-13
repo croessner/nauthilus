@@ -2,9 +2,10 @@
 
 ## Implementation status
 
-This document tracks the Kafka integration while it is being implemented.
-The production baseline remains v4.0.0-alpha.28. The simple single-broker pilot is being deployed. No million-user throughput
-or high-availability qualification is claimed.
+The optional Kafka transport and isolated consumer are implemented. The selected
+pilot uses one broker and one consumer per environment. Live release inventories
+and activation evidence belong to the Kubernetes manifest repositories. No
+million-user throughput or high-availability qualification is claimed.
 
 ## Acceptance and replay contract
 
@@ -156,16 +157,15 @@ Both targets are part of `make release-guardrails`, alongside normal guardrails,
 vulnerability checking and identity E2E. Actual production throughput and sustained qualification remain deployment
 gates. The deployed single broker has no Kafka replica failover. No completed soak test or million-user capacity result is claimed here.
 
-## Deployment status on 2026-09-13
+## Deployment evidence ownership
 
-The single Kafka StatefulSet, retained PVC and broker certificate have been
-applied. The broker is Ready. Four environment-specific client certificates
-are managed directly in the application namespaces by the existing cert-manager;
-no cross-namespace Secret synchronization is needed. Topic/ACL provisioning, verified TLS hostname checking, eight topic-scope checks,
-four forbidden-write denials and persistent record readback after a broker restart
-passed. Journal activation in Shadow and production remains a separate gate.
+The infrastructure repository records the broker, retained PVC, certificates,
+topic ACLs, hostname-verified TLS checks and persistent record readback after a
+broker restart. Environment-specific client certificates are issued directly in
+the application namespaces; no cross-namespace Secret synchronization is needed.
 
-The runtime commit passed local release guardrails and all seven CI workflows,
-including Kafka integration. Documentation changes do not change that runtime.
-The release and live journal activation remain incomplete until paired native
-artifacts, consumer readiness and actual learning/replay are verified.
+The application manifest repository records the exact release image and six
+paired native artifacts, consumer readiness, actual learning and the controlled
+outage/replay evidence. A published image does not itself prove live activation.
+Require positive accepted and applied counts, an empty recovered outbox, and no
+new unavailable learning outcomes before declaring an outage test successful.
