@@ -18,6 +18,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,7 +37,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
 
-	"encoding/json"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
@@ -48,6 +48,7 @@ var (
 	cacheSF   singleflight.Group
 )
 
+// loadEncryptedStringSliceField decrypts and decodes one cached string-list field.
 func loadEncryptedStringSliceField(hashValues map[string]string, fieldName string, securityManager *security.Manager) ([]string, error) {
 	fieldValue, ok := hashValues[fieldName]
 	if !ok || fieldValue == "" {
@@ -64,6 +65,7 @@ func loadEncryptedStringSliceField(hashValues map[string]string, fieldName strin
 	return values, nil
 }
 
+// storeEncryptedStringSliceField encodes and encrypts one string-list cache field.
 func storeEncryptedStringSliceField(hashFields map[string]any, fieldName string, values []string, securityManager *security.Manager) error {
 	if len(values) == 0 {
 		return nil

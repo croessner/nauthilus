@@ -17,10 +17,10 @@
 package language
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
-	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"

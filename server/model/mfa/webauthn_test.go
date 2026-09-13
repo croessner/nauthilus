@@ -16,11 +16,11 @@
 package mfa
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
-	"encoding/json"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 

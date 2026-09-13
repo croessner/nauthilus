@@ -19,12 +19,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/idp/clientauth"

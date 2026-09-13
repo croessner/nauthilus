@@ -8,12 +8,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
 
-	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp/signing"

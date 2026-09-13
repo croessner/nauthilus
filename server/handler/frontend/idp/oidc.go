@@ -21,6 +21,7 @@ import (
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -30,7 +31,6 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -1425,6 +1425,7 @@ func appendStateToLogoutTarget(target, state string) string {
 	return parsedTarget.String()
 }
 
+// encodeFrontChannelLogoutTasks serializes logout tasks for the browser response.
 func encodeFrontChannelLogoutTasks(tasks []frontChannelLogoutTask) string {
 	rawTasks, err := json.Marshal(tasks)
 	if err != nil {

@@ -17,11 +17,11 @@ package slo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
-	"encoding/json"
 	"github.com/go-redis/redismock/v9"
 	"github.com/stretchr/testify/assert"
 )

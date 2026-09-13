@@ -18,6 +18,7 @@ package idp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -27,7 +28,6 @@ import (
 	"testing"
 	"time"
 
-	"encoding/json"
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
 	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
@@ -995,6 +995,7 @@ func (f *backendDataLDAPFixture) expectEmptyWebAuthnCache(uniqueUserID string) {
 	f.mock.ExpectHGetAll(key).SetVal(map[string]string{})
 }
 
+// expectSavedWebAuthnCache expects the encoded credentials and their cache expiration.
 func (f *backendDataBaseFixture) expectSavedWebAuthnCache(t *testing.T, user *backend.User) {
 	t.Helper()
 
@@ -1034,6 +1035,7 @@ func (f *backendDataLDAPFixture) expectBackendDataRequestFlow(t *testing.T, cred
 	})
 }
 
+// replyToBackendDataSearches supplies an LDAP reply containing the serialized credential.
 func (f *backendDataLDAPFixture) replyToBackendDataSearches(
 	t *testing.T,
 	credential mfa.PersistentCredential,

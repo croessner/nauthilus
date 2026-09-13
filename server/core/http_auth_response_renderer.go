@@ -16,6 +16,7 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -27,7 +28,6 @@ import (
 	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 
-	"encoding/json"
 	"github.com/gin-gonic/gin"
 )
 

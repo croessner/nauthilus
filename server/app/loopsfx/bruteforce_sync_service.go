@@ -17,10 +17,10 @@ package loopsfx
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 
-	"encoding/json"
 	"github.com/croessner/nauthilus/v4/server/app/configfx"
 	"github.com/croessner/nauthilus/v4/server/app/redifx"
 	"github.com/croessner/nauthilus/v4/server/bruteforce"

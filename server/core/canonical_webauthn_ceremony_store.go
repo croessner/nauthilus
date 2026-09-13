@@ -41,6 +41,7 @@ func newCanonicalWebAuthnCeremonyStore(
 	return &canonicalWebAuthnCeremonyStore{stores: stores, generator: generator, session: session}
 }
 
+// Store persists serialized WebAuthn state bound to its canonical session and flow.
 func (s *canonicalWebAuthnCeremonyStore) Store(
 	ctx context.Context,
 	flow sessionstate.Handle,
@@ -78,6 +79,7 @@ func (s *canonicalWebAuthnCeremonyStore) Store(
 	return handle, nil
 }
 
+// Take consumes a ceremony once and returns its state after validating the binding.
 func (s *canonicalWebAuthnCeremonyStore) Take(
 	ctx context.Context,
 	handle sessionstate.Handle,

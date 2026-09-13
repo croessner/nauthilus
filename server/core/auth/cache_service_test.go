@@ -17,6 +17,9 @@ package auth
 
 import (
 	"encoding/json"
+	"testing"
+	"time"
+
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -25,8 +28,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/go-redis/redismock/v9"
-	"testing"
-	"time"
 )
 
 // TestDefaultCacheService_OnSuccess verifies that a positive cache write uses the expected

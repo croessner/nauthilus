@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -46,7 +47,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/util"
 
-	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"

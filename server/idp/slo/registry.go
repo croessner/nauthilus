@@ -22,10 +22,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var (

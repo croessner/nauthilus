@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	errors2 "errors"
 	"fmt"
 	"log/slog"
@@ -45,7 +46,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
 
-	"encoding/json"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/dspinhirne/netaddr-go"
 	"github.com/redis/go-redis/v9"
