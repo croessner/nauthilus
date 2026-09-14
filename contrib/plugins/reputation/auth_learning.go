@@ -10,7 +10,8 @@ import (
 )
 
 const componentLearnOutcome = "learn_outcome"
-const extensionPostAction = "post_action"
+const extensionObligation = "obligation"
+const operationExecute = "execute"
 
 var authenticationTarget = pluginapi.DecisionTargetSelector{Namespace: "authn", Action: "authenticate"}
 var errBackendUnobserved = errors.New("independent backend outcome not observed")
@@ -22,7 +23,7 @@ type authLearningConfig struct {
 
 type authenticationLearner struct {
 	plugin *Plugin
-	limits pluginapi.PostActionAdmissionLimits
+	limits pluginapi.CallbackAdmissionLimits
 }
 
 // Name declares the sole Policy-selected backend learning callback.
@@ -34,8 +35,8 @@ func (p authenticationLearner) AdmissionLimits() (int, int) {
 }
 
 // learningAdmissionLimits preserves every source bound when several identities share the callback.
-func (c *configuration) learningAdmissionLimits() pluginapi.PostActionAdmissionLimits {
-	var limits pluginapi.PostActionAdmissionLimits
+func (c *configuration) learningAdmissionLimits() pluginapi.CallbackAdmissionLimits {
+	var limits pluginapi.CallbackAdmissionLimits
 
 	for identity, source := range c.internalSources {
 		if identity.component != componentLearnOutcome {
@@ -123,7 +124,7 @@ func (p *Plugin) registerAuthentication(registrar pluginapi.Registrar, cfg *conf
 		return nil
 	}
 
-	if err := registrar.RegisterPostActionTarget(authenticationLearner{plugin: p, limits: cfg.learningAdmissionLimits()}); err != nil {
+	if err := registrar.RegisterObligationTarget(authenticationLearner{plugin: p, limits: cfg.learningAdmissionLimits()}); err != nil {
 		return err
 	}
 
@@ -137,7 +138,7 @@ func (p *Plugin) registerAuthentication(registrar pluginapi.Registrar, cfg *conf
 }
 
 // authenticationObservation projects immutable backend evidence without reading final flags, credentials or caller facts.
-func (c *configuration) authenticationObservation(request pluginapi.PostActionRequest) (*sourcePolicy, observationInput, error) {
+func (c *configuration) authenticationObservation(request pluginapi.ObligationRequest) (*sourcePolicy, observationInput, error) {
 	source := c.sourceForExecution(request.ExecutionIdentity())
 	if source == nil || c.raw.AuthLearning == nil || request.ExecutionIdentity().Component() != componentLearnOutcome {
 		return nil, observationInput{}, errConfiguration
@@ -181,14 +182,14 @@ func (c *configuration) authenticationObservation(request pluginapi.PostActionRe
 	return source, input, nil
 }
 
-// Enqueue persists only selected independent evidence; failure cannot rewrite the already selected authentication result.
-func (p authenticationLearner) Enqueue(ctx context.Context, request pluginapi.PostActionRequest) (pluginapi.PostActionEnqueueResult, error) {
+// Execute requires acknowledged storage before Policy finalizes the authentication response.
+func (p authenticationLearner) Execute(ctx context.Context, request pluginapi.ObligationRequest) (pluginapi.ObligationResult, error) {
 	metric := learningRejected
 	defer func() { p.plugin.recordLearning(ctx, learningAuthentication, metric) }()
 
 	if p.plugin == nil {
 		metric = learningUnavailable
-		return pluginapi.PostActionEnqueueResult{Temporary: true}, errStateUnavailable
+		return pluginapi.ObligationResult{Temporary: true}, errStateUnavailable
 	}
 
 	p.plugin.mu.RLock()
@@ -197,37 +198,37 @@ func (p authenticationLearner) Enqueue(ctx context.Context, request pluginapi.Po
 
 	if state == nil || !state.ready.Load() {
 		metric = learningUnavailable
-		return pluginapi.PostActionEnqueueResult{Temporary: true}, errStateUnavailable
+		return pluginapi.ObligationResult{Temporary: true}, errStateUnavailable
 	}
 
 	source, input, err := state.config.authenticationObservation(request)
 	if errors.Is(err, errBackendUnobserved) {
 		metric = learningSkipped
-		return pluginapi.PostActionEnqueueResult{}, nil
+		return pluginapi.ObligationResult{}, nil
 	}
 
 	if err != nil {
-		return pluginapi.PostActionEnqueueResult{}, err
+		return pluginapi.ObligationResult{}, err
 	}
 
 	admitted, reason, err := state.admitForPolicy(ctx, source, input, nil)
 	if err != nil {
 		metric = learningUnavailable
-		return pluginapi.PostActionEnqueueResult{Temporary: true}, err
+		return pluginapi.ObligationResult{Temporary: true}, err
 	}
 
 	if reason != reasonValid {
-		return pluginapi.PostActionEnqueueResult{}, errConfiguration
+		return pluginapi.ObligationResult{}, errConfiguration
 	}
 
 	result, err := state.ingest(ctx, admitted)
 
 	metric = learningIngestionResult(result, err)
 	if err != nil {
-		return pluginapi.PostActionEnqueueResult{Temporary: true}, err
+		return pluginapi.ObligationResult{Temporary: true}, err
 	}
 
-	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil
+	return pluginapi.ObligationResult{Applied: true}, nil
 }
 
 // validateLearningSignal excludes final decisions and account or ASN poisoning from credential evidence.
@@ -250,7 +251,7 @@ func validateLearningSignal(signal *signalPolicy, direction string) error {
 // validateLearningBinding matches the closed callback family and its complete source grant.
 func (c *configuration) validateLearningBinding(key executionKey, source *sourcePolicy) error {
 	learning := c.raw.AuthLearning
-	if key.extension != extensionPostAction || key.operation != "enqueue" || key.target != authenticationTarget || source.config.ASNProvider != "" ||
+	if key.extension != extensionObligation || key.operation != operationExecute || key.target != authenticationTarget || source.config.ASNProvider != "" ||
 		!slices.Contains(source.config.AllowedSignals, learning.SuccessSignal) || !slices.Contains(source.config.AllowedSignals, learning.BadCredentialsSignal) {
 		return errConfiguration
 	}

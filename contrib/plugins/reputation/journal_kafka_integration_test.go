@@ -53,7 +53,7 @@ func createJournalTestTopics(t *testing.T, client *kgo.Client) *journalConfig {
 		}
 	}
 
-	return &journalConfig{Topic: name, QuarantineTopic: name + ".quarantine", GroupID: name}
+	return &journalConfig{Role: journalProducer, Topic: name, QuarantineTopic: name + ".quarantine", GroupID: name}
 }
 
 // testJournalCounter records only closed outcomes from integration-owned clients.
@@ -61,7 +61,7 @@ func testJournalCounter(t *testing.T) *telemetry.Counter {
 	t.Helper()
 
 	counter, err := telemetry.RegisterCounter(&metricCapture{}, "journal_total", "Journal integration outcomes.",
-		telemetry.Dimension{Name: metricResult, Values: []string{"published", "outboxed", storageApplied, storageDuplicate, journalOutcomeRetry, "quarantined", journalOutcomeOutboxFull}})
+		telemetry.Dimension{Name: metricResult, Values: []string{"published", storageApplied, storageDuplicate, journalOutcomeRetry, "quarantined"}})
 	requireNoError(t, err)
 
 	return counter
@@ -91,8 +91,8 @@ func journalTestFetch(t *testing.T, consumer *kgo.Client) []*kgo.Record {
 	return fetches.Records()
 }
 
-// TestReputationKafkaOutboxRestartAndDuplicate proves durable recovery and exact Redis replay with a real broker.
-func TestReputationKafkaOutboxRestartAndDuplicate(t *testing.T) {
+// TestReputationKafkaAcknowledgementAndDuplicate proves rejection during outage, acknowledged recovery and exact Redis replay.
+func TestReputationKafkaAcknowledgementAndDuplicate(t *testing.T) {
 	live := localJournalClient(t)
 	journalConfig := createJournalTestTopics(t, live)
 	redisClient, facade := localReputationRedis(t)
@@ -101,31 +101,27 @@ func TestReputationKafkaOutboxRestartAndDuplicate(t *testing.T) {
 	state, err := newStateOwner(cfg, tagger, facade)
 	requireNoError(t, err)
 	requireNoError(t, state.start(t.Context()))
-	outboxDirectory := t.TempDir()
-	outbox, err := openJournalOutbox(outboxDirectory, 8, 1024*1024)
-	requireNoError(t, err)
 	unavailable, err := kgo.NewClient(kgo.SeedBrokers("127.0.0.1:1"), kgo.RecordDeliveryTimeout(time.Second))
 	requireNoError(t, err)
 	t.Cleanup(unavailable.Close)
 
-	runtime := &journalRuntime{client: unavailable, outbox: outbox, state: state, config: journalConfig,
+	runtime := &journalRuntime{client: unavailable, state: state, config: journalConfig,
 		timeout: 200 * time.Millisecond, metrics: &journalTelemetry{outcome: testJournalCounter(t)},
 		codec: journalCodec{tagger: tagger, scope: cfg.raw.ManifestScope, topic: journalConfig.Topic}}
 	state.journal = runtime
-	admitted := integrationObservation(t, cfg, tagger, "outbox-recovery")
+	admitted := integrationObservation(t, cfg, tagger, "acknowledged-recovery")
 	queued, err := state.ingest(t.Context(), admitted)
-	requireNoError(t, err)
-
-	if !queued.Queued || queued.Applied != 0 {
-		t.Fatal("broker outage did not retain durable acceptance")
+	requireError(t, err)
+	if queued.Queued || queued.Applied != 0 {
+		t.Fatal("broker outage was accepted")
 	}
-
-	runtime.outbox, err = openJournalOutbox(outboxDirectory, 8, 1024*1024)
-	requireNoError(t, err)
-
 	runtime.client = live
 	runtime.timeout = 5 * time.Second
-	requireNoError(t, runtime.outbox.drain(t.Context(), runtime.publish))
+	queued, err = state.ingest(t.Context(), admitted)
+	requireNoError(t, err)
+	if !queued.Queued || queued.Applied != 0 {
+		t.Fatal("acknowledged delivery was not queued")
+	}
 	verifyJournalConsumerRestart(t, runtime, redisClient)
 }
 

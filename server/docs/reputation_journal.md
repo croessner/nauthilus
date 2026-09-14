@@ -11,18 +11,24 @@ million-user throughput or high-availability qualification is claimed.
 
 Policy remains the only authority selecting learning. Producers freeze only
 independent observations and opaque HMAC identifiers. Credentials, raw account
-names and raw IP addresses must never enter Kafka, outbox files or metrics.
+names and raw IP addresses must never enter Kafka or metrics.
 
-Producers sync every immutable record to the persistent outbox before spending
-the caller deadline on Kafka delivery. This preserves acceptance even if the
-broker consumes the remaining request budget. Process memory and
-client-side Kafka buffers are not durable acceptance. An outbox record is
-removed only after confirmed Kafka acknowledgement. A failed or ambiguous
-send can therefore be repeated. Recovery never holds the shared admission lock
-while waiting for Kafka. Acknowledgement checks the exact immutable record before
-removal, so concurrent recovery cannot delete a different record. This design
-adds filesystem synchronization to the healthy path; benchmark that cost before
-raising the pilot load.
+Producers send the immutable contribution directly to Kafka using the native
+franz-go client over mutually authenticated TLS. Acceptance requires all in-sync
+replicas to acknowledge the record within `delivery_timeout`. There is no local
+outbox, CephFS write, object-store fallback or background producer recovery.
+Process memory and client-side Kafka buffers are not durable acceptance.
+
+Authentication learning is a host-synchronous Policy obligation. Kafka, Redis
+admission, capacity, TLS and timeout failures prevent successful completion and
+map through Policy to Tempfail before the response is sent. Other detached
+post-actions remain detached. The learner consumes only frozen backend evidence;
+it never learns a Policy denial as a credential failure.
+
+A lost acknowledgement is ambiguous: Kafka may already hold the record even
+though the caller receives Tempfail. Consumer deduplication remains necessary.
+A new client authentication retry receives a new host event identity and is a
+separate observation. No exactly-once guarantee spans authentication and Kafka.
 
 Redis remains the score and deduplication authority. Kafka consumer offsets
 advance only after every subject contribution has been applied or recognized
@@ -39,7 +45,7 @@ not extend the safe Redis replay window.
 ## Kubernetes ownership and capacity
 
 Kafka infrastructure belongs in the general Kubernetes repository under `kafka`.
-Nauthilus configuration, outbox mounts and consumer deployments belong in
+Nauthilus configuration and consumer deployments belong in
 nauthilus-tests/kubernetes. Preserve unrelated work and unpublished commits.
 
 The selected production pilot uses one Apache Kafka 4.3.1 StatefulSet, combining
@@ -50,10 +56,12 @@ of a single broker at the pilot's low event rate. There is no Strimzi operator,
 additional CRD installation or workload permission to read Kubernetes Secrets.
 The existing cert-manager CA issuer supplies separate broker and client leaves.
 
-A broker outage pauses consumption; persistent producer outboxes retain newly
-accepted work until recovery. A lost Kafka volume is not protected by Kafka
-replication. Ceph storage protection and the application outbox do not make this
-a highly available Kafka service. Scale up only after measuring actual demand.
+A broker outage pauses consumption and makes selected authentication learning
+return Tempfail. Previously acknowledged messages remain in Kafka. A lost Kafka
+volume is not protected by Kafka replication. Ceph storage protection does not
+make this a highly available Kafka service. The current resource-constrained
+pilot stays single-broker; a larger deployment needs independent failure domains,
+replicated controllers/brokers and measured failover behavior.
 
 The temporary increase of worker balloon floors was rolled back when the
 operator selected this smaller deployment. Existing host memory safeguards and
@@ -68,8 +76,8 @@ with a 128 MiB memory request and a 512 MiB limit.
 - Prove TLS verification, producer/consumer ACL separation and absence of
   raw identifiers in sample journal records without printing those records.
 - Measure sustained throughput, tail latency, Redis memory, hot-subject
-  capacity, queue age, outbox occupancy and Kafka consumer lag.
-- Test broker restart, persistent record recovery and idempotent Redis replay.
+  capacity, queue age, acknowledgement latency and Kafka consumer lag.
+- Test broker restart, acknowledged record recovery and idempotent Redis replay.
   Broker or worker loss is an expected temporary service interruption in this
   single-broker pilot, not an HA failover qualification.
 - Record actual test duration and load. Do not claim a completed soak or
@@ -89,8 +97,7 @@ with a 128 MiB memory request and a 512 MiB limit.
 The optional `journal` block accepts exactly one role: `producer` or `consumer`.
 A producer still admits the immutable manifest through Redis before publishing.
 Redis admission failure therefore prevents a durable journal receipt; Kafka does
-not remove that synchronous dependency. `queued` means that Kafka or the
-persistent outbox accepted the record, whereas `applied` means Redis subject
+not remove that synchronous dependency. `queued` means that Kafka acknowledged the record, whereas `applied` means Redis subject
 updates completed. Authentication success alone is not a journal receipt.
 
 The `reputation-worker` executable is built from the same reputation package with
@@ -110,17 +117,23 @@ An offset outside Kafka retention stops consumption rather than resetting silent
 ## Configuration and operational bounds
 
 `journal` requires `brokers`, `role`, `topic`, `quarantine_topic`, `group_id`,
-`ca_file`, `certificate_file` and `key_file`. Producer configuration additionally
-requires an absolute `outbox_directory`, `outbox_max_bytes` and
-`outbox_max_records`. `delivery_timeout` bounds each foreground delivery attempt.
+`ca_file`, `certificate_file`, `key_file` and `delivery_timeout`. Delivery budgets
+are bounded between 100 ms and 10 s; Kafka buffers are bounded to 1,024 records
+and 16 MiB. Source admission separately bounds concurrency and requests per second.
 Client certificates are re-read for new TLS handshakes; CA changes require a
 restart. Kubernetes Secret rotation must trigger that restart.
 
-The outbox uses a shared persistent filesystem with cross-process advisory locks,
-file synchronization and atomic rename. Records are bounded by both count and
-bytes. A full or unavailable outbox rejects new durable acceptance even when Kafka
-is reachable. Exact retry remains possible at the record limit. Filesystem scans and
-recovery are bounded but have not yet been qualified at sustained production load.
+Remove the obsolete `outbox_directory`, `outbox_max_bytes` and
+`outbox_max_records` keys and their PVC mounts. Before retiring the old producer,
+drain its already accepted outbox records and verify consumer progress. Do not
+remove a nonempty outbox. Deployment rollback must restore paired binaries and
+the previous callback binding, configuration and mounts.
+
+The exact learning binding is now `reputation/learn_outcome/obligation/execute/authn/authenticate`.
+The model hash canonicalizes this scheduling-only migration to the previous
+binding, preserving scores and accepted contributions. Runtime admission accepts
+only the new binding. Signal, attribution and other model changes still change
+the fingerprint and require a separately planned model migration.
 
 Operational overrides preserve the model fingerprint:
 
@@ -144,8 +157,8 @@ count. Raising a numeric limit without this measurement is insufficient.
 
 ## Validation evidence and remaining gates
 
-Local tests cover signed topic/expiry binding, conflicting retries, outbox reopen,
-Kafka acknowledgement before removal, consumer restart without offset commit,
+Local tests cover signed topic/expiry binding, conflicting retries, rejected Kafka deadlines,
+acknowledged delivery, consumer restart without offset commit,
 duplicate delivery, partial Redis application and bounded expired-marker pruning.
 `make reputation-kafka-check` starts an isolated, single-broker Kafka fixture and
 removes only its own Compose resources on exit. That fixture uses loopback
@@ -167,5 +180,5 @@ the application namespaces; no cross-namespace Secret synchronization is needed.
 The application manifest repository records the exact release image and six
 paired native artifacts, consumer readiness, actual learning and the controlled
 outage/replay evidence. A published image does not itself prove live activation.
-Require positive accepted and applied counts, an empty recovered outbox, and no
-new unavailable learning outcomes before declaring an outage test successful.
+Require positive accepted and applied counts, verified Tempfail while Kafka is unavailable, and recovered acknowledged
+delivery after restoration before declaring an outage test successful.

@@ -9,28 +9,23 @@ import (
 )
 
 const (
-	journalOutcomeRetry      = "retry"
-	journalOutcomeOutboxFull = "outbox_full"
+	journalOutcomeRetry = "retry"
 )
 
 type journalTelemetry struct {
-	outcome           *telemetry.Counter
-	outboxRecords     pluginapi.Gauge
-	outboxBytes       pluginapi.Gauge
-	outboxRecordLimit pluginapi.Gauge
-	outboxByteLimit   pluginapi.Gauge
-	outboxAvailable   pluginapi.Gauge
-	lastApplied       pluginapi.Gauge
-	replayRemaining   pluginapi.Gauge
-	processing        pluginapi.Histogram
+	outcome         *telemetry.Counter
+	lastApplied     pluginapi.Gauge
+	replayRemaining pluginapi.Gauge
+	processing      pluginapi.Histogram
+	delivery        pluginapi.Histogram
 }
 
-// newJournalTelemetry exposes bounded durability, freshness and fallback capacity signals.
+// newJournalTelemetry exposes bounded acknowledgement and consumer freshness signals.
 func newJournalTelemetry(host pluginapi.Metrics) (*journalTelemetry, error) {
 	metrics := &journalTelemetry{}
 
 	counter, err := telemetry.RegisterCounter(host, "journal_total", "Durable reputation journal outcomes.",
-		telemetry.Dimension{Name: metricResult, Values: []string{"published", "outboxed", storageApplied, storageDuplicate, journalOutcomeRetry, "quarantined", journalOutcomeOutboxFull}})
+		telemetry.Dimension{Name: metricResult, Values: []string{"published", storageApplied, storageDuplicate, journalOutcomeRetry, "quarantined"}})
 	if err != nil {
 		return nil, err
 	}
@@ -41,11 +36,6 @@ func newJournalTelemetry(host pluginapi.Metrics) (*journalTelemetry, error) {
 		target *pluginapi.Gauge
 		name   string
 	}{
-		{&metrics.outboxRecords, "journal_outbox_records"},
-		{&metrics.outboxBytes, "journal_outbox_bytes"},
-		{&metrics.outboxRecordLimit, "journal_outbox_record_limit"},
-		{&metrics.outboxByteLimit, "journal_outbox_byte_limit"},
-		{&metrics.outboxAvailable, "journal_outbox_available"},
 		{&metrics.lastApplied, "journal_last_applied_timestamp_seconds"},
 		{&metrics.replayRemaining, "journal_replay_remaining_seconds"},
 	} {
@@ -57,41 +47,22 @@ func newJournalTelemetry(host pluginapi.Metrics) (*journalTelemetry, error) {
 		*definition.target = gauge
 	}
 
-	metrics.processing, err = host.Histogram(pluginapi.MetricDefinition{Name: "journal_processing_seconds",
-		Help: "Time spent applying a complete journal contribution.", Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 5, 10}})
-	if err != nil {
-		return nil, err
+	for _, definition := range []struct {
+		target     *pluginapi.Histogram
+		name, help string
+	}{
+		{&metrics.processing, "journal_processing_seconds", "Time spent applying a complete journal contribution."},
+		{&metrics.delivery, "journal_delivery_seconds", "Time awaiting Kafka acknowledgement, including failed attempts."},
+	} {
+		histogram, err := host.Histogram(pluginapi.MetricDefinition{Name: definition.name, Help: definition.help, Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 5, 10}})
+		if err != nil {
+			return nil, err
+		}
+
+		*definition.target = histogram
 	}
 
 	return metrics, nil
-}
-
-// recordOutbox observes shared persistent occupancy under the same lock as capacity admission.
-func (m *journalTelemetry) recordOutbox(ctx context.Context, box *journalOutbox) {
-	if m.outboxRecords == nil {
-		return
-	}
-
-	m.outboxRecordLimit.Set(ctx, float64(box.maxRecords))
-	m.outboxByteLimit.Set(ctx, float64(box.maxBytes))
-
-	err := box.withLock(ctx, func() error {
-		records, bytes, err := box.inventory()
-		if err != nil {
-			return err
-		}
-
-		m.outboxRecords.Set(ctx, float64(len(records)))
-		m.outboxBytes.Set(ctx, float64(bytes))
-
-		return nil
-	})
-	if err != nil {
-		m.outboxAvailable.Set(ctx, 0)
-		return
-	}
-
-	m.outboxAvailable.Set(ctx, 1)
 }
 
 // recordApplied separates score freshness and replay headroom from successful Kafka acceptance.

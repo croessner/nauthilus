@@ -15,7 +15,7 @@ func (c *configuration) validateSourceAdmissionCapacity() error {
 			return errConfiguration
 		}
 
-		limits := pluginapi.PostActionAdmissionLimits{RequestsPerSecond: capacity.RequestsPerSecond, MaxConcurrency: capacity.MaxConcurrency}
+		limits := pluginapi.CallbackAdmissionLimits{RequestsPerSecond: capacity.RequestsPerSecond, MaxConcurrency: capacity.MaxConcurrency}
 		if err := limits.Validate(); err != nil || limits.RequestsPerSecond < source.RequestsPerSecond || limits.MaxConcurrency < source.MaxConcurrency {
 			return errConfiguration
 		}
@@ -25,8 +25,8 @@ func (c *configuration) validateSourceAdmissionCapacity() error {
 }
 
 // admissionLimits resolves operational headroom while leaving the fingerprinted source grant unchanged.
-func (s *sourcePolicy) admissionLimits() pluginapi.PostActionAdmissionLimits {
-	return pluginapi.PostActionAdmissionLimits{
+func (s *sourcePolicy) admissionLimits() pluginapi.CallbackAdmissionLimits {
+	return pluginapi.CallbackAdmissionLimits{
 		RequestsPerSecond: max(s.config.RequestsPerSecond, s.capacity.RequestsPerSecond),
 		MaxConcurrency:    max(s.config.MaxConcurrency, s.capacity.MaxConcurrency),
 	}

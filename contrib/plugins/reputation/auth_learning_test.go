@@ -24,7 +24,7 @@ func TestAuthenticationLearningRegistersHostAdmissionBounds(t *testing.T) {
 	requireNoError(t, p.registerAuthentication(registrar, cfg))
 
 	components := registrar.Components()
-	if len(components) != 1 || components[0].PostActionAdmissionLimits != (pluginapi.PostActionAdmissionLimits{RequestsPerSecond: 1, MaxConcurrency: 1}) {
+	if len(components) != 1 || components[0].CallbackAdmissionLimits != (pluginapi.CallbackAdmissionLimits{RequestsPerSecond: 1, MaxConcurrency: 1}) {
 		t.Fatal("internal source bounds did not reach host-owned callback admission")
 	}
 }
@@ -73,13 +73,13 @@ func TestAuthLearningRejectsBroadOrDependentEvidence(t *testing.T) {
 func TestAuthLearningProjectsOnlyBackendTruth(t *testing.T) {
 	cfg, err := decodeConfig(pluginregistry.NewConfigView(learningConfigMap(t)))
 	requireNoError(t, err)
-	identity, err := pluginapi.NewExecutionIdentityView("reputation", "learn_outcome", "post_action", "enqueue", pluginapi.DecisionTargetSelector{Namespace: "authn", Action: "authenticate"})
+	identity, err := pluginapi.NewExecutionIdentityView("reputation", "learn_outcome", "obligation", "execute", pluginapi.DecisionTargetSelector{Namespace: "authn", Action: "authenticate"})
 	requireNoError(t, err)
 
 	for _, status := range []pluginapi.BackendOutcomeStatus{pluginapi.BackendOutcomeAuthenticated, pluginapi.BackendOutcomeBadCredentials} {
 		outcome, err := pluginapi.NewBackendOutcomeView("host-event", "verified-account", status, time.Now())
 		requireNoError(t, err)
-		request, err := pluginapi.NewPostActionRequest(pluginapi.PostActionRequest{BackendOutcome: outcome,
+		request, err := pluginapi.NewObligationRequest(pluginapi.ObligationRequest{BackendOutcome: outcome,
 			Snapshot: pluginapi.RequestSnapshot{ClientIP: "192.0.2.7", Account: "forged-account", ExternalSessionID: "forged-event", Runtime: pluginapi.RuntimeFlags{Authenticated: status != pluginapi.BackendOutcomeAuthenticated}}}, identity)
 		requireNoError(t, err)
 		source, input, err := cfg.authenticationObservation(request)
@@ -96,7 +96,7 @@ func TestAuthLearningProjectsOnlyBackendTruth(t *testing.T) {
 		}
 	}
 
-	_, _, err = cfg.authenticationObservation(pluginapi.PostActionRequest{})
+	_, _, err = cfg.authenticationObservation(pluginapi.ObligationRequest{})
 	requireError(t, err)
 }
 
@@ -104,11 +104,11 @@ func TestAuthLearningProjectsOnlyBackendTruth(t *testing.T) {
 func TestAuthLearningSkipsBackendHealthChecks(t *testing.T) {
 	cfg, err := decodeConfig(pluginregistry.NewConfigView(learningConfigMap(t)))
 	requireNoError(t, err)
-	identity, err := pluginapi.NewExecutionIdentityView(pluginName, componentLearnOutcome, extensionPostAction, "enqueue", authenticationTarget)
+	identity, err := pluginapi.NewExecutionIdentityView(pluginName, componentLearnOutcome, extensionObligation, "execute", authenticationTarget)
 	requireNoError(t, err)
 	outcome, err := pluginapi.NewBackendOutcomeView("health-probe", "probe-account", pluginapi.BackendOutcomeAuthenticated, time.Now())
 	requireNoError(t, err)
-	request, err := pluginapi.NewPostActionRequest(pluginapi.PostActionRequest{BackendOutcome: outcome, Snapshot: pluginapi.RequestSnapshot{HealthCheck: true, ClientIP: "192.0.2.7"}}, identity)
+	request, err := pluginapi.NewObligationRequest(pluginapi.ObligationRequest{BackendOutcome: outcome, Snapshot: pluginapi.RequestSnapshot{HealthCheck: true, ClientIP: "192.0.2.7"}}, identity)
 	requireNoError(t, err)
 
 	_, _, err = cfg.authenticationObservation(request)
@@ -139,4 +139,24 @@ func TestAuthAssessmentAcceptsHostCanonicalFactIdentity(t *testing.T) {
 	raw["target_bindings"] = []any{map[string]any{"target": "authn/authenticate", "output_fact": "auth_subjects", "subjects": []any{map[string]any{"attribute": "nauthilus.request.client.ip", "category": "environment", "role": "auth_client", "kind": "ip"}}}}
 	_, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)
+}
+
+// TestSynchronousLearningPreservesStoredModel keeps existing scores and queued contributions valid during migration.
+func TestSynchronousLearningPreservesStoredModel(t *testing.T) {
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(learningConfigMap(t)))
+	requireNoError(t, err)
+	current, err := compileModel(cfg)
+	requireNoError(t, err)
+
+	for _, source := range cfg.internalSources {
+		source.config.Binding.ExtensionPoint = "post_action"
+		source.config.Binding.Operation = "enqueue"
+	}
+
+	previous, err := compileModel(cfg)
+	requireNoError(t, err)
+
+	if current.fingerprint != previous.fingerprint {
+		t.Fatal("callback scheduling reset existing reputation")
+	}
 }

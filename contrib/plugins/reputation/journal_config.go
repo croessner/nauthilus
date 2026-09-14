@@ -14,18 +14,15 @@ const journalProducer = "producer"
 const journalConsumer = "consumer"
 
 type journalConfig struct {
-	Brokers          []string `mapstructure:"brokers"`
-	Role             string   `mapstructure:"role"`
-	Topic            string   `mapstructure:"topic"`
-	QuarantineTopic  string   `mapstructure:"quarantine_topic"`
-	GroupID          string   `mapstructure:"group_id"`
-	CAFile           string   `mapstructure:"ca_file"`
-	CertificateFile  string   `mapstructure:"certificate_file"`
-	KeyFile          string   `mapstructure:"key_file"`
-	OutboxDirectory  string   `mapstructure:"outbox_directory"`
-	DeliveryTimeout  string   `mapstructure:"delivery_timeout"`
-	OutboxMaxBytes   int64    `mapstructure:"outbox_max_bytes"`
-	OutboxMaxRecords int      `mapstructure:"outbox_max_records"`
+	Brokers         []string `mapstructure:"brokers"`
+	Role            string   `mapstructure:"role"`
+	Topic           string   `mapstructure:"topic"`
+	QuarantineTopic string   `mapstructure:"quarantine_topic"`
+	GroupID         string   `mapstructure:"group_id"`
+	CAFile          string   `mapstructure:"ca_file"`
+	CertificateFile string   `mapstructure:"certificate_file"`
+	KeyFile         string   `mapstructure:"key_file"`
+	DeliveryTimeout string   `mapstructure:"delivery_timeout"`
 }
 
 // validateJournal requires explicit TLS, bounded buffers and an unambiguous process responsibility.
@@ -45,10 +42,6 @@ func (c *configuration) validateJournal() error {
 
 	timeout, err := time.ParseDuration(j.DeliveryTimeout)
 	if err != nil || timeout < 100*time.Millisecond || timeout > 10*time.Second {
-		return errConfiguration
-	}
-
-	if j.Role == journalProducer && !j.validOutbox() {
 		return errConfiguration
 	}
 
@@ -92,12 +85,6 @@ func (j *journalConfig) validIdentity() bool {
 // validPaths requires deployment-owned absolute paths for mutual TLS material.
 func (j *journalConfig) validPaths() bool {
 	return filepath.IsAbs(j.CAFile) && filepath.IsAbs(j.CertificateFile) && filepath.IsAbs(j.KeyFile)
-}
-
-// validOutbox keeps fallback storage explicit and bounded independently from Kafka buffers.
-func (j *journalConfig) validOutbox() bool {
-	return filepath.IsAbs(j.OutboxDirectory) && j.OutboxMaxRecords > 0 && j.OutboxMaxRecords <= 100000 &&
-		j.OutboxMaxBytes >= maximumJournalRecordBytes && j.OutboxMaxBytes <= 100*1024*1024*1024
 }
 
 // validBrokers requires explicit numeric TCP ports for every deployment-owned bootstrap endpoint.

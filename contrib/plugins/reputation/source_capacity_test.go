@@ -34,7 +34,7 @@ func TestSourceCapacityPreservesModelAndReachesHostGate(t *testing.T) {
 		t.Fatal("operational capacity changed the scoring model")
 	}
 
-	expected := pluginapi.PostActionAdmissionLimits{RequestsPerSecond: 200, MaxConcurrency: 32}
+	expected := pluginapi.CallbackAdmissionLimits{RequestsPerSecond: 200, MaxConcurrency: 32}
 	if expandedConfig.learningAdmissionLimits() != expected {
 		t.Fatal("higher admission capacity did not reach the authentication gate")
 	}

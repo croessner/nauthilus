@@ -11,6 +11,8 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
+const maximumJournalRecordBytes = 256 * 1024
+
 const journalSchema = "reputation-journal.v1"
 
 type journalMessage struct {

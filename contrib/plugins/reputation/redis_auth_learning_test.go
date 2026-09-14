@@ -49,16 +49,16 @@ func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 
 	counter := &learningTestCounter{}
 	bindLearningTestCounter(t, plugin, counter)
-	learner := registry.PostActionTargets()[0].Value.(pluginapi.PostActionTarget)
+	learner := registry.ObligationTargets()[0].Value.(pluginapi.ObligationTarget)
 
 	subject := subjectInput{role: "auth_client", kind: kindIP, value: "192.0.2.7"}
 	if before := plugin.state.assess(t.Context(), subject, profileOperational); before.State != assessmentMissing {
-		t.Fatal("current event present before selected post-action")
+		t.Fatal("current event present before selected obligation")
 	}
 
-	identity, err := pluginapi.NewExecutionIdentityView(pluginName, componentLearnOutcome, "post_action", "enqueue", authenticationTarget)
+	identity, err := pluginapi.NewExecutionIdentityView(pluginName, componentLearnOutcome, "obligation", "execute", authenticationTarget)
 	requireNoError(t, err)
-	request, err := pluginapi.NewPostActionRequest(pluginapi.PostActionRequest{Snapshot: pluginapi.RequestSnapshot{ClientIP: subject.value}}, identity)
+	request, err := pluginapi.NewObligationRequest(pluginapi.ObligationRequest{Snapshot: pluginapi.RequestSnapshot{ClientIP: subject.value}}, identity)
 	requireNoError(t, err)
 	assertUnobservedAuthLearning(t, plugin, learner, request, subject)
 
@@ -66,10 +66,10 @@ func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 	requireNoError(t, err)
 
 	for range 2 {
-		result, err := learner.Enqueue(t.Context(), request)
+		result, err := learner.Execute(t.Context(), request)
 		requireNoError(t, err)
 
-		if !result.Enqueued || result.Temporary {
+		if !result.Applied || result.Temporary {
 			t.Fatal("selected backend evidence not acknowledged")
 		}
 	}
@@ -81,21 +81,28 @@ func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 
 	assertLearningResults(t, counter, learningSkipped, "applied", "duplicate")
 
+	plugin.state.journal = unavailableJournalRuntime(t)
+	rejected, deliveryErr := learner.Execute(t.Context(), request)
+	if deliveryErr == nil || !rejected.Temporary || rejected.Applied {
+		t.Fatal("unacknowledged Kafka delivery bypassed synchronous failure")
+	}
+	plugin.state.journal = nil
+
 	plugin.state.redis = interruptRedis(facade, scriptManifest, false, 1)
 
-	failed, err := learner.Enqueue(t.Context(), request)
+	failed, err := learner.Execute(t.Context(), request)
 	if err == nil || !failed.Temporary {
 		t.Fatal("learning outage was hidden")
 	}
 }
 
 // assertUnobservedAuthLearning proves that a pre-backend denial cannot modify independent evidence.
-func assertUnobservedAuthLearning(t *testing.T, plugin *Plugin, learner pluginapi.PostActionTarget, request pluginapi.PostActionRequest, subject subjectInput) {
+func assertUnobservedAuthLearning(t *testing.T, plugin *Plugin, learner pluginapi.ObligationTarget, request pluginapi.ObligationRequest, subject subjectInput) {
 	t.Helper()
-	skipped, err := learner.Enqueue(t.Context(), request)
+	skipped, err := learner.Execute(t.Context(), request)
 	requireNoError(t, err)
 
-	if skipped.Enqueued {
+	if skipped.Applied {
 		t.Fatal("pre-backend denial learned bad credentials")
 	}
 

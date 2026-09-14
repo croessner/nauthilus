@@ -144,8 +144,9 @@ func (c authnNativeTestRuntimeContext) Snapshot() map[string]any {
 }
 
 type authnNativeObligationTestProgram struct {
-	id    string
-	calls atomic.Int32
+	request pluginapi.ObligationRequest
+	id      string
+	calls   atomic.Int32
 }
 
 // ID returns the exact selected obligation identity.
@@ -153,11 +154,12 @@ func (p *authnNativeObligationTestProgram) ID() string { return p.id }
 
 // ExecuteObligation records the exact public request invocation.
 func (p *authnNativeObligationTestProgram) ExecuteObligation(
-	context.Context,
-	pluginapi.ObligationRequest,
-	decision.Target,
+	_ context.Context,
+	request pluginapi.ObligationRequest,
+	_ decision.Target,
 ) (pluginapi.ObligationResult, error) {
 	p.calls.Add(1)
+	p.request = request
 
 	return pluginapi.ObligationResult{Applied: true}, nil
 }
@@ -226,3 +228,18 @@ func newAuthnNativeTestExecution(t *testing.T, effectID string) policyruntime.Ef
 }
 
 var _ decisionservice.AuthnNativeEffectHost = (*authnCandidateExecution)(nil)
+
+// TestAuthnSynchronousLearningReceivesIndependentEvidence preserves backend truth before the final response.
+func TestAuthnSynchronousLearningReceivesIndependentEvidence(t *testing.T) {
+	auth, ginCtx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t))
+	auth.deps.NativeRuntime = &authnNativeTestRuntime{}
+	host := &authnCandidateExecution{auth: auth, ginCtx: ginCtx, operation: policy.OperationAuthenticate}
+	host.captureBackendOutcome(&PassDBResult{Authenticated: true, Account: "verified"}, "verified")
+	auth.Runtime.Authenticated = false
+	program := &authnNativeObligationTestProgram{id: authnNativeObligationTestID}
+	host.ExecuteAuthnNativeObligation(t.Context(), program, newAuthnNativeTestExecution(t, authnNativeObligationTestID))
+
+	if !program.request.BackendOutcome.Observed() || program.request.BackendOutcome != host.backendOutcome {
+		t.Fatal("synchronous effect lost immutable backend evidence")
+	}
+}

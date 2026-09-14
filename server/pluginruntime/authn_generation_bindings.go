@@ -98,14 +98,15 @@ type nativeAuthnSubjectProvider struct {
 }
 
 type nativeAuthnObligationProvider struct {
-	target pluginapi.ObligationTarget
-	call   nativeAuthnComponentCall
-	id     string
+	admission *callbackAdmission
+	target    pluginapi.ObligationTarget
+	call      nativeAuthnComponentCall
+	id        string
 }
 
 type nativeAuthnPostActionProvider struct {
 	target       pluginapi.PostActionTarget
-	admission    *postActionAdmission
+	admission    *callbackAdmission
 	capabilities []pluginapi.Capability
 	call         nativeAuthnComponentCall
 	id           string
@@ -678,7 +679,8 @@ func (b *AuthenticationBindings) bindAuthenticationEffectOwner(
 		}
 
 		b.syncEffects[identity] = &nativeAuthnObligationProvider{
-			target: target, id: identity,
+			admission: newCallbackAdmission(component.CallbackAdmissionLimits),
+			target:    target, id: identity,
 			call: newNativeAuthnComponentCall(
 				input.Observer, module.moduleName, component.LocalName, authnNativeObligationExtension, "Execute",
 			),
@@ -695,7 +697,7 @@ func (b *AuthenticationBindings) bindAuthenticationEffectOwner(
 
 		b.postActions[identity] = &nativeAuthnPostActionProvider{
 			target: target, capabilities: slices.Clone(module.capabilities), id: identity,
-			admission: newPostActionAdmission(component.PostActionAdmissionLimits),
+			admission: newCallbackAdmission(component.CallbackAdmissionLimits),
 			call: newNativeAuthnComponentCall(
 				input.Observer, module.moduleName, component.LocalName, authnNativePostActionExtension, "Enqueue",
 			),
@@ -917,6 +919,11 @@ func (p *nativeAuthnObligationProvider) ExecuteObligation(
 		return result, err
 	}
 
+	if !p.admission.acquire(ctx) {
+		return pluginapi.ObligationResult{Temporary: true}, errCallbackAdmissionLimited
+	}
+	defer p.admission.release()
+
 	return invokeAuthenticationComponent(
 		ctx, p.call,
 		func(callbackCtx context.Context) (pluginapi.ObligationResult, error) {
@@ -967,7 +974,7 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 	}
 
 	if !p.admission.acquire(ctx) {
-		return pluginapi.PostActionEnqueueResult{Temporary: true}, errPostActionAdmissionLimited
+		return pluginapi.PostActionEnqueueResult{Temporary: true}, errCallbackAdmissionLimited
 	}
 	defer p.admission.release()
 

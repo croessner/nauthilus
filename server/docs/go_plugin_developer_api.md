@@ -1665,3 +1665,18 @@ Without `component`, the map key remains the component name. The selector is
 valid only for generic native entries. Two aliases cannot register the same
 canonical identity, and both configured and descriptor-owned generation
 preparation resolve the selected component against captured module authority.
+
+### Synchronous independent authentication learning
+
+`ObligationRequest.BackendOutcome` carries the same immutable host-captured
+credential evidence as `PostActionRequest.BackendOutcome`. The host captures it
+before mutable subject processing and final Policy decisions. Missing evidence
+must not be interpreted as bad credentials. Synchronous obligations may declare
+`CallbackAdmission.AdmissionLimits`; the host freezes and enforces the same
+bounded admission contract used for detached callbacks. `PostActionAdmissionLimits`
+remains a source-compatible alias of `CallbackAdmissionLimits`.
+
+The reputation learner is a synchronous obligation so missing Kafka acknowledgement
+becomes Policy Tempfail before the response. It does not mutate the response,
+consume credentials or infer evidence from final authentication flags. Detached
+post-actions retain their existing inability to revise a completed response.

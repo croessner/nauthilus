@@ -12,7 +12,7 @@ func testJournalConfig() map[string]any {
 		"brokers": []any{"journal-kafka-bootstrap.kafka.svc.cluster.local:9093"},
 		"role":    journalProducer, "topic": "reputation.prod", "quarantine_topic": "reputation.prod.quarantine",
 		"group_id": "reputation.prod", "ca_file": "/tls/ca.crt", "certificate_file": "/tls/user.crt", "key_file": "/tls/user.key",
-		"outbox_directory": "/outbox", "outbox_max_records": 10000, "outbox_max_bytes": 512 * 1024 * 1024, "delivery_timeout": "500ms",
+		"delivery_timeout": "500ms",
 	}
 }
 
@@ -40,7 +40,7 @@ func TestJournalConfigurationRejectsUnsafeTransport(t *testing.T) {
 		value any
 	}{
 		{"role", "combined"}, {"ca_file", ""}, {"key_file", "relative.key"}, {"brokers", []any{"missing-port"}},
-		{"quarantine_topic", "reputation.prod"}, {"outbox_max_records", 0}, {"outbox_max_bytes", 1},
+		{"quarantine_topic", "reputation.prod"},
 		{"delivery_timeout", "0s"}, {"delivery_timeout", "11s"},
 	} {
 		t.Run(test.key, func(t *testing.T) {

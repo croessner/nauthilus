@@ -17,7 +17,6 @@ type observationJournal interface {
 
 type journalRuntime struct {
 	client  *kgo.Client
-	outbox  *journalOutbox
 	state   *stateOwner
 	config  *journalConfig
 	metrics *journalTelemetry
@@ -27,7 +26,7 @@ type journalRuntime struct {
 	done    chan struct{}
 }
 
-// newJournalRuntime creates one explicitly scoped TLS client and optional persistent producer outbox.
+// newJournalRuntime creates one explicitly scoped TLS client for direct acknowledged production or consumption.
 func newJournalRuntime(state *stateOwner, host pluginapi.Host) (*journalRuntime, error) {
 	cfg := state.config.raw.Journal
 
@@ -56,20 +55,13 @@ func newJournalRuntime(state *stateOwner, host pluginapi.Host) (*journalRuntime,
 
 	runtime := &journalRuntime{client: client, state: state, config: cfg, timeout: timeout, metrics: metrics, done: make(chan struct{}),
 		codec: journalCodec{tagger: state.planner.tagger, scope: state.config.raw.ManifestScope, topic: cfg.Topic}}
-	if cfg.Role == journalProducer {
-		runtime.outbox, err = openJournalOutbox(cfg.OutboxDirectory, cfg.OutboxMaxRecords, cfg.OutboxMaxBytes)
-		if err != nil {
-			client.Close()
-			return nil, err
-		}
-	}
 
 	return runtime, nil
 }
 
-// enqueue syncs the immutable receipt before spending the caller budget on broker delivery.
+// enqueue accepts an immutable contribution only after the broker acknowledges it.
 func (j *journalRuntime) enqueue(ctx context.Context, allocation string, payload manifestPayload, expiry float64) error {
-	if j.outbox == nil {
+	if j.config.Role != journalProducer {
 		return errStateUnavailable
 	}
 
@@ -83,36 +75,24 @@ func (j *journalRuntime) enqueue(ctx context.Context, allocation string, payload
 		return err
 	}
 
-	if err := j.outbox.put(ctx, allocation, encoded); err != nil {
-		outcome := journalOutcomeRetry
-		if errors.Is(err, errQuotaExceeded) {
-			outcome = journalOutcomeOutboxFull
-		}
-
-		j.metrics.outcome.Add(ctx, outcome)
-
-		return err
-	}
-
-	if err := j.publish(ctx, allocation, encoded); err != nil {
-		j.metrics.outcome.Add(ctx, "outboxed")
-
-		return nil
-	}
-
-	if err := j.outbox.acknowledge(ctx, outboxRecord{Key: allocation, Value: encoded}); err != nil {
-		j.metrics.outcome.Add(ctx, journalOutcomeRetry)
-	}
-
-	return nil
+	return j.publish(ctx, allocation, encoded)
 }
 
 // publish requires all in-sync replica acknowledgement and exposes only a closed error class.
 func (j *journalRuntime) publish(ctx context.Context, key string, value []byte) error {
+	started := time.Now()
+
+	defer func() {
+		if j.metrics.delivery != nil {
+			j.metrics.delivery.Observe(ctx, time.Since(started).Seconds())
+		}
+	}()
+
 	sendContext, cancel := context.WithTimeout(ctx, j.timeout)
 	defer cancel()
 
 	if err := j.client.ProduceSync(sendContext, &kgo.Record{Topic: j.config.Topic, Key: []byte(key), Value: value}).FirstErr(); err != nil {
+		j.metrics.outcome.Add(ctx, journalOutcomeRetry)
 		return errStateUnavailable
 	}
 
@@ -133,33 +113,13 @@ func (j *journalRuntime) start(host pluginapi.Host) {
 		stop := context.AfterFunc(hostContext, cancel)
 		defer stop()
 
-		if j.outbox != nil {
-			return j.recoverOutbox(ctx)
+		if j.config.Role == journalProducer {
+			<-ctx.Done()
+			return nil
 		}
 
 		return j.consume(ctx)
 	})
-}
-
-// recoverOutbox preserves failed records and backs off between bounded recovery attempts.
-func (j *journalRuntime) recoverOutbox(ctx context.Context) error {
-	for ctx.Err() == nil {
-		attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
-		j.metrics.recordOutbox(attempt, j.outbox)
-		err := j.outbox.drain(attempt, j.publish)
-
-		cancel()
-
-		if err != nil && ctx.Err() == nil {
-			j.metrics.outcome.Add(ctx, journalOutcomeRetry)
-		}
-
-		if !journalPause(ctx) {
-			break
-		}
-	}
-
-	return nil
 }
 
 // journalPause bounds retry pressure without delaying cancellation.
@@ -172,7 +132,7 @@ func journalPause(ctx context.Context) bool {
 	}
 }
 
-// stop waits for cancellation-bound workers and client cleanup without changing durable outbox records.
+// stop waits for cancellation-bound workers and client cleanup without retaining unacknowledged records.
 func (j *journalRuntime) stop(ctx context.Context) error {
 	j.cancel()
 

@@ -90,6 +90,8 @@ func (e *authnCandidateExecution) ExecuteAuthnNativeObligation(
 		return effectsupervisor.Failed("authn_native_obligation_request")
 	}
 
+	request.BackendOutcome = e.backendOutcome
+
 	result, err := owner.ExecuteObligation(ctx, request, execution.Target())
 	if err != nil {
 		return effectsupervisor.Failed("authn_native_obligation_execute")

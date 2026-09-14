@@ -108,6 +108,13 @@ func canonicalIngestionSemantics(cfg *configuration) ingestionSemantics {
 // canonicalSourceConfig normalizes temporal aliases and set ordering without changing exact source identity.
 func canonicalSourceConfig(source *sourcePolicy) sourceConfig {
 	raw := source.config
+	// The synchronous callback retains the same independent evidence and historical model identity.
+	// Runtime authorization still requires the current obligation binding.
+	if raw.Binding.Module == pluginName && raw.Binding.Component == componentLearnOutcome && raw.Binding.ExtensionPoint == extensionObligation && raw.Binding.Operation == operationExecute {
+		raw.Binding.ExtensionPoint = "post_action"
+		raw.Binding.Operation = "enqueue"
+	}
+
 	raw.AllowedSignals = sortedStrings(raw.AllowedSignals)
 	raw.Binding.Targets = sortedStrings(raw.Binding.Targets)
 	raw.AllowedSubjects = sortedRoleKinds(raw.AllowedSubjects)

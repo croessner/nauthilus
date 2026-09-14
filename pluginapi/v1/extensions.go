@@ -112,6 +112,7 @@ type SubjectSource interface {
 // ObligationRequest is passed to synchronous policy obligation targets.
 type ObligationRequest struct {
 	executionIdentity ExecutionIdentityView
+	BackendOutcome    BackendOutcomeView
 	Snapshot          RequestSnapshot
 	Runtime           RuntimeContext
 	Args              ArgsView

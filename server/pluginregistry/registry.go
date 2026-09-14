@@ -110,7 +110,7 @@ type Component struct {
 	LocalName                        string
 	Kind                             ComponentKind
 	Origin                           ComponentOrigin
-	PostActionAdmissionLimits        pluginapi.PostActionAdmissionLimits
+	CallbackAdmissionLimits          pluginapi.CallbackAdmissionLimits
 }
 
 // DebugModule describes one registered plugin debug selector.
@@ -492,12 +492,18 @@ func (r *Registrar) RegisterObligationTarget(target pluginapi.ObligationTarget) 
 		return ErrNilComponent
 	}
 
+	limits, err := callbackAdmissionLimits(target)
+	if err != nil {
+		return err
+	}
+
 	return r.registerComponent(Component{
-		Value:      target,
-		ModuleName: r.module.Name,
-		LocalName:  target.Name(),
-		Kind:       ComponentKindObligationTarget,
-		Origin:     ComponentOriginNative,
+		CallbackAdmissionLimits: limits,
+		Value:                   target,
+		ModuleName:              r.module.Name,
+		LocalName:               target.Name(),
+		Kind:                    ComponentKindObligationTarget,
+		Origin:                  ComponentOriginNative,
 	})
 }
 
@@ -507,22 +513,18 @@ func (r *Registrar) RegisterPostActionTarget(target pluginapi.PostActionTarget) 
 		return ErrNilComponent
 	}
 
-	var limits pluginapi.PostActionAdmissionLimits
-
-	if bounded, ok := target.(pluginapi.BoundedPostActionTarget); ok {
-		limits.RequestsPerSecond, limits.MaxConcurrency = bounded.AdmissionLimits()
-		if err := limits.Validate(); err != nil {
-			return fmt.Errorf("%w: %w", ErrInvalidDescriptor, err)
-		}
+	limits, err := callbackAdmissionLimits(target)
+	if err != nil {
+		return err
 	}
 
 	return r.registerComponent(Component{
-		Value:                     target,
-		PostActionAdmissionLimits: limits,
-		ModuleName:                r.module.Name,
-		LocalName:                 target.Name(),
-		Kind:                      ComponentKindPostActionTarget,
-		Origin:                    ComponentOriginNative,
+		Value:                   target,
+		CallbackAdmissionLimits: limits,
+		ModuleName:              r.module.Name,
+		LocalName:               target.Name(),
+		Kind:                    ComponentKindPostActionTarget,
+		Origin:                  ComponentOriginNative,
 	})
 }
 
@@ -1205,4 +1207,17 @@ func convertDetailSensitivity(sensitivity pluginapi.DetailSensitivity) (string, 
 	default:
 		return "", fmt.Errorf("sensitivity %q is not supported", sensitivity)
 	}
+}
+
+// callbackAdmissionLimits freezes optional callback bounds using a shared validation contract.
+func callbackAdmissionLimits(target any) (pluginapi.CallbackAdmissionLimits, error) {
+	var limits pluginapi.CallbackAdmissionLimits
+	if bounded, ok := target.(pluginapi.CallbackAdmission); ok {
+		limits.RequestsPerSecond, limits.MaxConcurrency = bounded.AdmissionLimits()
+		if err := limits.Validate(); err != nil {
+			return limits, fmt.Errorf("%w: %w", ErrInvalidDescriptor, err)
+		}
+	}
+
+	return limits, nil
 }

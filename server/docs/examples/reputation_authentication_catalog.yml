@@ -22,8 +22,8 @@ config:
         kind: host_execution
         module: reputation
         component: learn_outcome
-        extension_point: post_action
-        operation: enqueue
+        extension_point: obligation
+        operation: execute
         targets: [authn/authenticate]
       source_class: authentication
       allowed_signals: [auth.success, auth.bad_credentials]

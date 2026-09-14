@@ -9,29 +9,29 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var errPostActionAdmissionLimited = errors.New("native post-action admission capacity unavailable")
+var errCallbackAdmissionLimited = errors.New("native callback admission capacity unavailable")
 
-type postActionAdmission struct {
+type callbackAdmission struct {
 	rate   *rate.Limiter
 	mu     sync.Mutex
 	active int
 	limit  int
 }
 
-// newPostActionAdmission creates one host-owned gate from the detached registration snapshot.
-func newPostActionAdmission(limits pluginapi.PostActionAdmissionLimits) *postActionAdmission {
-	if limits == (pluginapi.PostActionAdmissionLimits{}) {
+// newCallbackAdmission creates one host-owned gate from the detached registration snapshot.
+func newCallbackAdmission(limits pluginapi.CallbackAdmissionLimits) *callbackAdmission {
+	if limits == (pluginapi.CallbackAdmissionLimits{}) {
 		return nil
 	}
 
-	return &postActionAdmission{
+	return &callbackAdmission{
 		rate:  rate.NewLimiter(rate.Limit(limits.RequestsPerSecond), limits.RequestsPerSecond),
 		limit: limits.MaxConcurrency,
 	}
 }
 
 // acquire rejects excess callbacks without consuming a rate token when concurrency is full.
-func (a *postActionAdmission) acquire(ctx context.Context) bool {
+func (a *callbackAdmission) acquire(ctx context.Context) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -53,7 +53,7 @@ func (a *postActionAdmission) acquire(ctx context.Context) bool {
 }
 
 // release returns callback capacity after success, failure or a recovered plugin panic.
-func (a *postActionAdmission) release() {
+func (a *callbackAdmission) release() {
 	if a == nil {
 		return
 	}
