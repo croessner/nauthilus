@@ -1316,6 +1316,7 @@ func assertIssueClientCredentialsToken(t *testing.T, idpInst *NauthilusIDP) {
 	assert.NoError(t, err)
 	assert.Equal(t, "cc-client", claims[claimSubject])
 	assert.Equal(t, definitions.AudienceBackchannelAPI, claims[claimAudience])
+	assert.Equal(t, "cc-client", claims["client_id"])
 	assert.Equal(t, testIssuer, claims[claimIssuer])
 	assert.Equal(t, definitions.TokenTypeAccessToken, claims[definitions.ClaimTokenType])
 }

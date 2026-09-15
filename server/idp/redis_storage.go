@@ -71,6 +71,10 @@ type OIDCSession struct {
 	AccessTokenAudience string         `json:"access_token_audience,omitempty"`
 	IDTokenClaims       map[string]any `json:"id_token_claims"`
 	AccessTokenClaims   map[string]any `json:"access_token_claims"`
+
+	AccessTokenIssuer    string    `json:"access_token_issuer,omitempty"`
+	AccessTokenExpiresAt time.Time `json:"access_token_expires_at,omitempty"`
+	ServiceToken         bool      `json:"service_token,omitempty"`
 }
 
 // RedisTokenStorage handles OIDC token/session persistence in Redis.

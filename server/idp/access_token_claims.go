@@ -31,6 +31,16 @@ func copyCustomAccessTokenClaims(dst jwt.MapClaims, src map[string]any) {
 	}
 }
 
+// copyServiceTokenClaims adds issuer-owned client identity only to service tokens.
+func copyServiceTokenClaims(dst jwt.MapClaims, session *OIDCSession) {
+	if session == nil || !session.ServiceToken {
+		return
+	}
+
+	dst[definitions.ClaimClientID] = session.ClientID
+	dst[oidcClaimIssuer] = session.AccessTokenIssuer
+}
+
 // copyCustomIDTokenClaims copies only non-reserved custom claims into ID-token claims.
 func copyCustomIDTokenClaims(dst jwt.MapClaims, src map[string]any) {
 	for claimName, value := range src {

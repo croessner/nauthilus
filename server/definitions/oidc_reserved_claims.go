@@ -18,6 +18,9 @@ package definitions
 import "strings"
 
 const (
+	// ClaimClientID identifies the issuer-owned service client.
+	ClaimClientID = "client_id"
+
 	// ClaimTokenType identifies the issuer-owned access-token purpose claim.
 	ClaimTokenType = "token_type"
 

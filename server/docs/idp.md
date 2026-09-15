@@ -1888,3 +1888,9 @@ server/config/
 ├── idp.go                      # DeviceCodeExpiry, DeviceCodePollingInterval, DeviceCodeUserCodeLength fields,
 │                               # RequireMFA on OIDCClient and SAML2ServiceProvider
 ```
+
+### Dedicated backchannel introspection
+
+Set `idp.oidc.clients[].allow_backchannel_introspection: true` on a confidential
+inspection client to permit validation of other clients' backchannel service tokens.
+The default is `false`. See [configuration and migration notes](oidc-introspection.md).

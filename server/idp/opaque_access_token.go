@@ -51,6 +51,10 @@ func (t *OpaqueAccessToken) Issue(ctx context.Context) (string, time.Duration, e
 		return "", 0, fmt.Errorf("failed to generate opaque access token: %w", err)
 	}
 
+	if t.session.ServiceToken {
+		t.session.AccessTokenExpiresAt = time.Now().UTC().Add(t.lifetime)
+	}
+
 	if err := t.storage.StoreAccessToken(ctx, token, t.session, t.lifetime); err != nil {
 		return "", 0, fmt.Errorf("failed to store opaque access token: %w", err)
 	}
@@ -77,7 +81,12 @@ func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaim
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
 	}
 
+	if !session.AccessTokenExpiresAt.IsZero() {
+		claims[oidcClaimExpiresAt] = session.AccessTokenExpiresAt.Unix()
+	}
+
 	copyCustomAccessTokenClaims(claims, session.AccessTokenClaims)
+	copyServiceTokenClaims(claims, session)
 
 	return claims
 }

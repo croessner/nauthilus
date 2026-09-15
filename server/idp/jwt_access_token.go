@@ -59,6 +59,7 @@ func (t *JWTAccessToken) Issue(_ context.Context) (string, time.Duration, error)
 	}
 
 	copyCustomAccessTokenClaims(accessClaims, t.session.AccessTokenClaims)
+	copyServiceTokenClaims(accessClaims, t.session)
 
 	accessTokenString, err := t.signer.Sign(accessClaims)
 	if err != nil {

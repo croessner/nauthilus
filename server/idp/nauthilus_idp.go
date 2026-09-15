@@ -427,6 +427,8 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 		Scopes:              scopes,
 		AuthTime:            time.Now(),
 		AccessTokenAudience: clientCredentialsAccessTokenAudience(scopes),
+		AccessTokenIssuer:   issuer,
+		ServiceToken:        true,
 		AccessTokenClaims:   make(map[string]any),
 	}
 
