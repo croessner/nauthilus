@@ -852,7 +852,7 @@ func testConfigFile(module config.PluginModule) *config.FileSettings {
 	}
 }
 
-// testDatabasePath resolves a checked-in fixture database path.
+// testDatabasePath copies existing fixtures with fresh timestamps and preserves absent paths for injected loaders.
 func testDatabasePath(t *testing.T, name string) string {
 	t.Helper()
 
@@ -861,7 +861,21 @@ func testDatabasePath(t *testing.T, name string) string {
 		t.Fatalf("resolve test database path: %v", err)
 	}
 
-	return path
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path
+	}
+
+	if err != nil {
+		t.Fatalf("read test database: %v", err)
+	}
+
+	ownedPath := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(ownedPath, data, 0600); err != nil {
+		t.Fatalf("copy test database: %v", err)
+	}
+
+	return ownedPath
 }
 
 // mustPrefix parses a CIDR prefix and fails the test on invalid input.
