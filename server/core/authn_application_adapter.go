@@ -582,6 +582,8 @@ func logAuthnDecisionFailure(
 		fields = append(fields, "diagnostics", authnDecisionDiagnostics{entries: diagnostics.Entries()})
 	}
 
+	fields = append(fields, execution.nativeEffectFailureFields()...)
+
 	level.Debug(execution.auth.Logger()).Log(fields...)
 }
 

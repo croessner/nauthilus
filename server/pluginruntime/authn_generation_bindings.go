@@ -920,6 +920,8 @@ func (p *nativeAuthnObligationProvider) ExecuteObligation(
 	}
 
 	if !p.admission.acquire(ctx) {
+		observeAuthenticationAdmissionRejection(ctx, p.call)
+
 		return pluginapi.ObligationResult{Temporary: true}, errCallbackAdmissionLimited
 	}
 	defer p.admission.release()
@@ -974,6 +976,8 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 	}
 
 	if !p.admission.acquire(ctx) {
+		observeAuthenticationAdmissionRejection(ctx, p.call)
+
 		return pluginapi.PostActionEnqueueResult{Temporary: true}, errCallbackAdmissionLimited
 	}
 	defer p.admission.release()
@@ -984,6 +988,13 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 			return p.target.Enqueue(callbackCtx, request)
 		},
 	)
+}
+
+// observeAuthenticationAdmissionRejection records a denied host invocation without entering plugin code.
+func observeAuthenticationAdmissionRejection(ctx context.Context, call nativeAuthnComponentCall) {
+	_ = invokePluginCall(ctx, call.observer, call.spec, func(context.Context) error {
+		return errCallbackAdmissionLimited
+	})
 }
 
 // invokeTimedAuthenticationComponent applies a captured timeout before the shared native call boundary.

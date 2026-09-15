@@ -53,6 +53,10 @@ func sanitizeDiagnostics(
 	addDiagnosticInteger(entries, "facts.accepted", int64(report.facts.Len()))
 	addDiagnosticInteger(entries, "providers.executed", int64(executedProviderCount(report.providers)))
 
+	if report.failureCode != "" {
+		addDiagnosticString(entries, "failure.cause", string(report.failureCode))
+	}
+
 	addPolicyDiagnostic(entries, target, report.policySet)
 	addProviderDiagnostics(entries, target, report.providers)
 	addEffectDiagnostics(entries, target, report.effects)

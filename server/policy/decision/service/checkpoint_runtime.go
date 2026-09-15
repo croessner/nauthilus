@@ -127,6 +127,7 @@ type runtimeReport struct {
 	comparisonRule      string
 	comparisonEffect    decision.Effect
 	outcomeCode         decision.StatusCode
+	failureCode         decision.StatusCode
 	replayUnsafe        bool
 }
 
@@ -998,6 +999,8 @@ func (r *checkpointRuntime) indeterminate(
 	code decision.StatusCode,
 	report runtimeReport,
 ) runtimeEvaluation {
+	report.failureCode = code
+
 	status, _ := decision.NewStatus(code, "The admitted policy evaluation could not complete reliably.", nil)
 	if report.replayUnsafe && status.Retryable() {
 		code = decision.StatusCodeEffectReplayUnsafe

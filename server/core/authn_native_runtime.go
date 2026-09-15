@@ -73,7 +73,11 @@ func (e *authnCandidateExecution) ExecuteAuthnNativeObligation(
 	ctx context.Context,
 	program decisionservice.AuthnNativeEffectProgram,
 	execution policyruntime.EffectExecution,
-) effectsupervisor.Result {
+) (outcome effectsupervisor.Result) {
+	defer func() {
+		e.recordNativeEffectFailure(execution.EffectID(), outcome.ErrorClass())
+	}()
+
 	owner, ok := program.(authnNativeObligationProgram)
 	if !ok || e == nil || program == nil || program.ID() != execution.EffectID() ||
 		execution.Provider() != execution.EffectID() {
@@ -122,21 +126,57 @@ func (e *authnCandidateExecution) PrepareAuthnNativePostAction(
 
 	capture, err := e.captureAuthnNativeRequest(owner.Capabilities(), true)
 	if err != nil {
+		e.recordNativeEffectFailure(execution.EffectID(), "authn_native_post_action_capture")
+
 		return nil, err
 	}
 
 	request, err := authnNativePostActionRequest(capture, execution)
 	if err != nil {
+		e.recordNativeEffectFailure(execution.EffectID(), "authn_native_post_action_request")
+
 		return nil, err
 	}
 
 	request.BackendOutcome = e.backendOutcome
 
 	if err = effectsupervisor.ValidateBoundedValue(request, effectsupervisor.DefaultWorkBounds()); err != nil {
+		e.recordNativeEffectFailure(execution.EffectID(), "authn_native_post_action_bounds")
+
 		return nil, err
 	}
 
 	return &authnNativePostActionWork{program: owner, request: request, target: execution.Target()}, nil
+}
+
+type nativeEffectFailure struct {
+	effect string
+	class  string
+}
+
+// recordNativeEffectFailure retains only host-owned failure classes, never raw request or plugin errors.
+func (e *authnCandidateExecution) recordNativeEffectFailure(effect, class string) {
+	if e == nil || class == "" {
+		return
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.nativeFailure.class = class
+	e.nativeFailure.effect = effect
+}
+
+// nativeEffectFailureFields reads request-local diagnostics safely across bounded provider goroutines.
+func (e *authnCandidateExecution) nativeEffectFailureFields() []any {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.nativeFailure.class == "" {
+		return nil
+	}
+
+	return []any{"native_effect_failure", e.nativeFailure.class, "native_effect", e.nativeFailure.effect}
 }
 
 // Validate confirms detached work has an exact immutable owner and public request capture.

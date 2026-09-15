@@ -29,12 +29,13 @@ import (
 )
 
 const (
-	pluginCallResultOK       = "ok"
-	pluginCallResultError    = "error"
-	pluginCallResultPanic    = "panic"
-	pluginCallResultCanceled = "canceled"
-	pluginCallResultTimeout  = "timeout"
-	pluginLogFieldErrorClass = "plugin_error_class"
+	pluginCallResultOK               = "ok"
+	pluginCallResultError            = "error"
+	pluginCallResultPanic            = "panic"
+	pluginCallResultCanceled         = "canceled"
+	pluginCallResultTimeout          = "timeout"
+	pluginCallResultAdmissionLimited = "admission_limited"
+	pluginLogFieldErrorClass         = "plugin_error_class"
 )
 
 // OperationalObserver records bounded metrics and secret-safe structured plugin call logs.
@@ -145,6 +146,8 @@ func pluginCallResult(record CallRecord) string {
 	switch {
 	case record.Err == nil:
 		return pluginCallResultOK
+	case errors.Is(record.Err, errCallbackAdmissionLimited):
+		return pluginCallResultAdmissionLimited
 	case errors.Is(record.Err, context.Canceled):
 		return pluginCallResultCanceled
 	case errors.Is(record.Err, context.DeadlineExceeded):

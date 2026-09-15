@@ -62,6 +62,7 @@ type authnCandidateExecution struct {
 	backendPlan    backendExecutionPlan
 	providerFacts  decision.FactSet
 	backendAccount string
+	nativeFailure  nativeEffectFailure
 	operation      policy.Operation
 	mu             sync.Mutex
 	authResult     definitions.AuthResult
