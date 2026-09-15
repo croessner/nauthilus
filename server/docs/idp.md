@@ -1685,6 +1685,14 @@ backchannel token Policy authority or a Policy token backchannel authority.
 
 ### 8.4 Configuration
 
+#### Dedicated backchannel introspection clients
+
+A static confidential OIDC client can set `allow_backchannel_introspection: true`
+to inspect other clients' service access tokens for exactly `nauthilus:backchannel`.
+The default is `false`; this permission grants neither API access nor token issuance.
+See the [configuration reference and 60-identity.yml example](../../docs/oidc-introspection.md)
+for authentication requirements, response claims, and opaque-token migration details.
+
 #### Client with client_secret authentication for client_credentials
 
 ```yaml

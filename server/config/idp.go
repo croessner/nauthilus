@@ -232,6 +232,24 @@ func (f *FileSettings) validateIDPOIDCGrantAuthSettings() error {
 	return nil
 }
 
+// validateIDPOIDCIntrospectionSettings limits delegated introspection to authenticated static clients.
+func (f *FileSettings) validateIDPOIDCIntrospectionSettings() error {
+	if f == nil || f.IDP == nil {
+		return nil
+	}
+
+	for idx := range f.IDP.OIDC.Clients {
+		client := &f.IDP.OIDC.Clients[idx]
+
+		if client.AllowBackchannelIntrospection && !client.AllowsBackchannelIntrospection() {
+			return NewValidationProblem(fmt.Sprintf("identity.oidc.clients[%d].allow_backchannel_introspection", idx),
+				"backchannel introspection requires a static client with confidential client authentication")
+		}
+	}
+
+	return nil
+}
+
 // validateIDPSAMLSigningSettings ensures SAML SP signing requirements have the
 // required certificate material available and parseable at startup.
 func (f *FileSettings) validateIDPSAMLSigningSettings() error {
@@ -948,6 +966,7 @@ type OIDCClient struct {
 	SkipConsent                         bool          `mapstructure:"skip_consent"`
 	DelayedResponse                     bool          `mapstructure:"delayed_response"`
 	RequirePKCE                         bool          `mapstructure:"require_pkce"`
+	AllowBackchannelIntrospection       bool          `mapstructure:"allow_backchannel_introspection"`
 	AllowRefreshTokenCombinedClientAuth bool          `mapstructure:"allow_refresh_token_combined_client_auth"`
 	RevokeRefreshToken                  *bool         `mapstructure:"revoke_refresh_token"`
 	FrontChannelLogoutSessionRequired   bool          `mapstructure:"frontchannel_logout_session_required"`
@@ -1025,6 +1044,22 @@ func (c *OIDCClient) RequiresPKCE() bool {
 	}
 
 	return c.RequirePKCE || c.IsPublicClient()
+}
+
+// AllowsBackchannelIntrospection reports explicit resource inspection authority for a static confidential client.
+func (c *OIDCClient) AllowsBackchannelIntrospection() bool {
+	if c == nil || !c.AllowBackchannelIntrospection || c.Dynamic {
+		return false
+	}
+
+	switch c.TokenEndpointAuthMethod {
+	case AuthorityPrivateKeyJWTAuth:
+		return c.ClientPublicKey != "" || c.ClientPublicKeyFile != ""
+	case "", AuthorityClientSecretBasicAuth, AuthorityClientSecretPostAuth:
+		return !c.ClientSecret.IsZero()
+	default:
+		return false
+	}
 }
 
 // AllowsRefreshTokenCombinedClientAuth reports whether this client is allowed

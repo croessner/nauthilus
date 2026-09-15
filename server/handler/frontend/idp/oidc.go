@@ -1301,7 +1301,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 
 	// Verify that the token was issued to the client making the request,
 	// or that the client is otherwise authorized to introspect this token.
-	if aud, ok := claims["aud"].(string); ok && aud != client.ClientID {
+	if !canIntrospectAccessToken(client, claims) {
 		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
 
 		return

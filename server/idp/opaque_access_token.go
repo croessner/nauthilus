@@ -57,7 +57,7 @@ func (t *OpaqueAccessToken) Issue(ctx context.Context) (string, time.Duration, e
 		return "", 0, fmt.Errorf("failed to generate opaque access token: %w", err)
 	}
 
-	if strings.HasPrefix(t.session.ClientID, dcr.ClientIDPrefix) {
+	if t.session.ServiceToken || strings.HasPrefix(t.session.ClientID, dcr.ClientIDPrefix) {
 		t.session.AccessTokenIssuedAt = time.Now().UTC()
 		t.session.AccessTokenExpiresAt = t.session.AccessTokenIssuedAt.Add(t.lifetime)
 	}
@@ -86,6 +86,10 @@ func (t *OpaqueAccessToken) ClaimsFromSession(session *OIDCSession) jwt.MapClaim
 		oidcClaimAudience:          accessTokenAudience(session),
 		oidcClaimScope:             strings.Join(session.Scopes, " "),
 		definitions.ClaimTokenType: definitions.TokenTypeAccessToken,
+	}
+
+	if !session.AccessTokenExpiresAt.IsZero() {
+		claims["exp"] = session.AccessTokenExpiresAt.Unix()
 	}
 
 	copyCustomAccessTokenClaims(claims, session.AccessTokenClaims)

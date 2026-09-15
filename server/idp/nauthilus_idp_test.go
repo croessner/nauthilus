@@ -1806,6 +1806,7 @@ func assertClientCredentialsTokenClaims(t *testing.T, idpInst *NauthilusIDP, acc
 		return
 	}
 
+	assert.NotEmpty(t, claims["exp"])
 	assert.Equal(t, "cc-client", claims[claimSubject])
 	assert.Equal(t, "cc-client", claims[claimClientID])
 	assert.Equal(t, audience, claims[claimAudience])
