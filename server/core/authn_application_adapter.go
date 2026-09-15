@@ -18,6 +18,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -578,15 +579,20 @@ func logAuthnDecisionFailure(
 	}
 
 	if diagnostics := response.Diagnostics(); diagnostics != nil {
-		fields = append(fields, "diagnostics", authnDecisionDiagnostics(diagnostics.Entries()))
+		fields = append(fields, "diagnostics", authnDecisionDiagnostics{entries: diagnostics.Entries()})
 	}
 
 	level.Debug(execution.auth.Logger()).Log(fields...)
 }
 
-// authnDecisionDiagnostics converts bounded strict values into structured log fields.
-func authnDecisionDiagnostics(entries decision.ValueMap) map[string]any {
-	values := entries.Values()
+// authnDecisionDiagnostics explicitly opts bounded diagnostics into structured logging.
+type authnDecisionDiagnostics struct {
+	entries decision.ValueMap
+}
+
+// LogValue serializes strict values lazily without the compatibility logger's map summary.
+func (d authnDecisionDiagnostics) LogValue() slog.Value {
+	values := d.entries.Values()
 	result := make(map[string]any, len(values))
 
 	for key, value := range values {
@@ -595,7 +601,7 @@ func authnDecisionDiagnostics(entries decision.ValueMap) map[string]any {
 		}
 	}
 
-	return result
+	return slog.AnyValue(result)
 }
 
 // prepareCheckpointResult runs only host work associated with the current compiled checkpoint.

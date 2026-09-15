@@ -125,7 +125,10 @@ func (r *checkpointRuntime) finalizeSelection(
 		return outcome.response, outcome.report.runtime, false
 	}
 
-	if ctx.Err() != nil {
+	// A complete host plan is authoritative once every synchronous result or
+	// post-action ownership transfer is known. Late cancellation cannot undo it.
+	// Without host effects, cancellation still bounds rule evaluation.
+	if len(plan) == 0 && ctx.Err() != nil {
 		outcome := r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, report)
 
 		return outcome.response, outcome.report.runtime, false
@@ -191,7 +194,7 @@ func targetNoMatchProjection(
 	return decision.EffectDeny, decision.StatusCodeNoMatchDeny
 }
 
-// executePreparedEffects attempts every selected host effect at most once in policy order.
+// executePreparedEffects attempts each effect once and checks cancellation before unfinished work.
 func (r *checkpointRuntime) executePreparedEffects(
 	ctx context.Context,
 	input checkpointEvaluation,
@@ -233,12 +236,6 @@ func (r *checkpointRuntime) executePreparedEffects(
 			if execution.acceptanceRejected {
 				return decision.StatusCodeEffectAcceptanceRejected, true
 			}
-
-			return decision.StatusCodeEvaluationFailed, true
-		}
-
-		if ctx.Err() != nil {
-			appendUnstartedPlannedEffects(report, plan[index+1:])
 
 			return decision.StatusCodeEvaluationFailed, true
 		}
