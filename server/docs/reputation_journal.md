@@ -19,16 +19,61 @@ replicas to acknowledge the record within `delivery_timeout`. There is no local
 outbox, CephFS write, object-store fallback or background producer recovery.
 Process memory and client-side Kafka buffers are not durable acceptance.
 
-Authentication learning is a host-synchronous Policy obligation. Kafka, Redis
-admission, capacity, TLS and timeout failures prevent successful completion and
-map through Policy to Tempfail before the response is sent. Other detached
-post-actions remain detached. The learner consumes only frozen backend evidence;
-it never learns a Policy denial as a credential failure.
+Authentication learning is a Policy-selected, capture-only obligation. The callback
+projects bounded independent backend evidence into a dedicated process-local queue
+and returns without Redis admission or Kafka I/O. Full queues, unavailable learning
+state, storage failures, and expired jobs never turn the selected authentication
+result into Tempfail. Other security obligations retain their existing semantics.
+The current decision still consumes only already materialized reputation facts.
 
-A lost acknowledgement is ambiguous: Kafka may already hold the record even
-though the caller receives Tempfail. Consumer deduplication remains necessary.
-A new client authentication retry receives a new host event identity and is a
-separate observation. No exactly-once guarantee spans authentication and Kafka.
+Fixed background workers perform Redis admission and direct acknowledged Kafka
+production. Source concurrency and requests-per-second limits apply to these
+workers, including retries; they no longer reject the synchronous login callback.
+Transient unavailable or partial outcomes retry the same event identity, at least
+250 ms apart and within the original job age budget. Each delivery attempt has its
+own timeout. Permanent validation or quota rejection is terminal and observable.
+
+Queue acceptance is volatile, not a durable receipt. A hard producer crash can lose
+pending and active unacknowledged learning. A full queue drops the incoming event;
+there is no filesystem outbox or overflow queue. Graceful Stop stops admission and
+drains workers before closing the journal, bounded by the host shutdown deadline.
+Host cancellation aborts remaining work and counts pending items as shutdown loss.
+
+A lost acknowledgement is ambiguous: Kafka may already hold the record. Worker
+retries preserve its event identity and consumer deduplication remains necessary.
+A new client authentication request has a new host event identity. No exactly-once
+guarantee spans authentication and Kafka. Current authentication policy, including
+reputation assessment itself, is not weakened by the asynchronous learning path.
+
+### Authentication queue sizing and telemetry
+
+The optional module-level `auth_learning_queue` block is operational and excluded
+from the scoring fingerprint:
+
+```yaml
+auth_learning_queue:
+  capacity: 1024
+  max_age: 30s
+  timeout: 5s
+```
+
+`capacity` bounds waiting events (1..65536); active events are additionally bounded
+by the authentication source's effective `max_concurrency`. `max_age` includes
+queue residence, rate waiting, retries, and delivery (positive, at most 5 minutes).
+`timeout` bounds each storage attempt and must not exceed `max_age`. Defaults above
+apply when fields are omitted. Captured jobs retain only bounded event and subject
+evidence plus a span identity, never credentials or an entire request context.
+Changing queue capacity or the existing `source_admission_capacity` override does
+not reset the reputation model or stored history. These bounds are safeguards,
+not evidence of sustainable throughput; size them from measured arrival rates,
+worker latency, acceptable learning lag, memory, and backend capacity.
+
+`learning_queue_pending` and `learning_queue_active` expose occupancy. The bounded
+`learning_total` results additionally include `buffered`, `queue_full`, `expired`,
+`shutdown`, `worker_panic`, and `retried`. `buffered` is only local admission;
+`queued` still means a Kafka acknowledgement, and `applied` means subject updates.
+Alert on discarded/failed learning and sustained queue pressure independently of
+login success. Neither metric labels nor journal records contain raw identities.
 
 Redis remains the score and deduplication authority. Kafka consumer offsets
 advance only after every subject contribution has been applied or recognized
@@ -56,8 +101,8 @@ of a single broker at the pilot's low event rate. There is no Strimzi operator,
 additional CRD installation or workload permission to read Kubernetes Secrets.
 The existing cert-manager CA issuer supplies separate broker and client leaves.
 
-A broker outage pauses consumption and makes selected authentication learning
-return Tempfail. Previously acknowledged messages remain in Kafka. A lost Kafka
+A broker outage pauses consumption and triggers bounded background learning retries.
+Authentication continues; learning can expire or be dropped if the queue fills. Previously acknowledged messages remain in Kafka. A lost Kafka
 volume is not protected by Kafka replication. Ceph storage protection does not
 make this a highly available Kafka service. The current resource-constrained
 pilot stays single-broker; a larger deployment needs independent failure domains,
@@ -97,7 +142,7 @@ with a 128 MiB memory request and a 512 MiB limit.
 The optional `journal` block accepts exactly one role: `producer` or `consumer`.
 A producer still admits the immutable manifest through Redis before publishing.
 Redis admission failure therefore prevents a durable journal receipt; Kafka does
-not remove that synchronous dependency. `queued` means that Kafka acknowledged the record, whereas `applied` means Redis subject
+not remove that dependency from the background delivery worker. `queued` means that Kafka acknowledged the record, whereas `applied` means Redis subject
 updates completed. Authentication success alone is not a journal receipt.
 
 The `reputation-worker` executable is built from the same reputation package with
@@ -180,5 +225,6 @@ the application namespaces; no cross-namespace Secret synchronization is needed.
 The application manifest repository records the exact release image and six
 paired native artifacts, consumer readiness, actual learning and the controlled
 outage/replay evidence. A published image does not itself prove live activation.
-Require positive accepted and applied counts, verified Tempfail while Kafka is unavailable, and recovered acknowledged
-delivery after restoration before declaring an outage test successful.
+Require positive buffered and applied counts, preserved authentication decisions while
+Kafka is unavailable, visible bounded retries/loss, and recovered acknowledged delivery
+after restoration before declaring an outage test successful.

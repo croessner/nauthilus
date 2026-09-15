@@ -32,6 +32,7 @@ const maximumManifestCapacity = maximumOperationalCardinality
 const maximumSubjectSeenCapacity = maximumOperationalCardinality
 
 type rawConfig struct {
+	AuthLearningQueue               authLearningQueueConfig            `mapstructure:"auth_learning_queue"`
 	NewSubjectCapacityPerSourceHour int                                `mapstructure:"new_subject_capacity_per_source_hour"`
 	SourceAdmissionCapacity         map[string]sourceAdmissionCapacity `mapstructure:"source_admission_capacity"`
 	Journal                         *journalConfig                     `mapstructure:"journal"`

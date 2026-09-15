@@ -7,8 +7,8 @@ import (
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 )
 
-// TestSourceCapacityPreservesModelAndReachesHostGate prevents higher traffic budgets from resetting score history.
-func TestSourceCapacityPreservesModelAndReachesHostGate(t *testing.T) {
+// TestSourceCapacityPreservesModelAndReachesWorkerPool prevents higher traffic budgets from resetting score history.
+func TestSourceCapacityPreservesModelAndReachesWorkerPool(t *testing.T) {
 	raw := learningConfigMap(t)
 	originalConfig, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)
@@ -36,7 +36,7 @@ func TestSourceCapacityPreservesModelAndReachesHostGate(t *testing.T) {
 
 	expected := pluginapi.CallbackAdmissionLimits{RequestsPerSecond: 200, MaxConcurrency: 32}
 	if expandedConfig.learningAdmissionLimits() != expected {
-		t.Fatal("higher admission capacity did not reach the authentication gate")
+		t.Fatal("higher admission capacity did not reach the background worker pool")
 	}
 }
 

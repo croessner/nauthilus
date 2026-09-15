@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
@@ -23,18 +24,12 @@ type authLearningConfig struct {
 
 type authenticationLearner struct {
 	plugin *Plugin
-	limits pluginapi.CallbackAdmissionLimits
 }
 
 // Name declares the sole Policy-selected backend learning callback.
 func (authenticationLearner) Name() string { return componentLearnOutcome }
 
-// AdmissionLimits delegates the strictest internal source bounds to the host callback gate.
-func (p authenticationLearner) AdmissionLimits() (int, int) {
-	return p.limits.RequestsPerSecond, p.limits.MaxConcurrency
-}
-
-// learningAdmissionLimits preserves every source bound when several identities share the callback.
+// learningAdmissionLimits preserves source bounds for background workers sharing one learning queue.
 func (c *configuration) learningAdmissionLimits() pluginapi.CallbackAdmissionLimits {
 	var limits pluginapi.CallbackAdmissionLimits
 
@@ -59,6 +54,10 @@ func (c *configuration) learningAdmissionLimits() pluginapi.CallbackAdmissionLim
 
 // validateAuthLearning confines authentication evidence to exact host callbacks and conservative subjects.
 func (c *configuration) validateAuthLearning() error {
+	if _, err := c.raw.AuthLearningQueue.settings(); err != nil {
+		return err
+	}
+
 	learning := c.raw.AuthLearning
 	if learning == nil {
 		return nil
@@ -124,7 +123,7 @@ func (p *Plugin) registerAuthentication(registrar pluginapi.Registrar, cfg *conf
 		return nil
 	}
 
-	if err := registrar.RegisterObligationTarget(authenticationLearner{plugin: p, limits: cfg.learningAdmissionLimits()}); err != nil {
+	if err := registrar.RegisterObligationTarget(authenticationLearner{plugin: p}); err != nil {
 		return err
 	}
 
@@ -167,6 +166,11 @@ func (c *configuration) authenticationObservation(request pluginapi.ObligationRe
 				continue
 			}
 
+			if len(subject.value) > 1024 {
+				return nil, observationInput{}, errConfiguration
+			}
+
+			subject.value = strings.Clone(subject.value)
 			input.subjects = append(input.subjects, subject)
 		}
 	}
@@ -182,23 +186,21 @@ func (c *configuration) authenticationObservation(request pluginapi.ObligationRe
 	return source, input, nil
 }
 
-// Execute requires acknowledged storage before Policy finalizes the authentication response.
+// Execute attempts bounded local learning capture without changing the selected authentication decision.
 func (p authenticationLearner) Execute(ctx context.Context, request pluginapi.ObligationRequest) (pluginapi.ObligationResult, error) {
-	metric := learningRejected
+	metric := learningUnavailable
 	defer func() { p.plugin.recordLearning(ctx, learningAuthentication, metric) }()
 
 	if p.plugin == nil {
-		metric = learningUnavailable
-		return pluginapi.ObligationResult{Temporary: true}, errStateUnavailable
+		return pluginapi.ObligationResult{}, nil
 	}
 
 	p.plugin.mu.RLock()
-	state := p.plugin.state
+	state, queue := p.plugin.state, p.plugin.learningQueue
 	p.plugin.mu.RUnlock()
 
-	if state == nil || !state.ready.Load() {
-		metric = learningUnavailable
-		return pluginapi.ObligationResult{Temporary: true}, errStateUnavailable
+	if state == nil || queue == nil || !state.ready.Load() {
+		return pluginapi.ObligationResult{}, nil
 	}
 
 	source, input, err := state.config.authenticationObservation(request)
@@ -208,27 +210,29 @@ func (p authenticationLearner) Execute(ctx context.Context, request pluginapi.Ob
 	}
 
 	if err != nil {
-		return pluginapi.ObligationResult{}, err
+		metric = learningRejected
+		return pluginapi.ObligationResult{}, nil
 	}
 
-	admitted, reason, err := state.admitForPolicy(ctx, source, input, nil)
+	metric = queue.submit(ctx, learningJob{source: source, input: input})
+
+	return pluginapi.ObligationResult{}, nil
+}
+
+// learnAuthentication performs existing admission and acknowledged storage only on a background worker.
+func (s *stateOwner) learnAuthentication(ctx context.Context, job learningJob) string {
+	admitted, reason, err := s.admitForPolicy(ctx, job.source, job.input, nil)
 	if err != nil {
-		metric = learningUnavailable
-		return pluginapi.ObligationResult{Temporary: true}, err
+		return learningUnavailable
 	}
 
 	if reason != reasonValid {
-		return pluginapi.ObligationResult{}, errConfiguration
+		return learningRejected
 	}
 
-	result, err := state.ingest(ctx, admitted)
+	result, err := s.ingest(ctx, admitted)
 
-	metric = learningIngestionResult(result, err)
-	if err != nil {
-		return pluginapi.ObligationResult{Temporary: true}, err
-	}
-
-	return pluginapi.ObligationResult{Applied: true}, nil
+	return learningIngestionResult(result, err)
 }
 
 // validateLearningSignal excludes final decisions and account or ASN poisoning from credential evidence.

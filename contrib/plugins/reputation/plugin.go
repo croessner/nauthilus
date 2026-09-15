@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
@@ -14,14 +15,16 @@ var observeTarget = pluginapi.DecisionTargetSelector{Namespace: pluginName, Acti
 
 // Plugin owns immutable admission semantics and process-bound opaque services.
 type Plugin struct {
-	journal         *journalRuntime
-	learningCounter *telemetry.Counter
-	telemetry       *reputationTelemetry
-	state           *stateOwner
-	config          *configuration
-	tagger          pluginapi.OpaqueIdentifierTagger
-	registered      map[executionKey]struct{}
-	mu              sync.RWMutex
+	learningQueueMetrics *learningQueueTelemetry
+	learningQueue        *authenticationLearningQueue
+	journal              *journalRuntime
+	learningCounter      *telemetry.Counter
+	telemetry            *reputationTelemetry
+	state                *stateOwner
+	config               *configuration
+	tagger               pluginapi.OpaqueIdentifierTagger
+	registered           map[executionKey]struct{}
+	mu                   sync.RWMutex
 }
 
 var _ pluginapi.Plugin = (*Plugin)(nil)
@@ -149,24 +152,52 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 
 	p.state = state
 	p.tagger = tagger
+	p.startAuthenticationLearning(host, state)
 
 	return nil
 }
 
-// Stop cancels journal workers and removes local readiness without altering durable state.
+// startAuthenticationLearning owns a dedicated queue without exposing storage availability to login callbacks.
+func (p *Plugin) startAuthenticationLearning(host pluginapi.Host, state *stateOwner) {
+	if p.config.raw.AuthLearning == nil {
+		return
+	}
+
+	settings, _ := p.config.raw.AuthLearningQueue.settings()
+	queue := newAuthenticationLearningQueue(settings, p.config.learningAdmissionLimits(), state.learnAuthentication,
+		func(ctx context.Context, result string) { p.recordLearning(ctx, learningAuthentication, result) })
+	queue.metrics = p.learningQueueMetrics
+	p.learningQueue = queue
+
+	host.Go(host.ServiceContext(), "reputation-auth-learning", func(ctx context.Context) error {
+		queue.run(ctx)
+		return nil
+	})
+}
+
+// Stop drains local learning before closing journal storage, bounded by the host shutdown deadline.
 func (p *Plugin) Stop(ctx context.Context) error {
+	p.mu.RLock()
+	queue, journal := p.learningQueue, p.journal
+	p.mu.RUnlock()
+
+	var queueErr error
+
+	if queue != nil {
+		queueErr = queue.stop(ctx)
+	}
+
 	p.mu.Lock()
 	if p.state != nil {
 		p.state.ready.Store(false)
 	}
 
 	p.tagger = nil
-	journal := p.journal
 	p.mu.Unlock()
 
 	if journal != nil {
-		return journal.stop(ctx)
+		return errors.Join(queueErr, journal.stop(ctx))
 	}
 
-	return nil
+	return queueErr
 }

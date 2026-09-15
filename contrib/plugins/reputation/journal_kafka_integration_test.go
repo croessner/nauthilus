@@ -14,6 +14,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 
 	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 )
 
 const localJournalBroker = "127.0.0.1:19092"
@@ -156,5 +157,68 @@ func verifyJournalConsumerRestart(t *testing.T, runtime *journalRuntime, redisCl
 
 	for _, model := range payload.Models {
 		assertJournalSampleCounts(t, redisClient, runtime.state, model)
+	}
+}
+
+// TestReputationKafkaAsynchronousLearning preserves login availability through broker failure and delayed materialization.
+func TestReputationKafkaAsynchronousLearning(t *testing.T) {
+	live := localJournalClient(t)
+	journalConfig := createJournalTestTopics(t, live)
+	_, facade := localReputationRedis(t)
+	cfg, err := decodeConfig(pluginregistry.NewConfigView(learningConfigMap(t)))
+	requireNoError(t, err)
+	tagger := manifestTestTagger(t, false)
+	state, err := newStateOwner(cfg, tagger, facade)
+	requireNoError(t, err)
+	requireNoError(t, state.start(t.Context()))
+
+	unavailable, err := kgo.NewClient(kgo.SeedBrokers("127.0.0.1:1"), kgo.RecordDeliveryTimeout(time.Second))
+	requireNoError(t, err)
+	t.Cleanup(unavailable.Close)
+
+	runtime := &journalRuntime{client: unavailable, state: state, config: journalConfig,
+		timeout: 200 * time.Millisecond, metrics: &journalTelemetry{outcome: testJournalCounter(t)},
+		codec: journalCodec{tagger: tagger, scope: cfg.raw.ManifestScope, topic: journalConfig.Topic}}
+	state.journal = runtime
+	firstAttempt := make(chan string, 1)
+	q, results := testLearningQueue(t, 1, 2, func(ctx context.Context, job learningJob) string {
+		result := state.learnAuthentication(ctx, job)
+		if runtime.client == unavailable {
+			firstAttempt <- result
+
+			runtime.client = live
+			runtime.timeout = 5 * time.Second
+		}
+
+		return result
+	})
+	learner := authenticationLearner{plugin: &Plugin{state: state, learningQueue: q}}
+	result, err := learner.Execute(t.Context(), learningQueueTestRequest(t))
+	requireNoError(t, err)
+
+	if result.Temporary || result.Applied {
+		t.Fatal("unavailable Kafka vetoed authentication or claimed durable delivery")
+	}
+
+	awaitLearningResult(t, firstAttempt, learningUnavailable)
+	awaitLearningResult(t, results, learningRetried)
+	awaitLearningResult(t, results, learningQueued)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	requireNoError(t, q.stop(ctx))
+
+	subject := subjectInput{role: "auth_client", kind: kindIP, value: "192.0.2.7"}
+	if state.assess(t.Context(), subject, profileOperational).State != assessmentMissing {
+		t.Fatal("Kafka acknowledgement changed reputation before consumer application")
+	}
+
+	consumer := journalTestConsumer(t, journalConfig)
+	record := journalTestFetch(t, consumer)[0]
+	requireNoError(t, runtime.apply(t.Context(), string(record.Key), record.Value))
+
+	if state.assess(t.Context(), subject, profileOperational).State != assessmentFresh {
+		t.Fatal("recovered worker delivery was not materialized by the consumer")
 	}
 }

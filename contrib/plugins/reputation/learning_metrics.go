@@ -22,13 +22,19 @@ const (
 
 // initializeLearningMetrics requires one host-owned bounded collector before accepting evidence.
 func (p *Plugin) initializeLearningMetrics(host pluginapi.Host) error {
-	counter, err := telemetry.RegisterCounter(host.Metrics(pluginName), "learning_total", "Reputation learning attempts by bounded channel and outcome.",
+	counter, err := telemetry.RegisterCounter(host.Metrics(pluginName), "learning_total", "Reputation learning lifecycle events by bounded channel and outcome.",
 		learningMetricDimensions()...)
 	if err != nil {
 		return err
 	}
 
+	queueMetrics, err := newLearningQueueTelemetry(host.Metrics(pluginName))
+	if err != nil {
+		return err
+	}
+
 	p.learningCounter = counter
+	p.learningQueueMetrics = queueMetrics
 
 	return nil
 }
@@ -37,7 +43,7 @@ func (p *Plugin) initializeLearningMetrics(host pluginapi.Host) error {
 func learningMetricDimensions() []telemetry.Dimension {
 	return []telemetry.Dimension{
 		{Name: metricChannel, Values: []string{learningExternal, learningAuthentication}},
-		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, learningQueued, storageQuotaExceeded, storageApplied, storageDuplicate}},
+		{Name: metricResult, Values: []string{learningRejected, learningUnavailable, learningSkipped, learningPartial, learningQueued, learningBuffered, learningQueueFull, learningExpired, learningShutdown, learningPanic, learningRetried, storageQuotaExceeded, storageApplied, storageDuplicate}},
 	}
 }
 

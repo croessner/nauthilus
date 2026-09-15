@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +17,10 @@ import (
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 )
 
-type learningTestCounter struct{ results []string }
+type learningTestCounter struct {
+	results []string
+	mu      sync.Mutex
+}
 
 // bindLearningTestCounter preserves the production allowlist around a deterministic integration sink.
 func bindLearningTestCounter(t *testing.T, plugin *Plugin, counter *learningTestCounter) {
@@ -24,11 +28,16 @@ func bindLearningTestCounter(t *testing.T, plugin *Plugin, counter *learningTest
 
 	wrapped, err := telemetry.BindCounter(counter, learningMetricDimensions())
 	requireNoError(t, err)
+	plugin.mu.Lock()
 	plugin.learningCounter = wrapped
+	plugin.mu.Unlock()
 }
 
 // Add retains only bounded outcomes for deterministic callback assertions.
 func (c *learningTestCounter) Add(_ context.Context, _ float64, labels ...pluginapi.LabelValue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	for _, label := range labels {
 		if label.Name == "result" {
 			c.results = append(c.results, label.Value)
@@ -40,15 +49,29 @@ func (c *learningTestCounter) Add(_ context.Context, _ float64, labels ...plugin
 func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 	_, facade := localReputationRedis(t)
 	registry := pluginregistry.NewRegistry()
-	registrar := registry.NewRegistrar(config.PluginModule{Name: pluginName, Type: config.PluginModuleTypeGo, Path: "/plugins/reputation.so", Config: learningConfigMap(t)})
+	registrar := registry.NewRegistrar(config.PluginModule{Name: pluginName, Type: config.PluginModuleTypeGo, Path: "/plugins/reputation.so", Config: asyncLearningIntegrationConfig(t)})
 	plugin := NewPlugin()
 	requireNoError(t, plugin.Register(registrar))
 	requireNoError(t, registrar.Commit())
 	host := pluginruntime.NewHost(pluginruntime.WithConfig(pluginregistry.NewConfigView(testAdmissionMap())), pluginruntime.WithOpaqueIdentifierTagger(manifestTestTagger(t, false)), pluginruntime.WithRedis(facade))
 	requireNoError(t, plugin.Start(t.Context(), host))
 
-	counter := &learningTestCounter{}
-	bindLearningTestCounter(t, plugin, counter)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		requireNoError(t, plugin.Stop(ctx))
+	})
+
+	terminal := make(chan string, 16)
+	plugin.learningQueue.process = func(ctx context.Context, job learningJob) string {
+		result := plugin.state.learnAuthentication(ctx, job)
+		if result != learningUnavailable && result != learningPartial {
+			terminal <- result
+		}
+
+		return result
+	}
 	learner := registry.ObligationTargets()[0].Value.(pluginapi.ObligationTarget)
 
 	subject := subjectInput{role: "auth_client", kind: kindIP, value: "192.0.2.7"}
@@ -65,13 +88,15 @@ func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 	request.BackendOutcome, err = pluginapi.NewBackendOutcomeView("backend-success", "verified-account", pluginapi.BackendOutcomeAuthenticated, time.Now())
 	requireNoError(t, err)
 
-	for range 2 {
+	for _, expected := range []string{storageApplied, storageDuplicate} {
 		result, err := learner.Execute(t.Context(), request)
 		requireNoError(t, err)
 
-		if !result.Applied || result.Temporary {
-			t.Fatal("selected backend evidence not acknowledged")
+		if result.Applied || result.Temporary {
+			t.Fatal("local capture claimed durable delivery or vetoed authentication")
 		}
+
+		awaitLearningResult(t, terminal, expected)
 	}
 
 	assessment := plugin.state.assess(t.Context(), subject, profileOperational)
@@ -79,20 +104,23 @@ func TestReputationRedisAuthLearningUsesRegisteredBackendTruth(t *testing.T) {
 		t.Fatal("final denied flag replaced successful backend evidence")
 	}
 
-	assertLearningResults(t, counter, learningSkipped, "applied", "duplicate")
-
 	plugin.state.journal = unavailableJournalRuntime(t)
-	rejected, deliveryErr := learner.Execute(t.Context(), request)
-	if deliveryErr == nil || !rejected.Temporary || rejected.Applied {
-		t.Fatal("unacknowledged Kafka delivery bypassed synchronous failure")
+
+	result, deliveryErr := learner.Execute(t.Context(), request)
+	if deliveryErr != nil || result.Temporary || result.Applied {
+		t.Fatal("Kafka outage vetoed authentication or claimed delivery")
 	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	requireNoError(t, plugin.learningQueue.stop(ctx))
+
 	plugin.state.journal = nil
 
 	plugin.state.redis = interruptRedis(facade, scriptManifest, false, 1)
-
-	failed, err := learner.Execute(t.Context(), request)
-	if err == nil || !failed.Temporary {
-		t.Fatal("learning outage was hidden")
+	if metric := plugin.state.learnAuthentication(t.Context(), learningJobFromRequest(t, plugin.state.config, request)); metric != learningUnavailable {
+		t.Fatal("background Redis failure was not observable")
 	}
 }
 
@@ -115,7 +143,28 @@ func assertUnobservedAuthLearning(t *testing.T, plugin *Plugin, learner pluginap
 func assertLearningResults(t *testing.T, counter *learningTestCounter, expected ...string) {
 	t.Helper()
 
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+
 	if !slices.Equal(counter.results, expected) {
 		t.Fatalf("learning outcomes: %v, expected %v", counter.results, expected)
 	}
+}
+
+// asyncLearningIntegrationConfig bounds outage retries in the real Redis test without changing source semantics.
+func asyncLearningIntegrationConfig(t *testing.T) map[string]any {
+	raw := learningConfigMap(t)
+	raw["auth_learning_queue"] = map[string]any{"capacity": 16, "max_age": "800ms", "timeout": "500ms"}
+
+	return raw
+}
+
+// learningJobFromRequest reuses the production projection for direct storage failure verification.
+func learningJobFromRequest(t *testing.T, cfg *configuration, request pluginapi.ObligationRequest) learningJob {
+	t.Helper()
+
+	source, input, err := cfg.authenticationObservation(request)
+	requireNoError(t, err)
+
+	return learningJob{source: source, input: input}
 }
