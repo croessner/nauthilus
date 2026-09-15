@@ -122,6 +122,13 @@ func (o *OperationalObserver) log(record CallRecord, result string) {
 		keyvals = append(keyvals, pluginLogFieldErrorClass, result)
 	}
 
+	switch {
+	case errors.Is(record.Err, errCallbackConcurrencyLimited):
+		keyvals = append(keyvals, "plugin_admission_limit", "concurrency")
+	case errors.Is(record.Err, errCallbackRateLimited):
+		keyvals = append(keyvals, "plugin_admission_limit", "rate")
+	}
+
 	if record.Err != nil || record.Panicked {
 		_ = level.Error(o.logger).Log(keyvals...)
 

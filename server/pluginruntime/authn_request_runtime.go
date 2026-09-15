@@ -14,6 +14,7 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	pluginpassword "github.com/croessner/nauthilus/v4/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v4/server/core"
+	"github.com/croessner/nauthilus/v4/server/lualib"
 )
 
 // AuthnRequestRuntime projects public request values without selecting plugin components.
@@ -41,6 +42,9 @@ func (*AuthnRequestRuntime) Capture(
 	runtimeValues := map[string]any{}
 	if auth.Runtime.Context != nil {
 		runtimeValues = auth.Runtime.Context.Snapshot()
+		for key, value := range runtimeValues {
+			runtimeValues[key] = lualib.NormalizeContextValue(value)
+		}
 	}
 
 	runtimeContext, err := NewRuntimeContext(runtimeValues)

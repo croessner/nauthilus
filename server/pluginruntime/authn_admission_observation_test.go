@@ -19,7 +19,7 @@ func TestAuthenticationAdmissionRejectionIsObservable(t *testing.T) {
 
 	admission := newCallbackAdmission(pluginapi.CallbackAdmissionLimits{RequestsPerSecond: 10, MaxConcurrency: 2})
 	for range 2 {
-		if !admission.acquire(t.Context()) {
+		if err := admission.acquire(t.Context()); err != nil {
 			t.Fatal("could not occupy admission capacity")
 		}
 		defer admission.release()
@@ -35,5 +35,9 @@ func TestAuthenticationAdmissionRejectionIsObservable(t *testing.T) {
 
 	if !strings.Contains(output.String(), `"plugin_result":"admission_limited"`) {
 		t.Fatalf("admission rejection lacks bounded cause: %s", output.String())
+	}
+
+	if !strings.Contains(output.String(), `"plugin_admission_limit":"concurrency"`) {
+		t.Fatalf("admission rejection lacks its specific limit: %s", output.String())
 	}
 }

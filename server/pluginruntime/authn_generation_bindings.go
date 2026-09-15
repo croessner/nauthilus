@@ -919,10 +919,10 @@ func (p *nativeAuthnObligationProvider) ExecuteObligation(
 		return result, err
 	}
 
-	if !p.admission.acquire(ctx) {
-		observeAuthenticationAdmissionRejection(ctx, p.call)
+	if err := p.admission.acquire(ctx); err != nil {
+		observeAuthenticationAdmissionRejection(ctx, p.call, err)
 
-		return pluginapi.ObligationResult{Temporary: true}, errCallbackAdmissionLimited
+		return pluginapi.ObligationResult{Temporary: true}, err
 	}
 	defer p.admission.release()
 
@@ -975,10 +975,10 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 		return result, err
 	}
 
-	if !p.admission.acquire(ctx) {
-		observeAuthenticationAdmissionRejection(ctx, p.call)
+	if err := p.admission.acquire(ctx); err != nil {
+		observeAuthenticationAdmissionRejection(ctx, p.call, err)
 
-		return pluginapi.PostActionEnqueueResult{Temporary: true}, errCallbackAdmissionLimited
+		return pluginapi.PostActionEnqueueResult{Temporary: true}, err
 	}
 	defer p.admission.release()
 
@@ -991,9 +991,9 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 }
 
 // observeAuthenticationAdmissionRejection records a denied host invocation without entering plugin code.
-func observeAuthenticationAdmissionRejection(ctx context.Context, call nativeAuthnComponentCall) {
+func observeAuthenticationAdmissionRejection(ctx context.Context, call nativeAuthnComponentCall, err error) {
 	_ = invokePluginCall(ctx, call.observer, call.spec, func(context.Context) error {
-		return errCallbackAdmissionLimited
+		return err
 	})
 }
 
