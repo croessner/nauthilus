@@ -1050,10 +1050,13 @@ func (l *ldapPoolImpl) connectAbortTimeout() time.Duration {
 }
 
 // processConnection manages the connection at the specified index in the LDAP pool to determine its usability and state.
-// It locks the connection mutex, checks its current state, and either marks it busy, attempts reconnection, or skips it.
+// It skips contended slots so maintenance or another borrower cannot block scanning or cancellation.
+// Once locked, it checks the state and either borrows, reconnects, or skips the connection.
 // Returns the connection index if usable, or LDAPPoolExhausted if no connection can be utilized.
 func (l *ldapPoolImpl) processConnection(ctx context.Context, index int, guid string) (connNumber int) {
-	l.conn[index].GetMutex().Lock()
+	if ctx.Err() != nil || !l.conn[index].GetMutex().TryLock() {
+		return definitions.LDAPPoolExhausted
+	}
 
 	defer l.conn[index].GetMutex().Unlock()
 
