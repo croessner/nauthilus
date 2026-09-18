@@ -30,6 +30,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/grpcapi/authmapper"
+	"github.com/croessner/nauthilus/v4/server/grpcapi/decisionstatus"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
 	"github.com/croessner/nauthilus/v4/server/policy/transportsecurity"
 
@@ -540,6 +541,7 @@ func stringifyAttributeValues(values []any) []string {
 	return result
 }
 
+// grpcErrorFromServiceError preserves application failure categories at the authority boundary.
 func grpcErrorFromServiceError(err error) error {
 	if err == nil {
 		return nil
@@ -563,6 +565,10 @@ func grpcErrorFromServiceError(err error) error {
 
 	if stderrors.Is(err, context.DeadlineExceeded) {
 		return status.Error(codes.DeadlineExceeded, err.Error())
+	}
+
+	if mapped := decisionstatus.FromError(err); mapped != nil {
+		return mapped
 	}
 
 	return status.Error(codes.Internal, err.Error())

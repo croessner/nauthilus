@@ -17,12 +17,14 @@ package grpcauthority
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/admission"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 
@@ -125,13 +127,18 @@ func TestGRPCBackchannelDecisionServiceRejectsBeforeCurrentBackendOrEffects(t *t
 type grpcBoundaryFailureCase struct {
 	err  error
 	name string
+	code codes.Code
 }
 
 // grpcBoundaryFailureCases returns admission failures that must stop before host execution.
 func grpcBoundaryFailureCases() []grpcBoundaryFailureCase {
 	return []grpcBoundaryFailureCase{
-		{name: "generation capture", err: decisionservice.ErrDecisionGenerationUnavailable},
-		{name: "admission", err: decisionservice.ErrDecisionAdmission},
+		{name: "generation capture", err: decisionservice.ErrDecisionGenerationUnavailable, code: codes.Unavailable},
+		{name: "admission", err: decisionservice.ErrDecisionAdmission, code: codes.PermissionDenied},
+		{name: "request limit", err: errors.Join(decisionservice.ErrDecisionAdmission, admission.ErrRequestLimitExceeded), code: codes.ResourceExhausted},
+		{name: "capacity limit", err: errors.Join(decisionservice.ErrDecisionAdmission, admission.ErrCapacityLimitExceeded), code: codes.ResourceExhausted},
+		{name: "authentication", err: decisionservice.ErrDecisionAuthentication, code: codes.Unauthenticated},
+		{name: "dependency", err: decisionservice.ErrDecisionServiceDependencyMissing, code: codes.Unavailable},
 	}
 }
 
@@ -163,8 +170,8 @@ func assertGRPCBoundaryRejection(
 
 	err = operation.invoke(ctx, handler)
 
-	if status.Code(err) != codes.Internal {
-		t.Fatalf("backchannel RPC code = %v, want %v for %v", status.Code(err), codes.Internal, failure.err)
+	if status.Code(err) != failure.code {
+		t.Fatalf("backchannel RPC code = %v, want %v for %v", status.Code(err), failure.code, failure.err)
 	}
 
 	assertGRPCBoundaryRejectedState(t, current, session, factory)

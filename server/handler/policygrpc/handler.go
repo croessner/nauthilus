@@ -16,7 +16,7 @@ import (
 
 	policyv1 "github.com/croessner/nauthilus/v4/api/policy/v1"
 	"github.com/croessner/nauthilus/v4/server/core"
-	"github.com/croessner/nauthilus/v4/server/policy/admission"
+	"github.com/croessner/nauthilus/v4/server/grpcapi/decisionstatus"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
@@ -174,24 +174,15 @@ func grpcServiceError(err error) error {
 		return status.Error(codes.DeadlineExceeded, "policy evaluation deadline exceeded")
 	case errors.Is(err, decision.ErrInvalidRequest):
 		return status.Error(codes.InvalidArgument, "invalid policy decision request")
-	case errors.Is(err, decisionservice.ErrDecisionRouteUnavailable):
-		return status.Error(codes.Unimplemented, "policy endpoint is disabled")
 	case errors.Is(err, errPolicyGRPCRequestTooLarge), status.Code(err) == codes.ResourceExhausted:
 		return status.Error(codes.ResourceExhausted, "policy request exceeds the message limit")
 	case errors.Is(err, errPolicyGRPCCredentialsRequired), status.Code(err) == codes.Unauthenticated:
 		return status.Error(codes.Unauthenticated, "policy credentials required")
-	case errors.Is(err, decisionservice.ErrDecisionAuthentication):
-		return status.Error(codes.Unauthenticated, "policy credentials rejected")
-	case errors.Is(err, decisionservice.ErrDecisionAdmission):
-		switch {
-		case errors.Is(err, admission.ErrRequestLimitExceeded), errors.Is(err, admission.ErrCapacityLimitExceeded):
-			return status.Error(codes.ResourceExhausted, "policy request exceeds admitted limits")
-		default:
-			return status.Error(codes.PermissionDenied, "policy request is not permitted")
-		}
-	case errors.Is(err, decisionservice.ErrDecisionGenerationUnavailable), errors.Is(err, decisionservice.ErrDecisionServiceDependencyMissing):
-		return status.Error(codes.Unavailable, "policy service unavailable")
 	default:
+		if mapped := decisionstatus.FromError(err); mapped != nil {
+			return mapped
+		}
+
 		return status.Error(codes.Unavailable, "policy service unavailable")
 	}
 }
