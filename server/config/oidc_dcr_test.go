@@ -16,6 +16,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -359,5 +360,52 @@ func validOIDCDynamicClientRegistrationSettings() *FileSettings {
 				},
 			},
 		},
+	}
+}
+
+func TestNativeLoopbackFormActionSources(t *testing.T) {
+	tests := []struct {
+		idp  *IDPSection
+		name string
+		want []string
+	}{
+		{name: "nil section", idp: nil, want: nil},
+		{name: "nothing native", idp: &IDPSection{OIDC: OIDCConfig{Enabled: true, Clients: []OIDCClient{{RedirectURIs: []string{"https://app.example.test/cb"}}}}}, want: nil},
+		{
+			name: "dynamic registration",
+			idp:  &IDPSection{OIDC: OIDCConfig{Enabled: true, DynamicClientRegistration: OIDCDynamicClientRegistrationConfig{Enabled: true}}},
+			want: []string{"http://127.0.0.1:*", "http://[::1]:*"},
+		},
+		{
+			name: "static loopback clients",
+			idp: &IDPSection{OIDC: OIDCConfig{Enabled: true, Clients: []OIDCClient{
+				{RedirectURIs: []string{"http://127.0.0.1", "http://localhost/cb", "https://127.0.0.1/cb"}},
+				{RedirectURIs: []string{"http://[::1]:8080/cb", "http://127.0.0.1:1234"}},
+			}}},
+			want: []string{"http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"},
+		},
+		{
+			name: "disabled OIDC",
+			idp:  &IDPSection{OIDC: OIDCConfig{DynamicClientRegistration: OIDCDynamicClientRegistrationConfig{Enabled: true}}},
+			want: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.idp.NativeLoopbackFormActionSources(); !slices.Equal(got, test.want) {
+				t.Fatalf("NativeLoopbackFormActionSources() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestOIDCDynamicClientRegistrationSkipConsentDefaultsToFalse(t *testing.T) {
+	if (OIDCDynamicClientRegistrationConfig{}).SkipConsent {
+		t.Fatal("dynamic registration must require consent unless skip_consent is configured")
+	}
+
+	if !strings.Contains((OIDCDynamicClientRegistrationConfig{SkipConsent: true}).String(), "SkipConsent:true") {
+		t.Fatal("String() must expose skip_consent")
 	}
 }

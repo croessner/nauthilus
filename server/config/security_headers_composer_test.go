@@ -270,3 +270,44 @@ func TestFrontendSecurityHeaders_ValidateComposedValues_InvalidPermissionsPolicy
 
 	assert.Contains(t, err.Error(), securityHeadersPermissionsKey)
 }
+
+func TestAppendFormActionSourcesKeepsPolicyAndDeduplicates(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  string
+		sources []string
+		want    string
+	}{
+		{
+			name:    "appends missing sources",
+			policy:  "default-src 'self'; form-action 'self' https:",
+			sources: []string{"http://127.0.0.1:*", "http://[::1]:*"},
+			want:    "default-src 'self'; form-action 'self' https: http://127.0.0.1:* http://[::1]:*",
+		},
+		{
+			name:    "deduplicates existing sources",
+			policy:  "form-action 'self' http://127.0.0.1:*",
+			sources: []string{"http://127.0.0.1:*"},
+			want:    "form-action 'self' http://127.0.0.1:*",
+		},
+		{
+			name:    "keeps an explicit none",
+			policy:  "default-src 'self'; form-action 'none'",
+			sources: []string{"http://127.0.0.1:*"},
+			want:    "default-src 'self'; form-action 'none'",
+		},
+		{
+			name:   "no sources leaves policy untouched",
+			policy: "default-src 'self'; form-action 'self'",
+			want:   "default-src 'self'; form-action 'self'",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := appendFormActionSources(test.policy, test.sources); got != test.want {
+				t.Fatalf("appendFormActionSources() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

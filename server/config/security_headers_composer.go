@@ -483,6 +483,32 @@ func finalizeFormActionDirective(
 	return directives
 }
 
+// appendFormActionSources adds runtime-derived sources to the rendered form-action directive.
+// An explicit form-action 'none' is kept unchanged because it forbids every form target.
+func appendFormActionSources(policy string, sources []string) string {
+	if len(sources) == 0 {
+		return policy
+	}
+
+	directives := splitAndTrim(policy, ";")
+	for index, directive := range directives {
+		fields := strings.Fields(directive)
+		if len(fields) == 0 || normalizeCSPDirectiveName(fields[0]) != cspFormActionDirectiveName || stringSliceContains(fields[1:], cspSourceNone) {
+			continue
+		}
+
+		for _, source := range sources {
+			if !stringSliceContains(fields[1:], source) {
+				fields = append(fields, source)
+			}
+		}
+
+		directives[index] = strings.Join(fields, " ")
+	}
+
+	return strings.Join(directives, "; ")
+}
+
 func removeStringFromSlice(values []string, search string) []string {
 	result := make([]string, 0, len(values))
 

@@ -548,6 +548,10 @@ Backward compatibility:
 
 - Existing configurations that already use full header strings continue to work without changes.
 
+The security-header middleware appends `IDPSection.NativeLoopbackFormActionSources()` to the rendered
+`form-action` directive (unless it is `'none'`): wildcard-port loopback sources for dynamic registration and for
+static clients with `http` loopback redirects, because RFC 8252 native apps listen on a runtime-chosen port.
+
 Default `form-action` is `form-action 'self' https:` when no `form_action_optional_uris` are set.
 If `form_action_optional_uris` is set, implicit default `https:` is removed and only explicit entries are appended.
 If full control is required, set `form-action` directly.
@@ -635,7 +639,8 @@ sets `access_token_type: jwt`.
 The registration handler delegates decoding and policy enforcement to `server/idp/dcr`. Unrecognized RFC 7591
 metadata is ignored, while understood metadata outside the profile is rejected. Redis creation atomically enforces
 source/global rate limits and the active-client quota. Dynamic-client resolution always uses the authoritative Redis
-write handle; unavailable or corrupt state fails closed. Every dynamic authorization requires interaction and consent.
+write handle; unavailable or corrupt state fails closed. Every dynamic authorization requires interaction and consent
+unless the profile sets `skip_consent`; dynamic clients never consult remembered consent grants.
 
 `dcr.RuntimePolicy.Resolve` materializes the current profile on every use: token format, profile-wide
 `id_token_claims`/`access_token_claims` mappings, and `implied_scopes` restricted to the scopes the client registered.

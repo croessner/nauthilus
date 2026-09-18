@@ -1166,6 +1166,7 @@ func configDumpDynamicClientRegistrationDefaults() map[string]configDumpValuePro
 		"profile_version":                   registration.GetProfileVersion(),
 		"consent_mode":                      registration.GetConsentMode(),
 		"access_token_type":                 registration.GetAccessTokenType(),
+		"skip_consent":                      registration.SkipConsent,
 		"access_token_lifetime":             registration.GetAccessTokenLifetime(),
 		"refresh_token_lifetime":            registration.GetRefreshTokenLifetime(),
 		"limits.request_body_bytes":         limits.RequestBodyBytes,

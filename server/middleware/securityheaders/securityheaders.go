@@ -107,7 +107,7 @@ func (m *Middleware) Handler() gin.HandlerFunc {
 			setHeader(ctx, "Strict-Transport-Security", headers.GetStrictTransportSecurity())
 		}
 
-		policy := strings.TrimSpace(headers.GetContentSecurityPolicy())
+		policy := strings.TrimSpace(headers.GetContentSecurityPolicyWithFormActionSources(m.cfg.GetIDP().NativeLoopbackFormActionSources()))
 		if policy != "" {
 			nonce, err := m.nonceGenerator.Generate()
 			if err != nil {

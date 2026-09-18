@@ -33,6 +33,9 @@ const (
 	oidcDCRAccessTokenOpaque   = "opaque"
 	oidcDCRAccessTokenJWT      = "jwt"
 	oidcDCRPath                = "identity.oidc.dynamic_client_registration."
+	oidcLoopbackIPv4           = "127.0.0.1"
+	oidcLoopbackIPv6           = "::1"
+	oidcLoopbackLocalhost      = "localhost"
 
 	oidcDCRProfileVersion             = 1
 	oidcDCRMinimumSourceHMACKeyBytes  = 32
@@ -87,6 +90,7 @@ type OIDCDynamicClientRegistrationConfig struct {
 	RequiredMFALevel     int                                    `mapstructure:"required_mfa_level"`
 	Enabled              bool                                   `mapstructure:"enabled"`
 	AllowRefreshTokens   bool                                   `mapstructure:"allow_refresh_tokens"`
+	SkipConsent          bool                                   `mapstructure:"skip_consent"`
 }
 
 // OIDCDynamicClientRegistrationLimits bounds registration input, storage, and rate consumption.
@@ -114,7 +118,7 @@ type OIDCDynamicClientRegistrationLifecycle struct {
 
 // String formats dynamic registration configuration without exposing source-key material.
 func (c OIDCDynamicClientRegistrationConfig) String() string {
-	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
+	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t SkipConsent:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
 		c.Enabled,
 		c.GetProfile(),
 		c.GetProfileVersion(),
@@ -126,6 +130,7 @@ func (c OIDCDynamicClientRegistrationConfig) String() string {
 		len(c.IDTokenClaims.Mappings),
 		len(c.AccessTokenClaims.Mappings),
 		c.AllowRefreshTokens,
+		c.SkipConsent,
 		c.GetConsentMode(),
 		c.RequiredMFALevel,
 		c.GetAccessTokenLifetime(),
@@ -259,6 +264,59 @@ func defaultDuration(value time.Duration, fallback time.Duration) time.Duration 
 	}
 
 	return value
+}
+
+// NativeLoopbackFormActionSources returns CSP form-action sources for native-app loopback redirects.
+// Native apps receive the authorization response on a port chosen at runtime (RFC 8252 section 7.3),
+// while a port-less CSP host source only matches the default port. Dynamic registration always uses
+// literal IPv4 and IPv6 loopback redirects; static clients contribute the loopback hosts they configure.
+func (i *IDPSection) NativeLoopbackFormActionSources() []string {
+	if i == nil || !i.OIDC.Enabled {
+		return nil
+	}
+
+	sources := make([]string, 0, 3)
+	addSource := func(host string) {
+		if source := "http://" + host + ":*"; !slices.Contains(sources, source) {
+			sources = append(sources, source)
+		}
+	}
+
+	if i.OIDC.DynamicClientRegistration.Enabled {
+		addSource(oidcLoopbackIPv4)
+		addSource("[" + oidcLoopbackIPv6 + "]")
+	}
+
+	for index := range i.OIDC.Clients {
+		for _, redirectURI := range i.OIDC.Clients[index].RedirectURIs {
+			if host, ok := nativeLoopbackRedirectHost(redirectURI); ok {
+				addSource(host)
+			}
+		}
+	}
+
+	if len(sources) == 0 {
+		return nil
+	}
+
+	return sources
+}
+
+// nativeLoopbackRedirectHost returns the CSP host form of an http loopback redirect URI.
+func nativeLoopbackRedirectHost(redirectURI string) (string, bool) {
+	parsed, err := url.Parse(redirectURI)
+	if err != nil || parsed.Scheme != "http" {
+		return "", false
+	}
+
+	switch host := parsed.Hostname(); host {
+	case oidcLoopbackIPv4, oidcLoopbackLocalhost:
+		return host, true
+	case oidcLoopbackIPv6:
+		return "[" + host + "]", true
+	default:
+		return "", false
+	}
 }
 
 // validateIDPOIDCDynamicClientRegistration validates the restricted public-native profile.

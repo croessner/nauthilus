@@ -87,6 +87,28 @@ func TestRuntimePolicyAppliesProfileClaimsTokenTypeAndImpliedScopes(t *testing.T
 	}
 }
 
+func TestRuntimePolicyAppliesProfileSkipConsent(t *testing.T) {
+	policy := config.OIDCDynamicClientRegistrationConfig{
+		Enabled:            true,
+		RequiredScopes:     []string{"openid"},
+		OptionalScopes:     []string{"offline_access", "mail:imap"},
+		AllowRefreshTokens: true,
+	}
+
+	for _, skip := range []bool{false, true} {
+		policy.SkipConsent = skip
+
+		client, err := NewRuntimePolicy(policy).Resolve(runtimePolicyTestRecord())
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+
+		if client.SkipConsent != skip {
+			t.Fatalf("Resolve() SkipConsent = %t, want %t", client.SkipConsent, skip)
+		}
+	}
+}
+
 func TestRuntimePolicyKeepsOpaqueTokensWithoutProfileOverrides(t *testing.T) {
 	client, err := NewRuntimePolicy(config.OIDCDynamicClientRegistrationConfig{
 		Enabled:            true,

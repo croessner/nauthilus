@@ -158,6 +158,13 @@ func TestMiddleware_NonceFailureAborts(t *testing.T) {
 func assertCSPMiddlewareResponse(t *testing.T, policy string, expectedPolicy string) {
 	t.Helper()
 
+	assertCSPMiddlewareResponseWithIDP(t, policy, nil, expectedPolicy)
+}
+
+// assertCSPMiddlewareResponseWithIDP runs the middleware with an optional identity-provider section.
+func assertCSPMiddlewareResponseWithIDP(t *testing.T, policy string, idp *config.IDPSection, expectedPolicy string) {
+	t.Helper()
+
 	gin.SetMode(gin.TestMode)
 
 	enabled := true
@@ -170,6 +177,7 @@ func assertCSPMiddlewareResponse(t *testing.T, policy string, expectedPolicy str
 				},
 			},
 		},
+		IDP: idp,
 	}
 
 	mw := New(MiddlewareConfig{
@@ -203,6 +211,24 @@ func TestMiddleware_FormActionSelfRemainsStrict(t *testing.T) {
 		t,
 		"default-src 'self'; form-action 'self'; script-src 'self' 'nonce-{{nonce}}'",
 		"default-src 'self'; form-action 'self'; script-src 'self' 'nonce-testnonce123'",
+	)
+}
+
+func TestMiddleware_FormActionAllowsNativeLoopbackPorts(t *testing.T) {
+	// Native apps receive the authorization response on a runtime-chosen loopback port (RFC 8252).
+	// A port-less CSP source only matches port 80, so the consent redirect would be blocked.
+	idp := &config.IDPSection{
+		OIDC: config.OIDCConfig{
+			Enabled:                   true,
+			DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{Enabled: true},
+		},
+	}
+
+	assertCSPMiddlewareResponseWithIDP(
+		t,
+		"default-src 'self'; form-action 'self' http://127.0.0.1; script-src 'self' 'nonce-{{nonce}}'",
+		idp,
+		"default-src 'self'; form-action 'self' http://127.0.0.1 http://127.0.0.1:* http://[::1]:*; script-src 'self' 'nonce-testnonce123'",
 	)
 }
 

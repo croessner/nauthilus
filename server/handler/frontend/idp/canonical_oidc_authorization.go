@@ -348,12 +348,8 @@ func (h *OIDCHandler) canonicalOIDCAuthorizeNeedsConsent(
 		return false, sessionstate.ErrBindingMismatch
 	}
 
-	if prompt == "consent" || client.Dynamic {
-		return true, nil
-	}
-
-	if client.SkipConsent {
-		return false, nil
+	if required, decided := consentRequirementWithoutGrant(client, prompt); decided {
+		return required, nil
 	}
 
 	reference, err := sessionstate.ConsentGrantReference(identity.Reference, client.ClientID)
@@ -375,6 +371,22 @@ func (h *OIDCHandler) canonicalOIDCAuthorizeNeedsConsent(
 	}
 
 	return false, nil
+}
+
+// consentRequirementWithoutGrant decides consent cases that never consult a remembered grant.
+// prompt=consent always forces the page. Dynamic clients never inherit remembered grants, so only
+// the profile skip_consent can waive their consent; static clients may waive it per client.
+func consentRequirementWithoutGrant(client *config.OIDCClient, prompt string) (required bool, decided bool) {
+	switch {
+	case prompt == "consent":
+		return true, true
+	case client.Dynamic:
+		return !client.SkipConsent, true
+	case client.SkipConsent:
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 //nolint:gocyclo,funlen // Session construction validates the complete typed identity, scope, and assurance projection.

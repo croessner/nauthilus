@@ -2512,6 +2512,11 @@ func (h *FrontendSecurityHeaders) IsEnabled() bool {
 
 // GetContentSecurityPolicy returns the CSP value.
 func (h *FrontendSecurityHeaders) GetContentSecurityPolicy() string {
+	return h.GetContentSecurityPolicyWithFormActionSources(nil)
+}
+
+// GetContentSecurityPolicyWithFormActionSources returns the CSP value with runtime-derived form-action sources.
+func (h *FrontendSecurityHeaders) GetContentSecurityPolicyWithFormActionSources(formActionSources []string) string {
 	if h == nil {
 		return ""
 	}
@@ -2524,7 +2529,7 @@ func (h *FrontendSecurityHeaders) GetContentSecurityPolicy() string {
 		return ""
 	}
 
-	return value
+	return appendFormActionSources(value, formActionSources)
 }
 
 // IsContentSecurityPolicyReportOnly returns true when CSP should be emitted in report-only mode.

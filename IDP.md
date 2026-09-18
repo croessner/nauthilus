@@ -197,8 +197,11 @@ disabled by default and intentionally implements a narrow profile rather than un
 - JWT access tokens of dynamic clients are validated like opaque ones at UserInfo and introspection: the client must
   still be active, the granted scopes must still be allowed, and the lifetime must not exceed the current profile.
   MFA is enforced at authorization; a raised `required_mfa_level` applies to JWTs at the next refresh.
-- Every authorization requires user interaction and consent. Anonymous dynamic clients never inherit a previous
-  consent decision.
+- Every authorization requires user interaction and consent by default. Anonymous dynamic clients never inherit a
+  previous consent decision. `skip_consent: true` waives the consent page for all dynamic clients, like the per-client
+  option for static clients; `prompt=consent` still forces it. Enable it only when every native application that can
+  register is trusted: an application registered on the user's device then obtains tokens without a consent step
+  whenever the browser already holds an authenticated IdP session.
 - Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive
   reads always use the authoritative primary/write handle and fail closed when Redis is unavailable.
 
@@ -230,6 +233,7 @@ identity:
       required_mfa_level: 0
       access_token_lifetime: 15m
       refresh_token_lifetime: 720h
+      skip_consent: false
       # Optional profile extensions for native applications that omit scope and grant_types.
       default_scopes: [ "openid", "offline_access", "mail:imap" ]
       implied_scopes: [ ]
@@ -268,6 +272,12 @@ Native applications such as the OpenCloud desktop client register automatically 
 registration endpoint. They send neither `scope` nor `grant_types` and request their own default scopes at
 authorization time, so `default_scopes` must cover those scopes. Resource servers that assign users or roles from
 token claims need matching `id_token_claims`/`access_token_claims` mappings and, where required, `implied_scopes`.
+
+Native applications receive the authorization response on a loopback port chosen at runtime. A CSP `form-action`
+source without a port only matches the default port, so the browser would block the redirect that follows the consent
+form. Nauthilus therefore appends `http://127.0.0.1:*` and `http://[::1]:*` to `form-action` when dynamic registration
+is enabled, and `http://<host>:*` for every static client with an `http` loopback redirect URI (`127.0.0.1`, `[::1]`,
+`localhost`). An explicit `form-action 'none'` is left unchanged.
 
 When enabled, discovery advertises `registration_endpoint` as `<issuer>/oidc/register`. The endpoint accepts only
 `POST` with `Content-Type: application/json`, returns `201 Created` with effective public metadata, and never returns a

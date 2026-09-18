@@ -80,10 +80,11 @@ func (p RuntimePolicy) Resolve(record *DynamicClientRecord) (*config.OIDCClient,
 	return client, nil
 }
 
-// applyProfileIssuance materializes current token format, claim mappings, and implied scopes.
+// applyProfileIssuance materializes current token format, consent, claim mappings, and implied scopes.
 // Implied scopes are limited to scopes registered for the client so authorization never widens them.
 func (p RuntimePolicy) applyProfileIssuance(client *config.OIDCClient, registeredScopes []string) {
 	client.AccessTokenType = p.registration.GetAccessTokenType()
+	client.SkipConsent = p.registration.SkipConsent
 	client.IDTokenClaims = config.IDTokenClaims{Mappings: slices.Clone(p.registration.IDTokenClaims.Mappings)}
 	client.AccessTokenClaims = config.AccessTokenClaims{Mappings: slices.Clone(p.registration.AccessTokenClaims.Mappings)}
 	client.ImpliedScopes = slices.DeleteFunc(slices.Clone(p.registration.ImpliedScopes), func(scope string) bool {
