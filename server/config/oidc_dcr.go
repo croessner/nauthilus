@@ -283,19 +283,19 @@ func (f *FileSettings) validateIDPOIDCDynamicClientRegistration() error { //noli
 	}
 
 	if registration.GetProfile() != oidcDCRProfileMailClientV1 {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.profile", "must be mail-client-v1")
+		return NewValidationProblem(oidcDCRPath+"profile", "must be mail-client-v1")
 	}
 
 	if registration.GetProfileVersion() != oidcDCRProfileVersion {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.profile_version", "must be 1")
+		return NewValidationProblem(oidcDCRPath+"profile_version", "must be 1")
 	}
 
 	if registration.GetConsentMode() != oidcDCRConsentAllOrNothing {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.consent_mode", "must be all_or_nothing")
+		return NewValidationProblem(oidcDCRPath+"consent_mode", "must be all_or_nothing")
 	}
 
 	if registration.SourceHMACKey.Len() < oidcDCRMinimumSourceHMACKeyBytes {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.source_hmac_key", "must contain at least 32 bytes")
+		return NewValidationProblem(oidcDCRPath+"source_hmac_key", "must contain at least 32 bytes")
 	}
 
 	if err := validateOIDCDCRScopes(oidc, registration); err != nil {
@@ -304,6 +304,10 @@ func (f *FileSettings) validateIDPOIDCDynamicClientRegistration() error { //noli
 
 	if err := validateOIDCDCRProfileDefaults(registration); err != nil {
 		return err
+	}
+
+	if len(registration.DefaultScopes) > registration.GetLimits().GetScopes() {
+		return NewValidationProblem(oidcDCRPath+"default_scopes", "must not contain more scopes than limits.scopes")
 	}
 
 	if accessTokenType := registration.GetAccessTokenType(); accessTokenType != oidcDCRAccessTokenOpaque && accessTokenType != oidcDCRAccessTokenJWT {
@@ -354,7 +358,7 @@ func (f *FileSettings) validateIDPOIDCDynamicClientRegistration() error { //noli
 	}
 
 	return validateRequiredMFALevel(
-		"identity.oidc.dynamic_client_registration.required_mfa_level",
+		oidcDCRPath+"required_mfa_level",
 		registration.RequiredMFALevel,
 		nil,
 		f.IDP.GetMFAPolicyLevels(),
@@ -373,33 +377,33 @@ func validateOIDCDCRIssuer(rawIssuer string) error {
 
 // validateOIDCDCRScopes enforces the deployment-owned dynamic scope allowlist.
 func validateOIDCDCRScopes(oidc *OIDCConfig, registration OIDCDynamicClientRegistrationConfig) error { //nolint:gocyclo
-	required, err := validateOIDCDCRScopeList("identity.oidc.dynamic_client_registration.required_scopes", registration.RequiredScopes)
+	required, err := validateOIDCDCRScopeList(oidcDCRPath+"required_scopes", registration.RequiredScopes)
 	if err != nil {
 		return err
 	}
 
 	if len(required) == 0 || !required[definitions.ScopeOpenID] {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.required_scopes", "must include openid")
+		return NewValidationProblem(oidcDCRPath+"required_scopes", "must include openid")
 	}
 
 	if required[definitions.ScopeOfflineAccess] {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.required_scopes", "offline_access must remain optional")
+		return NewValidationProblem(oidcDCRPath+"required_scopes", "offline_access must remain optional")
 	}
 
-	optional, err := validateOIDCDCRScopeList("identity.oidc.dynamic_client_registration.optional_scopes", registration.OptionalScopes)
+	optional, err := validateOIDCDCRScopeList(oidcDCRPath+"optional_scopes", registration.OptionalScopes)
 	if err != nil {
 		return err
 	}
 
 	for scope := range optional {
 		if required[scope] {
-			return NewValidationProblem("identity.oidc.dynamic_client_registration.optional_scopes", fmt.Sprintf("scope %q also appears in required_scopes", scope))
+			return NewValidationProblem(oidcDCRPath+"optional_scopes", fmt.Sprintf("scope %q also appears in required_scopes", scope))
 		}
 	}
 
 	hasOfflineAccess := optional[definitions.ScopeOfflineAccess]
 	if registration.AllowRefreshTokens != hasOfflineAccess {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.optional_scopes", "offline_access must be present exactly when refresh tokens are enabled")
+		return NewValidationProblem(oidcDCRPath+"optional_scopes", "offline_access must be present exactly when refresh tokens are enabled")
 	}
 
 	supported := make(map[string]bool, len(oidc.GetScopesSupported())+len(oidc.CustomScopes))
@@ -413,13 +417,13 @@ func validateOIDCDCRScopes(oidc *OIDCConfig, registration OIDCDynamicClientRegis
 
 	for scope := range required {
 		if !supported[scope] {
-			return NewValidationProblem("identity.oidc.dynamic_client_registration.required_scopes", fmt.Sprintf("scope %q is not supported by the provider", scope))
+			return NewValidationProblem(oidcDCRPath+"required_scopes", fmt.Sprintf("scope %q is not supported by the provider", scope))
 		}
 	}
 
 	for scope := range optional {
 		if !supported[scope] {
-			return NewValidationProblem("identity.oidc.dynamic_client_registration.optional_scopes", fmt.Sprintf("scope %q is not supported by the provider", scope))
+			return NewValidationProblem(oidcDCRPath+"optional_scopes", fmt.Sprintf("scope %q is not supported by the provider", scope))
 		}
 	}
 
@@ -482,12 +486,12 @@ func validateOIDCDCRScopeList(path string, scopes []string) (map[string]bool, er
 func validateOIDCDCRLifetimes(registration OIDCDynamicClientRegistrationConfig) error {
 	accessLifetime := registration.GetAccessTokenLifetime()
 	if accessLifetime <= 0 || accessLifetime > oidcDCRMaximumAccessTokenLifetime {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.access_token_lifetime", "must be positive and no greater than 15m")
+		return NewValidationProblem(oidcDCRPath+"access_token_lifetime", "must be positive and no greater than 15m")
 	}
 
 	refreshLifetime := registration.GetRefreshTokenLifetime()
 	if registration.AllowRefreshTokens && (refreshLifetime <= 0 || refreshLifetime > oidcDCRMaximumRefreshTokenLifetime) {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.refresh_token_lifetime", "must be positive and no greater than 720h")
+		return NewValidationProblem(oidcDCRPath+"refresh_token_lifetime", "must be positive and no greater than 720h")
 	}
 
 	return nil
@@ -513,16 +517,16 @@ func validateOIDCDCRLimits(limits OIDCDynamicClientRegistrationLimits) error {
 
 	for _, limit := range integerLimits {
 		if limit.value <= 0 || limit.value > limit.maximum {
-			return NewValidationProblem("identity.oidc.dynamic_client_registration.limits."+limit.path, fmt.Sprintf("must be positive and no greater than %d", limit.maximum))
+			return NewValidationProblem(oidcDCRPath+"limits."+limit.path, fmt.Sprintf("must be positive and no greater than %d", limit.maximum))
 		}
 	}
 
 	if limits.SourceWindow <= 0 || limits.SourceWindow > 24*time.Hour {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.limits.source_window", "must be positive and no greater than 24h")
+		return NewValidationProblem(oidcDCRPath+"limits.source_window", "must be positive and no greater than 24h")
 	}
 
 	if limits.GlobalWindow <= 0 || limits.GlobalWindow > time.Hour {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.limits.global_window", "must be positive and no greater than 1h")
+		return NewValidationProblem(oidcDCRPath+"limits.global_window", "must be positive and no greater than 1h")
 	}
 
 	return nil
@@ -531,7 +535,7 @@ func validateOIDCDCRLimits(limits OIDCDynamicClientRegistrationLimits) error {
 // validateOIDCDCRLifecycle enforces positive and consistently ordered client lifetimes.
 func validateOIDCDCRLifecycle(lifecycle OIDCDynamicClientRegistrationLifecycle) error {
 	if lifecycle.MaximumTTL <= 0 || lifecycle.MaximumTTL > oidcDCRDefaultMaximumTTL {
-		return NewValidationProblem("identity.oidc.dynamic_client_registration.lifecycle.maximum_ttl", "must be positive and no greater than 8760h")
+		return NewValidationProblem(oidcDCRPath+"lifecycle.maximum_ttl", "must be positive and no greater than 8760h")
 	}
 
 	values := []struct {
@@ -545,7 +549,7 @@ func validateOIDCDCRLifecycle(lifecycle OIDCDynamicClientRegistrationLifecycle) 
 
 	for _, value := range values {
 		if value.value <= 0 || value.value > lifecycle.MaximumTTL {
-			return NewValidationProblem("identity.oidc.dynamic_client_registration.lifecycle."+value.path, "must be positive and no greater than maximum_ttl")
+			return NewValidationProblem(oidcDCRPath+"lifecycle."+value.path, "must be positive and no greater than maximum_ttl")
 		}
 	}
 

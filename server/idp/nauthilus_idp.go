@@ -619,7 +619,7 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 
 	// Invalidate the access token that was last bound to this refresh token
 	// session before issuing the replacement access token.
-	if err := n.invalidateOldAccessToken(ctx, session, clientID); err != nil {
+	if err := n.invalidateOldAccessToken(ctx, session, client); err != nil {
 		return nil, "", "", "", 0, fmt.Errorf("invalidate previous access token: %w", err)
 	}
 
@@ -663,7 +663,7 @@ func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshT
 		return nil, "", "", "", 0, fmt.Errorf("%w: %v", ErrInvalidRefreshToken, err)
 	}
 
-	if err := n.invalidateOldAccessToken(ctx, session, clientID); err != nil {
+	if err := n.invalidateOldAccessToken(ctx, session, client); err != nil {
 		return nil, "", "", "", 0, fmt.Errorf("invalidate previous access token: %w", err)
 	}
 
@@ -705,7 +705,8 @@ func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshT
 // invalidateOldAccessToken removes the previous access token that was linked
 // to the refresh token session. For opaque tokens it deletes the Redis entry;
 // for JWT tokens it adds the token to a denylist with the remaining lifetime.
-func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, clientID string) error {
+// The caller passes the already resolved client so static and dynamic clients share one path.
+func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OIDCSession, client *config.OIDCClient) error {
 	oldAccessToken := session.AccessToken
 
 	if oldAccessToken == "" {
@@ -719,8 +720,7 @@ func (n *NauthilusIDP) invalidateOldAccessToken(ctx context.Context, session *OI
 
 	// JWT token: add to denylist with the client's access token lifetime
 	// as a conservative upper bound for the remaining validity.
-	client, ok := n.FindClient(clientID)
-	if !ok {
+	if client == nil {
 		return fmt.Errorf("client not found")
 	}
 
@@ -816,9 +816,14 @@ func (n *NauthilusIDP) ValidateToken(ctx context.Context, tokenString string) (j
 	return nil, fmt.Errorf("invalid token")
 }
 
-// validateJWTAccessTokenState enforces user-wide revocation and the explicit denylist.
+// validateJWTAccessTokenState enforces user-wide revocation, the explicit denylist,
+// and the current policy of dynamic clients.
 func (n *NauthilusIDP) validateJWTAccessTokenState(ctx context.Context, tokenString string, claims jwt.MapClaims) error {
 	if err := n.validateAccessTokenUserEpoch(ctx, claims); err != nil {
+		return err
+	}
+
+	if err := n.validateDynamicJWTAccessToken(ctx, claims); err != nil {
 		return err
 	}
 
@@ -837,6 +842,37 @@ func (n *NauthilusIDP) validateJWTAccessTokenState(ctx context.Context, tokenStr
 		denySpan.RecordError(err)
 
 		return err
+	}
+
+	return nil
+}
+
+// validateDynamicJWTAccessToken gives JWT access tokens of dynamic clients the same fail-closed
+// checks as opaque tokens: the client must still be active, the scopes must still be allowed,
+// and the token lifetime must not exceed the current policy.
+func (n *NauthilusIDP) validateDynamicJWTAccessToken(ctx context.Context, claims jwt.MapClaims) error {
+	clientID, _ := claims[oidcClaimAudience].(string)
+	if !strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
+		return nil
+	}
+
+	client, err := n.ResolveClient(ctx, clientID)
+	if err != nil {
+		return fmt.Errorf("dynamic client is not active: %w", err)
+	}
+
+	scopeValue, _ := claims[oidcClaimScope].(string)
+	session := &OIDCSession{ClientID: clientID, Scopes: strings.Fields(scopeValue)}
+
+	if err := n.validateDynamicSessionPolicy(client, session); err != nil {
+		return err
+	}
+
+	issuedAt, issuedOK := claims[oidcClaimIssuedAt].(float64)
+	expiresAt, expiresOK := claims[oidcClaimExpiresAt].(float64)
+
+	if !issuedOK || !expiresOK || time.Duration(expiresAt-issuedAt)*time.Second > client.AccessTokenLifetime {
+		return fmt.Errorf("dynamic access token has invalid lifetime metadata")
 	}
 
 	return nil

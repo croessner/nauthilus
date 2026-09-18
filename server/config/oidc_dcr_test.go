@@ -292,6 +292,14 @@ func TestValidateIDPOIDCDynamicClientRegistrationRejectsUnsafeProfiles(t *testin
 			wantErr: "identity.oidc.dynamic_client_registration.default_scopes",
 		},
 		{
+			name: "default scopes exceed scope limit",
+			mutate: func(settings *FileSettings) {
+				settings.IDP.OIDC.DynamicClientRegistration.DefaultScopes = []string{"openid", "offline_access"}
+				settings.IDP.OIDC.DynamicClientRegistration.Limits.Scopes = 1
+			},
+			wantErr: "identity.oidc.dynamic_client_registration.default_scopes",
+		},
+		{
 			name: "implied scope outside allowlist",
 			mutate: func(settings *FileSettings) {
 				settings.IDP.OIDC.DynamicClientRegistration.ImpliedScopes = []string{"profile"}

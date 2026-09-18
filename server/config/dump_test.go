@@ -48,6 +48,8 @@ func TestRenderDefaultConfigDump_IncludesKnownDefaults(t *testing.T) {
 		`runtime.servers.http.tls.min_tls_version = "TLS1.2"`,
 		`runtime.timeouts.lua_script = "30s"`,
 		`identity.oidc.tokens.revoke_refresh_token = true`,
+		`identity.oidc.dynamic_client_registration.access_token_type = "opaque"`,
+		`identity.oidc.dynamic_client_registration.limits.source_registrations = 5`,
 	}
 
 	for _, expected := range expectedLines {

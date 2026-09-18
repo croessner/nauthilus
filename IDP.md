@@ -191,7 +191,11 @@ disabled by default and intentionally implements a narrow profile rather than un
 - `implied_scopes` are added to every authorization of a dynamic client, but only if the client registered them.
   `offline_access` cannot be implied.
 - `id_token_claims` and `access_token_claims` apply the same claim mappings as static clients to all dynamic clients.
-  Claims remain gated by the scopes granted in the authorization.
+  Claims remain gated by the scopes granted in the authorization. With `access_token_type: jwt`, the UserInfo
+  endpoint returns the access-token claim set, so claims a resource server reads from UserInfo must also be mapped
+  under `access_token_claims`.
+- JWT access tokens of dynamic clients are validated like opaque ones at UserInfo and introspection: the client must
+  still be active, the granted scopes must still be allowed, and the lifetime must not exceed the current profile.
 - Every authorization requires user interaction and consent. Anonymous dynamic clients never inherit a previous
   consent decision.
 - Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive

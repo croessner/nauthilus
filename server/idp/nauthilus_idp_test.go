@@ -943,6 +943,40 @@ func expectFixedRefreshTokenStore(mock redismock.ClientMock) {
 }
 
 // expectUserTokenEpoch expects an absent epoch to resolve to the baseline value.
+// testDynamicClientKey returns the authoritative registry key of a dynamic client.
+func testDynamicClientKey(clientID string) string {
+	return testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID
+}
+
+// expectDynamicClientRecord serves an active public-native dynamic client with the given registered scope.
+func expectDynamicClientRecord(t *testing.T, mock redismock.ClientMock, clientID string, scope string) {
+	t.Helper()
+
+	record := &dcr.DynamicClientRecord{
+		EffectiveMetadata: dcr.EffectiveMetadata{
+			RedirectURIs:             []string{"http://127.0.0.1/callback"},
+			GrantTypes:               []string{dcr.GrantAuthorizationCode},
+			ResponseTypes:            []string{dcr.ResponseTypeCode},
+			Scope:                    scope,
+			TokenEndpointAuthMethod:  dcr.TokenEndpointAuthMethodNone,
+			ApplicationType:          dcr.ApplicationTypeNative,
+			SubjectType:              dcr.SubjectTypePublic,
+			IDTokenSignedResponseAlg: dcr.IDTokenSigningAlgorithm,
+		},
+		ClientID:        clientID,
+		Profile:         dcr.ProfileMailClientV1,
+		ProfileVersion:  1,
+		CreatedAt:       time.Now(),
+		AccessTokenTTL:  5 * time.Minute,
+		RefreshTokenTTL: time.Hour,
+	}
+
+	recordData, err := json.Marshal(record)
+	assert.NoError(t, err)
+
+	mock.ExpectGet(testDynamicClientKey(clientID)).SetVal(string(recordData))
+}
+
 func expectUserTokenEpoch(mock redismock.ClientMock, userID string) {
 	mock.ExpectGet(testUserTokenEpochKey(userID)).RedisNil()
 }
@@ -1287,34 +1321,113 @@ func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T
 	sessionData, err := json.Marshal(session)
 	assert.NoError(t, err)
 
-	record := &dcr.DynamicClientRecord{
-		EffectiveMetadata: dcr.EffectiveMetadata{
-			RedirectURIs:             []string{"http://127.0.0.1/callback"},
-			GrantTypes:               []string{dcr.GrantAuthorizationCode},
-			ResponseTypes:            []string{dcr.ResponseTypeCode},
-			Scope:                    definitions.ScopeOpenID,
-			TokenEndpointAuthMethod:  dcr.TokenEndpointAuthMethodNone,
-			ApplicationType:          dcr.ApplicationTypeNative,
-			SubjectType:              dcr.SubjectTypePublic,
-			IDTokenSignedResponseAlg: dcr.IDTokenSigningAlgorithm,
-		},
-		ClientID:        clientID,
-		Profile:         dcr.ProfileMailClientV1,
-		ProfileVersion:  1,
-		CreatedAt:       time.Now(),
-		AccessTokenTTL:  5 * time.Minute,
-		RefreshTokenTTL: time.Hour,
-	}
-	recordData, err := json.Marshal(record)
-	assert.NoError(t, err)
-
 	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID).SetVal(string(recordData))
+	expectDynamicClientRecord(t, mock, clientID, definitions.ScopeOpenID)
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.NoError(t, err)
 	assert.Equal(t, clientID, claims[claimAudience])
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTokenJWTRevalidatesDynamicClientAuthoritatively(t *testing.T) {
+	const clientID = dcr.ClientIDPrefix + "jwt-policy-client"
+
+	tests := []struct {
+		expect  func(*testing.T, redismock.ClientMock)
+		name    string
+		scope   string
+		wantErr string
+	}{
+		{
+			name:  "active client",
+			scope: "openid profile",
+			expect: func(t *testing.T, mock redismock.ClientMock) {
+				expectDynamicClientRecord(t, mock, clientID, "openid profile")
+			},
+		},
+		{
+			name:    "revoked client",
+			scope:   "openid",
+			wantErr: "dynamic client is not active",
+			expect: func(_ *testing.T, mock redismock.ClientMock) {
+				mock.ExpectGet(testDynamicClientKey(clientID)).RedisNil()
+			},
+		},
+		{
+			name:    "scope narrowed by policy",
+			scope:   "openid email",
+			wantErr: "dynamic client policy changed",
+			expect: func(t *testing.T, mock redismock.ClientMock) {
+				expectDynamicClientRecord(t, mock, clientID, "openid email")
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertDynamicJWTValidation(t, clientID, test.scope, test.expect, test.wantErr)
+		})
+	}
+}
+
+// assertDynamicJWTValidation validates one signed dynamic-client JWT against a mocked registry state.
+func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, expect func(*testing.T, redismock.ClientMock), wantErr string) {
+	t.Helper()
+
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+		Issuer: testIssuer,
+		DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
+			Enabled:        true,
+			RequiredScopes: []string{definitions.ScopeOpenID},
+			OptionalScopes: []string{definitions.ScopeProfile},
+		},
+	})
+	mock.MatchExpectationsInOrder(false)
+
+	kid := "dynamic-jwt-key"
+	pemData := generateTestKey()
+	tokenString := signedTestTokenWithClaims(t, kid, pemData, jwt.MapClaims{
+		claimIssuer:                     testIssuer,
+		claimSubject:                    testUserID,
+		claimAudience:                   clientID,
+		claimIssuedAt:                   time.Now().Add(-time.Minute).Unix(),
+		claimExpires:                    time.Now().Add(4 * time.Minute).Unix(),
+		claimScope:                      scope,
+		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
+		definitions.ClaimUserTokenEpoch: "0",
+	})
+
+	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
+	expectUserTokenEpoch(mock, testUserID)
+	expect(t, mock)
+
+	// Rejected dynamic clients fail before the denylist lookup.
+	if wantErr == "" {
+		mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+	}
+
+	_, err := idp.ValidateToken(t.Context(), tokenString)
+	if wantErr == "" {
+		assert.NoError(t, err)
+	} else if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), wantErr)
+	}
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestInvalidateOldAccessTokenDeniesDynamicJWTWithResolvedLifetime(t *testing.T) {
+	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{Issuer: testIssuer})
+	oldToken := "header.payload.signature"
+	client := &config.OIDCClient{ClientID: dcr.ClientIDPrefix + "refresh-client", Dynamic: true, AccessTokenLifetime: 5 * time.Minute}
+
+	// The dynamic client is not part of the static client list, so the resolved client must be used.
+	mock.ExpectSet(testDeniedAccessTokenKey(oldToken), "1", 5*time.Minute).SetVal("OK")
+
+	err := idp.invalidateOldAccessToken(t.Context(), &OIDCSession{ClientID: client.ClientID, AccessToken: oldToken}, client)
+	assert.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -1334,7 +1447,7 @@ func TestValidateTokenOpaqueFailsClosedWhenDynamicClientUnavailable(t *testing.T
 
 	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID).SetErr(errors.New("redis unavailable"))
+	mock.ExpectGet(testDynamicClientKey(clientID)).SetErr(errors.New("redis unavailable"))
 
 	_, err = idp.ValidateToken(t.Context(), tokenString)
 	assert.Error(t, err)

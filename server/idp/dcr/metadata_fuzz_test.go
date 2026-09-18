@@ -42,6 +42,9 @@ func FuzzDecodeMetadataNeverPanics(f *testing.F) {
 func FuzzMatchRedirectURINeverBroadensHost(f *testing.F) {
 	for _, seed := range []string{
 		"http://127.0.0.1:49152/callback",
+		"http://127.0.0.1:49152",
+		"http://127.0.0.1",
+		"http://127.0.0.1:49152/",
 		"http://[::1]:49152/callback",
 		"http://localhost/callback",
 		"com.example:/callback",
@@ -50,9 +53,12 @@ func FuzzMatchRedirectURINeverBroadensHost(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, candidate string) {
-		matched := MatchRedirectURI([]string{"http://127.0.0.1/callback"}, candidate)
-		if matched && !strings.HasPrefix(candidate, "http://127.0.0.1") {
-			t.Fatalf("MatchRedirectURI accepted non-literal IPv4 loopback candidate %q", candidate)
+		// Both a path-ful and a path-less registration must only ever match literal IPv4 loopback candidates.
+		for _, registered := range []string{"http://127.0.0.1/callback", "http://127.0.0.1"} {
+			matched := MatchRedirectURI([]string{registered}, candidate)
+			if matched && !strings.HasPrefix(candidate, "http://127.0.0.1") {
+				t.Fatalf("MatchRedirectURI(%q) accepted non-literal IPv4 loopback candidate %q", registered, candidate)
+			}
 		}
 	})
 }

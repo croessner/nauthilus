@@ -1048,6 +1048,7 @@ func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	addConfigDumpDefaultProviders(providers, configDumpRuntimeDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpRedisDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpIdentityDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpDynamicClientRegistrationDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpPluginDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBruteForceDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpBackendHealthCheckDefaults())
@@ -1153,6 +1154,43 @@ func configDumpRedisDefaults() map[string]configDumpValueProvider {
 		"storage.redis.account_local_cache.shards":           func() any { return 32 },
 		"storage.redis.account_local_cache.cleanup_interval": func() any { return 10 * time.Minute },
 	}
+}
+
+// configDumpDynamicClientRegistrationDefaults derives dynamic-registration defaults from the runtime getters.
+func configDumpDynamicClientRegistrationDefaults() map[string]configDumpValueProvider {
+	registration := OIDCDynamicClientRegistrationConfig{}
+	limits := registration.GetLimits()
+	lifecycle := registration.GetLifecycle()
+	values := map[string]any{
+		"profile":                           registration.GetProfile(),
+		"profile_version":                   registration.GetProfileVersion(),
+		"consent_mode":                      registration.GetConsentMode(),
+		"access_token_type":                 registration.GetAccessTokenType(),
+		"access_token_lifetime":             registration.GetAccessTokenLifetime(),
+		"refresh_token_lifetime":            registration.GetRefreshTokenLifetime(),
+		"limits.request_body_bytes":         limits.RequestBodyBytes,
+		"limits.redirect_uris":              limits.RedirectURIs,
+		"limits.scopes":                     limits.Scopes,
+		"limits.client_name_runes":          limits.ClientNameRunes,
+		"limits.string_bytes":               limits.StringBytes,
+		"limits.active_clients":             limits.ActiveClients,
+		"limits.source_window":              limits.SourceWindow,
+		"limits.source_registrations":       limits.SourceRegistrations,
+		"limits.source_daily_registrations": limits.SourceDailyRegistrations,
+		"limits.global_window":              limits.GlobalWindow,
+		"limits.global_registrations":       limits.GlobalRegistrations,
+		"lifecycle.unused_ttl":              lifecycle.UnusedTTL,
+		"lifecycle.inactivity_ttl":          lifecycle.InactivityTTL,
+		"lifecycle.maximum_ttl":             lifecycle.MaximumTTL,
+		"lifecycle.tombstone_ttl":           lifecycle.TombstoneTTL,
+	}
+
+	providers := make(map[string]configDumpValueProvider, len(values))
+	for key, value := range values {
+		providers[oidcDCRPath+key] = func() any { return value }
+	}
+
+	return providers
 }
 
 func configDumpIdentityDefaults() map[string]configDumpValueProvider {
