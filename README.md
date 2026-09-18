@@ -108,6 +108,7 @@ make guardrails
 - Backend health checks: [server/docs/backend_health_checks.md](server/docs/backend_health_checks.md)
 - Policy configuration hard-cut and manual migration guide: [server/docs/policy_configuration_migration.md](server/docs/policy_configuration_migration.md)
 - Policy Decision Service operations guide: [server/docs/policy_operations.md](server/docs/policy_operations.md)
+- Load-test error classification and logging: [server/docs/load_test_observability.md](server/docs/load_test_observability.md)
 - Policy HTTP client guide: [server/openapi/client/README.md](server/openapi/client/README.md)
 - Policy gRPC client guide: [api/policy/v1/README.md](api/policy/v1/README.md)
 
