@@ -550,7 +550,8 @@ Backward compatibility:
 
 The security-header middleware appends `IDPSection.NativeLoopbackFormActionSources()` to the rendered
 `form-action` directive (unless it is `'none'`): wildcard-port loopback sources for dynamic registration and for
-static clients with `http` loopback redirects, because RFC 8252 native apps listen on a runtime-chosen port.
+static clients with `http` loopback redirects, because RFC 8252 native apps listen on a runtime-chosen port. IPv6
+literals are not valid CSP host sources, so `[::1]` redirects are not covered.
 
 Default `form-action` is `form-action 'self' https:` when no `form_action_optional_uris` are set.
 If `form_action_optional_uris` is set, implicit default `https:` is removed and only explicit entries are appended.

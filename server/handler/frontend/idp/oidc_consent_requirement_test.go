@@ -16,9 +16,11 @@
 package idp
 
 import (
+	"context"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core/cookie"
 )
 
 func TestConsentRequirementWithoutGrant(t *testing.T) {
@@ -41,6 +43,35 @@ func TestConsentRequirementWithoutGrant(t *testing.T) {
 			required, decided := consentRequirementWithoutGrant(test.client, test.prompt)
 			if required != test.wantRequired || decided != test.wantDecided {
 				t.Fatalf("consentRequirementWithoutGrant() = (%t, %t), want (%t, %t)", required, decided, test.wantRequired, test.wantDecided)
+			}
+		})
+	}
+}
+
+func TestCanonicalAuthorizeConsentDecisionForDynamicClients(t *testing.T) {
+	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
+	session := openCanonicalFixture(t, runtime, browserCookie)
+	handler := &OIDCHandler{}
+	scopes := []string{"openid", "profile", "offline_access", "roles"}
+
+	tests := []struct {
+		client *config.OIDCClient
+		name   string
+		prompt string
+		want   bool
+	}{
+		{name: "profile skip_consent authorizes without consent page", client: &config.OIDCClient{ClientID: "dcr_skip", Dynamic: true, SkipConsent: true}},
+		{name: "default dynamic profile shows consent page", client: &config.OIDCClient{ClientID: "dcr_consent", Dynamic: true}, want: true},
+		{name: "prompt consent wins over skip_consent", client: &config.OIDCClient{ClientID: "dcr_skip", Dynamic: true, SkipConsent: true}, prompt: "consent", want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			required, err := handler.canonicalOIDCAuthorizeNeedsConsent(
+				context.Background(), session, cookie.SessionIdentity{}, test.client, scopes, test.prompt,
+			)
+			if err != nil || required != test.want {
+				t.Fatalf("canonicalOIDCAuthorizeNeedsConsent() = %t, %v; want %t", required, err, test.want)
 			}
 		})
 	}

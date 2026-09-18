@@ -34,7 +34,6 @@ const (
 	oidcDCRAccessTokenJWT      = "jwt"
 	oidcDCRPath                = "identity.oidc.dynamic_client_registration."
 	oidcLoopbackIPv4           = "127.0.0.1"
-	oidcLoopbackIPv6           = "::1"
 	oidcLoopbackLocalhost      = "localhost"
 
 	oidcDCRProfileVersion             = 1
@@ -268,14 +267,14 @@ func defaultDuration(value time.Duration, fallback time.Duration) time.Duration 
 
 // NativeLoopbackFormActionSources returns CSP form-action sources for native-app loopback redirects.
 // Native apps receive the authorization response on a port chosen at runtime (RFC 8252 section 7.3),
-// while a port-less CSP host source only matches the default port. Dynamic registration always uses
-// literal IPv4 and IPv6 loopback redirects; static clients contribute the loopback hosts they configure.
+// while a port-less CSP host source only matches the default port. CSP host sources cannot express
+// IPv6 literals, so only 127.0.0.1 (dynamic registration) and configured IPv4/localhost hosts are added.
 func (i *IDPSection) NativeLoopbackFormActionSources() []string {
 	if i == nil || !i.OIDC.Enabled {
 		return nil
 	}
 
-	sources := make([]string, 0, 3)
+	sources := make([]string, 0, 2)
 	addSource := func(host string) {
 		if source := "http://" + host + ":*"; !slices.Contains(sources, source) {
 			sources = append(sources, source)
@@ -284,7 +283,6 @@ func (i *IDPSection) NativeLoopbackFormActionSources() []string {
 
 	if i.OIDC.DynamicClientRegistration.Enabled {
 		addSource(oidcLoopbackIPv4)
-		addSource("[" + oidcLoopbackIPv6 + "]")
 	}
 
 	for index := range i.OIDC.Clients {
@@ -302,21 +300,16 @@ func (i *IDPSection) NativeLoopbackFormActionSources() []string {
 	return sources
 }
 
-// nativeLoopbackRedirectHost returns the CSP host form of an http loopback redirect URI.
+// nativeLoopbackRedirectHost returns the CSP-expressible host of an http loopback redirect URI.
 func nativeLoopbackRedirectHost(redirectURI string) (string, bool) {
 	parsed, err := url.Parse(redirectURI)
 	if err != nil || parsed.Scheme != "http" {
 		return "", false
 	}
 
-	switch host := parsed.Hostname(); host {
-	case oidcLoopbackIPv4, oidcLoopbackLocalhost:
-		return host, true
-	case oidcLoopbackIPv6:
-		return "[" + host + "]", true
-	default:
-		return "", false
-	}
+	host := parsed.Hostname()
+
+	return host, host == oidcLoopbackIPv4 || host == oidcLoopbackLocalhost
 }
 
 // validateIDPOIDCDynamicClientRegistration validates the restricted public-native profile.

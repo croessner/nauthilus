@@ -228,7 +228,7 @@ func TestMiddleware_FormActionAllowsNativeLoopbackPorts(t *testing.T) {
 		t,
 		"default-src 'self'; form-action 'self' http://127.0.0.1; script-src 'self' 'nonce-{{nonce}}'",
 		idp,
-		"default-src 'self'; form-action 'self' http://127.0.0.1 http://127.0.0.1:* http://[::1]:*; script-src 'self' 'nonce-testnonce123'",
+		"default-src 'self'; form-action 'self' http://127.0.0.1 http://127.0.0.1:*; script-src 'self' 'nonce-testnonce123'",
 	)
 }
 

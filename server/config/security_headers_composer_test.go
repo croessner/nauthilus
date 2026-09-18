@@ -281,8 +281,8 @@ func TestAppendFormActionSourcesKeepsPolicyAndDeduplicates(t *testing.T) {
 		{
 			name:    "appends missing sources",
 			policy:  "default-src 'self'; form-action 'self' https:",
-			sources: []string{"http://127.0.0.1:*", "http://[::1]:*"},
-			want:    "default-src 'self'; form-action 'self' https: http://127.0.0.1:* http://[::1]:*",
+			sources: []string{"http://127.0.0.1:*", "http://localhost:*"},
+			want:    "default-src 'self'; form-action 'self' https: http://127.0.0.1:* http://localhost:*",
 		},
 		{
 			name:    "deduplicates existing sources",

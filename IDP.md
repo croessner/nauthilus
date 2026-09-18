@@ -275,9 +275,10 @@ token claims need matching `id_token_claims`/`access_token_claims` mappings and,
 
 Native applications receive the authorization response on a loopback port chosen at runtime. A CSP `form-action`
 source without a port only matches the default port, so the browser would block the redirect that follows the consent
-form. Nauthilus therefore appends `http://127.0.0.1:*` and `http://[::1]:*` to `form-action` when dynamic registration
-is enabled, and `http://<host>:*` for every static client with an `http` loopback redirect URI (`127.0.0.1`, `[::1]`,
-`localhost`). An explicit `form-action 'none'` is left unchanged.
+form. Nauthilus therefore appends `http://127.0.0.1:*` to `form-action` when dynamic registration is enabled, and
+`http://<host>:*` for every static client with an `http` loopback redirect URI on `127.0.0.1` or `localhost`. An explicit
+`form-action 'none'` is left unchanged. CSP source expressions cannot contain IPv6 literals, so a redirect to
+`http://[::1]:<port>` after the consent form is still blocked by browsers; native applications must use `127.0.0.1`.
 
 When enabled, discovery advertises `registration_endpoint` as `<issuer>/oidc/register`. The endpoint accepts only
 `POST` with `Content-Type: application/json`, returns `201 Created` with effective public metadata, and never returns a

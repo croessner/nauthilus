@@ -374,7 +374,7 @@ func TestNativeLoopbackFormActionSources(t *testing.T) {
 		{
 			name: "dynamic registration",
 			idp:  &IDPSection{OIDC: OIDCConfig{Enabled: true, DynamicClientRegistration: OIDCDynamicClientRegistrationConfig{Enabled: true}}},
-			want: []string{"http://127.0.0.1:*", "http://[::1]:*"},
+			want: []string{"http://127.0.0.1:*"},
 		},
 		{
 			name: "static loopback clients",
@@ -382,7 +382,8 @@ func TestNativeLoopbackFormActionSources(t *testing.T) {
 				{RedirectURIs: []string{"http://127.0.0.1", "http://localhost/cb", "https://127.0.0.1/cb"}},
 				{RedirectURIs: []string{"http://[::1]:8080/cb", "http://127.0.0.1:1234"}},
 			}}},
-			want: []string{"http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"},
+			// CSP cannot express IPv6 literals, so [::1] redirects contribute no source.
+			want: []string{"http://127.0.0.1:*", "http://localhost:*"},
 		},
 		{
 			name: "disabled OIDC",
