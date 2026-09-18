@@ -262,8 +262,8 @@ func setRedisClusterClientTracking(options *redis.ClusterOptions, redisCfg *conf
 func instrumentRedisIfEnabled(cfg config.File, c redis.UniversalClient) {
 	tr := cfg.GetServer().GetInsights().GetTracing()
 	if tr.IsEnabled() && tr.IsRedisEnabled() {
-		// Ignore error to avoid impacting runtime if instrumentation fails
-		_ = redisotel.InstrumentTracing(c)
+		// Redis keys and values can contain credentials; retain spans without raw commands.
+		_ = redisotel.InstrumentTracing(c, redisotel.WithDBStatement(false))
 	}
 }
 
