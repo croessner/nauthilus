@@ -55,10 +55,37 @@ var (
 	ErrCorrupt = errors.New("dynamic client record corrupt")
 	// ErrRateLimited indicates a bounded source or global registration rate rejection.
 	ErrRateLimited = errors.New("dynamic client registration rate limited")
+	// ErrSourceWindowRateLimited indicates an exhausted per-source registration window.
+	ErrSourceWindowRateLimited = errors.New("source registration window exhausted")
+	// ErrSourceDailyRateLimited indicates an exhausted per-source daily registration budget.
+	ErrSourceDailyRateLimited = errors.New("source daily registration budget exhausted")
+	// ErrGlobalRateLimited indicates an exhausted global registration window.
+	ErrGlobalRateLimited = errors.New("global registration window exhausted")
 	// ErrQuota indicates that the active dynamic-client quota is exhausted.
 	ErrQuota             = errors.New("dynamic client quota exceeded")
 	errClientIDCollision = errors.New("dynamic client id collision")
 )
+
+// rateLimitReasons maps each classified rate-limit cause to a bounded audit and metric label.
+var rateLimitReasons = []struct {
+	err    error
+	reason string
+}{
+	{ErrSourceWindowRateLimited, "source_window_limit"},
+	{ErrSourceDailyRateLimited, "source_daily_limit"},
+	{ErrGlobalRateLimited, "global_window_limit"},
+}
+
+// RateLimitReason returns a bounded label for a classified rate-limit error, or an empty string.
+func RateLimitReason(err error) string {
+	for _, candidate := range rateLimitReasons {
+		if errors.Is(err, candidate.err) {
+			return candidate.reason
+		}
+	}
+
+	return ""
+}
 
 // ProtocolError is a stable RFC 7591 registration error response.
 type ProtocolError struct {

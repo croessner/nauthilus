@@ -176,13 +176,22 @@ The `id` in `signing_keys` (also called KID) is simply a name for your signing k
 Nauthilus can expose an anonymous RFC 7591 registration endpoint for public native mail clients. The endpoint is
 disabled by default and intentionally implements a narrow profile rather than unrestricted dynamic registration:
 
-- RFC 8252 literal loopback redirects only: `http://127.0.0.1/...` and `http://[::1]/...`; `localhost`, custom URI
-  schemes, claimed HTTPS redirects, fragments, and userinfo are rejected.
+- RFC 8252 literal loopback redirects only: `http://127.0.0.1`, `http://127.0.0.1/...`, `http://[::1]` and
+  `http://[::1]/...`; the port may vary at authorization time. `localhost`, custom URI schemes, claimed HTTPS
+  redirects, queries, fragments, and userinfo are rejected.
 - Authorization Code flow only, with mandatory PKCE `S256`, `token_endpoint_auth_method=none`,
   `application_type=native`, `subject_type=public`, and RS256 ID tokens.
-- Opaque access tokens with a hard lifetime ceiling of 15 minutes.
-- Refresh tokens only when registration explicitly requests both the `refresh_token` grant and the optional
-  `offline_access` scope. Refresh families rotate atomically; reuse of an ancestor revokes the active descendant.
+- Access tokens are opaque by default; `access_token_type: jwt` issues JWT access tokens for resource servers that
+  validate tokens locally. The hard lifetime ceiling is 15 minutes.
+- Refresh tokens only when registration requests both the `refresh_token` grant and the optional `offline_access`
+  scope. Refresh families rotate atomically; reuse of an ancestor revokes the active descendant.
+- When a client omits both `scope` and `grant_types`, the profile registers `default_scopes`. If they contain
+  `offline_access` and refresh tokens are allowed, the `refresh_token` grant is registered with it. Explicit requests
+  never fall back to defaults, so a client that names `offline_access` must still name the `refresh_token` grant.
+- `implied_scopes` are added to every authorization of a dynamic client, but only if the client registered them.
+  `offline_access` cannot be implied.
+- `id_token_claims` and `access_token_claims` apply the same claim mappings as static clients to all dynamic clients.
+  Claims remain gated by the scopes granted in the authorization.
 - Every authorization requires user interaction and consent. Anonymous dynamic clients never inherit a previous
   consent decision.
 - Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive
@@ -216,6 +225,14 @@ identity:
       required_mfa_level: 0
       access_token_lifetime: 15m
       refresh_token_lifetime: 720h
+      # Optional profile extensions for native applications that omit scope and grant_types.
+      default_scopes: [ "openid", "offline_access", "mail:imap" ]
+      implied_scopes: [ ]
+      access_token_type: "opaque"
+      id_token_claims:
+        mappings: [ ]
+      access_token_claims:
+        mappings: [ ]
       source_hmac_key: "replace-with-at-least-32-random-bytes"
       limits:
         request_body_bytes: 16384
@@ -238,6 +255,14 @@ identity:
 
 The mail scope names and their audience semantics are deployment-owned. They must match the protected mail resource
 servers; Nauthilus does not assign IMAP or SMTP meaning to a scope name automatically.
+
+Rejected registration attempts return a generic `429 Too Many Requests`. The structured registration audit record
+names the exhausted budget in `reason`: `source_window_limit`, `source_daily_limit`, or `global_window_limit`.
+
+Native applications such as the OpenCloud desktop client register automatically whenever discovery advertises a
+registration endpoint. They send neither `scope` nor `grant_types` and request their own default scopes at
+authorization time, so `default_scopes` must cover those scopes. Resource servers that assign users or roles from
+token claims need matching `id_token_claims`/`access_token_claims` mappings and, where required, `implied_scopes`.
 
 When enabled, discovery advertises `registration_endpoint` as `<issuer>/oidc/register`. The endpoint accepts only
 `POST` with `Content-Type: application/json`, returns `201 Created` with effective public metadata, and never returns a

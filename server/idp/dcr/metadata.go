@@ -139,6 +139,8 @@ func BuildEffectiveMetadata(request RegistrationRequest, policy config.OIDCDynam
 		}
 	}
 
+	usesProfileDefaults := request.Scope == "" && len(request.GrantTypes) == 0 && len(policy.DefaultScopes) > 0
+
 	grantTypes := request.GrantTypes
 	if len(grantTypes) == 0 {
 		grantTypes = []string{GrantAuthorizationCode}
@@ -164,9 +166,18 @@ func BuildEffectiveMetadata(request RegistrationRequest, policy config.OIDCDynam
 		return EffectiveMetadata{}, invalidClientMetadata("requested authentication, application, subject, or signing metadata is not allowed")
 	}
 
-	scopes, scopeErr := effectiveScopes(request.Scope, policy, limits.GetScopes())
+	requestedScope := request.Scope
+	if usesProfileDefaults {
+		requestedScope = strings.Join(policy.DefaultScopes, " ")
+	}
+
+	scopes, scopeErr := effectiveScopes(requestedScope, policy, limits.GetScopes())
 	if scopeErr != nil {
 		return EffectiveMetadata{}, scopeErr
+	}
+
+	if usesProfileDefaults {
+		grantTypes = defaultGrantTypes(scopes, policy.AllowRefreshTokens)
 	}
 
 	hasRefreshGrant := slices.Contains(grantTypes, GrantRefreshToken)
@@ -189,6 +200,17 @@ func BuildEffectiveMetadata(request RegistrationRequest, policy config.OIDCDynam
 		SoftwareID:               request.SoftwareID,
 		SoftwareVersion:          request.SoftwareVersion,
 	}, nil
+}
+
+// defaultGrantTypes pairs the refresh grant with a profile-default offline_access scope.
+// It is only used when a client omits both scope and grant_types, so explicit requests keep
+// the mandatory refresh_token/offline_access pairing.
+func defaultGrantTypes(scopes []string, allowRefreshTokens bool) []string {
+	if allowRefreshTokens && slices.Contains(scopes, definitions.ScopeOfflineAccess) {
+		return []string{GrantAuthorizationCode, GrantRefreshToken}
+	}
+
+	return []string{GrantAuthorizationCode}
 }
 
 // MatchRedirectURI applies exact string matching with only the RFC 8252 loopback-port exception.
@@ -305,7 +327,8 @@ func validateRedirectURIs(values []string, maximum int, maximumBytes int) ([]str
 // parseLoopbackRedirect parses one strict RFC 8252 loopback-profile URI.
 func parseLoopbackRedirect(value string) (*url.URL, bool) { //nolint:gocyclo
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Path == "" {
+	// RFC 8252 section 7.3 permits path-less loopback redirects such as http://127.0.0.1:<port>.
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Opaque != "" {
 		return nil, false
 	}
 
@@ -344,14 +367,15 @@ func loopbackHostEqual(left *url.URL, right *url.URL) bool {
 func loopbackURIWithoutPort(raw string, parsed *url.URL) string {
 	const schemePrefix = "http://"
 
-	authorityEnd := strings.IndexAny(raw[len(schemePrefix):], "/?#")
-	if authorityEnd < 0 {
-		return raw
-	}
-
 	host := parsed.Hostname()
 	if host == loopbackIPv6 {
 		host = "[" + loopbackIPv6 + "]"
+	}
+
+	// A path-less redirect consists of the authority only, so the whole remainder is replaced.
+	authorityEnd := strings.IndexAny(raw[len(schemePrefix):], "/?#")
+	if authorityEnd < 0 {
+		return schemePrefix + host
 	}
 
 	return schemePrefix + host + raw[len(schemePrefix)+authorityEnd:]

@@ -75,8 +75,20 @@ func (p RuntimePolicy) Resolve(record *DynamicClientRecord) (*config.OIDCClient,
 	client.RequiredMFALevel = max(record.RequiredMFALevel, p.registration.RequiredMFALevel)
 	client.AccessTokenLifetime = minimumPositiveDuration(record.AccessTokenTTL, p.registration.GetAccessTokenLifetime())
 	client.RefreshTokenLifetime = minimumPositiveDuration(record.RefreshTokenTTL, p.registration.GetRefreshTokenLifetime())
+	p.applyProfileIssuance(client, currentScopes)
 
 	return client, nil
+}
+
+// applyProfileIssuance materializes current token format, claim mappings, and implied scopes.
+// Implied scopes are limited to scopes registered for the client so authorization never widens them.
+func (p RuntimePolicy) applyProfileIssuance(client *config.OIDCClient, registeredScopes []string) {
+	client.AccessTokenType = p.registration.GetAccessTokenType()
+	client.IDTokenClaims = config.IDTokenClaims{Mappings: slices.Clone(p.registration.IDTokenClaims.Mappings)}
+	client.AccessTokenClaims = config.AccessTokenClaims{Mappings: slices.Clone(p.registration.AccessTokenClaims.Mappings)}
+	client.ImpliedScopes = slices.DeleteFunc(slices.Clone(p.registration.ImpliedScopes), func(scope string) bool {
+		return !slices.Contains(registeredScopes, scope)
+	})
 }
 
 // validStoredMetadata verifies immutable effective-profile invariants.

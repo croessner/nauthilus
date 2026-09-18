@@ -17,6 +17,7 @@ package dcr
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +135,70 @@ func TestBuildEffectiveMetadataRequiresExplicitRefreshPair(t *testing.T) {
 	}
 }
 
+func TestBuildEffectiveMetadataAppliesProfileDefaultsWhenScopeAndGrantsAreOmitted(t *testing.T) {
+	policy := nativeTestPolicy()
+	policy.DefaultScopes = []string{"openid", "offline_access", "mail:imap"}
+
+	// Mirrors the OpenCloud desktop request: no scope and no grant_types.
+	request := RegistrationRequest{
+		RedirectURIs:            []string{"http://127.0.0.1"},
+		ClientName:              "OpenCloud 3.0.3",
+		ApplicationType:         ApplicationTypeNative,
+		TokenEndpointAuthMethod: TokenEndpointAuthMethodNone,
+	}
+
+	effective, protocolErr := BuildEffectiveMetadata(request, policy)
+	if protocolErr != nil {
+		t.Fatalf("BuildEffectiveMetadata() error = %v: %s", protocolErr, protocolErr.Description)
+	}
+
+	if effective.Scope != "openid offline_access mail:imap" {
+		t.Fatalf("scope = %q, want profile default scopes", effective.Scope)
+	}
+
+	if !slices.Equal(effective.GrantTypes, []string{GrantAuthorizationCode, GrantRefreshToken}) {
+		t.Fatalf("grant_types = %v, want default refresh grant paired with default offline_access", effective.GrantTypes)
+	}
+}
+
+func TestBuildEffectiveMetadataKeepsExplicitRequestsIndependentOfProfileDefaults(t *testing.T) {
+	policy := nativeTestPolicy()
+	policy.DefaultScopes = []string{"openid", "offline_access"}
+
+	tests := []struct {
+		request   RegistrationRequest
+		wantScope string
+		wantErr   bool
+	}{
+		{request: RegistrationRequest{RedirectURIs: []string{"http://127.0.0.1"}, Scope: "mail:imap"}, wantScope: "openid mail:imap"},
+		{request: RegistrationRequest{RedirectURIs: []string{"http://127.0.0.1"}, Scope: "offline_access"}, wantErr: true},
+		{request: RegistrationRequest{RedirectURIs: []string{"http://127.0.0.1"}, GrantTypes: []string{GrantAuthorizationCode, GrantRefreshToken}}, wantErr: true},
+		{request: RegistrationRequest{RedirectURIs: []string{"http://127.0.0.1"}, GrantTypes: []string{GrantAuthorizationCode}}, wantScope: "openid"},
+	}
+
+	for _, test := range tests {
+		effective, protocolErr := BuildEffectiveMetadata(test.request, policy)
+		if test.wantErr {
+			if protocolErr == nil || protocolErr.Code != "invalid_client_metadata" {
+				t.Fatalf("BuildEffectiveMetadata(%+v) error = %#v, want invalid_client_metadata", test.request, protocolErr)
+			}
+
+			continue
+		}
+
+		if protocolErr != nil || effective.Scope != test.wantScope {
+			t.Fatalf("BuildEffectiveMetadata(%+v) = %q, %#v; want %q", test.request, effective.Scope, protocolErr, test.wantScope)
+		}
+	}
+}
+
+func TestBuildEffectiveMetadataWithoutProfileDefaultsRegistersRequiredScopesOnly(t *testing.T) {
+	effective, protocolErr := BuildEffectiveMetadata(RegistrationRequest{RedirectURIs: []string{"http://127.0.0.1"}}, nativeTestPolicy())
+	if protocolErr != nil || effective.Scope != "openid" || !slices.Equal(effective.GrantTypes, []string{GrantAuthorizationCode}) {
+		t.Fatalf("BuildEffectiveMetadata() = %+v, %#v; want required scopes and authorization_code only", effective, protocolErr)
+	}
+}
+
 func TestBuildEffectiveMetadataRejectsUnsafeRedirects(t *testing.T) {
 	unsafe := []string{
 		"https://127.0.0.1/callback",
@@ -169,6 +234,28 @@ func TestMatchRedirectURIAllowsOnlyLoopbackPortVariance(t *testing.T) {
 		if MatchRedirectURI(registered, candidate) {
 			t.Fatalf("MatchRedirectURI(%q) = true, want false", candidate)
 		}
+	}
+}
+
+func TestMatchRedirectURISupportsPathlessLoopbackRedirects(t *testing.T) {
+	// OpenCloud desktop registers http://127.0.0.1 and authorizes with http://127.0.0.1:<port>.
+	registered := []string{"http://127.0.0.1", "http://[::1]"}
+
+	for _, candidate := range []string{"http://127.0.0.1:49152", "http://127.0.0.1", "http://[::1]:49152"} {
+		if !MatchRedirectURI(registered, candidate) {
+			t.Fatalf("MatchRedirectURI(%q) = false, want true", candidate)
+		}
+	}
+
+	for _, candidate := range []string{"http://127.0.0.1:49152/", "http://127.0.0.1:49152/callback", "http://127.0.0.1:49152?x=1", "http://127.0.0.1:http"} {
+		if MatchRedirectURI(registered, candidate) {
+			t.Fatalf("MatchRedirectURI(%q) = true, want false", candidate)
+		}
+	}
+
+	_, protocolErr := BuildEffectiveMetadata(RegistrationRequest{RedirectURIs: []string{"http://127.0.0.1", "http://127.0.0.1:8080"}}, nativeTestPolicy())
+	if protocolErr == nil || protocolErr.Code != "invalid_redirect_uri" {
+		t.Fatalf("BuildEffectiveMetadata() error = %#v, want port-normalized duplicate rejection", protocolErr)
 	}
 }
 

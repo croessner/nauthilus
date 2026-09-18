@@ -628,16 +628,24 @@ sequenceDiagram
 
 When `identity.oidc.dynamic_client_registration.enabled` is true, the OIDC handler exposes `POST /oidc/register` and
 adds `registration_endpoint` to discovery. The implementation accepts only the `mail-client-v1` public-native profile:
-literal IPv4 or IPv6 loopback redirects, Authorization Code, PKCE S256, no client authentication, RS256 ID tokens, and
-opaque access tokens of at most 15 minutes.
+literal IPv4 or IPv6 loopback redirects (with or without a path), Authorization Code, PKCE S256, no client
+authentication, RS256 ID tokens, and access tokens of at most 15 minutes. Access tokens are opaque unless the profile
+sets `access_token_type: jwt`.
 
 The registration handler delegates decoding and policy enforcement to `server/idp/dcr`. Unrecognized RFC 7591
 metadata is ignored, while understood metadata outside the profile is rejected. Redis creation atomically enforces
 source/global rate limits and the active-client quota. Dynamic-client resolution always uses the authoritative Redis
 write handle; unavailable or corrupt state fails closed. Every dynamic authorization requires interaction and consent.
 
+`dcr.RuntimePolicy.Resolve` materializes the current profile on every use: token format, profile-wide
+`id_token_claims`/`access_token_claims` mappings, and `implied_scopes` restricted to the scopes the client registered.
+Operator changes therefore apply to existing dynamic clients without re-registration. When a client omits both `scope`
+and `grant_types`, `BuildEffectiveMetadata` registers the profile `default_scopes` and pairs a default
+`offline_access` with the `refresh_token` grant. Attempt budget rejections wrap `ErrRateLimited` with a classified
+cause (`source_window_limit`, `source_daily_limit`, `global_window_limit`) that is written to the registration audit.
+
 Refresh support is opt-in per registration and requires both `grant_types` containing `refresh_token` and `scope`
-containing `offline_access`. Refresh families rotate with an atomic Redis consume-and-issue transition. Reuse of a
+containing `offline_access`, either explicitly or through the profile defaults described above. Refresh families rotate with an atomic Redis consume-and-issue transition. Reuse of a
 consumed ancestor revokes the active family descendant.
 
 This profile covers the RFC 8252 loopback behavior in sections 7.3, 8.3, and 8.4. It does not implement claimed HTTPS

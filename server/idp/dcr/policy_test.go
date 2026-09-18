@@ -48,6 +48,61 @@ func TestRuntimePolicyNarrowsStoredDynamicClient(t *testing.T) {
 	}
 }
 
+func TestRuntimePolicyAppliesProfileClaimsTokenTypeAndImpliedScopes(t *testing.T) {
+	record := runtimePolicyTestRecord()
+	record.Scope = "openid offline_access profile roles"
+	mapping := []config.OIDCClaimMapping{{Claim: "roles", Attribute: "memberOf", Type: "string_array"}}
+	policy := config.OIDCDynamicClientRegistrationConfig{
+		Enabled:            true,
+		RequiredScopes:     []string{"openid"},
+		OptionalScopes:     []string{"offline_access", "profile", "roles", "groups"},
+		ImpliedScopes:      []string{"roles", "groups"},
+		AllowRefreshTokens: true,
+		AccessTokenType:    "jwt",
+		IDTokenClaims:      config.IDTokenClaims{Mappings: mapping},
+		AccessTokenClaims:  config.AccessTokenClaims{Mappings: mapping},
+	}
+
+	client, err := NewRuntimePolicy(policy).Resolve(record)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if client.GetAccessTokenType("opaque") != "jwt" {
+		t.Fatalf("access token type = %q, want jwt", client.AccessTokenType)
+	}
+
+	if !slices.Equal(client.IDTokenClaims.GetMappings(), mapping) || !slices.Equal(client.AccessTokenClaims.GetMappings(), mapping) {
+		t.Fatalf("Resolve() did not apply profile claim mappings: %+v", client)
+	}
+
+	// Implied scopes are limited to scopes registered for this client.
+	if !slices.Equal(client.GetImpliedScopes(), []string{"roles"}) {
+		t.Fatalf("implied scopes = %v, want registered subset [roles]", client.GetImpliedScopes())
+	}
+
+	policy.IDTokenClaims.Mappings[0].Claim = "mutated"
+	if client.IDTokenClaims.GetMappings()[0].Claim != "roles" {
+		t.Fatal("Resolve() shares claim mapping storage with the runtime policy")
+	}
+}
+
+func TestRuntimePolicyKeepsOpaqueTokensWithoutProfileOverrides(t *testing.T) {
+	client, err := NewRuntimePolicy(config.OIDCDynamicClientRegistrationConfig{
+		Enabled:            true,
+		RequiredScopes:     []string{"openid"},
+		OptionalScopes:     []string{"offline_access", "mail:imap"},
+		AllowRefreshTokens: true,
+	}).Resolve(runtimePolicyTestRecord())
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if client.GetAccessTokenType("jwt") != "opaque" || len(client.IDTokenClaims.GetMappings()) != 0 || len(client.GetImpliedScopes()) != 0 {
+		t.Fatalf("Resolve() = %+v, want opaque tokens without claims or implied scopes", client)
+	}
+}
+
 func TestRuntimePolicyRejectsUnknownProfileVersion(t *testing.T) {
 	record := runtimePolicyTestRecord()
 	record.ProfileVersion++

@@ -37,7 +37,7 @@ return 1
 
 const registrationAttemptScript = `
 if tonumber(redis.call('GET', KEYS[1]) or '0') >= tonumber(ARGV[1]) then return 2 end
-if tonumber(redis.call('GET', KEYS[2]) or '0') >= tonumber(ARGV[2]) then return 2 end
+if tonumber(redis.call('GET', KEYS[2]) or '0') >= tonumber(ARGV[2]) then return 4 end
 if tonumber(redis.call('GET', KEYS[3]) or '0') >= tonumber(ARGV[3]) then return 3 end
 local source_count = redis.call('INCR', KEYS[1])
 if source_count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[4]) end
@@ -56,6 +56,13 @@ redis.call('SET', KEYS[1], ARGV[4], 'KEEPTTL')
 redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
 return 1
 `
+
+// attemptRateLimitCauses maps registrationAttemptScript rejection codes to classified causes.
+var attemptRateLimitCauses = map[int64]error{
+	2: ErrSourceWindowRateLimited,
+	3: ErrGlobalRateLimited,
+	4: ErrSourceDailyRateLimited,
+}
 
 // Repository stores dynamic clients and always resolves them from the authoritative write handle.
 type Repository struct {
@@ -99,8 +106,8 @@ func (r *Repository) ReserveAttempt(ctx context.Context, sourceHash string, limi
 		return nil
 	}
 
-	if result == 2 || result == 3 {
-		return ErrRateLimited
+	if cause, limited := attemptRateLimitCauses[result]; limited {
+		return fmt.Errorf("%w: %w", ErrRateLimited, cause)
 	}
 
 	return fmt.Errorf("%w: unexpected attempt result %d", ErrUnavailable, result)

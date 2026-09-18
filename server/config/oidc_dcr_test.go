@@ -83,6 +83,31 @@ func TestValidateIDPOIDCDynamicClientRegistrationAcceptsValidProfile(t *testing.
 	}
 }
 
+func TestValidateIDPOIDCDynamicClientRegistrationAcceptsApplicationProfileDefaults(t *testing.T) {
+	settings := validOIDCDynamicClientRegistrationSettings()
+	settings.IDP.OIDC.CustomScopes = []Oauth2CustomScope{{Name: "roles"}}
+	registration := &settings.IDP.OIDC.DynamicClientRegistration
+	registration.OptionalScopes = []string{"offline_access", "profile", "roles"}
+	registration.DefaultScopes = []string{"openid", "offline_access", "profile", "roles"}
+	registration.ImpliedScopes = []string{"roles"}
+	registration.AccessTokenType = "JWT"
+	registration.IDTokenClaims = IDTokenClaims{Mappings: []OIDCClaimMapping{{Claim: "roles", Attribute: "memberOf", Type: "string_array"}}}
+
+	if err := settings.validateIDPOIDCDynamicClientRegistration(); err != nil {
+		t.Fatalf("validateIDPOIDCDynamicClientRegistration() error = %v", err)
+	}
+
+	if got := registration.GetAccessTokenType(); got != "jwt" {
+		t.Fatalf("GetAccessTokenType() = %q, want normalized jwt", got)
+	}
+}
+
+func TestOIDCDynamicClientRegistrationAccessTokenTypeDefaultsToOpaque(t *testing.T) {
+	if got := (OIDCDynamicClientRegistrationConfig{}).GetAccessTokenType(); got != "opaque" {
+		t.Fatalf("GetAccessTokenType() = %q, want opaque", got)
+	}
+}
+
 func TestValidateIDPOIDCDynamicClientRegistrationDisabledHasNoRequirements(t *testing.T) {
 	settings := &FileSettings{IDP: &IDPSection{}}
 
@@ -251,6 +276,41 @@ func TestValidateIDPOIDCDynamicClientRegistrationRejectsUnsafeProfiles(t *testin
 				settings.IDP.OIDC.TokenEndpointAuthMethodsSupported = []string{"client_secret_basic"}
 			},
 			wantErr: "identity.oidc.token_endpoint_auth_methods_supported",
+		},
+		{
+			name: "default scope outside allowlist",
+			mutate: func(settings *FileSettings) {
+				settings.IDP.OIDC.DynamicClientRegistration.DefaultScopes = []string{"openid", "profile"}
+			},
+			wantErr: "identity.oidc.dynamic_client_registration.default_scopes",
+		},
+		{
+			name: "duplicate default scope",
+			mutate: func(settings *FileSettings) {
+				settings.IDP.OIDC.DynamicClientRegistration.DefaultScopes = []string{"openid", "openid"}
+			},
+			wantErr: "identity.oidc.dynamic_client_registration.default_scopes",
+		},
+		{
+			name: "implied scope outside allowlist",
+			mutate: func(settings *FileSettings) {
+				settings.IDP.OIDC.DynamicClientRegistration.ImpliedScopes = []string{"profile"}
+			},
+			wantErr: "identity.oidc.dynamic_client_registration.implied_scopes",
+		},
+		{
+			name: "implied offline access",
+			mutate: func(settings *FileSettings) {
+				settings.IDP.OIDC.DynamicClientRegistration.ImpliedScopes = []string{"offline_access"}
+			},
+			wantErr: "identity.oidc.dynamic_client_registration.implied_scopes",
+		},
+		{
+			name: "unknown access token type",
+			mutate: func(settings *FileSettings) {
+				settings.IDP.OIDC.DynamicClientRegistration.AccessTokenType = "paseto"
+			},
+			wantErr: "identity.oidc.dynamic_client_registration.access_token_type",
 		},
 		{
 			name: "reserved static client prefix",

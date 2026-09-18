@@ -68,7 +68,7 @@ func (h *OIDCHandler) RegisterDynamicClient(ctx *gin.Context) { //nolint:funlen
 	source := registrationSource(ctx)
 	if err := h.registrationService.ReserveAttempt(ctx.Request.Context(), source); err != nil {
 		if errors.Is(err, dcr.ErrRateLimited) {
-			writeRegistrationHTTPError(ctx, http.StatusTooManyRequests)
+			writeRegistrationRateLimited(ctx, err)
 		} else {
 			writeRegistrationHTTPError(ctx, http.StatusServiceUnavailable)
 		}
@@ -212,6 +212,15 @@ func writeRegistrationHTTPError(ctx *gin.Context, status int) {
 	setRegistrationAuditResult(ctx, "failed", http.StatusText(status), "")
 	ctx.JSON(status, gin.H{definitions.LogKeyError: http.StatusText(status)})
 	observeRegistration("failed", http.StatusText(status))
+}
+
+// writeRegistrationRateLimited returns the generic 429 while auditing the classified limit cause.
+func writeRegistrationRateLimited(ctx *gin.Context, err error) {
+	writeRegistrationHTTPError(ctx, http.StatusTooManyRequests)
+
+	if reason := dcr.RateLimitReason(err); reason != "" {
+		ctx.Set(registrationAuditReasonKey, reason)
+	}
 }
 
 // setRegistrationAuditResult stores only bounded fields for deferred structured logging.

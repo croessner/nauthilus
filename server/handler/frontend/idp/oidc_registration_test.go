@@ -16,9 +16,11 @@
 package idp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -89,6 +91,33 @@ func TestOIDCRegistrationHTTPMatrix(t *testing.T) {
 
 			assertRegistrationNoStoreHeaders(t, response)
 		})
+	}
+}
+
+func TestOIDCRegistrationAuditsRateLimitCause(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		reason string
+	}{
+		{err: fmt.Errorf("%w: %w", dcr.ErrRateLimited, dcr.ErrSourceDailyRateLimited), reason: "source_daily_limit"},
+		{err: dcr.ErrRateLimited, reason: "Too Many Requests"},
+	} {
+		var logs bytes.Buffer
+
+		router := newRegistrationTestRouterWithLogger(t, registrationServiceStub{reserveErr: test.err}, slog.New(slog.NewJSONHandler(&logs, nil)))
+		request := httptest.NewRequest(http.MethodPost, oidcRegistrationEndpointPath, strings.NewReader(validRegistrationBody()))
+		request.Header.Set("Content-Type", "application/json")
+
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		if response.Code != http.StatusTooManyRequests || !strings.Contains(response.Body.String(), "Too Many Requests") {
+			t.Fatalf("response = %d %s, want generic 429", response.Code, response.Body.String())
+		}
+
+		if !strings.Contains(logs.String(), `"reason":"`+test.reason+`"`) {
+			t.Fatalf("audit log lacks reason %q: %s", test.reason, logs.String())
+		}
 	}
 }
 
@@ -170,6 +199,13 @@ func TestOIDCRegistrationWrongMethodReturns405(t *testing.T) {
 // newRegistrationTestRouter creates an enabled handler with an isolated service boundary.
 func newRegistrationTestRouter(t *testing.T, service dynamicRegistrationService) *gin.Engine {
 	t.Helper()
+
+	return newRegistrationTestRouterWithLogger(t, service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// newRegistrationTestRouterWithLogger creates an enabled handler that writes audit records to logger.
+func newRegistrationTestRouterWithLogger(t *testing.T, service dynamicRegistrationService, logger *slog.Logger) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	cfg := &mockOIDCCfg{
@@ -185,7 +221,7 @@ func newRegistrationTestRouter(t *testing.T, service dynamicRegistrationService)
 		Cfg:         cfg,
 		Env:         config.NewTestEnvironmentConfig(),
 		LangManager: &mockLangManager{},
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      logger,
 		Redis:       rediscli.NewTestClient(db),
 	}
 	util.SetDefaultEnvironment(dependencies.Env)

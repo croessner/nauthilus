@@ -30,6 +30,9 @@ const (
 	oidcDCRProfileMailClientV1 = "mail-client-v1"
 	oidcDCRConsentAllOrNothing = "all_or_nothing"
 	oidcDCRClientIDPrefix      = "dcr_"
+	oidcDCRAccessTokenOpaque   = "opaque"
+	oidcDCRAccessTokenJWT      = "jwt"
+	oidcDCRPath                = "identity.oidc.dynamic_client_registration."
 
 	oidcDCRProfileVersion             = 1
 	oidcDCRMinimumSourceHMACKeyBytes  = 32
@@ -68,8 +71,13 @@ const (
 type OIDCDynamicClientRegistrationConfig struct {
 	RequiredScopes       []string                               `mapstructure:"required_scopes"`
 	OptionalScopes       []string                               `mapstructure:"optional_scopes"`
+	DefaultScopes        []string                               `mapstructure:"default_scopes"`
+	ImpliedScopes        []string                               `mapstructure:"implied_scopes"`
+	IDTokenClaims        IDTokenClaims                          `mapstructure:"id_token_claims" validate:"omitempty"`
+	AccessTokenClaims    AccessTokenClaims                      `mapstructure:"access_token_claims" validate:"omitempty"`
 	Profile              string                                 `mapstructure:"profile"`
 	ConsentMode          string                                 `mapstructure:"consent_mode"`
+	AccessTokenType      string                                 `mapstructure:"access_token_type"`
 	SourceHMACKey        secret.Value                           `mapstructure:"source_hmac_key"`
 	Limits               OIDCDynamicClientRegistrationLimits    `mapstructure:"limits"`
 	Lifecycle            OIDCDynamicClientRegistrationLifecycle `mapstructure:"lifecycle"`
@@ -106,12 +114,17 @@ type OIDCDynamicClientRegistrationLifecycle struct {
 
 // String formats dynamic registration configuration without exposing source-key material.
 func (c OIDCDynamicClientRegistrationConfig) String() string {
-	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v AllowRefreshTokens:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
+	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
 		c.Enabled,
 		c.GetProfile(),
 		c.GetProfileVersion(),
 		c.RequiredScopes,
 		c.OptionalScopes,
+		c.DefaultScopes,
+		c.ImpliedScopes,
+		c.GetAccessTokenType(),
+		len(c.IDTokenClaims.Mappings),
+		len(c.AccessTokenClaims.Mappings),
 		c.AllowRefreshTokens,
 		c.GetConsentMode(),
 		c.RequiredMFALevel,
@@ -149,7 +162,16 @@ func (c OIDCDynamicClientRegistrationConfig) GetConsentMode() string {
 	return c.ConsentMode
 }
 
-// GetAccessTokenLifetime returns the configured opaque access-token lifetime.
+// GetAccessTokenType returns the normalized access-token format issued to dynamic clients.
+func (c OIDCDynamicClientRegistrationConfig) GetAccessTokenType() string {
+	if c.AccessTokenType == "" {
+		return oidcDCRAccessTokenOpaque
+	}
+
+	return strings.ToLower(c.AccessTokenType)
+}
+
+// GetAccessTokenLifetime returns the configured dynamic-client access-token lifetime.
 func (c OIDCDynamicClientRegistrationConfig) GetAccessTokenLifetime() time.Duration {
 	return defaultDuration(c.AccessTokenLifetime, oidcDCRDefaultAccessTokenLifetime)
 }
@@ -280,6 +302,14 @@ func (f *FileSettings) validateIDPOIDCDynamicClientRegistration() error { //noli
 		return err
 	}
 
+	if err := validateOIDCDCRProfileDefaults(registration); err != nil {
+		return err
+	}
+
+	if accessTokenType := registration.GetAccessTokenType(); accessTokenType != oidcDCRAccessTokenOpaque && accessTokenType != oidcDCRAccessTokenJWT {
+		return NewValidationProblem(oidcDCRPath+"access_token_type", "must be opaque or jwt")
+	}
+
 	if err := validateOIDCDCRLifetimes(registration); err != nil {
 		return err
 	}
@@ -391,6 +421,40 @@ func validateOIDCDCRScopes(oidc *OIDCConfig, registration OIDCDynamicClientRegis
 		if !supported[scope] {
 			return NewValidationProblem("identity.oidc.dynamic_client_registration.optional_scopes", fmt.Sprintf("scope %q is not supported by the provider", scope))
 		}
+	}
+
+	return nil
+}
+
+// validateOIDCDCRProfileDefaults keeps default and implied scopes inside the registration allowlist.
+func validateOIDCDCRProfileDefaults(registration OIDCDynamicClientRegistrationConfig) error {
+	allowed := make(map[string]bool, len(registration.RequiredScopes)+len(registration.OptionalScopes))
+	for _, scope := range append(slices.Clone(registration.RequiredScopes), registration.OptionalScopes...) {
+		allowed[scope] = true
+	}
+
+	for _, list := range []struct {
+		path   string
+		scopes []string
+	}{
+		{oidcDCRPath + "default_scopes", registration.DefaultScopes},
+		{oidcDCRPath + "implied_scopes", registration.ImpliedScopes},
+	} {
+		scopes, err := validateOIDCDCRScopeList(list.path, list.scopes)
+		if err != nil {
+			return err
+		}
+
+		for scope := range scopes {
+			if !allowed[scope] {
+				return NewValidationProblem(list.path, fmt.Sprintf("scope %q is not in required_scopes or optional_scopes", scope))
+			}
+		}
+	}
+
+	// Refresh capability must stay an explicit registration decision, never an authorization-time side effect.
+	if slices.Contains(registration.ImpliedScopes, definitions.ScopeOfflineAccess) {
+		return NewValidationProblem(oidcDCRPath+"implied_scopes", "offline_access must not be implied")
 	}
 
 	return nil

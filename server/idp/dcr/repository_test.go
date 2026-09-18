@@ -94,6 +94,42 @@ func TestRegistrationServiceEnforcesAtomicSourceRateLimit(t *testing.T) {
 	}
 }
 
+func TestReserveAttemptClassifiesExhaustedBudget(t *testing.T) {
+	tests := []struct {
+		configure func(*config.OIDCDynamicClientRegistrationLimits)
+		want      error
+		name      string
+		reason    string
+	}{
+		{name: "source window", configure: func(l *config.OIDCDynamicClientRegistrationLimits) { l.SourceRegistrations = 1 }, want: ErrSourceWindowRateLimited, reason: "source_window_limit"},
+		{name: "source day", configure: func(l *config.OIDCDynamicClientRegistrationLimits) { l.SourceDailyRegistrations = 1 }, want: ErrSourceDailyRateLimited, reason: "source_daily_limit"},
+		{name: "global window", configure: func(l *config.OIDCDynamicClientRegistrationLimits) { l.GlobalRegistrations = 1 }, want: ErrGlobalRateLimited, reason: "global_window_limit"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
+			policy := repositoryTestPolicy()
+			test.configure(&policy.Limits)
+			service := NewRegistrationService(NewRepository(rediscli.NewTestClient(handle), "test:", policy.GetLifecycle()), policy)
+
+			if err := service.ReserveAttempt(context.Background(), "192.0.2.10"); err != nil {
+				t.Fatalf("first ReserveAttempt() error = %v", err)
+			}
+
+			err := service.ReserveAttempt(context.Background(), "192.0.2.10")
+			if !errors.Is(err, test.want) || !errors.Is(err, ErrRateLimited) {
+				t.Fatalf("second ReserveAttempt() error = %v, want %v wrapping ErrRateLimited", err, test.want)
+			}
+
+			if got := RateLimitReason(err); got != test.reason {
+				t.Fatalf("RateLimitReason() = %q, want %q", got, test.reason)
+			}
+		})
+	}
+}
+
 func TestRegisterDoesNotPerformUnboundedExpiredCleanup(t *testing.T) {
 	server := miniredis.RunT(t)
 	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
