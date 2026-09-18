@@ -309,12 +309,20 @@ func (n *NauthilusIDP) validateDynamicSessionPolicy(client *config.OIDCClient, s
 		return nil
 	}
 
-	filteredScopes := n.FilterScopes(client, session.Scopes)
-	if !slices.Equal(filteredScopes, session.Scopes) || client.RequiredMFALevel > session.RequiredMFALevel {
+	if client.RequiredMFALevel > session.RequiredMFALevel {
 		return fmt.Errorf("dynamic client policy changed; authorization must restart")
 	}
 
-	if slices.Contains(session.Scopes, definitions.ScopeOfflineAccess) && !client.SupportsGrantType(dcr.GrantRefreshToken) {
+	return n.validateDynamicScopePolicy(client, session.Scopes)
+}
+
+// validateDynamicScopePolicy rejects granted scopes or refresh capability the current dynamic policy no longer allows.
+func (n *NauthilusIDP) validateDynamicScopePolicy(client *config.OIDCClient, scopes []string) error {
+	if !slices.Equal(n.FilterScopes(client, scopes), scopes) {
+		return fmt.Errorf("dynamic client policy changed; authorization must restart")
+	}
+
+	if slices.Contains(scopes, definitions.ScopeOfflineAccess) && !client.SupportsGrantType(dcr.GrantRefreshToken) {
 		return fmt.Errorf("dynamic client refresh policy changed; authorization must restart")
 	}
 
@@ -861,10 +869,10 @@ func (n *NauthilusIDP) validateDynamicJWTAccessToken(ctx context.Context, claims
 		return fmt.Errorf("dynamic client is not active: %w", err)
 	}
 
+	// MFA is enforced at authorization and re-checked on refresh against the stored session;
+	// a JWT carries no MFA level, so only scope and lifetime policy are re-validated here.
 	scopeValue, _ := claims[oidcClaimScope].(string)
-	session := &OIDCSession{ClientID: clientID, Scopes: strings.Fields(scopeValue)}
-
-	if err := n.validateDynamicSessionPolicy(client, session); err != nil {
+	if err := n.validateDynamicScopePolicy(client, strings.Fields(scopeValue)); err != nil {
 		return err
 	}
 

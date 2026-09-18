@@ -641,7 +641,8 @@ write handle; unavailable or corrupt state fails closed. Every dynamic authoriza
 `id_token_claims`/`access_token_claims` mappings, and `implied_scopes` restricted to the scopes the client registered.
 Operator changes therefore apply to existing dynamic clients without re-registration. JWT access tokens whose
 audience is a dynamic client are re-validated by `validateDynamicJWTAccessToken` against the authoritative client,
-its current scopes, and the current lifetime ceiling, matching the opaque-token checks. Refresh rotation denylists the
+its current scopes, and the current lifetime ceiling. JWTs carry no MFA level, so the MFA ceiling is enforced at
+authorization and re-checked against the stored session on refresh (`validateDynamicSessionPolicy`). Refresh rotation denylists the
 previous JWT using the resolved client, so dynamic and static clients share one invalidation path. When a client omits both `scope`
 and `grant_types`, `BuildEffectiveMetadata` registers the profile `default_scopes` and pairs a default
 `offline_access` with the `refresh_token` grant. Attempt budget rejections wrap `ErrRateLimited` with a classified

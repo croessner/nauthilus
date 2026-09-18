@@ -1335,14 +1335,24 @@ func TestValidateTokenJWTRevalidatesDynamicClientAuthoritatively(t *testing.T) {
 	const clientID = dcr.ClientIDPrefix + "jwt-policy-client"
 
 	tests := []struct {
-		expect  func(*testing.T, redismock.ClientMock)
-		name    string
-		scope   string
-		wantErr string
+		expect   func(*testing.T, redismock.ClientMock)
+		name     string
+		scope    string
+		wantErr  string
+		mfaLevel int
 	}{
 		{
 			name:  "active client",
 			scope: "openid profile",
+			expect: func(t *testing.T, mock redismock.ClientMock) {
+				expectDynamicClientRecord(t, mock, clientID, "openid profile")
+			},
+		},
+		{
+			// MFA is enforced at authorization; the JWT carries no MFA level to compare against.
+			name:     "active client with required MFA",
+			scope:    "openid profile",
+			mfaLevel: 2,
 			expect: func(t *testing.T, mock redismock.ClientMock) {
 				expectDynamicClientRecord(t, mock, clientID, "openid profile")
 			},
@@ -1367,21 +1377,22 @@ func TestValidateTokenJWTRevalidatesDynamicClientAuthoritatively(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assertDynamicJWTValidation(t, clientID, test.scope, test.expect, test.wantErr)
+			assertDynamicJWTValidation(t, clientID, test.scope, test.mfaLevel, test.expect, test.wantErr)
 		})
 	}
 }
 
 // assertDynamicJWTValidation validates one signed dynamic-client JWT against a mocked registry state.
-func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, expect func(*testing.T, redismock.ClientMock), wantErr string) {
+func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, mfaLevel int, expect func(*testing.T, redismock.ClientMock), wantErr string) {
 	t.Helper()
 
 	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
 		Issuer: testIssuer,
 		DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
-			Enabled:        true,
-			RequiredScopes: []string{definitions.ScopeOpenID},
-			OptionalScopes: []string{definitions.ScopeProfile},
+			Enabled:          true,
+			RequiredScopes:   []string{definitions.ScopeOpenID},
+			OptionalScopes:   []string{definitions.ScopeProfile},
+			RequiredMFALevel: mfaLevel,
 		},
 	})
 	mock.MatchExpectationsInOrder(false)

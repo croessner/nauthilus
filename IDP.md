@@ -196,6 +196,7 @@ disabled by default and intentionally implements a narrow profile rather than un
   under `access_token_claims`.
 - JWT access tokens of dynamic clients are validated like opaque ones at UserInfo and introspection: the client must
   still be active, the granted scopes must still be allowed, and the lifetime must not exceed the current profile.
+  MFA is enforced at authorization; a raised `required_mfa_level` applies to JWTs at the next refresh.
 - Every authorization requires user interaction and consent. Anonymous dynamic clients never inherit a previous
   consent decision.
 - Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive
