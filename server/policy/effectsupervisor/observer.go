@@ -83,9 +83,16 @@ func (o *OperationalObserver) Observe(ctx context.Context, event Event) {
 		o.audit.RecordEffect(ctx, event)
 	}
 
-	if o.logger != nil {
+	if o.logger != nil && !o.auditLogsToObserverLogger() {
 		o.logger.LogAttrs(ctx, eventLogLevel(event), "Post-action supervisor state changed", eventLogAttributes(event)...)
 	}
+}
+
+// auditLogsToObserverLogger avoids duplicate records when the audit already uses this logger.
+func (o *OperationalObserver) auditLogsToObserverLogger() bool {
+	sink, ok := o.audit.(*LoggingAuditSink)
+
+	return ok && sink != nil && sink.logger == o.logger
 }
 
 // eventTraceAttributes returns redacted correlation attributes for one transition.

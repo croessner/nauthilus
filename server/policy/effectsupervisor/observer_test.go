@@ -64,3 +64,38 @@ func TestOperationalObserverKeepsCorrelationOutOfMetricLabels(t *testing.T) {
 		t.Fatalf("controlled audit lacks effect classification: %s", logOutput)
 	}
 }
+
+func TestOperationalObserverLogsFailureOnceWithSharedAuditLogger(t *testing.T) {
+	for _, state := range []State{StateFailed, StateOutcomeUnknown} {
+		t.Run(string(state), func(t *testing.T) {
+			var logs bytes.Buffer
+
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			observer := NewOperationalObserver(logger, nil, NewLoggingAuditSink(logger))
+			observer.Observe(t.Context(), Event{State: state, DecisionID: testDecisionID, ErrorClass: "saturated"})
+
+			if got := strings.Count(logs.String(), "\n"); got != 1 {
+				t.Fatalf("one failed transition produced %d log records, want one", got)
+			}
+
+			if !strings.Contains(logs.String(), `"audit_class":"policy_effect"`) {
+				t.Fatal("deduplicated failure lost its audit classification")
+			}
+		})
+	}
+}
+
+func TestOperationalObserverPreservesSeparateLoggingDestinations(t *testing.T) {
+	var operational, audit bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&operational, nil))
+	auditLogger := slog.New(slog.NewJSONHandler(&audit, nil))
+	observer := NewOperationalObserver(logger, nil, NewLoggingAuditSink(auditLogger))
+	observer.Observe(t.Context(), Event{State: StateFailed, DecisionID: testDecisionID})
+
+	for name, output := range map[string]string{"operational": operational.String(), "audit": audit.String()} {
+		if strings.Count(output, "\n") != 1 {
+			t.Fatalf("%s destination did not receive exactly one failure", name)
+		}
+	}
+}
