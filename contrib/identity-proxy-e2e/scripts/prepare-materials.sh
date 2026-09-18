@@ -8,7 +8,27 @@ KEY_DIR="${WORK_DIR}/keys"
 
 mkdir -p "${CERT_DIR}" "${KEY_DIR}"
 
-if [[ "${NAUTHILUS_E2E_FORCE:-}" != "1" && -f "${CERT_DIR}/e2e-ca.crt" && -f "${CERT_DIR}/edge-http.crt" ]]; then
+CERT_NAMES=(e2e-ca authority-server edge-http edge-client edge-saml)
+CERT_MIN_VALIDITY_SECONDS=86400
+
+# cached_certs_usable reports whether every generated certificate exists and
+# stays valid long enough for a full E2E run, so expired material is replaced.
+cached_certs_usable() {
+  local name
+
+  for name in "${CERT_NAMES[@]}"; do
+    if [[ ! -f "${CERT_DIR}/${name}.crt" ]]; then
+      return 1
+    fi
+
+    if ! openssl x509 -in "${CERT_DIR}/${name}.crt" -noout -checkend "${CERT_MIN_VALIDITY_SECONDS}" >/dev/null; then
+      echo "Generated certificate ${name}.crt expires within ${CERT_MIN_VALIDITY_SECONDS}s; regenerating material."
+      return 1
+    fi
+  done
+}
+
+if [[ "${NAUTHILUS_E2E_FORCE:-}" != "1" ]] && cached_certs_usable; then
   echo "Generated material already exists in ${WORK_DIR}. Set NAUTHILUS_E2E_FORCE=1 to replace it."
   exit 0
 fi
