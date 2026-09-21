@@ -47,6 +47,7 @@ if ! command -v protoc-gen-go-grpc >/dev/null 2>&1; then
 fi
 
 cd "${repo_root}"
+bash "${script_dir}/check-protobuf-toolchain.sh"
 
 output_root="${repo_root}"
 if [[ "${check_mode}" == true ]]; then

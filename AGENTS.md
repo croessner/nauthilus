@@ -32,6 +32,7 @@ This document captures practical, project-specific details to build, configure, 
 - Toolchain and modules
   - Go version: the module sets go 1.27 (see go.mod). Use exactly Go 1.27.1; changing the toolchain requires an explicit contract update.
   - Lint version: local and CI guardrails require golangci-lint 2.13.1.
+  - Protobuf generation: use protoc 36.1 and the Go generator versions pinned in scripts/protobuf-toolchain.env. Local generation and CI enforce these versions.
   - Vendor mode: the Makefile builds with -mod=vendor. Keep vendor/ in sync (go mod vendor) when updating deps.
 - Makefile targets (preferred workflow)
   - make build: builds server binary to nauthilus/bin/nauthilus with trimpath and ldflags that set main.version and main.buildTime.
