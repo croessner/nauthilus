@@ -65,8 +65,8 @@ jobs:
             --pattern "protoc-${PROTOC_VERSION}-linux-x86_64.zip" --dir "$RUNNER_TEMP"
           unzip -q "$RUNNER_TEMP/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -d "$RUNNER_TEMP/protoc"
           echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
-          GOFLAGS= go install "google.golang.org/protobuf/cmd/protoc-gen-go@v${PROTOC_GEN_GO_VERSION}"
-          GOFLAGS= go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v${PROTOC_GEN_GO_GRPC_VERSION}"
+          GOFLAGS=-mod=mod go install "google.golang.org/protobuf/cmd/protoc-gen-go@v${PROTOC_GEN_GO_VERSION}"
+          GOFLAGS=-mod=mod go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v${PROTOC_GEN_GO_GRPC_VERSION}"
 
       - name: Verify protobuf generation and public wire compatibility
         run: make generate-grpc-proto-check grpc-proto-compatibility-check
