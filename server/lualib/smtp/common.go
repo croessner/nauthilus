@@ -18,7 +18,7 @@ package smtp
 import "io"
 
 // sendEmailContent sends an email using the provided GenericClient, sender address, recipient list, and message content.
-// It handles connection setup, message transmission, and cleanup, returning an error if any step fails.
+// It returns success once the server acknowledges DATA; QUIT cannot undo acceptance.
 func sendEmailContent(genericClient GenericClient, from string, to []string, msg []byte) error {
 	var (
 		wc  io.WriteCloser
@@ -50,10 +50,8 @@ func sendEmailContent(genericClient GenericClient, from string, to []string, msg
 		return err
 	}
 
-	err = genericClient.Quit()
-	if err != nil {
-		return err
-	}
+	// A failed session shutdown must not cause a retry of an accepted message.
+	_ = genericClient.Quit()
 
 	return nil
 }

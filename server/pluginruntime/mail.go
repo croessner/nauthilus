@@ -123,6 +123,7 @@ func (f *MailFacade) Send(ctx context.Context, message pluginapi.MailMessage) er
 	}
 
 	started := time.Now()
+	prepared.options.Context = ctx
 	sender := f.sender
 
 	if sender == nil {

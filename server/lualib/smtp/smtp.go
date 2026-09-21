@@ -16,23 +16,20 @@
 package smtp
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"net/smtp"
 )
 
-// runSendSMTPMail establishes an SMTP connection and sends an email using provided parameters with optional TLS/StartTLS.
-func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from string, to []string, msg []byte, useTLS bool, useStartTLS bool) error {
-	genericClient, err := newSMTPGenericClient(smtpServer, heloName, useTLS, useStartTLS)
+// runSendSMTPMailContext keeps SMTP I/O within the originating operation lifetime.
+func runSendSMTPMailContext(ctx context.Context, smtpServer string, heloName string, auth smtp.Auth, from string, to []string, msg []byte, useTLS bool, useStartTLS bool) error {
+	genericClient, err := newSMTPGenericClientContext(ctx, smtpServer, heloName, useTLS, useStartTLS)
 	if err != nil {
 		return err
 	}
 
 	defer closeSMTPClient(genericClient)
-
-	if err := genericClient.Hello(heloName); err != nil {
-		return err
-	}
 
 	if auth != nil {
 		if err := genericClient.Auth(auth); err != nil {
@@ -43,14 +40,33 @@ func runSendSMTPMail(smtpServer string, heloName string, auth smtp.Auth, from st
 	return sendEmailContent(genericClient, from, to, msg)
 }
 
-// newSMTPGenericClient creates a plain, STARTTLS, or direct TLS SMTP client.
-func newSMTPGenericClient(smtpServer string, heloName string, useTLS bool, useStartTLS bool) (GenericClient, error) {
-	tlsConfig := smtpTLSConfig(smtpServer, useTLS)
-	if !useTLS || useStartTLS {
-		return newPlainOrStartTLSClient(smtpServer, heloName, tlsConfig, useStartTLS)
+// newSMTPGenericClientContext configures a bounded verified SMTP connection.
+func newSMTPGenericClientContext(ctx context.Context, server, helo string, useTLS, startTLS bool) (GenericClient, error) {
+	conn, err := dialMailConnection(ctx, server, useTLS && !startTLS)
+	if err != nil {
+		return nil, err
 	}
 
-	return newDirectTLSClient(smtpServer, tlsConfig)
+	host, _, _ := net.SplitHostPort(server)
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		_ = conn.Close()
+
+		return nil, err
+	}
+
+	if err = client.Hello(helo); err == nil && startTLS {
+		err = client.StartTLS(smtpTLSConfig(server, true))
+	}
+
+	if err != nil {
+		_ = client.Close()
+
+		return nil, err
+	}
+
+	return client, nil
 }
 
 // smtpTLSConfig returns TLS config when TLS is enabled.
@@ -67,49 +83,7 @@ func smtpTLSConfig(smtpServer string, useTLS bool) *tls.Config {
 	}
 }
 
-// newPlainOrStartTLSClient creates a plain SMTP client and optionally upgrades it.
-func newPlainOrStartTLSClient(smtpServer string, heloName string, tlsConfig *tls.Config, useStartTLS bool) (GenericClient, error) {
-	genericClient, err := smtp.Dial(smtpServer)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := genericClient.Hello(heloName); err != nil {
-		closeSMTPClient(genericClient)
-
-		return nil, err
-	}
-
-	if useStartTLS {
-		if err := genericClient.StartTLS(tlsConfig); err != nil {
-			closeSMTPClient(genericClient)
-
-			return nil, err
-		}
-	}
-
-	return genericClient, nil
-}
-
-// newDirectTLSClient creates an SMTP client over an immediate TLS connection.
-func newDirectTLSClient(smtpServer string, tlsConfig *tls.Config) (GenericClient, error) {
-	conn, err := tls.Dial("tcp", smtpServer, tlsConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	genericClient, err := smtp.NewClient(conn, smtpServer)
-	if err != nil {
-		_ = conn.Close()
-
-		return nil, err
-	}
-
-	return genericClient, nil
-}
-
 // closeSMTPClient closes the SMTP session best-effort.
 func closeSMTPClient(genericClient GenericClient) {
-	_ = genericClient.Quit()
 	_ = genericClient.Close()
 }

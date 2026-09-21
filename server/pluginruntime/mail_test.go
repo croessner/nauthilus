@@ -281,6 +281,12 @@ func assertMailOptionsMatchMessage(t *testing.T, options *smtp.MailOptions, mess
 		message.LMTP,
 	)
 
+	if options.Context == nil {
+		t.Fatal("mail context was not propagated")
+	}
+
+	want.Context = options.Context
+
 	if !reflect.DeepEqual(options, want) {
 		t.Fatalf("mail options = %#v, want %#v", options, want)
 	}

@@ -18,6 +18,7 @@ package smtp
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/mail"
 	"net/smtp"
@@ -54,11 +55,28 @@ func (s *EmailClient) SendMail(options *MailOptions) error {
 		return fmt.Errorf("options is nil")
 	}
 
-	if options.LMTP {
-		return SendMail(options, runSendLMTPMail)
+	ctx := options.Context
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	return SendMail(options, runSendSMTPMail)
+	ctx, cancel := context.WithTimeout(ctx, mailOperationTimeout)
+	defer cancel()
+
+	send := func(server, helo string, auth smtp.Auth, from string, to []string, body []byte, useTLS, startTLS bool) error {
+		if options.LMTP {
+			return runSendLMTPMailContext(ctx, server, helo, auth, from, to, body, useTLS, startTLS)
+		}
+
+		return runSendSMTPMailContext(ctx, server, helo, auth, from, to, body, useTLS, startTLS)
+	}
+
+	err := SendMail(options, send)
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	return err
 }
 
 // SendMail sends an email using the provided MailOptions and InternalSendMailFunc.

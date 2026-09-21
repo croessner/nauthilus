@@ -16,6 +16,7 @@
 package smtp
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -133,40 +134,19 @@ func (l *LMTPClient) Quit() error {
 	return err
 }
 
-// runSendLMTPMail connects to an LMTP server, sends the email using provided parameters, and handles TLS if enabled.
-// Returns an error if connection, authentication, or message transmission fails.
-func runSendLMTPMail(lmtpServer string, heloName string, _ smtp.Auth, from string, to []string, msg []byte, useTLS bool, _ bool) error {
-	var (
-		genericClient GenericClient
-		tlsConfig     *tls.Config
-		conn          net.Conn
-		err           error
-	)
-
-	if useTLS {
-		host, _, _ := net.SplitHostPort(lmtpServer)
-		tlsConfig = &tls.Config{
-			ServerName: host,
-			MinVersion: tls.VersionTLS12,
-		}
-
-		conn, err = tls.Dial("tcp", lmtpServer, tlsConfig)
-		if err != nil {
-			return err
-		}
-	} else {
-		conn, err = net.Dial("tcp", lmtpServer)
-		if err != nil {
-			return err
-		}
+// runSendLMTPMailContext keeps LMTP I/O within the originating operation lifetime.
+func runSendLMTPMailContext(ctx context.Context, lmtpServer string, heloName string, _ smtp.Auth, from string, to []string, msg []byte, useTLS bool, _ bool) error {
+	conn, err := dialMailConnection(ctx, lmtpServer, useTLS)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = conn.Close() }()
 
-	genericClient, err = NewLMTPClient(conn)
+	genericClient, err := NewLMTPClient(conn)
 	if err != nil {
 		return err
 	}
 
-	defer func() { _ = genericClient.Quit() }()
 	defer func() { _ = genericClient.Close() }()
 
 	if err = genericClient.Hello(heloName); err != nil {

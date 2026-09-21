@@ -39,6 +39,9 @@ func TestPostActionResponseCompletionMiddlewareReleasesAfterInnerReturn(t *testi
 	innerReturned := atomic.Bool{}
 	releasedAfterInnerReturn := make(chan bool, 1)
 
+	finishEffect := make(chan struct{})
+	defer close(finishEffect)
+
 	engine.Use(postActionResponseCompletionMiddleware())
 	engine.Use(func(ctx *gin.Context) {
 		defer innerReturned.Store(true)
@@ -56,6 +59,8 @@ func TestPostActionResponseCompletionMiddlewareReleasesAfterInnerReturn(t *testi
 			<-executionDone
 
 			releasedAfterInnerReturn <- innerReturned.Load()
+			// The response must complete while this post-action is still blocked.
+			<-finishEffect
 		}()
 
 		ctx.Status(http.StatusNoContent)

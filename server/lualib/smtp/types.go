@@ -16,6 +16,7 @@
 package smtp
 
 import (
+	"context"
 	"crypto/tls"
 	"io"
 	"net/smtp"
@@ -50,6 +51,9 @@ type GenericClient interface {
 
 // MailOptions represents configuration options for sending an email, including server settings, credentials, and email content.
 type MailOptions struct {
+	// Context bounds the complete send, including connection setup and replies.
+	Context context.Context
+
 	// Server represents the SMTP server address for sending an email.
 	Server string
 
