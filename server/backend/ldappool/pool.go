@@ -1434,9 +1434,15 @@ func (l *ldapPoolImpl) handleTypedLDAPSearchError(
 		return false
 	}
 
-	if isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded) {
+	switch {
+	case isTimeoutErr(err) || ldapError.ResultCode == uint16(ldap.LDAPResultTimeLimitExceeded):
 		ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
-	} else {
+	case isTransportError(err):
+		// Typed errors carry transport failures too, most visibly result code
+		// 200 "Network Error". Unwrapping to ldapError.Err would hand the
+		// caller a bare string that no layer can classify any more.
+		ldapReply.Err = errors.ErrBackendTemporaryFailure.WithDetail(err.Error())
+	default:
 		ldapReply.Err = ldapError.Err
 	}
 
@@ -1620,11 +1626,7 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 
 	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
-		if isTimeoutErr(err) || isLDAPTimeLimitExceeded(err) {
-			ldapReply.Err = errors.ErrLDAPBindTimeout.WithDetail(err.Error())
-		} else {
-			ldapReply.Err = err
-		}
+		ldapReply.Err = classifyBindError(err)
 
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()
 		bsp.RecordError(err)
@@ -1635,8 +1637,19 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 		ldapPool.conn[index].conn.unbind()
 	*/
 
-	if ctxErr := ldapAuthRequest.HTTPClientContext.Err(); ctxErr != nil {
-		ldapReply.Err = ctxErr
+	// Only report the context error when the bind itself said nothing. A bind
+	// that already returned a result code - above all invalid credentials -
+	// gave a definitive answer that a late cancellation must not overwrite.
+	//
+	// This protects the verdict only while a caller is still listening. The
+	// caller waits on the bind timeout, so against a directory that is slow
+	// rather than broken it gives up first, and a rejection that arrives
+	// afterwards lands in the reply buffer uncounted. That is the deliberate
+	// trade: a bind nobody waited for is not evidence of a wrong password.
+	if ldapReply.Err == nil {
+		if ctxErr := ldapAuthRequest.HTTPClientContext.Err(); ctxErr != nil {
+			ldapReply.Err = ctxErr
+		}
 	}
 }
 
@@ -1718,11 +1731,32 @@ func isTimeoutErr(err error) bool {
 
 	// Fallback by message
 	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded") {
+	if strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out") || strings.Contains(msg, "deadline exceeded") {
 		return true
 	}
 
 	return false
+}
+
+// classifyBindError labels a failed bind so later layers can tell a rejected
+// password from a bind that never happened.
+//
+// This matters beyond diagnostics: an unclassified error is read further up as
+// a credential rejection and counted against the client's address, so a
+// directory outage would ban the very users it locked out.
+func classifyBindError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case isTimeoutErr(err) || isLDAPTimeLimitExceeded(err):
+		return errors.ErrLDAPBindTimeout.WithDetail(err.Error())
+	case isTransportError(err):
+		// The bind never reached the directory, so this failure says nothing
+		// about the password.
+		return errors.ErrBackendTemporaryFailure.WithDetail(err.Error())
+	default:
+		return err
+	}
 }
 
 // isLDAPTimeLimitExceeded checks if the error corresponds to the server-side

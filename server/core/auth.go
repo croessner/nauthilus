@@ -1963,7 +1963,11 @@ func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*Pas
 // If the error is not a configuration error, it logs the error using the Logger.
 // It returns the error unchanged.
 func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState, configErrors map[definitions.Backend]error) error {
-	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) {
+	// A backend that declined is recorded here too. On its own a decline is
+	// harmless, but a chain where every backend declines serves no one, and
+	// checkAllBackends is what turns that into a temporary failure instead of
+	// an answer nobody is qualified to give.
+	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) || errors.IsBackendNotResponsible(err) {
 		configErrors[passDB.backend] = err
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.

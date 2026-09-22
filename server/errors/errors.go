@@ -19,6 +19,8 @@ package errors
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 )
 
 // DetailedError describes the exported DetailedError type.
@@ -175,7 +177,34 @@ var (
 	// ErrBackendTemporaryFailure indicates that a backend could not make an auth
 	// decision because of a temporary technical failure.
 	ErrBackendTemporaryFailure = NewDetailedError("backend_temporary_failure")
+	// ErrBackendNotResponsible indicates that a backend declined to handle the
+	// request at all, because its configuration does not cover this protocol or
+	// operation. It is not a failure: the remaining backends still answer.
+	ErrBackendNotResponsible = NewDetailedError("backend_not_responsible")
 )
+
+// IsBackendNotResponsible reports whether err means a backend declined the
+// request rather than failed it.
+//
+// The difference decides whether a later backend's verdict counts. A backend
+// that declines leaves the chain intact, so the next backend's answer is
+// authoritative. A backend that failed leaves the request undecided, and a
+// negative answer taken from elsewhere would present that outage as a wrong
+// password.
+//
+// Only ErrBackendNotResponsible qualifies, and it is minted at the few places
+// that genuinely decide "this backend does not serve this request".
+// Configuration errors are deliberately excluded: most of them mean a broken
+// or half-configured backend, and some are raised after the user was already
+// found. Reading those as declines would let a broken backend hand the verdict
+// to one that knows nothing about the user.
+func IsBackendNotResponsible(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return errors.Is(err, ErrBackendNotResponsible)
+}
 
 // technicalBackendFailures lists every error class that means a backend could not
 // reach an authentication decision for technical reasons.
@@ -190,11 +219,15 @@ var technicalBackendFailures = []error{
 	ErrBackendTemporaryFailure,
 	ErrLDAPSearchTimeout,
 	ErrLDAPBindTimeout,
+	ErrLDAPConnect,
+	ErrLDAPConnectTimeout,
+	ErrAllBackendConfigError,
 	ErrLDAPModify,
 	ErrBackendLua,
-	ErrLuaConfig,
 	context.DeadlineExceeded,
 	context.Canceled,
+	io.EOF,
+	io.ErrUnexpectedEOF,
 }
 
 // IsBackendTechnicalFailure reports whether err describes a backend that could not
@@ -210,7 +243,11 @@ func IsBackendTechnicalFailure(err error) bool {
 		}
 	}
 
-	return false
+	// A transport error reaches us when the connection to the backend failed,
+	// which is never a statement about the credentials carried over it.
+	var netErr net.Error
+
+	return errors.As(err, &netErr)
 }
 
 // lua.

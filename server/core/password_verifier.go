@@ -34,7 +34,12 @@ type PasswordVerifier interface {
 type passwordPipelineState struct {
 	configErrors map[definitions.Backend]error
 	tempfailErr  error
-	finalRes     *PassDBResult
+	// unclassifiedErr holds the first backend error that no layer recognised.
+	// It is kept apart from tempfailErr so the gap stays visible in the logs,
+	// but it counts the same way when deciding whether the pipeline reached an
+	// authoritative answer.
+	unclassifiedErr error
+	finalRes        *PassDBResult
 }
 
 // newPasswordPipelineState creates the mutable state for one password pipeline run.
@@ -110,9 +115,7 @@ func (state *passwordPipelineState) tryPasswordBackend(ctx *gin.Context, auth *A
 
 // handlePasswordBackendError records temporary backend failures and delegates configured error handling.
 func (state *passwordPipelineState) handlePasswordBackendError(index int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState) error {
-	if errors.IsBackendTechnicalFailure(err) {
-		state.tempfailErr = err
-	}
+	state.recordBackendError(err)
 
 	e := HandleBackendErrors(index, passDBs, passDB, err, auth, state.configErrors)
 	if stderrors.Is(e, errors.ErrAllBackendConfigError) {
@@ -120,6 +123,37 @@ func (state *passwordPipelineState) handlePasswordBackendError(index int, passDB
 	}
 
 	return nil
+}
+
+// recordBackendError remembers that a backend could not answer.
+//
+// Classified failures are kept separately from the rest so the logs still name
+// the precise cause, but both mean the same thing for the pipeline: no
+// authoritative answer was reached.
+func (state *passwordPipelineState) recordBackendError(err error) {
+	if err == nil {
+		return
+	}
+
+	// A backend that declines the request never tried to answer it, so it
+	// leaves the chain intact and the next backend still decides. Recording it
+	// here would let a protocol this backend does not serve suppress another
+	// backend's verdict, which turns an unknown user into a temporary failure
+	// and tells an attacker the two apart. checkAllBackends owns the case where
+	// every backend declines.
+	if errors.IsBackendNotResponsible(err) {
+		return
+	}
+
+	if errors.IsBackendTechnicalFailure(err) {
+		state.tempfailErr = err
+
+		return
+	}
+
+	if state.unclassifiedErr == nil {
+		state.unclassifiedErr = err
+	}
 }
 
 // processPasswordBackendResult applies result post-processing and releases failed results.
@@ -164,17 +198,33 @@ func (state *passwordPipelineState) storePasswordResult(ctx *gin.Context, auth *
 
 // finalPasswordResult returns the completed pipeline result or the preserved temporary failure.
 func (state *passwordPipelineState) finalPasswordResult() (*PassDBResult, error) {
+	undecided := state.undecidedErr()
+
 	if state.finalRes == nil {
-		if state.tempfailErr != nil {
-			return nil, state.tempfailErr
+		if undecided != nil {
+			return nil, undecided
 		}
 
 		return nil, errors.ErrNoPassDBResult
 	}
 
-	if !state.finalRes.Authenticated && !state.finalRes.UserFound && state.tempfailErr != nil {
-		return nil, state.tempfailErr
+	// A result that neither authenticates nor finds the user is not an answer
+	// once a backend failed: it usually comes from a cache miss, while the
+	// authoritative backend never got to speak. Returning it would present a
+	// backend outage as a wrong password and count it against the client.
+	if !state.finalRes.Authenticated && !state.finalRes.UserFound && undecided != nil {
+		return nil, undecided
 	}
 
 	return state.finalRes, nil
+}
+
+// undecidedErr returns the backend error that prevented an authoritative
+// answer, preferring the classified one so callers log the precise cause.
+func (state *passwordPipelineState) undecidedErr() error {
+	if state.tempfailErr != nil {
+		return state.tempfailErr
+	}
+
+	return state.unclassifiedErr
 }

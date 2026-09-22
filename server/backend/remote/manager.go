@@ -28,8 +28,11 @@ import (
 // must stay countable as authentication failures.
 var (
 	ErrRemoteAuthorityUnavailable = stderrors.New("remote authority unavailable")
-	ErrRemoteOperationDenied      = stderrors.New("remote backend operation denied")
-	ErrRemoteAuthorityRejected    = stderrors.New("remote authority rejected operation")
+	// ErrRemoteOperationDenied means allowed_operations does not cover this
+	// operation. The backend declines rather than fails, so the remaining
+	// backends in the chain still decide the request.
+	ErrRemoteOperationDenied   = fmt.Errorf("%w: remote backend operation denied", errors.ErrBackendNotResponsible)
+	ErrRemoteAuthorityRejected = stderrors.New("remote authority rejected operation")
 )
 
 const (

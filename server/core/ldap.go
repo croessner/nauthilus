@@ -151,7 +151,11 @@ func (lm *ldapManagerImpl) loadSearchConfig(endSpan spanEnder, protocolName stri
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
 	if err != nil || protocol == nil {
 		if err == nil && opts.requireProtocol {
-			err = errors.ErrLDAPConfig.WithDetail(fmt.Sprintf(opts.missingProtocolDetail, protocolName))
+			// GetLDAPSearchProtocol answered "no such protocol" rather than
+			// failing, so this pool simply does not serve this protocol. That
+			// is a decline, not a fault: the other backends still decide the
+			// request, and their verdict has to keep counting.
+			err = errors.ErrBackendNotResponsible.WithDetail(fmt.Sprintf(opts.missingProtocolDetail, protocolName))
 		}
 
 		endLDAPPrepareSpan(endSpan)
@@ -849,17 +853,26 @@ func (lm *ldapManagerImpl) handleLDAPPassDBBindError(auth *AuthState, lspan trac
 		definitions.LogKeyMsg, err,
 	)
 
+	// Only a protocol-level rejection carrying LDAPResultInvalidCredentials is a
+	// statement about the password. Everything else - a transport failure, a
+	// cancelled context, a closed connection - says nothing about the
+	// credentials and has to stay a technical error, otherwise the caller
+	// records a wrong-password event for what is in truth an outage.
 	if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 		if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
 			lspan.RecordError(ldapError)
 
 			return false, ldapError.Err
 		}
+
+		lspan.SetAttributes(attribute.Bool("authenticated", false))
+
+		return false, nil
 	}
 
-	lspan.SetAttributes(attribute.Bool("authenticated", false))
+	lspan.RecordError(err)
 
-	return false, nil
+	return false, err
 }
 
 // completeLDAPPassDBAuthentication records successful bind state and cache status.

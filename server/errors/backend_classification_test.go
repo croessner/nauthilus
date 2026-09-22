@@ -19,6 +19,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"testing"
 )
 
@@ -33,12 +36,18 @@ func TestIsBackendTechnicalFailure(t *testing.T) {
 		"ldap search timeout":  ErrLDAPSearchTimeout,
 		"ldap bind timeout":    ErrLDAPBindTimeout,
 		"lua script execution": ErrBackendLua,
-		"lua configuration":    ErrLuaConfig,
 		"context deadline":     context.DeadlineExceeded,
 		"context canceled":     context.Canceled,
 		"wrapped with detail":  ErrBackendTemporaryFailure.WithDetail("connection reset by peer"),
 		"wrapped by a caller":  fmt.Errorf("remote authority unavailable: %w", ErrBackendTemporaryFailure),
 		"wrapped twice":        fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", ErrLDAPPoolExhausted)),
+		"ldap connect failed":  ErrLDAPConnect,
+		"ldap connect timeout": ErrLDAPConnectTimeout,
+		"closed connection":    io.EOF,
+		"truncated read":       io.ErrUnexpectedEOF,
+		"network operation":    &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET},
+		"wrapped network":      fmt.Errorf("ldap bind: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}),
+		"all backends failed":  ErrAllBackendConfigError,
 	}
 	for name, err := range technical {
 		if !IsBackendTechnicalFailure(err) {
@@ -51,6 +60,12 @@ func TestIsBackendTechnicalFailure(t *testing.T) {
 		"no passdb result":    ErrNoPassDBResult,
 		"wrong lua user data": ErrBackendLuaWrongUserData,
 		"unrelated error":     errors.New("credentials rejected"),
+		// Config errors are settled by checkAllBackends, which fails the
+		// request only when every real backend had one. Classifying them here
+		// as well would decide that question twice.
+		"ldap configuration": ErrLDAPConfig,
+		"lua configuration":  ErrLuaConfig,
+		"declined backend":   ErrBackendNotResponsible,
 	}
 	for name, err := range decisions {
 		if IsBackendTechnicalFailure(err) {
