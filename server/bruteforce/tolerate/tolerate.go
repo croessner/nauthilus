@@ -49,6 +49,7 @@ var (
 
 const (
 	tolerateAdaptiveMode = "adaptive"
+	tolerateDisabledMode = "disabled"
 	tolerateNegativeFlag = ":N"
 	toleratePositiveFlag = ":P"
 	tolerateStaticMode   = "static"
@@ -417,7 +418,7 @@ func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) (fact P
 
 		// A disabled toleration carries a configured percentage that was never
 		// applied; observing it would skew the distribution.
-		if fact.Mode != "disabled" {
+		if fact.Mode != tolerateDisabledMode {
 			stats.GetMetrics().GetTolerationPercent().Observe(float64(fact.Percent))
 		}
 
@@ -434,7 +435,7 @@ func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) (fact P
 	settings := t.policySettingsForIP(ipAddress)
 	fact = PolicyFact{
 		TTL:     settings.ttl,
-		Mode:    "disabled",
+		Mode:    tolerateDisabledMode,
 		Percent: settings.percent,
 		Custom:  settings.custom,
 	}
