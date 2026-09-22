@@ -24,6 +24,8 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/errors"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v4/server/policy"
@@ -577,7 +579,21 @@ func (e *authnCandidateExecution) prepareVerifiedBackendResult(plan backendExecu
 }
 
 // recordBackendFailure projects one backend failure onto request-local auth and Policy state.
+//
+// Every backend error still answers TempFail, because answering anything else
+// without knowing the cause would count technical faults as wrong credentials
+// and lock users out of their own addresses. Errors that no backend classified
+// are logged so the gap is visible instead of silent; see
+// errors.IsBackendTechnicalFailure for the classes backends are expected to use.
 func (e *authnCandidateExecution) recordBackendFailure(result *PassDBResult, err error) {
+	if err != nil && !errors.IsBackendTechnicalFailure(err) {
+		level.Warn(e.auth.Logger()).Log(
+			definitions.LogKeyGUID, e.auth.Runtime.GUID,
+			definitions.LogKeyMsg, "Unclassified backend error answered as a temporary failure",
+			definitions.LogKeyError, err,
+		)
+	}
+
 	e.auth.Runtime.Authenticated = false
 	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, result, err)
 	e.authResult = definitions.AuthResultTempFail
@@ -598,9 +614,16 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 	e.backendAccount = accountName
 
 	e.backendReady = true
-	if result.Authenticated {
+
+	switch {
+	case result.Authenticated:
 		e.authResult = definitions.AuthResultOK
-	} else {
+	case e.auth.Runtime.BruteForceError:
+		// Brute-force accounting could not classify this failure. Answering a
+		// credential rejection would both mislead the client and feed the very
+		// counters that could not be read.
+		e.authResult = definitions.AuthResultTempFail
+	default:
 		e.authResult = definitions.AuthResultFail
 	}
 }

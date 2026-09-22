@@ -2260,6 +2260,8 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() (bool, error) {
 	}
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+
+	started := time.Now()
 	result, execErr := rediscli.ExecuteScript(
 		dCtx,
 		bm.redis(),
@@ -2268,6 +2270,8 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() (bool, error) {
 		[]string{args.allowKey},
 		args.passwordHash, args.argNow, args.argTTL, args.argThreshold, args.legacyHash,
 	)
+
+	stats.GetMetrics().GetRWPWindowDuration().Observe(time.Since(started).Seconds())
 
 	cancel()
 

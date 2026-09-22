@@ -24,11 +24,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Remote backend errors are returned to the core pipeline as temporary failures.
+// Only Unavailable is a technical fault. Denied and Rejected are decisions and
+// must stay countable as authentication failures.
 var (
 	ErrRemoteAuthorityUnavailable = stderrors.New("remote authority unavailable")
-	ErrRemoteOperationDenied      = stderrors.New("remote backend operation denied")
-	ErrRemoteAuthorityRejected    = stderrors.New("remote authority rejected operation")
+	// ErrRemoteOperationDenied means allowed_operations does not cover this
+	// operation. The backend declines rather than fails, so the remaining
+	// backends in the chain still decide the request.
+	ErrRemoteOperationDenied   = fmt.Errorf("%w: remote backend operation denied", errors.ErrBackendNotResponsible)
+	ErrRemoteAuthorityRejected = stderrors.New("remote authority rejected operation")
 )
 
 const (
@@ -950,29 +954,36 @@ func (m *Manager) failedPassDBResultFromStatus(operationStatus *commonv1.Operati
 	return result
 }
 
+// unavailable marks a remote authority fault as technical so the shared pipeline
+// keeps it out of brute-force accounting. Denied and rejected stay untouched:
+// they are decisions, not faults.
+func unavailable(err error) error {
+	return fmt.Errorf("%w: %w: %v", errors.ErrBackendTemporaryFailure, ErrRemoteAuthorityUnavailable, err)
+}
+
 func mapAuthorityError(err error) error {
 	if err == nil {
 		return nil
 	}
 
 	if stderrors.Is(err, context.DeadlineExceeded) || stderrors.Is(err, context.Canceled) {
-		return fmt.Errorf("%w: %v", ErrRemoteAuthorityUnavailable, err)
+		return unavailable(err)
 	}
 
 	if st, ok := status.FromError(err); ok {
 		switch st.Code() {
 		case codes.DeadlineExceeded, codes.Unavailable, codes.ResourceExhausted:
-			return fmt.Errorf("%w: %v", ErrRemoteAuthorityUnavailable, err)
+			return unavailable(err)
 		case codes.PermissionDenied, codes.Unauthenticated:
 			return fmt.Errorf("%w: %v", ErrRemoteOperationDenied, err)
 		case codes.FailedPrecondition, codes.InvalidArgument, codes.AlreadyExists:
 			return fmt.Errorf("%w: %v", ErrRemoteAuthorityRejected, err)
 		default:
-			return fmt.Errorf("%w: %v", ErrRemoteAuthorityUnavailable, err)
+			return unavailable(err)
 		}
 	}
 
-	return fmt.Errorf("%w: %v", ErrRemoteAuthorityUnavailable, err)
+	return unavailable(err)
 }
 
 func authDTOFromState(auth *core.AuthState) authdto.Request {

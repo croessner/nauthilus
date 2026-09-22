@@ -667,17 +667,40 @@ func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSou
 	// The commit classifies the confirmed failure atomically; precheck hints are not authoritative.
 	repeated, err := a.commitRWPIfAllowed(ctx, bm, learningSource)
 	if err != nil {
+		// The verdict is unknown, not negative. Counting here would let a storage
+		// outage turn a repeating password into an attack signal and ban the
+		// address it came from.
+		//
+		// This is deliberately fail-open for the counter. It is only safe
+		// because applyBackendResult turns BruteForceError into a temporary
+		// failure, which never grants access. Callers that reject before
+		// authentication answer on their own and are unaffected. Watch
+		// bruteforce_rwp_decisions_total{verdict="undecided"} against "counted":
+		// a sustained rise means accounting is blind, not that traffic is clean.
 		a.Runtime.BruteForceError = true
-	}
+		a.Runtime.BFRWP = false
 
-	a.Runtime.BFRWP = repeated && err == nil
-	ctx.Set(definitions.CtxRWPResultKey, !a.Runtime.BFRWP)
+		stats.GetMetrics().GetRWPDecisionsTotal().WithLabelValues("undecided").Inc()
+		level.Warn(a.Logger()).Log(
+			definitions.LogKeyGUID, a.Runtime.GUID,
+			definitions.LogKeyMsg, "RWP verdict unavailable; not counting this request",
+			definitions.LogKeyError, err,
+		)
 
-	if a.Runtime.BFRWP {
-		a.activateRWPAllowance(bm)
 		return
 	}
 
+	a.Runtime.BFRWP = repeated
+	ctx.Set(definitions.CtxRWPResultKey, !a.Runtime.BFRWP)
+
+	if a.Runtime.BFRWP {
+		stats.GetMetrics().GetRWPDecisionsTotal().WithLabelValues("repeated").Inc()
+		a.activateRWPAllowance(bm)
+
+		return
+	}
+
+	stats.GetMetrics().GetRWPDecisionsTotal().WithLabelValues("counted").Inc()
 	a.saveBruteForceBucketCounters(ctx, bm, matchedPeriod)
 }
 

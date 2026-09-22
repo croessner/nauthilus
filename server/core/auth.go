@@ -1017,7 +1017,18 @@ type (
 	// This struct is used to store the database mappings in an array and loop through them in the verifyPassword method.
 	PassDBMap struct {
 		backend definitions.Backend
-		fn      PassDBOption
+		// name identifies the configured instance. Two pools of the same type
+		// are distinct backends in a chain, and bookkeeping that cannot tell
+		// them apart credits one pool's fault to the other.
+		name string
+		fn   PassDBOption
+	}
+
+	// backendInstance identifies one entry of the backend chain. Keying by
+	// type alone would merge two pools of the same type into a single slot.
+	backendInstance struct {
+		backend definitions.Backend
+		name    string
 	}
 )
 
@@ -1962,9 +1973,13 @@ func (a *AuthState) verifyPassword(ctx *gin.Context, passDBs []*PassDBMap) (*Pas
 // If all password databases have been processed and there are configuration errors, it calls the checkAllBackends function.
 // If the error is not a configuration error, it logs the error using the Logger.
 // It returns the error unchanged.
-func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState, configErrors map[definitions.Backend]error) error {
-	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) {
-		configErrors[passDB.backend] = err
+func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState, configErrors map[backendInstance]error) error {
+	// A backend that declined is recorded here too. On its own a decline is
+	// harmless, but a chain where every backend declines serves no one, and
+	// checkAllBackends is what turns that into a temporary failure instead of
+	// an answer nobody is qualified to give.
+	if stderrors.Is(err, errors.ErrLDAPConfig) || stderrors.Is(err, errors.ErrLuaConfig) || errors.IsBackendNotResponsible(err) {
+		configErrors[passDB.instance()] = err
 
 		// After all password databases were running,  check if SQL, LDAP and Lua  backends have configuration errors.
 		if passDBIndex == len(passDBs)-1 {
@@ -1973,7 +1988,7 @@ func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 	} else {
 		level.Error(auth.logger()).Log(
 			definitions.LogKeyGUID, auth.Runtime.GUID,
-			"passdb", passDB.backend.String(),
+			"passdb", passDB.instance().String(),
 			definitions.LogKeyMsg, "Error occurred during backend processing",
 			definitions.LogKeyError, err)
 	}
@@ -1984,7 +1999,7 @@ func HandleBackendErrors(passDBIndex int, passDBs []*PassDBMap, passDB *PassDBMa
 // After all password databases were running, check if SQL, LDAP and Lua backends have configuration errors.
 // A backend is considered "real" (non-cache) if it is not BackendCache. Only if every real backend
 // has a configuration error do we report ErrAllBackendConfigError.
-func checkAllBackends(configErrors map[definitions.Backend]error, passDBs []*PassDBMap, auth *AuthState) (err error) {
+func checkAllBackends(configErrors map[backendInstance]error, passDBs []*PassDBMap, auth *AuthState) (err error) {
 	realBackends := 0
 	failedBackends := 0
 
@@ -1995,7 +2010,7 @@ func checkAllBackends(configErrors map[definitions.Backend]error, passDBs []*Pas
 
 		realBackends++
 
-		if cfgErr, exists := configErrors[pdb.backend]; exists && cfgErr != nil {
+		if cfgErr, exists := configErrors[pdb.instance()]; exists && cfgErr != nil {
 			failedBackends++
 		}
 	}
@@ -2018,7 +2033,7 @@ func checkAllBackends(configErrors map[definitions.Backend]error, passDBs []*Pas
 }
 
 // collectConfigErrorDetails builds a summary string from all backend configuration errors.
-func collectConfigErrorDetails(configErrors map[definitions.Backend]error) string {
+func collectConfigErrorDetails(configErrors map[backendInstance]error) string {
 	var parts []string
 
 	for configIndex, cfgErr := range configErrors {
@@ -2847,12 +2862,33 @@ func (a *AuthState) buildBackendExecutionPlan() backendExecutionPlan {
 	cfg := a.Cfg()
 
 	for index, backendType := range cfg.GetServer().GetBackends() {
-		db := backendType.Get()
+		before := len(plan.passDBs)
+
 		a.appendConfiguredBackend(&plan, backendType)
-		plan.positions[db] = index
+		plan.recordPosition(backendType.Get(), index, len(plan.passDBs) > before)
 	}
 
 	return plan
+}
+
+// recordPosition notes where a backend type first runs in the chain.
+//
+// Only entries that were actually appended count: a pool the chain skipped,
+// such as a lookup-only LDAP pool, never runs and must not stand in for one
+// that does. And the first position wins rather than the last, because two
+// pools of one type can straddle the cache. Asking whether the cache precedes
+// the earliest of them is the conservative question: it can cost a cache
+// entry, never serve one the cache does not front.
+func (p *backendExecutionPlan) recordPosition(db definitions.Backend, index int, appended bool) {
+	if !appended {
+		return
+	}
+
+	if _, seen := p.positions[db]; seen {
+		return
+	}
+
+	p.positions[db] = index
 }
 
 // buildAuthnTypedBackendExecutionPlan selects only the backend family named by one captured Policy provider.
@@ -2869,8 +2905,10 @@ func (a *AuthState) buildAuthnTypedBackendExecutionPlan(providerID string) (back
 			continue
 		}
 
+		before := len(plan.passDBs)
+
 		a.appendConfiguredBackend(&plan, configured)
-		plan.positions[backendType] = index
+		plan.recordPosition(backendType, index, len(plan.passDBs) > before)
 	}
 
 	if len(plan.passDBs) == 0 {
@@ -2918,7 +2956,7 @@ func (a *AuthState) appendCacheBackend(plan *backendExecutionPlan) {
 		return
 	}
 
-	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendCache, CachePassDB)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendCache, definitions.DefaultBackendName, CachePassDB)
 	plan.hasPositivePasswordCache = true
 }
 
@@ -2928,17 +2966,17 @@ func (a *AuthState) appendLDAPBackend(plan *backendExecutionPlan, name string) {
 	}
 
 	mgr := NewLDAPManager(name, a.deps)
-	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendLDAP, mgr.PassDB)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendLDAP, name, mgr.PassDB)
 }
 
 func (a *AuthState) appendLuaBackend(plan *backendExecutionPlan, name string) {
 	mgr := NewLuaManager(name, a.deps)
-	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendLua, mgr.PassDB)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendLua, name, mgr.PassDB)
 }
 
 func (a *AuthState) appendTestBackend(plan *backendExecutionPlan, name string) {
 	mgr := NewTestBackendManager(name, a.deps)
-	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendTest, mgr.PassDB)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendTest, name, mgr.PassDB)
 }
 
 func (a *AuthState) appendRemoteBackend(plan *backendExecutionPlan, name string) {
@@ -2947,7 +2985,7 @@ func (a *AuthState) appendRemoteBackend(plan *backendExecutionPlan, name string)
 		return
 	}
 
-	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendRemote, mgr.PassDB)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendRemote, name, mgr.PassDB)
 }
 
 // appendPluginBackend appends a registered native plugin backend manager.
@@ -2957,21 +2995,37 @@ func (a *AuthState) appendPluginBackend(plan *backendExecutionPlan, name string)
 		return
 	}
 
-	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendPlugin, mgr.PassDB)
+	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendPlugin, name, mgr.PassDB)
 }
 
 // appendBackend appends a new PassDBMap object to the passDBs slice.
 // Parameters:
 // - passDBs: the slice of PassDBMap objects to append to
 // - backendType: the definitions.Backend value representing the backend type
+// - name: the configured instance name, which distinguishes two pools of one type
 // - backendFunction: the PassDBOption function to assign to the PassDBMap object
 // Returns:
 // - The modified passDBs slice with the new PassDBMap object appended
-func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.Backend, backendFunction PassDBOption) []*PassDBMap {
+func (a *AuthState) appendBackend(passDBs []*PassDBMap, backendType definitions.Backend, name string, backendFunction PassDBOption) []*PassDBMap {
 	return append(passDBs, &PassDBMap{
-		backendType,
-		backendFunction,
+		backend: backendType,
+		name:    name,
+		fn:      backendFunction,
 	})
+}
+
+// instance identifies this chain entry for per-backend bookkeeping.
+func (p *PassDBMap) instance() backendInstance {
+	return backendInstance{backend: p.backend, name: p.name}
+}
+
+// String names the backend instance for operator-facing messages.
+func (b backendInstance) String() string {
+	if b.name == "" || b.name == definitions.DefaultBackendName {
+		return b.backend.String()
+	}
+
+	return fmt.Sprintf("%s(%s)", b.backend.String(), b.name)
 }
 
 // processVerifyPassword verifies the user's password against multiple databases.
@@ -3261,7 +3315,18 @@ func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBRes
 
 	a.UpdateBruteForceBucketsCounter(ctx)
 	a.Runtime.Authenticated = false
-	a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
+
+	// The policy checkpoint, not the candidate runtime, decides the response.
+	// If brute-force accounting could not classify this failure, it has to see a
+	// temporary failure here, otherwise standard_auth_failure (priority 50) wins
+	// over standard_backend_tempfail (priority 30) and the request comes back as
+	// a credential rejection that was never counted.
+	result := definitions.AuthResultFail
+	if a.Runtime.BruteForceError {
+		result = definitions.AuthResultTempFail
+	}
+
+	a.recordPolicyBackendResult(ctx, result, passDBResult, nil)
 }
 
 func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDBResult, authResult definitions.AuthResult, accountName string, plan backendExecutionPlan) error {

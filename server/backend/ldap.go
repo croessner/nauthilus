@@ -597,10 +597,11 @@ func createLDAPRequest(ctx context.Context, L *lua.LState, fieldValues map[strin
 // newBaseLDAPRequest creates the common request fields for LDAP search and modify operations.
 func newBaseLDAPRequest(ctx context.Context, fieldValues map[string]lua.LValue, command definitions.LDAPCommand) *bktype.LDAPRequest {
 	return &bktype.LDAPRequest{
-		GUID:              fieldValues["session"].String(),
-		RequestID:         "",
-		PoolName:          fieldValues["pool_name"].String(),
-		LDAPReplyChan:     make(chan *bktype.LDAPReply),
+		GUID:      fieldValues["session"].String(),
+		RequestID: "",
+		PoolName:  fieldValues["pool_name"].String(),
+		// Buffered so a dropped request can still be answered.
+		LDAPReplyChan:     make(chan *bktype.LDAPReply, 1),
 		HTTPClientContext: ctx,
 		Command:           command,
 	}

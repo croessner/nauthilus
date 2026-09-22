@@ -18,7 +18,7 @@ NAUTHILUS_CONF_DIR ?= /etc/nauthilus
 NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
 GOLANGCI_LINT ?= golangci-lint
-GOLANGCI_LINT_VERSION ?= 2.13.1
+GOLANGCI_LINT_VERSION ?= 2.13.2
 
 export GOEXPERIMENT := runtimesecret
 

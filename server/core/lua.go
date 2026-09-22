@@ -17,12 +17,14 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/localcache"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib"
@@ -404,9 +406,17 @@ func (lm *luaManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, e
 	if protocol == nil || protocolErr != nil {
 		if protocolErr != nil {
 			lsp.RecordError(protocolErr)
+
+			return passDBResult, protocolErr
 		}
 
-		return passDBResult, protocolErr
+		// No protocol and no error means this backend does not serve this
+		// protocol. Returning a nil result with a nil error would be read as
+		// "backend produced nothing" and abort the whole chain, so a protocol
+		// only one backend serves would fail every request for the others.
+		return passDBResult, errors.ErrBackendNotResponsible.WithDetail(
+			fmt.Sprintf("Lua backend %s does not serve protocol %s", lm.backendName, auth.Request.Protocol.Get()),
+		)
 	}
 
 	passDBResult = GetPassDBResultFromPool()

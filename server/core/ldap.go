@@ -92,8 +92,11 @@ type ldapAccountSearchPlan struct {
 }
 
 type ldapPassDBSearchPlan struct {
-	protocol     *config.LDAPSearchProtocol
-	scope        *config.LDAPScope
+	protocol *config.LDAPSearchProtocol
+	scope    *config.LDAPScope
+	// searchCtx carries the per-operation search timeout, so waiting for the
+	// reply is bounded by that timeout and not by the whole request.
+	searchCtx    context.Context
 	cancelSearch context.CancelFunc
 	filter       string
 	baseDN       string
@@ -151,7 +154,11 @@ func (lm *ldapManagerImpl) loadSearchConfig(endSpan spanEnder, protocolName stri
 	protocol, err := lm.effectiveCfg().GetLDAPSearchProtocol(protocolName, lm.poolName)
 	if err != nil || protocol == nil {
 		if err == nil && opts.requireProtocol {
-			err = errors.ErrLDAPConfig.WithDetail(fmt.Sprintf(opts.missingProtocolDetail, protocolName))
+			// GetLDAPSearchProtocol answered "no such protocol" rather than
+			// failing, so this pool simply does not serve this protocol. That
+			// is a decline, not a fault: the other backends still decide the
+			// request, and their verdict has to keep counting.
+			err = errors.ErrBackendNotResponsible.WithDetail(fmt.Sprintf(opts.missingProtocolDetail, protocolName))
 		}
 
 		endLDAPPrepareSpan(endSpan)
@@ -343,11 +350,18 @@ func startSpan(ctx context.Context, tr monittrace.Tracer, name string) (context.
 // waitLDAPReply waits for a reply and wraps the wait with a tracing span.
 func waitLDAPReply(ctx context.Context, tr monittrace.Tracer, name string, replyChan <-chan *bktype.LDAPReply) *bktype.LDAPReply {
 	_, endSpan := startSpan(ctx, tr, name)
-	reply := <-replyChan
 
-	endSpan()
+	defer endSpan()
 
-	return reply
+	// The queue answers every request it drops, but a worker that dies between
+	// dequeue and reply would otherwise block this handler for good. Honouring
+	// the context keeps a lost reply bounded by the request deadline.
+	select {
+	case reply := <-replyChan:
+		return reply
+	case <-ctx.Done():
+		return &bktype.LDAPReply{Err: ctx.Err()}
+	}
 }
 
 // saveMasterUserTOTPSecret checks if the master user has a TOTP secret and returns it if present.
@@ -541,7 +555,7 @@ func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, 
 
 	defer searchPlan.cancelSearch()
 
-	ldapReply := waitLDAPReply(lctx, tr, "ldap.passdb.search.wait", ldapReplyChan)
+	ldapReply := waitLDAPReply(searchPlan.searchCtx, tr, "ldap.passdb.search.wait", ldapReplyChan)
 	if ldapReply.Err != nil {
 		return passDBResult, recordLDAPReplyError(lspan, ldapReply.Err)
 	}
@@ -586,6 +600,7 @@ func (lm *ldapManagerImpl) prepareLDAPPassDBSearch(
 	plan := ldapPassDBSearchPlan{
 		protocol:     searchConfig.protocol,
 		scope:        searchConfig.scope,
+		searchCtx:    ctxSearch,
 		cancelSearch: cancelSearch,
 		filter:       searchConfig.filter,
 		baseDN:       searchConfig.baseDN,
@@ -807,7 +822,7 @@ func (lm *ldapManagerImpl) authenticateLDAPPassDBUser(
 	endAuthPrepare()
 	lm.ldapAuthQueue().Push(request, priority)
 
-	ldapReply := waitLDAPReply(lctx, tr, "ldap.passdb.auth.wait", replyChan)
+	ldapReply := waitLDAPReply(ctxBind, tr, "ldap.passdb.auth.wait", replyChan)
 	if ldapReply.Err == nil {
 		return true, nil
 	}
@@ -849,17 +864,26 @@ func (lm *ldapManagerImpl) handleLDAPPassDBBindError(auth *AuthState, lspan trac
 		definitions.LogKeyMsg, err,
 	)
 
+	// Only a protocol-level rejection carrying LDAPResultInvalidCredentials is a
+	// statement about the password. Everything else - a transport failure, a
+	// cancelled context, a closed connection - says nothing about the
+	// credentials and has to stay a technical error, otherwise the caller
+	// records a wrong-password event for what is in truth an outage.
 	if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 		if ldapError.ResultCode != uint16(ldap.LDAPResultInvalidCredentials) {
 			lspan.RecordError(ldapError)
 
 			return false, ldapError.Err
 		}
+
+		lspan.SetAttributes(attribute.Bool("authenticated", false))
+
+		return false, nil
 	}
 
-	lspan.SetAttributes(attribute.Bool("authenticated", false))
+	lspan.RecordError(err)
 
-	return false, nil
+	return false, err
 }
 
 // completeLDAPPassDBAuthentication records successful bind state and cache status.
@@ -930,7 +954,7 @@ func (lm *ldapManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err
 
 	lm.ldapQueue().Push(ldapRequest, priorityqueue.PriorityMedium)
 
-	ldapReply := waitLDAPReply(actx, tr, "ldap.accountdb.wait", ldapReplyChan)
+	ldapReply := waitLDAPReply(ctxSearch, tr, "ldap.accountdb.wait", ldapReplyChan)
 
 	if ldapReply.Err != nil {
 		return accounts, recordLDAPReplyError(asp, ldapReply.Err)
@@ -1077,7 +1101,7 @@ func (lm *ldapManagerImpl) addLDAPObjectClass(ctx context.Context, auth *AuthSta
 
 	var ocReply *bktype.LDAPReply
 	if input.waitSpan != "" {
-		ocReply = waitLDAPReply(ctx, tr, input.waitSpan, objectClassReplyChan)
+		ocReply = waitLDAPReply(ctxAddOC, tr, input.waitSpan, objectClassReplyChan)
 	} else {
 		ocReply = <-objectClassReplyChan
 	}
@@ -1148,7 +1172,10 @@ func (lm *ldapManagerImpl) newLDAPReplaceAttributeRequest(ctx context.Context, a
 
 // replaceLDAPAttribute executes the LDAP modify-replace operation for one attribute.
 func (lm *ldapManagerImpl) replaceLDAPAttribute(ctx context.Context, auth *AuthState, tr monittrace.Tracer, waitSpan string, plan ldapAttributeReplacePlan, values []string, priority int, includeTOTPSecret bool) error {
-	ldapReplyChan := make(chan *bktype.LDAPReply)
+	// Buffered so a request the queue drops can still be answered: an
+	// unbuffered channel would silently discard that reply and leave the caller
+	// waiting for its whole deadline.
+	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
 	ctxModify, cancelModify := lm.ldapModifyContext()
 	defer cancelModify()
@@ -1156,7 +1183,7 @@ func (lm *ldapManagerImpl) replaceLDAPAttribute(ctx context.Context, auth *AuthS
 	ldapRequest := lm.newLDAPReplaceAttributeRequest(ctxModify, auth, plan, ldapReplyChan, values, includeTOTPSecret)
 	lm.ldapQueue().Push(ldapRequest, priority)
 
-	return waitLDAPReply(ctx, tr, waitSpan, ldapReplyChan).Err
+	return waitLDAPReply(ctxModify, tr, waitSpan, ldapReplyChan).Err
 }
 
 // AddTOTPSecret adds a newly generated TOTP secret to an LDAP server.
@@ -1315,7 +1342,10 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 		defer stopTimer()
 	}
 
-	ldapReplyChan := make(chan *bktype.LDAPReply)
+	// Buffered so a request the queue drops can still be answered: an
+	// unbuffered channel would silently discard that reply and leave the caller
+	// waiting for its whole deadline.
+	ldapReplyChan := make(chan *bktype.LDAPReply, 1)
 
 	plan, endPrepare, err := lm.prepareDeleteLDAPField(mctx, auth, params, msp, tr)
 	if err != nil || endPrepare == nil {
@@ -1332,7 +1362,7 @@ func (lm *ldapManagerImpl) deleteLDAPField(auth *AuthState, params deleteLDAPFie
 	// Use priority queue instead of channel
 	lm.ldapQueue().Push(ldapRequest, lm.requestPriority(auth))
 
-	ldapReply := waitLDAPReply(mctx, tr, params.waitSpan, ldapReplyChan)
+	ldapReply := waitLDAPReply(ctxModify, tr, params.waitSpan, ldapReplyChan)
 
 	if isNoSuchAttributeError(ldapReply.Err) {
 		return nil

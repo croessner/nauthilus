@@ -87,7 +87,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.13.1
+          version: v2.13.2
           args: --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen ./...
           only-new-issues: true
 
