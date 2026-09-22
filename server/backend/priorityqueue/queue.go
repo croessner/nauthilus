@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/stats"
 )
@@ -258,6 +259,9 @@ type ldapRequestPool[T any] struct {
 type ldapPriorityQueueCore[T any] struct {
 	logger         *slog.Logger
 	requestContext func(*T) context.Context
+	// requestReply returns the channel the caller waits on, so a dropped
+	// request can be answered instead of leaving that caller blocked.
+	requestReply   func(*T) chan *bktype.LDAPReply
 	poolNames      map[string]bool
 	workerPools    map[string]bool
 	warnedNoWorker map[string]bool
@@ -303,6 +307,7 @@ func NewLDAPRequestQueue(logger *slog.Logger) *LDAPRequestQueue {
 			"lookup",
 			"LDAP lookup request queued without active worker",
 			ldapRequestContext,
+			ldapRequestReply,
 		),
 	}
 
@@ -317,6 +322,7 @@ func NewLDAPAuthRequestQueue(logger *slog.Logger) *LDAPAuthRequestQueue {
 			"auth",
 			"LDAP auth request queued without active worker",
 			ldapAuthRequestContext,
+			ldapAuthRequestReply,
 		),
 	}
 
@@ -344,10 +350,12 @@ func newLDAPPriorityQueueCore[T any](
 	metricLabel string,
 	warnMessage string,
 	requestContext func(*T) context.Context,
+	requestReply func(*T) chan *bktype.LDAPReply,
 ) ldapPriorityQueueCore[T] {
 	return ldapPriorityQueueCore[T]{
 		logger:         normalizeLogger(logger),
 		requestContext: requestContext,
+		requestReply:   requestReply,
 		poolNames:      make(map[string]bool),
 		workerPools:    make(map[string]bool),
 		warnedNoWorker: make(map[string]bool),
@@ -374,6 +382,24 @@ func ldapAuthRequestContext(request *bktype.LDAPAuthRequest) context.Context {
 	}
 
 	return request.HTTPClientContext
+}
+
+// ldapRequestReply returns the reply channel of a lookup request.
+func ldapRequestReply(request *bktype.LDAPRequest) chan *bktype.LDAPReply {
+	if request == nil {
+		return nil
+	}
+
+	return request.LDAPReplyChan
+}
+
+// ldapAuthRequestReply returns the reply channel of an auth request.
+func ldapAuthRequestReply(request *bktype.LDAPAuthRequest) chan *bktype.LDAPReply {
+	if request == nil {
+		return nil
+	}
+
+	return request.LDAPReplyChan
 }
 
 // AddPoolName adds a pool name to the LDAPRequestQueue
@@ -538,13 +564,13 @@ func (q *ldapPriorityQueueCore[T]) push(poolName string, request *T, priority in
 
 	p := q.ensurePoolLocked(poolName)
 	if q.requestCanceled(request) {
-		q.dropRequest(poolName)
+		q.dropRequest(poolName, request)
 
 		return
 	}
 
 	if maxLen, has := q.maxLen[poolName]; has && maxLen > 0 && p.queue.Len() >= maxLen {
-		q.dropRequest(poolName)
+		q.dropRequest(poolName, request)
 
 		return
 	}
@@ -633,7 +659,7 @@ func (q *ldapPriorityQueueCore[T]) ensurePoolLocked(poolName string) *ldapReques
 func (q *ldapPriorityQueueCore[T]) popAvailableLocked(poolName string, p *ldapRequestPool[T]) (*T, bool) {
 	item := heap.Pop(&p.queue).(*ldapPriorityQueueItem[T])
 	if q.requestCanceled(item.Request) {
-		q.dropRequest(poolName)
+		q.dropRequest(poolName, item.Request)
 		q.updateDepth(poolName, p)
 
 		return nil, false
@@ -661,8 +687,38 @@ func (q *ldapPriorityQueueCore[T]) requestCanceled(request *T) bool {
 }
 
 // dropRequest records one dropped LDAP queue request.
-func (q *ldapPriorityQueueCore[T]) dropRequest(poolName string) {
+func (q *ldapPriorityQueueCore[T]) dropRequest(poolName string, request *T) {
 	stats.GetMetrics().GetLdapQueueDroppedTotal().WithLabelValues(poolName, q.metricLabel).Inc()
+
+	q.answerDroppedRequest(request)
+}
+
+// answerDroppedRequest tells the waiting caller that its request never ran.
+//
+// Without this the caller blocks on a reply that will never come, holding its
+// goroutine until the whole request times out. The error is a temporary backend
+// failure because a request that was never executed says nothing about the
+// credentials it carried.
+func (q *ldapPriorityQueueCore[T]) answerDroppedRequest(request *T) {
+	if q.requestReply == nil || request == nil {
+		return
+	}
+
+	replyChan := q.requestReply(request)
+	if replyChan == nil {
+		return
+	}
+
+	reply := &bktype.LDAPReply{
+		Err: errors.ErrBackendTemporaryFailure.WithDetail("LDAP request dropped from the queue"),
+	}
+
+	// The channel is buffered with room for one reply. A non-blocking send
+	// keeps the queue from stalling if a caller already gave up.
+	select {
+	case replyChan <- reply:
+	default:
+	}
 }
 
 // updateDepth records the current LDAP queue depth for one pool.
