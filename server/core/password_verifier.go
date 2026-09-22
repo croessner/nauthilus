@@ -32,7 +32,7 @@ type PasswordVerifier interface {
 }
 
 type passwordPipelineState struct {
-	configErrors map[definitions.Backend]error
+	configErrors map[backendInstance]error
 	tempfailErr  error
 	// unclassifiedErr holds the first backend error that no layer recognised.
 	// It is kept apart from tempfailErr so the gap stays visible in the logs,
@@ -45,7 +45,7 @@ type passwordPipelineState struct {
 // newPasswordPipelineState creates the mutable state for one password pipeline run.
 func newPasswordPipelineState() passwordPipelineState {
 	return passwordPipelineState{
-		configErrors: make(map[definitions.Backend]error),
+		configErrors: make(map[backendInstance]error),
 	}
 }
 
