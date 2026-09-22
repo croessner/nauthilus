@@ -110,7 +110,7 @@ func (state *passwordPipelineState) tryPasswordBackend(ctx *gin.Context, auth *A
 
 // handlePasswordBackendError records temporary backend failures and delegates configured error handling.
 func (state *passwordPipelineState) handlePasswordBackendError(index int, passDBs []*PassDBMap, passDB *PassDBMap, err error, auth *AuthState) error {
-	if stderrors.Is(err, errors.ErrLDAPPoolExhausted) || stderrors.Is(err, errors.ErrBackendTemporaryFailure) {
+	if errors.IsBackendTechnicalFailure(err) {
 		state.tempfailErr = err
 	}
 

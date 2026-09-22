@@ -17,6 +17,7 @@
 package errors
 
 import (
+	"context"
 	"errors"
 )
 
@@ -175,6 +176,42 @@ var (
 	// decision because of a temporary technical failure.
 	ErrBackendTemporaryFailure = NewDetailedError("backend_temporary_failure")
 )
+
+// technicalBackendFailures lists every error class that means a backend could not
+// reach an authentication decision for technical reasons.
+//
+// Membership has a security consequence in both directions. Treating a real
+// authentication failure as technical hides it from brute-force accounting;
+// treating a technical fault as an authentication failure locks legitimate users
+// out of their own addresses when a backend degrades. Only add an error here
+// when it can never express "these credentials are wrong".
+var technicalBackendFailures = []error{
+	ErrLDAPPoolExhausted,
+	ErrBackendTemporaryFailure,
+	ErrLDAPSearchTimeout,
+	ErrLDAPBindTimeout,
+	ErrLDAPModify,
+	ErrBackendLua,
+	ErrLuaConfig,
+	context.DeadlineExceeded,
+	context.Canceled,
+}
+
+// IsBackendTechnicalFailure reports whether err describes a backend that could not
+// decide, as opposed to a backend that decided against the credentials.
+func IsBackendTechnicalFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	for _, technical := range technicalBackendFailures {
+		if errors.Is(err, technical) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // lua.
 

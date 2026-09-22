@@ -1406,9 +1406,13 @@ func (l *ldapPoolImpl) handleLDAPSearchError(
 		return
 	}
 
-	if isTimeoutErr(err) {
+	switch {
+	case isTimeoutErr(err):
 		ldapReply.Err = errors.ErrLDAPSearchTimeout.WithDetail(err.Error())
-	} else {
+	case isTransportError(err):
+		// A dropped or refused connection says nothing about the credentials.
+		ldapReply.Err = errors.ErrBackendTemporaryFailure.WithDetail(err.Error())
+	default:
 		ldapReply.Err = err
 	}
 
