@@ -3261,7 +3261,18 @@ func (a *AuthState) applyBackendResult(ctx *gin.Context, passDBResult *PassDBRes
 
 	a.UpdateBruteForceBucketsCounter(ctx)
 	a.Runtime.Authenticated = false
-	a.recordPolicyBackendResult(ctx, definitions.AuthResultFail, passDBResult, nil)
+
+	// The policy checkpoint, not the candidate runtime, decides the response.
+	// If brute-force accounting could not classify this failure, it has to see a
+	// temporary failure here, otherwise standard_auth_failure (priority 50) wins
+	// over standard_backend_tempfail (priority 30) and the request comes back as
+	// a credential rejection that was never counted.
+	result := definitions.AuthResultFail
+	if a.Runtime.BruteForceError {
+		result = definitions.AuthResultTempFail
+	}
+
+	a.recordPolicyBackendResult(ctx, result, passDBResult, nil)
 }
 
 func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDBResult, authResult definitions.AuthResult, accountName string, plan backendExecutionPlan) error {

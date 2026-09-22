@@ -614,9 +614,16 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 	e.backendAccount = accountName
 
 	e.backendReady = true
-	if result.Authenticated {
+
+	switch {
+	case result.Authenticated:
 		e.authResult = definitions.AuthResultOK
-	} else {
+	case e.auth.Runtime.BruteForceError:
+		// Brute-force accounting could not classify this failure. Answering a
+		// credential rejection would both mislead the client and feed the very
+		// counters that could not be read.
+		e.authResult = definitions.AuthResultTempFail
+	default:
 		e.authResult = definitions.AuthResultFail
 	}
 }
