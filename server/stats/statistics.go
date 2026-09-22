@@ -134,6 +134,8 @@ const (
 	metricBackendLabel          = "backend"
 	metricBoundaryLabel         = "boundary"
 	metricBucketLabel           = "bucket"
+	metricVerdictLabel          = "verdict"
+	metricTolerationModeLabel   = "mode"
 	metricClientIDLabel         = "client_id"
 	metricCodeLabel             = "code"
 	metricDescriptionLabel      = "description"
@@ -262,6 +264,20 @@ type Metrics interface {
 
 	// GetBruteForceRejected tracks the total number of brute force attempts rejected, categorized by bucket, as a Prometheus CounterVec.
 	GetBruteForceRejected() *prometheus.CounterVec
+
+	// GetRWPDecisionsTotal counts repeating-wrong-password verdicts by outcome:
+	// repeated, counted or undecided. Undecided means the store could not answer,
+	// which is the one case that must never be read as an attack.
+	GetRWPDecisionsTotal() *prometheus.CounterVec
+
+	// GetRWPWindowDuration observes how long one RWP sliding-window round-trip takes.
+	GetRWPWindowDuration() prometheus.Histogram
+
+	// GetTolerationDecisionsTotal counts toleration lookups by resulting mode.
+	GetTolerationDecisionsTotal() *prometheus.CounterVec
+
+	// GetTolerationPercent observes the tolerated percentage actually applied.
+	GetTolerationPercent() prometheus.Histogram
 
 	// GetBruteForceHits counts the total number of brute force hits before being rejected as a Prometheus CounterVec.
 	GetBruteForceHits() *prometheus.CounterVec
@@ -402,6 +418,10 @@ type metricsImpl struct {
 	redisIdleConns                 *prometheus.GaugeVec
 	redisStaleConns                *prometheus.GaugeVec
 	bruteForceRejected             *prometheus.CounterVec
+	rwpDecisionsTotal              *prometheus.CounterVec
+	rwpWindowDuration              prometheus.Histogram
+	tolerationDecisionsTotal       *prometheus.CounterVec
+	tolerationPercent              prometheus.Histogram
 	bruteForceHits                 *prometheus.CounterVec
 	rejectedProtocols              *prometheus.CounterVec
 	acceptedProtocols              *prometheus.CounterVec
@@ -554,6 +574,26 @@ func (m *metricsImpl) GetRedisStaleConns() *prometheus.GaugeVec {
 // GetBruteForceRejected returns the bruteForceRejected field.
 func (m *metricsImpl) GetBruteForceRejected() *prometheus.CounterVec {
 	return m.bruteForceRejected
+}
+
+// GetRWPDecisionsTotal returns the rwpDecisionsTotal field.
+func (m *metricsImpl) GetRWPDecisionsTotal() *prometheus.CounterVec {
+	return m.rwpDecisionsTotal
+}
+
+// GetRWPWindowDuration returns the rwpWindowDuration field.
+func (m *metricsImpl) GetRWPWindowDuration() prometheus.Histogram {
+	return m.rwpWindowDuration
+}
+
+// GetTolerationDecisionsTotal returns the tolerationDecisionsTotal field.
+func (m *metricsImpl) GetTolerationDecisionsTotal() *prometheus.CounterVec {
+	return m.tolerationDecisionsTotal
+}
+
+// GetTolerationPercent returns the tolerationPercent field.
+func (m *metricsImpl) GetTolerationPercent() prometheus.Histogram {
+	return m.tolerationPercent
 }
 
 // GetBruteForceHits returns the bruteForceHits field.
@@ -878,6 +918,16 @@ func (m *metricsImpl) initRedisMetrics() {
 func (m *metricsImpl) initAuthMetrics() {
 	m.bruteForceRejected = newCounterVecMetric("bruteforce_rejected_total", "The total number of brute force rejected attempts", metricBucketLabel)
 	m.bruteForceHits = newCounterVecMetric("bruteforce_hits_total", "The total number of brute force hits before rejection", metricBucketLabel)
+	m.rwpDecisionsTotal = newCounterVecMetric("bruteforce_rwp_decisions_total",
+		"Repeating-wrong-password verdicts by outcome: repeated, counted or undecided", metricVerdictLabel)
+	m.rwpWindowDuration = newHistogramMetric("bruteforce_rwp_window_duration_seconds",
+		"Duration of one repeating-wrong-password sliding-window round-trip",
+		prometheus.ExponentialBuckets(0.001, 1.7, 15))
+	m.tolerationDecisionsTotal = newCounterVecMetric("bruteforce_toleration_decisions_total",
+		"Toleration lookups by resulting mode", metricTolerationModeLabel)
+	m.tolerationPercent = newHistogramMetric("bruteforce_toleration_percent",
+		"Tolerated percentage applied to a brute-force bucket",
+		prometheus.LinearBuckets(0, 10, 11))
 	m.rejectedProtocols = newCounterVecMetric("rejected_protocols_total", "The total number of rejects per protocol", metricProtocolLabel)
 	m.acceptedProtocols = newCounterVecMetric("accepted_protocols_total", "The total number of acceptances per protocol", metricProtocolLabel)
 }

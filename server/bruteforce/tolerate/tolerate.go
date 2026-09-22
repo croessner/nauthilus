@@ -403,7 +403,7 @@ func (t *tolerateImpl) IsTolerated(ctx context.Context, ipAddress string) bool {
 }
 
 // PolicyFact returns the policy-visible toleration state for the specified IP address.
-func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) PolicyFact {
+func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) (fact PolicyFact) {
 	tr := monittrace.New("nauthilus/tolerate")
 
 	tctx, tsp := tr.Start(ctx, "tolerate.is_tolerated",
@@ -411,8 +411,28 @@ func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) PolicyF
 	)
 	defer tsp.End()
 
+	// Registered after tsp.End so it runs first and can still decorate the span.
+	defer func() {
+		stats.GetMetrics().GetTolerationDecisionsTotal().WithLabelValues(fact.Mode).Inc()
+
+		// A disabled toleration carries a configured percentage that was never
+		// applied; observing it would skew the distribution.
+		if fact.Mode != "disabled" {
+			stats.GetMetrics().GetTolerationPercent().Observe(float64(fact.Percent))
+		}
+
+		tsp.SetAttributes(
+			attribute.String("toleration.mode", fact.Mode),
+			attribute.Bool("toleration.active", fact.Active),
+			attribute.Bool("toleration.custom", fact.Custom),
+			attribute.Int64("toleration.percent", int64(fact.Percent)),
+			attribute.Int64("toleration.positive", fact.Positive),
+			attribute.Int64("toleration.negative", fact.Negative),
+		)
+	}()
+
 	settings := t.policySettingsForIP(ipAddress)
-	fact := PolicyFact{
+	fact = PolicyFact{
 		TTL:     settings.ttl,
 		Mode:    "disabled",
 		Percent: settings.percent,
