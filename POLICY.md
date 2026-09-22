@@ -15,7 +15,7 @@ A task is incomplete if any mandatory rule is not satisfied.
 - MUST (CRITICAL, Go 1.27): Always run Go tests with `GOEXPERIMENT=runtimesecret` as prefix.
     - Required command pattern: `GOEXPERIMENT=runtimesecret go test ...`
 - MUST: Keep `.golangci.yml` aligned with the repository guardrail policy and
-  run golangci-lint 2.13.1 through `make lint` or `make guardrails`.
+  run golangci-lint 2.13.2 through `make lint` or `make guardrails`.
 - MUST: Keep numbered rollout-stage terminology out of source code, tests,
   docs, filenames, branch names, tags, commit subjects, and commit bodies. Use
   domain-specific names such as `baseline`, `authority`, `identity`, or the
