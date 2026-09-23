@@ -1263,7 +1263,7 @@ func (f *oidcIntrospectionTest) assertPrivateKeyJWTTokenIntrospection(t *testing
 func (f *oidcIntrospectionTest) expectAccessTokenValidation(userID string, token string, count int) {
 	for range count {
 		f.mock.ExpectGet(testUserTokenEpochKey(userID)).RedisNil()
-		f.mock.ExpectGet("test:oidc:denied_access_token:" + token).RedisNil()
+		expectDeniedAccessTokenLookup(f.mock, token)
 	}
 }
 
@@ -1350,7 +1350,7 @@ func TestOIDCHandler_PrivateKeyJWTIntrospectionReplayProtection(t *testing.T) {
 
 	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, true)
 	fixture.mock.ExpectGet(testUserTokenEpochKey("jwt-user")).RedisNil()
-	fixture.mock.ExpectGet("test:oidc:denied_access_token:" + accessToken).RedisNil()
+	expectDeniedAccessTokenLookup(fixture.mock, accessToken)
 
 	first := fixture.postPrivateKeyJWTIntrospection(t, accessToken, assertion)
 	assert.Equal(t, http.StatusOK, first.Code)
@@ -1392,7 +1392,7 @@ func TestOIDCHandler_PrivateKeyJWTReplayScopeIncludesEndpointAudience(t *testing
 		true,
 	)
 	fixture.mock.ExpectGet(testUserTokenEpochKey("jwt-user")).RedisNil()
-	fixture.mock.ExpectGet("test:oidc:denied_access_token:" + accessToken).RedisNil()
+	expectDeniedAccessTokenLookup(fixture.mock, accessToken)
 
 	introspectionResponse := fixture.postPrivateKeyJWTIntrospection(t, accessToken, introspectionAssertion)
 	assert.Equal(t, http.StatusOK, introspectionResponse.Code)
@@ -1729,6 +1729,19 @@ func testUserTokenEpochKey(userID string) string {
 	return "test:oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID
 }
 
+// testDeniedAccessTokenKey returns the digest denylist key that never embeds the raw token.
+func testDeniedAccessTokenKey(token string) string {
+	sum := sha256.Sum256([]byte("nauthilus-oidc-denied-access-token\x00" + token))
+
+	return "test:oidc:denied_access_token:sha256:" + fmt.Sprintf("%x", sum[:])
+}
+
+// expectDeniedAccessTokenLookup registers the digest and legacy denylist reads for one token.
+func expectDeniedAccessTokenLookup(mock redismock.ClientMock, token string) {
+	mock.ExpectExists(testDeniedAccessTokenKey(token)).SetVal(0)
+	mock.ExpectExists("test:oidc:denied_access_token:" + token).SetVal(0)
+}
+
 // newRefreshTokenSession creates a common refresh-token session fixture.
 func newRefreshTokenSession(clientID string) *idp.OIDCSession {
 	return &idp.OIDCSession{
@@ -1954,6 +1967,7 @@ func (f *oidcTokenTest) assertRefreshWithoutRotation(t *testing.T) {
 	session.AccessToken = oldAccessToken
 	f.expectRefreshTokenSession(t, refreshToken, session)
 	f.expectRefreshTokenConsume(t, refreshToken, session)
+	f.mock.ExpectSet(testDeniedAccessTokenKey(oldAccessToken), "1", time.Hour).SetVal("OK")
 	f.mock.ExpectSet("test:oidc:denied_access_token:"+oldAccessToken, "1", time.Hour).SetVal("OK")
 	f.expectStaticRefreshTokenStore(refreshToken, session.UserID)
 

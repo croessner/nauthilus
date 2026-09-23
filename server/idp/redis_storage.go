@@ -972,40 +972,6 @@ func (s *RedisTokenStorage) getEpochBoundSession(ctx context.Context, key string
 	return session, nil
 }
 
-// DenyJWTAccessToken adds a JWT access token to the denylist in Redis.
-// The token is stored with a TTL so it expires automatically when the original token would have expired.
-func (s *RedisTokenStorage) DenyJWTAccessToken(ctx context.Context, token string, ttl time.Duration) error {
-	if token == "" || ttl <= 0 {
-		return nil
-	}
-
-	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	return s.redis.GetWriteHandle().Set(writeCtx, key, "1", ttl).Err()
-}
-
-// IsJWTAccessTokenDenied checks authoritative revocation state without collapsing backend failures into absence.
-func (s *RedisTokenStorage) IsJWTAccessTokenDenied(ctx context.Context, token string) (bool, error) {
-	key := s.prefix + fmt.Sprintf("oidc:denied_access_token:%s", token)
-
-	readCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	_, err := s.redis.GetWriteHandle().Get(readCtx, key).Result()
-	if stderrors.Is(err, redis.Nil) {
-		return false, nil
-	}
-
-	if err != nil {
-		return false, err
-	}
-
-	return true, nil
-}
-
 // FlushUserTokens removes all OIDC access tokens and refresh tokens for a given user.
 // It returns a combined error if any of the underlying deletions fail.
 func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) error {

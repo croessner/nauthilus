@@ -19,7 +19,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -501,7 +503,37 @@ func testAccessTokenKey(token string) string {
 }
 
 func testDeniedAccessTokenKey(token string) string {
+	sum := sha256.Sum256([]byte(oidcDeniedAccessTokenDigestDomain + token))
+
+	return testRedisPrefix + "oidc:denied_access_token:" + oidcDeniedAccessTokenDigestMarker + hex.EncodeToString(sum[:])
+}
+
+// testLegacyDeniedAccessTokenKey returns the pre-digest denylist key that embedded the raw token.
+func testLegacyDeniedAccessTokenKey(token string) string {
 	return testRedisPrefix + "oidc:denied_access_token:" + token
+}
+
+// expectDeniedAccessTokenLookup registers the pipelined digest and legacy denylist reads.
+func expectDeniedAccessTokenLookup(mock redismock.ClientMock, token string, denied bool) {
+	entries := int64(0)
+	if denied {
+		entries = 1
+	}
+
+	mock.ExpectExists(testDeniedAccessTokenKey(token)).SetVal(entries)
+	mock.ExpectExists(testLegacyDeniedAccessTokenKey(token)).SetVal(0)
+}
+
+// expectDeniedAccessTokenWrite registers the pipelined digest and legacy denylist writes of one release.
+func expectDeniedAccessTokenWrite(mock redismock.ClientMock, token string, ttl time.Duration) {
+	mock.ExpectSet(testDeniedAccessTokenKey(token), "1", ttl).SetVal("OK")
+	mock.ExpectSet(testLegacyDeniedAccessTokenKey(token), "1", ttl).SetVal("OK")
+}
+
+// expectDeniedAccessTokenLookupError registers a pipelined denylist read that fails at the backend.
+// The mock stops a pipeline at its first failing command, so only the digest read is expected.
+func expectDeniedAccessTokenLookupError(mock redismock.ClientMock, token string, err error) {
+	mock.ExpectExists(testDeniedAccessTokenKey(token)).SetErr(err)
 }
 
 func testUserAccessTokensKey(userID string) string {
@@ -1015,7 +1047,7 @@ func expectStaticRefreshTokenConsume(mock redismock.ClientMock, refreshToken str
 // expectJWTRefreshTokenExchange expects JWT access-token denial and refresh-token rotation.
 func expectJWTRefreshTokenExchange(mock redismock.ClientMock, refreshToken string, accessToken string, sessionData string) {
 	expectStaticRefreshTokenConsume(mock, refreshToken, sessionData)
-	mock.ExpectSet(testDeniedAccessTokenKey(accessToken), "1", 2*time.Hour).SetVal("OK")
+	expectDeniedAccessTokenWrite(mock, accessToken, 2*time.Hour)
 	expectFixedRefreshTokenStore(mock)
 }
 
@@ -1033,7 +1065,7 @@ func expectOpaqueRefreshTokenExchange(mock redismock.ClientMock, refreshToken st
 // expectStableRefreshTokenExchange expects refresh-token reuse without rotation.
 func expectStableRefreshTokenExchange(mock redismock.ClientMock, refreshToken string, accessToken string, sessionData string) {
 	expectStaticRefreshTokenConsume(mock, refreshToken, sessionData)
-	mock.ExpectSet(testDeniedAccessTokenKey(accessToken), "1", 2*time.Hour).SetVal("OK")
+	expectDeniedAccessTokenWrite(mock, accessToken, 2*time.Hour)
 	expectStaticRefreshTokenStore(mock, refreshToken)
 }
 
@@ -1416,7 +1448,7 @@ func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, mfa
 
 	// Rejected dynamic clients fail before the denylist lookup.
 	if wantErr == "" {
-		mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+		expectDeniedAccessTokenLookup(mock, tokenString, false)
 	}
 
 	_, err := idp.ValidateToken(t.Context(), tokenString)
@@ -1435,7 +1467,7 @@ func TestInvalidateOldAccessTokenDeniesDynamicJWTWithResolvedLifetime(t *testing
 	client := &config.OIDCClient{ClientID: dcr.ClientIDPrefix + "refresh-client", Dynamic: true, AccessTokenLifetime: 5 * time.Minute}
 
 	// The dynamic client is not part of the static client list, so the resolved client must be used.
-	mock.ExpectSet(testDeniedAccessTokenKey(oldToken), "1", 5*time.Minute).SetVal("OK")
+	expectDeniedAccessTokenWrite(mock, oldToken, 5*time.Minute)
 
 	err := idp.invalidateOldAccessToken(t.Context(), &OIDCSession{ClientID: client.ClientID, AccessToken: oldToken}, client)
 	assert.NoError(t, err)
@@ -1493,7 +1525,7 @@ func TestValidateTokenJWTResolvesRedisKeyByKID(t *testing.T) {
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+	expectDeniedAccessTokenLookup(mock, tokenString, false)
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.NoError(t, err)
@@ -1513,7 +1545,7 @@ func TestValidateTokenJWTRejectsDeniedTokenAfterSignatureValidation(t *testing.T
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).SetVal("1")
+	expectDeniedAccessTokenLookup(mock, tokenString, true)
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.Error(t, err)
@@ -1534,7 +1566,7 @@ func TestValidateTokenJWTRejectsDenylistBackendFailure(t *testing.T) {
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).SetErr(errors.New("redis unavailable"))
+	expectDeniedAccessTokenLookupError(mock, tokenString, errors.New("redis unavailable"))
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.Error(t, err)
@@ -1615,7 +1647,7 @@ func TestValidateTokenForUserInfoRequiresOpenIDScope(t *testing.T) {
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+	expectDeniedAccessTokenLookup(mock, tokenString, false)
 
 	claims, err := idp.ValidateTokenForUserInfo(t.Context(), tokenString)
 	assert.Error(t, err)
@@ -1635,7 +1667,7 @@ func TestValidateTokenForUserInfoAcceptsOpenIDScope(t *testing.T) {
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+	expectDeniedAccessTokenLookup(mock, tokenString, false)
 
 	claims, err := idp.ValidateTokenForUserInfo(t.Context(), tokenString)
 	assert.NoError(t, err)
@@ -1664,7 +1696,7 @@ func TestValidateTokenEmitsDiagnosticChildSpans(t *testing.T) {
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectGet(testDeniedAccessTokenKey(tokenString)).RedisNil()
+	expectDeniedAccessTokenLookup(mock, tokenString, false)
 
 	_, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.NoError(t, err)
@@ -1983,7 +2015,7 @@ func expectClientCredentialsTokenValidation(
 
 	for range count {
 		expectUserTokenEpoch(mock, "cc-client")
-		mock.ExpectGet(testDeniedAccessTokenKey(accessToken)).RedisNil()
+		expectDeniedAccessTokenLookup(mock, accessToken, false)
 	}
 }
 

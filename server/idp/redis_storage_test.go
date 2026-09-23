@@ -179,9 +179,10 @@ func assertDenyJWTAccessToken(t *testing.T, fixture redisTokenStorageFixture) {
 
 	token := "header.payload.signature"
 	ttl := 2 * time.Hour
-	key := fixture.prefix + "oidc:denied_access_token:" + token
+	key := fixture.storage.deniedAccessTokenKey(token)
 
 	fixture.mock.ExpectSet(key, "1", ttl).SetVal("OK")
+	fixture.mock.ExpectSet(fixture.prefix+"oidc:denied_access_token:"+token, "1", ttl).SetVal("OK")
 
 	err := fixture.storage.DenyJWTAccessToken(fixture.ctx, token, ttl)
 	assert.NoError(t, err)
@@ -201,12 +202,14 @@ func assertDenyJWTAccessTokenNoop(t *testing.T, fixture redisTokenStorageFixture
 func assertJWTAccessTokenDenied(t *testing.T, fixture redisTokenStorageFixture, token string, want bool) {
 	t.Helper()
 
-	key := fixture.prefix + "oidc:denied_access_token:" + token
+	fixture.mock.ExpectExists(fixture.storage.deniedAccessTokenKey(token)).SetVal(0)
+
+	legacyEntries := int64(0)
 	if want {
-		fixture.mock.ExpectGet(key).SetVal("1")
-	} else {
-		fixture.mock.ExpectGet(key).RedisNil()
+		legacyEntries = 1
 	}
+
+	fixture.mock.ExpectExists(fixture.prefix + "oidc:denied_access_token:" + token).SetVal(legacyEntries)
 
 	denied, err := fixture.storage.IsJWTAccessTokenDenied(fixture.ctx, token)
 	assert.NoError(t, err)
@@ -277,8 +280,8 @@ func TestRedisTokenStorageUsesConfiguredRedisDeadlines(t *testing.T) {
 func TestJWTAccessTokenDenylistFailsClosedOnRedisError(t *testing.T) {
 	fixture := newRedisTokenStorageFixture()
 	token := "header.payload.signature"
-	key := fixture.prefix + "oidc:denied_access_token:" + token
-	fixture.mock.ExpectGet(key).SetErr(&net.OpError{Op: "read", Net: "tcp", Err: errors.New("redis unavailable")})
+	backendErr := &net.OpError{Op: "read", Net: "tcp", Err: errors.New("redis unavailable")}
+	fixture.mock.ExpectExists(fixture.storage.deniedAccessTokenKey(token)).SetErr(backendErr)
 
 	denied, err := fixture.storage.IsJWTAccessTokenDenied(fixture.ctx, token)
 	assert.False(t, denied)
