@@ -458,19 +458,12 @@ func (r *checkpointRuntime) guardAttributeMatch(
 		return booleanGuardMatch(r.runtimeWithinTimeWindow(namespace, fact.Value(), expression.Reference()))
 	}
 
-	operands := expression.Values()
-	if expression.Reference() != "" {
-		var found bool
-
-		key := policyruntime.ConditionMaterialKey(namespace, expression.Reference())
-
-		operands, found = r.conditionSets[key]
-		if !found {
-			return guardUnknown
-		}
+	operands, found := r.predicateOperands(namespace, expression)
+	if !found {
+		return guardUnknown
 	}
 
-	return booleanGuardMatch(matchAttributeOperator(expression.Operator(), fact.Value(), operands))
+	return booleanGuardMatch(matchAttributeOperator(expression, fact.Value(), operands))
 }
 
 // negateGuardMatch preserves unknown instead of converting missing facts into a matched skip guard.

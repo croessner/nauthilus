@@ -18,7 +18,6 @@ package service
 import (
 	"math/big"
 	"net/netip"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -27,6 +26,12 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
+
+// conditionOperands holds one predicate's inline or referenced operands with their precompiled networks.
+type conditionOperands struct {
+	values   []decision.Value
+	networks registry.NetworkSet
+}
 
 type selectedRule struct {
 	rule      policyruntime.CompiledRule
@@ -290,13 +295,9 @@ func (r *checkpointRuntime) recordLocalPredicateMatches(
 		return r.runtimeWithinTimeWindow(namespace, value, expression.Reference())
 	}
 
-	operands := expression.Values()
-	if expression.Reference() != "" {
-		key := policyruntime.ConditionMaterialKey(namespace, expression.Reference())
-		operands = append([]decision.Value(nil), r.conditionSets[key]...)
-	}
+	operands, _ := r.predicateOperands(namespace, expression)
 
-	return matchAttributeOperator(expression.Operator(), value, operands)
+	return matchAttributeOperator(expression, value, operands)
 }
 
 // attributeExpressionMatches evaluates one strict typed fact predicate.
@@ -320,35 +321,62 @@ func (r *checkpointRuntime) attributeExpressionMatches(
 		return r.runtimeWithinTimeWindow(namespace, fact.Value(), expression.Reference())
 	}
 
-	operands := expression.Values()
-	if expression.Reference() != "" {
-		key := policyruntime.ConditionMaterialKey(namespace, expression.Reference())
-		operands = append([]decision.Value(nil), r.conditionSets[key]...)
+	operands, _ := r.predicateOperands(namespace, expression)
+
+	return matchAttributeOperator(expression, fact.Value(), operands)
+}
+
+// predicateOperands resolves the operands one leaf predicate reads at evaluation time.
+// Referenced sets are shared read-only generation state and are never copied; an unavailable
+// reference yields empty operands and false. Inline operands are resolved by inlineOperands.
+func (r *checkpointRuntime) predicateOperands(
+	namespace string,
+	expression registry.PolicyExpression,
+) (conditionOperands, bool) {
+	if expression.Reference() == "" {
+		return inlineOperands(expression), true
 	}
 
-	return matchAttributeOperator(expression.Operator(), fact.Value(), operands)
+	operands, found := r.conditionSets[policyruntime.ConditionMaterialKey(namespace, expression.Reference())]
+
+	return operands, found
+}
+
+// inlineOperands returns only the inline operand form the operator reads.
+// matches reads the constructor-compiled pattern from the expression and cidr_contains reads the
+// precompiled networks, so neither pays for the detached copy that Values() allocates.
+func inlineOperands(expression registry.PolicyExpression) conditionOperands {
+	switch expression.Operator() {
+	case registry.ExpressionOperatorMatches:
+		return conditionOperands{}
+	case registry.ExpressionOperatorCIDRContains:
+		return conditionOperands{networks: expression.Networks()}
+	default:
+		return conditionOperands{values: expression.Values()}
+	}
 }
 
 // matchAttributeOperator applies the closed expression operator matrix.
+// Operand slices are shared read-only generation state and must not be mutated.
 func matchAttributeOperator(
-	operator registry.ExpressionOperator,
+	expression registry.PolicyExpression,
 	fact decision.Value,
-	operands []decision.Value,
+	operands conditionOperands,
 ) bool {
-	switch operator {
+	switch operator := expression.Operator(); operator {
 	case registry.ExpressionOperatorIs, registry.ExpressionOperatorEqual, registry.ExpressionOperatorEQ,
 		registry.ExpressionOperatorNotEqual, registry.ExpressionOperatorIn, registry.ExpressionOperatorNotIn:
-		return matchRuntimeSetOperator(operator, fact, operands)
+		return matchRuntimeSetOperator(operator, fact, operands.values)
 	case registry.ExpressionOperatorMatches:
-		return matchesRuntimePattern(fact, operands)
+		return matchesRuntimePattern(expression, fact)
 	case registry.ExpressionOperatorContains, registry.ExpressionOperatorContainsAny,
 		registry.ExpressionOperatorContainsAll, registry.ExpressionOperatorContainsNone:
-		return matchRuntimeContainsOperator(operator, fact, operands)
+		return matchRuntimeContainsOperator(operator, fact, operands.values)
 	case registry.ExpressionOperatorGT, registry.ExpressionOperatorGTE,
 		registry.ExpressionOperatorLT, registry.ExpressionOperatorLTE:
-		return orderedRuntimeValue(operator, fact, operands)
+		return orderedRuntimeValue(operator, fact, operands.values)
 	case registry.ExpressionOperatorCIDRContains:
-		return runtimeCIDRContains(fact, operands)
+		return runtimeCIDRContains(fact, operands.networks)
 	default:
 		return false
 	}
@@ -441,22 +469,11 @@ func equalRuntimeValue(left decision.Value, right decision.Value) bool {
 	}
 }
 
-// matchesRuntimePattern evaluates one compiler-validated regular expression.
-func matchesRuntimePattern(fact decision.Value, operands []decision.Value) bool {
-	if len(operands) != 1 {
-		return false
-	}
+// matchesRuntimePattern evaluates the regular expression precompiled by the expression constructor.
+func matchesRuntimePattern(expression registry.PolicyExpression, fact decision.Value) bool {
+	text, ok := fact.StringValue()
 
-	text, textOK := fact.StringValue()
-
-	pattern, patternOK := operands[0].StringValue()
-	if !textOK || !patternOK {
-		return false
-	}
-
-	compiled, err := regexp.Compile(pattern)
-
-	return err == nil && compiled.MatchString(text)
+	return ok && expression.MatchPattern(text)
 }
 
 // containsRuntimeStrings evaluates exact string-list containment modes.
@@ -583,34 +600,16 @@ func compareOrdered[T ~int64 | ~float64](left T, right T) int {
 	return 0
 }
 
-// runtimeCIDRContains evaluates an address fact against exact address or prefix operands.
-func runtimeCIDRContains(fact decision.Value, operands []decision.Value) bool {
+// runtimeCIDRContains evaluates an address fact against precompiled exact address or prefix operands.
+func runtimeCIDRContains(fact decision.Value, networks registry.NetworkSet) bool {
 	text, ok := fact.StringValue()
 	if !ok {
 		return false
 	}
 
 	address, err := netip.ParseAddr(text)
-	if err != nil {
-		return false
-	}
 
-	for _, operand := range operands {
-		network, stringOK := operand.StringValue()
-		if !stringOK {
-			continue
-		}
-
-		if prefix, prefixErr := netip.ParsePrefix(network); prefixErr == nil && prefix.Contains(address) {
-			return true
-		}
-
-		if exact, exactErr := netip.ParseAddr(network); exactErr == nil && exact == address {
-			return true
-		}
-	}
-
-	return false
+	return err == nil && networks.Contains(address)
 }
 
 // runtimeWithinTimeWindow evaluates one source-owned recurring local-time schedule.

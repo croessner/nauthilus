@@ -85,7 +85,7 @@ type checkpointRuntime struct {
 	factProviders     map[string]factProviderBinding
 	syncEffects       map[string]syncEffectBinding
 	postActions       map[string]postActionBinding
-	conditionSets     map[string][]decision.Value
+	conditionSets     map[string]conditionOperands
 	timeWindows       map[string]policyruntime.CompiledTimeWindow
 	ids               correlationIDGenerator
 	evaluationTimeout time.Duration
@@ -165,7 +165,7 @@ func newCheckpointRuntime(config checkpointRuntimeConfig) (*checkpointRuntime, e
 		factProviders:     cloneFactProviderBindings(config.factProviders),
 		syncEffects:       cloneSyncEffectBindings(config.syncEffects),
 		postActions:       clonePostActionBindings(config.postActions),
-		conditionSets:     cloneConditionSets(config.conditionSets),
+		conditionSets:     compileConditionSets(config.conditionSets),
 		timeWindows:       cloneTimeWindows(config.timeWindows),
 		ids:               ids,
 		evaluationTimeout: timeout,
@@ -1069,11 +1069,20 @@ func cloneFactProviderBindings(input map[string]factProviderBinding) map[string]
 	return result
 }
 
-// cloneConditionSets deeply owns referenced strict operands.
-func cloneConditionSets(input map[string][]decision.Value) map[string][]decision.Value {
-	result := make(map[string][]decision.Value, len(input))
+// compileConditionSets deeply owns referenced strict operands and precompiles network sets once per generation.
+// Only registry.NetworkReferencePrefix sets are compiled as networks: the registry admits that reference
+// family exclusively for cidr_contains, which reads nothing but the precompiled networks.
+func compileConditionSets(input map[string][]decision.Value) map[string]conditionOperands {
+	result := make(map[string]conditionOperands, len(input))
 	for id, values := range input {
-		result[id] = append([]decision.Value(nil), values...)
+		operands := conditionOperands{values: append([]decision.Value(nil), values...)}
+
+		if reference, ok := policyruntime.ConditionMaterialReference(id); ok &&
+			strings.HasPrefix(reference, registry.NetworkReferencePrefix) {
+			operands.networks = registry.NewNetworkSet(operands.values)
+		}
+
+		result[id] = operands
 	}
 
 	return result

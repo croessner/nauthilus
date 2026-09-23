@@ -154,7 +154,7 @@ func normalizeReferencedAttribute(
 	case configured.CIDRContains != "":
 		input.Operator = registry.ExpressionOperatorCIDRContains
 		input.FactKind = decision.ValueKindString
-		input.Reference, input.Values = referenceOrString(configured.CIDRContains, "@network.")
+		input.Reference, input.Values = referenceOrString(configured.CIDRContains, registry.NetworkReferencePrefix)
 	case configured.WithinTimeWindow != "":
 		input.Operator = registry.ExpressionOperatorWithinTimeWindow
 		input.FactKind = decision.ValueKindTimestamp

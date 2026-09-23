@@ -17,7 +17,6 @@ package registry
 
 import (
 	"errors"
-	"net/netip"
 	"regexp"
 	"slices"
 	"strings"
@@ -162,6 +161,8 @@ type PolicyExpressionInput struct {
 
 // PolicyExpression is one immutable executable condition-tree node.
 type PolicyExpression struct {
+	pattern         *regexp.Regexp
+	networks        NetworkSet
 	factID          string
 	reference       string
 	values          []decision.Value
@@ -205,6 +206,8 @@ func NewPolicyExpression(input PolicyExpressionInput) (PolicyExpression, error) 
 		expression.factKind = decision.ValueKindRecords
 	}
 
+	expression.compileOperands()
+
 	state := expressionValidationState{}
 	if err := expression.validate(1, &state); err != nil {
 		return PolicyExpression{}, err
@@ -241,6 +244,16 @@ func (e PolicyExpression) Reference() string {
 // Values returns detached immutable expected values.
 func (e PolicyExpression) Values() []decision.Value {
 	return append([]decision.Value(nil), e.values...)
+}
+
+// MatchPattern reports whether text matches the precompiled matches operand.
+func (e PolicyExpression) MatchPattern(text string) bool {
+	return e.pattern != nil && e.pattern.MatchString(text)
+}
+
+// Networks returns the precompiled inline cidr_contains operands.
+func (e PolicyExpression) Networks() NetworkSet {
+	return e.networks
 }
 
 // Children returns a deeply detached ordered logical child list.
@@ -293,7 +306,38 @@ func (e PolicyExpression) valid() bool {
 	return e.Valid()
 }
 
+// compileOperands precompiles inline matches and cidr_contains operands once per node.
+// Validation owns the rejection of operands that did not compile.
+func (e *PolicyExpression) compileOperands() {
+	switch e.operator {
+	case ExpressionOperatorMatches:
+		e.pattern = compileExpressionPattern(e.values)
+	case ExpressionOperatorCIDRContains:
+		e.networks = NewNetworkSet(e.values)
+	}
+}
+
+// compileExpressionPattern compiles one bounded string operand or returns nil.
+func compileExpressionPattern(values []decision.Value) *regexp.Regexp {
+	if len(values) != 1 || !expressionValuesWithinByteBound(values) {
+		return nil
+	}
+
+	pattern, ok := values[0].StringValue()
+	if !ok {
+		return nil
+	}
+
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+
+	return compiled
+}
+
 // clone returns one deeply detached condition tree.
+// Precompiled operands are immutable and stay shared.
 func (e PolicyExpression) clone() PolicyExpression {
 	e.values = e.Values()
 	e.children = e.Children()
@@ -612,8 +656,7 @@ func validatePatternExpressionOperand(expression PolicyExpression) error {
 		return err
 	}
 
-	pattern, _ := expression.values[0].StringValue()
-	if _, err := regexp.Compile(pattern); err != nil {
+	if expression.pattern == nil {
 		return invalidExpression(expression.factID, "matches operand must compile as a regular expression")
 	}
 
@@ -658,20 +701,16 @@ func validateNetworkExpressionOperand(expression PolicyExpression) error {
 		return invalidExpression(expression.factID, "cidr_contains requires an IP/CIDR string fact")
 	}
 
+	// NetworkReferencePrefix is admitted only here; the runtime precompiles exactly this family as networks.
 	if expression.reference != "" {
-		return requireExpressionReference(expression, "@network.")
+		return requireExpressionReference(expression, NetworkReferencePrefix)
 	}
 
 	if err := requireExpressionValues(expression, 1, decision.ValueKindString); err != nil {
 		return err
 	}
 
-	network, _ := expression.values[0].StringValue()
-	if _, prefixErr := netip.ParsePrefix(network); prefixErr == nil {
-		return nil
-	}
-
-	if _, addressErr := netip.ParseAddr(network); addressErr != nil {
+	if expression.networks.Len() != 1 {
 		return invalidExpression(expression.factID, "cidr_contains requires one IP or CIDR operand")
 	}
 
@@ -776,6 +815,7 @@ func (e PolicyExpression) collectFactContracts(result *[]FactContract, seen map[
 }
 
 // clonePolicyExpressions deeply owns one ordered child list.
+// Precompiled operands are immutable and stay shared.
 func clonePolicyExpressions(values []PolicyExpression) []PolicyExpression {
 	result := make([]PolicyExpression, 0, len(values))
 	for _, value := range values {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
 
@@ -37,7 +38,7 @@ func PrepareConditionMaterial(
 			return nil, nil, err
 		}
 
-		if err := addConditionValueSets(sets, namespace, "@network.", configuredSets.Networks); err != nil {
+		if err := addConditionValueSets(sets, namespace, registry.NetworkReferencePrefix, configuredSets.Networks); err != nil {
 			return nil, nil, err
 		}
 

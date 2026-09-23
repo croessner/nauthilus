@@ -60,6 +60,13 @@ func ConditionMaterialKey(namespace string, reference string) string {
 	return namespace + conditionMaterialSeparator + reference
 }
 
+// ConditionMaterialReference returns the authored reference scoped by one ConditionMaterialKey.
+func ConditionMaterialReference(key string) (string, bool) {
+	_, reference, found := strings.Cut(key, conditionMaterialSeparator)
+
+	return reference, found
+}
+
 // Clone returns one deeply detached recurring window.
 func (w CompiledTimeWindow) Clone() CompiledTimeWindow {
 	w.Days = append([]time.Weekday(nil), w.Days...)
