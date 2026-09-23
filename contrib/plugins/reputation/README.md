@@ -177,6 +177,12 @@ a socket-only primary and a three-node loopback Cluster. Tests include real Lua
 execution, time/expiry, quotas, malformed state, concurrent allocations and
 rotation, lost requests/acknowledgments, partial fan-out, allocation drain and
 host-managed `NOSCRIPT` recovery. No production Redis endpoint is accepted.
+A command-budget test observes `MONITOR` and pins the script calls and the
+commands one steady-state authentication spends on its hottest subject keys.
+A subject shared by many logins, such as a NAT or proxy address, concentrates
+this work on one Cluster slot by design: its atomic accumulation cannot be
+split or cached without changing model semantics, so scripts write each hash
+with one command and probe each key only once.
 
 ## Primary assessment and calibration
 

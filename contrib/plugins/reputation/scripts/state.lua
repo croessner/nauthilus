@@ -42,8 +42,9 @@ local function decay_state(request, state, now)
 end
 
 -- Validate persistent expiry metadata without refreshing or repairing either subject key.
-local function valid_subject_lifetime(state, state_key, seen_key, now, retention)
-    local seen_type = kind(seen_key)
+-- Callers that already probed the seen set pass its type so the hot key is not probed twice.
+local function valid_subject_lifetime(state, state_key, seen_key, now, retention, seen_type)
+    seen_type = seen_type or kind(seen_key)
     if seen_type ~= 'none' and seen_type ~= 'zset' then return false end
     if next(state) == nil then return seen_type == 'none' end
     local expiry = number(state.expires_at, now, now + retention)

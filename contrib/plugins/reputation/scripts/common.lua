@@ -23,9 +23,11 @@ local function kind(key)
     return redis.call('TYPE', key).ok
 end
 
+-- Read one bounded hash with a single type probe so hot subject keys pay for each check once.
 local function hash(key, maximum)
-    if kind(key) == 'none' then return {} end
-    if kind(key) ~= 'hash' or redis.call('HLEN', key) > maximum then return nil end
+    local current = kind(key)
+    if current == 'none' then return {} end
+    if current ~= 'hash' or redis.call('HLEN', key) > maximum then return nil end
     local values = redis.call('HGETALL', key)
     local result = {}
     for index = 1, #values, 2 do result[values[index]] = values[index + 1] end
@@ -134,4 +136,14 @@ end
 local function prune_expired(key, now)
     local expired = redis.call('ZRANGEBYSCORE', key, '-inf', now, 'LIMIT', 0, maximum_expiry_prune)
     if #expired > 0 then redis.call('ZREM', key, unpack(expired)) end
+end
+
+-- Write every field of one hash in a single variadic HSET instead of one command per field.
+local function write_hash(key, values)
+    local arguments = {}
+    for field, value in pairs(values) do
+        arguments[#arguments + 1] = field
+        arguments[#arguments + 1] = value
+    end
+    if #arguments > 0 then redis.call('HSET', key, unpack(arguments)) end
 end

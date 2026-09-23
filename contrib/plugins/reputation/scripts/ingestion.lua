@@ -18,7 +18,7 @@ if existing and (state.schema_version ~= state_schema or state.model_fingerprint
     return {'model_mismatch'}
 end
 local values = decay_state(request, state, now)
-if not values or not valid_subject_lifetime(state, KEYS[1], KEYS[2], now, request.retention) then return {'invalid_state'} end
+if not values or not valid_subject_lifetime(state, KEYS[1], KEYS[2], now, request.retention, seen_type) then return {'invalid_state'} end
 local eligible = {}
 for _, profile in ipairs(request.eligible_profiles) do eligible[profile] = true end
 local source_exists = false
@@ -59,7 +59,7 @@ values.kind = request.kind
 values.expires_at = now + request.retention
 values.seen_until = seen_until
 prune_expired(KEYS[2], now)
-for field, value in pairs(values) do redis.call('HSET', KEYS[1], field, value) end
+write_hash(KEYS[1], values)
 redis.call('ZADD', KEYS[2], request.manifest_expiry, request.seen_tag)
 redis.call('PEXPIRE', KEYS[1], math.ceil(request.retention * 1000))
 redis.call('PEXPIRE', KEYS[2], math.ceil((seen_until - now) * 1000))

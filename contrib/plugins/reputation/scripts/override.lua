@@ -14,7 +14,7 @@ local function finish(response)
         local value = {schema=audit_schema,tag=request.tag,kind=request.kind,operation='override_' .. request.operation,
             reason=request.reason,creator=request.creator,audit_id=request.audit_id,previous_audit=request.previous_audit,
             origin=request.origin,created_at=now}
-        for field, content in pairs(value) do redis.call('HSET', KEYS[2], field, content) end
+        write_hash(KEYS[2], value)
         redis.call('EXPIRE', KEYS[2], 7776000)
     end
     return response
@@ -40,7 +40,7 @@ if request.operation ~= 'put' or not bounded(request.ttl, 0, 31536000) or not op
 local value = {schema=override_schema,tag=request.tag,kind=request.kind,band=request.band,
     reason=request.reason,creator=request.creator,created_at=now,expires_at=0,audit_id=request.audit_id,origin=request.origin}
 if request.ttl > 0 then value.expires_at = now + request.ttl end
-for field, content in pairs(value) do redis.call('HSET', KEYS[1], field, content) end
+write_hash(KEYS[1], value)
 if request.ttl > 0 then redis.call('PEXPIRE', KEYS[1], math.ceil(request.ttl * 1000))
 else redis.call('PERSIST', KEYS[1]) end
 return finish({'override_written',cjson.encode(value)})

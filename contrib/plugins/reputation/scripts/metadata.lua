@@ -88,5 +88,5 @@ local retained = math.max(tonumber(metadata.retention) or 0, request.retention)
 redis.call('HSET', KEYS[1], 'schema', request.schema, 'identity', request.identity, 'shards', request.shards,
     'generation', request.generation, 'mode', 'active', 'retention', retained, 'previous_identity', previous)
 redis.call('HDEL', KEYS[1], 'audit_reason', 'audit_origin', 'audit_id', 'audit_creator', 'drain_generation', 'drained_at')
-for id, fingerprint in pairs(request.models) do redis.call('HSET', KEYS[2], id, fingerprint) end
+write_hash(KEYS[2], request.models)
 return {'active', previous}
