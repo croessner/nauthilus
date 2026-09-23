@@ -1082,12 +1082,7 @@ func (n *NauthilusIDP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token
 // resolveRSAPublicKey finds the RSA public key matching the given kid.
 func (n *NauthilusIDP) resolveRSAPublicKey(ctx context.Context, kid string) (any, error) {
 	if kid != "" {
-		key, err := n.keyMgr.GetRSAKeyByID(ctx, kid)
-		if err != nil {
-			return nil, err
-		}
-
-		return &key.PublicKey, nil
+		return n.keyMgr.VerificationKeyByID(ctx, signing.AlgorithmRS256, kid)
 	}
 
 	// Fallback: the active key, read without the signing path's key generation.
@@ -1097,12 +1092,7 @@ func (n *NauthilusIDP) resolveRSAPublicKey(ctx context.Context, kid string) (any
 // resolveEdDSAPublicKey finds the Ed25519 public key matching the given kid.
 func (n *NauthilusIDP) resolveEdDSAPublicKey(ctx context.Context, kid string) (any, error) {
 	if kid != "" {
-		key, err := n.keyMgr.GetEdKeyByID(ctx, kid)
-		if err != nil {
-			return nil, err
-		}
-
-		return key.Public(), nil
+		return n.keyMgr.VerificationKeyByID(ctx, signing.AlgorithmEdDSA, kid)
 	}
 
 	// Fallback: the active EdDSA key, read without the signing path's key generation.

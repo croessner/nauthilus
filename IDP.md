@@ -170,6 +170,10 @@ The `id` in `signing_keys` (also called KID) is simply a name for your signing k
     - **Automatic**: If `auto_key_rotation` is enabled, Nauthilus generates new RSA keys at the specified
       `key_rotation_interval`. Keys are stored encrypted in Redis and automatically rotated across all Nauthilus
       instances. Old keys remain available in JWKS until they reach `key_max_age`.
+- **Verification key cache**: Token validation keeps the public half of a Redis-held key, looked up by KID, in a
+  process-local cache for at most 10 seconds and never beyond the key's expiry. Private keys and unknown KIDs are
+  never cached, and rotation or cleanup in the same process drops the cache at once. Deleting a still-valid key from
+  Redis by hand therefore takes up to 10 seconds to stop verification in every process, including the one that deleted it.
 
 ### 3.2 Restricted Native Dynamic Client Registration
 

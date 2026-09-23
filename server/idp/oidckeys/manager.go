@@ -56,15 +56,16 @@ type SigningKeyEntry struct {
 
 // Manager handles OIDC signing keys.
 type Manager struct {
-	deps      *deps.Deps
-	artifacts *config.ArtifactSnapshot
+	deps             *deps.Deps
+	artifacts        *config.ArtifactSnapshot
+	verificationKeys *verificationKeyCache
 }
 
 // NewManager creates a new Manager.
 func NewManager(d *deps.Deps) *Manager {
 	artifacts, _ := config.ArtifactSnapshotFor(d.Cfg)
 
-	return &Manager{deps: d, artifacts: artifacts}
+	return &Manager{deps: d, artifacts: artifacts, verificationKeys: newVerificationKeyCache(VerificationKeyCacheTTL)}
 }
 
 func (m *Manager) redisReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -282,44 +283,6 @@ func (m *Manager) GetAllEdKeys(ctx context.Context) (map[string]ed25519.PrivateK
 	return keys, nil
 }
 
-// GetRSAKeyByID returns one RSA signing key by key ID without scanning the full key set.
-func (m *Manager) GetRSAKeyByID(ctx context.Context, kid string) (*rsa.PrivateKey, error) {
-	if kid == "" {
-		key, _, err := m.GetActiveKey(ctx)
-
-		return key, err
-	}
-
-	key, redisErr := m.getRSAKeyFromRedis(ctx, kid)
-	if redisErr == nil {
-		return key, nil
-	}
-
-	if key, err := m.getStaticRSAKeyByID(kid); err == nil {
-		return key, nil
-	}
-
-	return nil, keyByIDNotFoundError("RSA", kid, redisErr)
-}
-
-// GetEdKeyByID returns one Ed25519 signing key by key ID without scanning the full key set.
-func (m *Manager) GetEdKeyByID(ctx context.Context, kid string) (ed25519.PrivateKey, error) {
-	if kid == "" {
-		return nil, fmt.Errorf("EdDSA key ID is required")
-	}
-
-	key, redisErr := m.getEdKeyFromRedis(ctx, kid)
-	if redisErr == nil {
-		return key, nil
-	}
-
-	if key, err := m.getStaticEdKeyByID(kid); err == nil {
-		return key, nil
-	}
-
-	return nil, keyByIDNotFoundError("EdDSA", kid, redisErr)
-}
-
 // keyByIDNotFoundError reports a key that neither Redis nor the static configuration holds. When the Redis
 // lookup itself failed, the key may well exist, so the store failure is returned instead of a verdict.
 func keyByIDNotFoundError(algorithm string, kid string, redisErr error) error {
@@ -330,30 +293,29 @@ func keyByIDNotFoundError(algorithm string, kid string, redisErr error) error {
 	return fmt.Errorf("%s key with kid %s not found", algorithm, kid)
 }
 
-func (m *Manager) getRSAKeyFromRedis(ctx context.Context, kid string) (*rsa.PrivateKey, error) {
-	meta, err := m.getKeyMetadataFromRedisHash(ctx, kid, RedisKeyOIDCKeys)
+// unexpiredKeyMetadata loads the Redis metadata of one key of algorithm and rejects expired key material.
+func (m *Manager) unexpiredKeyMetadata(ctx context.Context, algorithm string, kid string) (*KeyMetadata, error) {
+	hashKey, label := keyStoreFor(algorithm)
+
+	meta, err := m.getKeyMetadataFromRedisHash(ctx, kid, hashKey)
 	if err != nil {
 		return nil, err
 	}
 
 	if isExpired(meta, time.Now()) {
-		return nil, fmt.Errorf("RSA key with kid %s is expired", kid)
+		return nil, fmt.Errorf("%s key with kid %s is expired", label, kid)
 	}
 
-	return m.pemToPrivateKey(meta.PEM)
+	return meta, nil
 }
 
-func (m *Manager) getEdKeyFromRedis(ctx context.Context, kid string) (ed25519.PrivateKey, error) {
-	meta, err := m.getKeyMetadataFromRedisHash(ctx, kid, RedisKeyOIDCEdKeys)
-	if err != nil {
-		return nil, err
+// keyStoreFor returns the Redis hash and diagnostic label that hold keys of algorithm.
+func keyStoreFor(algorithm string) (string, string) {
+	if algorithm == signing.AlgorithmEdDSA {
+		return RedisKeyOIDCEdKeys, "EdDSA"
 	}
 
-	if isExpired(meta, time.Now()) {
-		return nil, fmt.Errorf("EdDSA key with kid %s is expired", kid)
-	}
-
-	return signing.ParseEd25519PrivateKeyPEM(meta.PEM)
+	return RedisKeyOIDCKeys, "RSA"
 }
 
 func (m *Manager) getStaticRSAKeyByID(kid string) (*rsa.PrivateKey, error) {
@@ -550,6 +512,9 @@ func (m *Manager) storeKeyInRedis(ctx context.Context, kid, pemData, algorithm, 
 	if err != nil {
 		return "", fmt.Errorf("failed to store key in Redis: %w", err)
 	}
+
+	// Rotation changed the key store; no Manager in this process may keep serving earlier lookups.
+	invalidateVerificationKeys()
 
 	// Set as active
 	err = m.deps.Redis.GetWriteHandle().Set(writeCtx, prefix+activeKey, kid, 0).Err()
@@ -770,6 +735,7 @@ func (m *Manager) cleanupKeysInHash(ctx context.Context, hashKey, activeKey stri
 			writeCtx, cancel := m.redisWriteContext(ctx)
 			m.deps.Redis.GetWriteHandle().HDel(writeCtx, prefix+hashKey, kid)
 			cancel()
+			invalidateVerificationKeys()
 			level.Info(m.deps.Logger).Log("msg", "cleaned up expired OIDC signing key", "kid", kid)
 		}
 	}

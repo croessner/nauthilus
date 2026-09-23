@@ -214,6 +214,8 @@ func UnaryServerInterceptor(deps ServerDeps) grpc.UnaryServerInterceptor {
 
 // unaryServerInterceptor composes the authority response-boundary interceptor order.
 func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
+	deps = deps.withSharedOIDCValidator()
+
 	return chainUnaryInterceptors(
 		postActionResponseCompletionInterceptor(),
 		requestMetrics,
@@ -339,6 +341,14 @@ func (d ServerDeps) effectiveLogger() *slog.Logger {
 	}
 
 	return d.Logger
+}
+
+// withSharedOIDCValidator resolves the bearer validator once per server, so its verification-key cache is
+// reused across calls instead of being rebuilt with a new validator for every request.
+func (d ServerDeps) withSharedOIDCValidator() ServerDeps {
+	d.OIDCValidator = d.effectiveOIDCValidator()
+
+	return d
 }
 
 func (d ServerDeps) effectiveOIDCValidator() oidcbearer.TokenValidator {

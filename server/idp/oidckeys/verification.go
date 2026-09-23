@@ -18,12 +18,37 @@ package oidckeys
 import (
 	"context"
 	"crypto"
+	"crypto/rsa"
 	"errors"
 	"fmt"
+	"math/big"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/server/idp/signing"
 	"github.com/redis/go-redis/v9"
 )
+
+// VerificationKeyByID returns the public key that verifies tokens signed with key kid of algorithm.
+//
+// Redis-held keys are served from a short-lived process cache of public keys; unknown key IDs and store
+// failures are never cached. Static configuration keys are consulted when Redis does not hold the key.
+func (m *Manager) VerificationKeyByID(ctx context.Context, algorithm string, kid string) (crypto.PublicKey, error) {
+	_, label := keyStoreFor(algorithm)
+	if kid == "" {
+		return nil, fmt.Errorf("%s key ID is required", label)
+	}
+
+	publicKey, redisErr := m.cachedRedisVerificationKey(ctx, algorithm, kid)
+	if redisErr == nil {
+		return publicKey, nil
+	}
+
+	if publicKey, err := m.staticVerificationKeyByID(algorithm, kid); err == nil {
+		return publicKey, nil
+	}
+
+	return nil, keyByIDNotFoundError(label, kid, redisErr)
+}
 
 // ActiveVerificationKey returns the public key of the active signing key for tokens that carry no kid.
 //
@@ -45,7 +70,7 @@ func (m *Manager) ActiveVerificationKey(ctx context.Context, algorithm string) (
 
 	switch {
 	case err == nil && kid != "":
-		publicKey, keyErr := m.redisVerificationKey(ctx, algorithm, kid)
+		publicKey, keyErr := m.cachedRedisVerificationKey(ctx, algorithm, kid)
 		if keyErr == nil {
 			return publicKey, nil
 		}
@@ -68,10 +93,56 @@ func (m *Manager) ActiveVerificationKey(ctx context.Context, algorithm string) (
 	return nil, fmt.Errorf("no active %s verification key found", algorithm)
 }
 
-// redisVerificationKey loads the public key of one Redis-held signing key.
-func (m *Manager) redisVerificationKey(ctx context.Context, algorithm string, kid string) (crypto.PublicKey, error) {
+// cachedRedisVerificationKey serves one Redis-held public key from the cache or loads and caches it.
+// The generation is captured before the read so a concurrent rotation cannot resurrect a stale entry.
+func (m *Manager) cachedRedisVerificationKey(ctx context.Context, algorithm string, kid string) (crypto.PublicKey, error) {
+	hashKey, _ := keyStoreFor(algorithm)
+	cacheKey := verificationKeyCacheKey{hashKey: hashKey, kid: kid}
+
+	if publicKey, ok := m.verificationKeys.get(cacheKey); ok {
+		return publicKey, nil
+	}
+
+	generation := verificationKeyGeneration.Load()
+
+	publicKey, expiresAt, err := m.redisVerificationKey(ctx, algorithm, kid)
+	if err != nil {
+		return nil, err
+	}
+
+	m.verificationKeys.put(cacheKey, publicKey, expiresAt, generation)
+
+	return publicKey, nil
+}
+
+// redisVerificationKey loads, decrypts and parses one Redis-held key and returns only its public half and expiry.
+func (m *Manager) redisVerificationKey(ctx context.Context, algorithm string, kid string) (crypto.PublicKey, time.Time, error) {
+	meta, err := m.unexpiredKeyMetadata(ctx, algorithm, kid)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+
 	if algorithm == signing.AlgorithmEdDSA {
-		key, err := m.getEdKeyFromRedis(ctx, kid)
+		key, err := signing.ParseEd25519PrivateKeyPEM(meta.PEM)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+
+		return key.Public(), meta.ExpiresAt, nil
+	}
+
+	key, err := m.pemToPrivateKey(meta.PEM)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+
+	return detachedRSAPublicKey(key), meta.ExpiresAt, nil
+}
+
+// staticVerificationKeyByID returns the public key of the configured static key kid of algorithm.
+func (m *Manager) staticVerificationKeyByID(algorithm string, kid string) (crypto.PublicKey, error) {
+	if algorithm == signing.AlgorithmEdDSA {
+		key, err := m.getStaticEdKeyByID(kid)
 		if err != nil {
 			return nil, err
 		}
@@ -79,12 +150,17 @@ func (m *Manager) redisVerificationKey(ctx context.Context, algorithm string, ki
 		return key.Public(), nil
 	}
 
-	key, err := m.getRSAKeyFromRedis(ctx, kid)
+	key, err := m.getStaticRSAKeyByID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return &key.PublicKey, nil
+	return detachedRSAPublicKey(key), nil
+}
+
+// detachedRSAPublicKey copies the public half so no reference to the private key outlives the lookup.
+func detachedRSAPublicKey(key *rsa.PrivateKey) *rsa.PublicKey {
+	return &rsa.PublicKey{N: new(big.Int).Set(key.N), E: key.E}
 }
 
 // staticVerificationKey returns the public key of the active static signing key of algorithm.
@@ -108,5 +184,5 @@ func (m *Manager) staticVerificationKey(algorithm string) (crypto.PublicKey, boo
 		return nil, false
 	}
 
-	return &key.PublicKey, true
+	return detachedRSAPublicKey(key), true
 }
