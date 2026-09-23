@@ -842,7 +842,7 @@ func (n *NauthilusIDP) validateJWTAccessTokenState(ctx context.Context, tokenStr
 	if err != nil {
 		denySpan.RecordError(err)
 
-		return fmt.Errorf("validate access token revocation: %w", err)
+		return tokenStateReadError(fmt.Errorf("validate access token revocation: %w", err))
 	}
 
 	if denied {
@@ -866,7 +866,7 @@ func (n *NauthilusIDP) validateDynamicJWTAccessToken(ctx context.Context, claims
 
 	client, err := n.ResolveClient(ctx, clientID)
 	if err != nil {
-		return fmt.Errorf("dynamic client is not active: %w", err)
+		return dynamicClientResolveError(err)
 	}
 
 	// MFA is enforced at authorization and re-checked on refresh against the stored session;
@@ -902,7 +902,7 @@ func (n *NauthilusIDP) validateAccessTokenUserEpoch(ctx context.Context, claims 
 
 	currentEpoch, err := n.storage.DynamicUserEpoch(ctx, subject)
 	if err != nil {
-		return fmt.Errorf("load access token revocation epoch: %w", err)
+		return tokenStateReadError(fmt.Errorf("load access token revocation epoch: %w", err))
 	}
 
 	if currentEpoch != epoch {
@@ -1000,7 +1000,7 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 			if resolveErr != nil {
 				parentSpan.RecordError(resolveErr)
 
-				return nil, fmt.Errorf("dynamic client is not active: %w", resolveErr)
+				return nil, dynamicClientResolveError(resolveErr)
 			}
 
 			if policyErr := n.validateDynamicSessionPolicy(client, session); policyErr != nil {
@@ -1027,7 +1027,7 @@ func (n *NauthilusIDP) opaqueTokenClaims(
 		return buildClaims(token, session), nil
 	}
 
-	return nil, fmt.Errorf("invalid or expired opaque token")
+	return nil, opaqueTokenLookupError(err)
 }
 
 // validateDynamicAccessTokenLifetime fail-closes missing, corrupt, narrowed, or expired lifetime metadata.
@@ -1063,14 +1063,14 @@ func (n *NauthilusIDP) resolveJWTPublicKey(ctx context.Context, token *jwt.Token
 			sp.RecordError(err)
 		}
 
-		return key, err
+		return key, signingKeyLookupError(err)
 	case *jwt.SigningMethodEd25519:
 		key, err := n.resolveEdDSAPublicKey(ctx, kid)
 		if err != nil {
 			sp.RecordError(err)
 		}
 
-		return key, err
+		return key, signingKeyLookupError(err)
 	default:
 		err := fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		sp.RecordError(err)
@@ -1090,13 +1090,8 @@ func (n *NauthilusIDP) resolveRSAPublicKey(ctx context.Context, kid string) (any
 		return &key.PublicKey, nil
 	}
 
-	// Fallback: try the active key
-	key, _, err := n.keyMgr.GetActiveKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return &key.PublicKey, nil
+	// Fallback: the active key, read without the signing path's key generation.
+	return n.keyMgr.ActiveVerificationKey(ctx, signing.AlgorithmRS256)
 }
 
 // resolveEdDSAPublicKey finds the Ed25519 public key matching the given kid.
@@ -1110,13 +1105,8 @@ func (n *NauthilusIDP) resolveEdDSAPublicKey(ctx context.Context, kid string) (a
 		return key.Public(), nil
 	}
 
-	// Fallback: try the active EdDSA signer
-	signer, err := n.keyMgr.GetActiveSigner(ctx, "EdDSA")
-	if err != nil {
-		return nil, err
-	}
-
-	return signer.PublicKey(), nil
+	// Fallback: the active EdDSA key, read without the signing path's key generation.
+	return n.keyMgr.ActiveVerificationKey(ctx, signing.AlgorithmEdDSA)
 }
 
 // PasswordAuthentication is the typed password-authentication result used by canonical browser flows.

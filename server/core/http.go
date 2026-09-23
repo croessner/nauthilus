@@ -341,6 +341,7 @@ func (f DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
+		ConnContext:       transportPeerConnContext,
 	}
 
 	if err := http2.ConfigureServer(srv, h2Server); err != nil {
@@ -355,6 +356,37 @@ func (f DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 	}
 
 	return srv
+}
+
+// transportPeerConnContext records the TCP upstream of every accepted connection, so the backchannel
+// lockout exemption never relies on a source address that a PROXY protocol header supplied.
+func transportPeerConnContext(ctx context.Context, conn net.Conn) context.Context {
+	return mdauth.ContextWithTransportPeer(ctx, transportPeerAddress(conn))
+}
+
+// transportPeerAddress returns the host of the connection's TCP upstream. It unwraps TLS and PROXY
+// protocol connections without reading from them, so it never blocks on a pending PROXY header.
+func transportPeerAddress(conn net.Conn) string {
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		conn = tlsConn.NetConn()
+	}
+
+	if proxied, ok := conn.(*proxyproto.Conn); ok {
+		conn = proxied.Raw()
+	}
+
+	if conn == nil || conn.RemoteAddr() == nil {
+		return ""
+	}
+
+	address := conn.RemoteAddr().String()
+
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return address
+	}
+
+	return host
 }
 
 // HAProxyListenerProvider provides PROXY v2 listener when enabled.

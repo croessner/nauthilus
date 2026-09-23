@@ -27,6 +27,10 @@ var (
 	// ErrDecisionAuthentication identifies rejected credential evidence.
 	ErrDecisionAuthentication = errors.New("decision caller authentication failed")
 
+	// ErrDecisionAuthenticationUnavailable identifies credential evidence that could not be validated for
+	// technical reasons; transports answer with a retryable unavailability instead of a rejection.
+	ErrDecisionAuthenticationUnavailable = errors.New("decision caller authentication unavailable")
+
 	// ErrDecisionAdmission identifies rejected caller or invocation authority.
 	ErrDecisionAdmission = errors.New("decision caller admission failed")
 

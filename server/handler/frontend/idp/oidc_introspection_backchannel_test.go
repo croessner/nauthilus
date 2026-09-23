@@ -19,8 +19,10 @@ import (
 	"context"
 	coreidp "github.com/croessner/nauthilus/v4/server/idp"
 	json "github.com/json-iterator/go"
+	"net"
 	"net/http"
 	"net/url"
+	"syscall"
 	"testing"
 	"time"
 
@@ -113,7 +115,7 @@ func TestOIDCHandler_OpaqueBackchannelIntrospection(t *testing.T) {
 	encrypted, err := manager.Encrypt(string(encoded))
 	assert.NoError(t, err)
 
-	key := "test:oidc:dcr:{dynamic}:access_token:" + manager.IndexDigest("oidc-static-access", token)
+	key := f.staticAccessTokenKey(token)
 	f.mock.ExpectGet(key).SetVal(encrypted)
 	f.mock.ExpectGet(testUserTokenEpochKey(session.UserID)).RedisNil()
 	w := f.postIntrospection(t, url.Values{"token": {token}}, "test-client", "test-secret")
@@ -138,4 +140,20 @@ func assertBackchannelIntrospectionResponse(t *testing.T, response map[string]an
 	assert.Equal(t, clientID, response["client_id"])
 	assert.Equal(t, definitions.ScopeAuthenticate, response["scope"])
 	assert.NotEmpty(t, response["exp"])
+}
+
+// TestOIDCHandler_IntrospectionReportsUnavailableTokenStore pins that an unreachable token store is not
+// presented as an inactive token, which a protected resource would treat like a revocation.
+func TestOIDCHandler_IntrospectionReportsUnavailableTokenStore(t *testing.T) {
+	f := newOIDCIntrospectionTest(t)
+	token := definitions.OIDCTokenPrefixAccessToken + "store-unavailable"
+
+	f.mock.ExpectGet(f.staticAccessTokenKey(token)).SetErr(&net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET})
+
+	w := f.postIntrospection(t, url.Values{"token": {token}}, "test-client", "test-secret")
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "1", w.Header().Get("Retry-After"))
+	assert.Equal(t, map[string]any{definitions.LogKeyError: "temporarily_unavailable"}, mustDecodeOIDCTestJSON(t, w))
+	assert.NoError(t, f.mock.ExpectationsWereMet())
 }

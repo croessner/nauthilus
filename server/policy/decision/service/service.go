@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/registry"
@@ -568,6 +569,13 @@ func authenticateInvocation(
 	}
 
 	caller, err := generation.authenticator.Authenticate(ctx, invocation.Authentication)
+	if servererrors.IsTokenValidationUnavailable(err) {
+		return decision.CallerContext{}, decision.DecisionRequest{}, fmt.Errorf(
+			"%w: credential evidence could not be validated",
+			ErrDecisionAuthenticationUnavailable,
+		)
+	}
+
 	if err != nil {
 		return decision.CallerContext{}, decision.DecisionRequest{}, fmt.Errorf(
 			"%w: credential evidence was rejected",

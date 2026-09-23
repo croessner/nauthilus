@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -62,6 +63,10 @@ func (v *claimsAccessTokenValidator) ValidateAccessToken(ctx context.Context, cr
 
 	claims, err := v.underlying.ValidateToken(ctx, string(credential))
 	if err != nil {
+		if servererrors.IsTokenValidationUnavailable(err) {
+			return ValidatedAccessToken{}, ErrAuthenticationUnavailable
+		}
+
 		return ValidatedAccessToken{}, ErrAuthentication
 	}
 

@@ -313,6 +313,9 @@ func (h *Handler) writeServiceError(ctx *gin.Context, err error) {
 		default:
 			h.writeError(ctx, http.StatusForbidden, "forbidden", "policy request is not permitted")
 		}
+	case errors.Is(err, decisionservice.ErrDecisionAuthenticationUnavailable):
+		ctx.Header("Retry-After", "1")
+		h.writeError(ctx, http.StatusServiceUnavailable, "service_unavailable", "policy caller authentication temporarily unavailable")
 	case errors.Is(err, decisionservice.ErrDecisionGenerationUnavailable), errors.Is(err, decisionservice.ErrDecisionServiceDependencyMissing):
 		h.writeError(ctx, http.StatusServiceUnavailable, "service_unavailable", "policy service unavailable")
 	default:

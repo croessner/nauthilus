@@ -14,6 +14,17 @@ This checklist is intended for release readiness and recurring security operatio
     - `auth.backchannel.basic_auth.enabled=true` or `auth.backchannel.oidc_bearer.enabled=true`
 - [ ] **Staging**: At least one backchannel auth method is enabled.
 - [ ] **Production**: `/api/v1/*` is reachable only from trusted internal networks.
+- [ ] Backchannel callers that share one source address (sidecars) reach the authority from
+      `auth.backchannel.failure_lockout.exempt_networks` (default loopback) or present a client certificate
+      listed in `trusted_mtls_identities` and verified by the dedicated gRPC `client_ca`. Exemptions stay
+      narrow: no cluster or ingress CIDRs, and `trusted_proxies` is not an exemption.
+- [ ] `auth.backchannel.failure_lockout` is reviewed, including `exempt_threshold`; alerts watch
+      `backchannel_caller_auth_total{outcome=~"throttled|unavailable"}`.
+- [ ] `/oidc/token` and `/oidc/introspect` are not covered by the backchannel lockout; client-secret guessing
+      there is limited by network exposure and upstream rate limits.
+- [ ] With `runtime.servers.http.haproxy_v2` enabled, the listener accepts PROXY headers from every TCP peer.
+      The lockout exemption ignores PROXY sources, but lockout keys and logs still use them, so the listener is
+      reachable only from the PROXY-speaking load balancers.
 - [ ] **Staging**: `/api/v1/*` is not publicly exposed.
 
 Evidence:

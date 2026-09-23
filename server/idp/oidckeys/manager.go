@@ -34,6 +34,10 @@ const (
 	RedisKeyOIDCEdKeys = "oidc:ed_keys"
 )
 
+// ErrKeyStoreUnavailable reports that the Redis key store could not be read. It is never a statement that
+// a key does not exist, so token validation must not reject a token because of it.
+var ErrKeyStoreUnavailable = errors.New("OIDC key store unavailable")
+
 // KeyMetadata stores metadata about an OIDC signing key.
 type KeyMetadata struct {
 	ID        string    `json:"id"`
@@ -286,7 +290,8 @@ func (m *Manager) GetRSAKeyByID(ctx context.Context, kid string) (*rsa.PrivateKe
 		return key, err
 	}
 
-	if key, err := m.getRSAKeyFromRedis(ctx, kid); err == nil {
+	key, redisErr := m.getRSAKeyFromRedis(ctx, kid)
+	if redisErr == nil {
 		return key, nil
 	}
 
@@ -294,7 +299,7 @@ func (m *Manager) GetRSAKeyByID(ctx context.Context, kid string) (*rsa.PrivateKe
 		return key, nil
 	}
 
-	return nil, fmt.Errorf("RSA key with kid %s not found", kid)
+	return nil, keyByIDNotFoundError("RSA", kid, redisErr)
 }
 
 // GetEdKeyByID returns one Ed25519 signing key by key ID without scanning the full key set.
@@ -303,7 +308,8 @@ func (m *Manager) GetEdKeyByID(ctx context.Context, kid string) (ed25519.Private
 		return nil, fmt.Errorf("EdDSA key ID is required")
 	}
 
-	if key, err := m.getEdKeyFromRedis(ctx, kid); err == nil {
+	key, redisErr := m.getEdKeyFromRedis(ctx, kid)
+	if redisErr == nil {
 		return key, nil
 	}
 
@@ -311,7 +317,17 @@ func (m *Manager) GetEdKeyByID(ctx context.Context, kid string) (ed25519.Private
 		return key, nil
 	}
 
-	return nil, fmt.Errorf("EdDSA key with kid %s not found", kid)
+	return nil, keyByIDNotFoundError("EdDSA", kid, redisErr)
+}
+
+// keyByIDNotFoundError reports a key that neither Redis nor the static configuration holds. When the Redis
+// lookup itself failed, the key may well exist, so the store failure is returned instead of a verdict.
+func keyByIDNotFoundError(algorithm string, kid string, redisErr error) error {
+	if errors.Is(redisErr, ErrKeyStoreUnavailable) {
+		return fmt.Errorf("%s key with kid %s could not be loaded: %w", algorithm, kid, redisErr)
+	}
+
+	return fmt.Errorf("%s key with kid %s not found", algorithm, kid)
 }
 
 func (m *Manager) getRSAKeyFromRedis(ctx context.Context, kid string) (*rsa.PrivateKey, error) {
@@ -567,8 +583,12 @@ func (m *Manager) getKeyMetadataFromRedisHash(ctx context.Context, kid, hashKey 
 
 	cancel()
 
-	if err != nil {
+	if errors.Is(err, redis.Nil) {
 		return nil, err
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrKeyStoreUnavailable, err)
 	}
 
 	sm := m.deps.Redis.GetSecurityManager()

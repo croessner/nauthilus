@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -178,6 +179,28 @@ func TestPolicyClaimsAccessTokenValidatorSanitizesUnderlyingFailure(t *testing.T
 	assertClaimsAdapterRejected(t, err)
 
 	if strings.Contains(err.Error(), claimsAdapterSecret) || strings.Contains(err.Error(), secretFailure.Error()) {
+		t.Fatalf("error exposed secret validator detail: %v", err)
+	}
+}
+
+// TestPolicyClaimsAccessTokenValidatorReportsUnavailableValidation pins that an unreachable token store is
+// reported as unavailable, not as rejected caller evidence, and still hides the technical detail.
+func TestPolicyClaimsAccessTokenValidatorReportsUnavailableValidation(t *testing.T) {
+	t.Parallel()
+
+	technical := servererrors.NewTokenValidationUnavailable(errors.New("redis exposed " + claimsAdapterSecret))
+	validator := mustClaimsAccessTokenValidator(t, &claimsTokenValidatorStub{err: technical}, claimsAdapterIssuer)
+
+	_, err := validator.ValidateAccessToken(context.Background(), []byte(claimsAdapterSecret))
+	if !errors.Is(err, ErrAuthenticationUnavailable) || errors.Is(err, ErrAuthentication) {
+		t.Fatalf("ValidateAccessToken() error = %v, want only ErrAuthenticationUnavailable", err)
+	}
+
+	if !servererrors.IsTokenValidationUnavailable(err) {
+		t.Fatal("unavailable caller evidence must keep the shared classification")
+	}
+
+	if strings.Contains(err.Error(), claimsAdapterSecret) {
 		t.Fatalf("error exposed secret validator detail: %v", err)
 	}
 }

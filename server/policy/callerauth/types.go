@@ -19,8 +19,10 @@ package callerauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/secret"
 )
@@ -28,6 +30,10 @@ import (
 var (
 	// ErrAuthentication identifies rejected opaque Policy caller evidence.
 	ErrAuthentication = errors.New("policy caller authentication rejected")
+
+	// ErrAuthenticationUnavailable identifies caller evidence that could not be validated for technical
+	// reasons. It is never a rejection of the presented credential.
+	ErrAuthenticationUnavailable = fmt.Errorf("policy caller authentication unavailable: %w", servererrors.ErrTokenValidationUnavailable)
 
 	// ErrConfiguration identifies an invalid immutable caller-authentication generation.
 	ErrConfiguration = errors.New("invalid policy caller authentication configuration")

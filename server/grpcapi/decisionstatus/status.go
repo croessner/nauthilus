@@ -40,6 +40,8 @@ func FromError(err error) error {
 		}
 
 		return status.Error(codes.PermissionDenied, "policy request is not permitted")
+	case errors.Is(err, decisionservice.ErrDecisionAuthenticationUnavailable):
+		return status.Error(codes.Unavailable, "policy caller authentication temporarily unavailable")
 	case errors.Is(err, decisionservice.ErrDecisionGenerationUnavailable), errors.Is(err, decisionservice.ErrDecisionServiceDependencyMissing):
 		return status.Error(codes.Unavailable, "policy service unavailable")
 	default:

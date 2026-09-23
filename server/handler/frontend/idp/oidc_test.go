@@ -1289,11 +1289,20 @@ func (f *oidcIntrospectionTest) mustValidateAccessTokenClaims(t *testing.T, toke
 
 // assertInvalidTokenIntrospection verifies inactive responses for unknown tokens.
 func (f *oidcIntrospectionTest) assertInvalidTokenIntrospection(t *testing.T) {
+	f.mock.ExpectGet(f.staticAccessTokenKey("invalid-token")).RedisNil()
+
 	w := f.postIntrospection(t, url.Values{"token": {"invalid-token"}}, "test-client", "test-secret")
 	resp := mustDecodeOIDCTestJSON(t, w)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, resp["active"].(bool))
+}
+
+// staticAccessTokenKey returns the authoritative Redis key of a static-client opaque access token.
+func (f *oidcIntrospectionTest) staticAccessTokenKey(token string) string {
+	manager := f.handler.deps.Redis.GetSecurityManager()
+
+	return "test:oidc:dcr:{dynamic}:access_token:" + manager.IndexDigest("oidc-static-access", token)
 }
 
 // assertUnauthorizedClient verifies rejected introspection client credentials.

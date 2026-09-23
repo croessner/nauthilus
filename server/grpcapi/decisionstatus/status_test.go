@@ -38,6 +38,7 @@ func TestFromErrorPreservesCategoriesWithoutPrivateDetails(t *testing.T) {
 		{errors.Join(decisionservice.ErrDecisionAdmission, admission.ErrRequestLimitExceeded), codes.ResourceExhausted},
 		{errors.Join(decisionservice.ErrDecisionAdmission, admission.ErrCapacityLimitExceeded), codes.ResourceExhausted},
 		{decisionservice.ErrDecisionGenerationUnavailable, codes.Unavailable},
+		{decisionservice.ErrDecisionAuthenticationUnavailable, codes.Unavailable},
 		{decisionservice.ErrDecisionServiceDependencyMissing, codes.Unavailable},
 	}
 

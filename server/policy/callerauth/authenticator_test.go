@@ -617,6 +617,25 @@ func TestPolicyCallerAuthenticationErrorsAreSecretSafe(t *testing.T) {
 	}
 }
 
+// TestPolicyBearerAuthenticationReportsUnavailableValidation pins that technical token validation failures
+// leave the authenticator as unavailability instead of a credential rejection.
+func TestPolicyBearerAuthenticationReportsUnavailableValidation(t *testing.T) {
+	t.Parallel()
+
+	authenticator := mustPolicyAuthenticator(t, Configuration{
+		TokenValidator: policyStaticTokenValidator{err: ErrAuthenticationUnavailable},
+		ExternalProfiles: []ExternalProfile{{
+			AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer},
+			Principal:           policyTestPrincipal,
+		}},
+	})
+	input := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBearer, policyTestBearerToken, "http", true, "")
+
+	if _, err := authenticator.Authenticate(context.Background(), input); !errors.Is(err, ErrAuthenticationUnavailable) {
+		t.Fatalf("Authenticate() error = %v, want ErrAuthenticationUnavailable", err)
+	}
+}
+
 type policyStaticTokenValidator struct {
 	token ValidatedAccessToken
 	err   error

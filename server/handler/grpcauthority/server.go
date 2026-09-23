@@ -39,6 +39,7 @@ import (
 	coreauth "github.com/croessner/nauthilus/v4/server/core/auth"
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/handler/policygrpc"
 	"github.com/croessner/nauthilus/v4/server/idp"
@@ -749,11 +750,7 @@ func policyMTLSIdentity(ctx context.Context) string {
 
 // peerCertificateCommonName returns the leaf common name without claiming chain verification.
 func peerCertificateCommonName(certificates []*x509.Certificate) string {
-	if len(certificates) == 0 || certificates[0] == nil {
-		return ""
-	}
-
-	return strings.TrimSpace(certificates[0].Subject.CommonName)
+	return transportsecurity.LeafCommonName(certificates)
 }
 
 // knownAuthorityMethod identifies only methods deliberately handled by this listener.
@@ -863,6 +860,7 @@ func firstIncomingMetadata(ctx context.Context, key string) string {
 	return strings.TrimSpace(values[0])
 }
 
+// authenticateCaller authenticates one authority RPC and feeds the result into the caller lockout.
 func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string) (callerAuthResult, error) {
 	cfg := deps.Cfg
 	if cfg == nil || cfg.GetServer() == nil {
@@ -876,32 +874,114 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 		return callerAuthResult{}, status.Error(codes.Unauthenticated, "backchannel authentication is not configured")
 	}
 
-	if exceeded, retryAfter := mdauth.MaybeThrottleAuthByIPValue(callerPeerIP(ctx), cfg); exceeded {
-		return callerAuthResult{}, status.Errorf(
-			codes.ResourceExhausted,
-			"too many backchannel authentication failures; retry after %s",
-			retryAfter.Truncate(time.Second),
-		)
+	guard := newGRPCCallerGuard(ctx, deps)
+
+	// A request that already ended must not reach the lockout or the token store.
+	if ctx.Err() != nil {
+		guard.Unavailable()
+
+		return callerAuthResult{}, endedRequestStatus(ctx)
 	}
 
+	if exceeded, retryAfter := guard.Throttled(); exceeded {
+		return callerAuthResult{}, callerThrottledStatus(retryAfter)
+	}
+
+	result, err := authenticateCallerCredentials(ctx, deps, fullMethod, basicEnabled, oidcEnabled)
+
+	// Exempt callers are throttled only after a genuine rejection, so valid credentials always pass.
+	if status.Code(err) == codes.Unauthenticated {
+		if exceeded, retryAfter := guard.RejectionThrottled(); exceeded {
+			return callerAuthResult{}, callerThrottledStatus(retryAfter)
+		}
+	}
+
+	recordCallerAuthOutcome(guard, err)
+
+	return result, err
+}
+
+// callerThrottledStatus answers a caller whose failure counter is blocked.
+func callerThrottledStatus(retryAfter time.Duration) error {
+	return status.Errorf(
+		codes.ResourceExhausted,
+		"too many backchannel authentication failures; retry after %s",
+		retryAfter.Truncate(time.Second),
+	)
+}
+
+// newGRPCCallerGuard describes the gRPC peer for failure accounting. The peer address is the direct
+// transport peer, so it serves both as lockout key and as the only address considered for the exemption.
+func newGRPCCallerGuard(ctx context.Context, deps ServerDeps) *mdauth.CallerGuard {
+	peerIP := callerPeerIP(ctx)
+
+	return mdauth.NewCallerGuard(deps.Cfg, deps.effectiveLogger(), mdauth.CallerIdentity{
+		IP:             peerIP,
+		PeerIP:         peerIP,
+		Presented:      mdauth.PresentedCredentialIdentity(authorizationMetadata(ctx)),
+		Transport:      mdauth.CallerTransportGRPC,
+		MTLSIdentities: callerMTLSIdentities(ctx, deps.Cfg),
+	})
+}
+
+// callerMTLSIdentities returns the identities of a client certificate whose chain the listener verified
+// against the dedicated runtime.servers.grpc.authority.tls.client_ca. Without that CA no certificate is
+// eligible for the lockout exemption.
+func callerMTLSIdentities(ctx context.Context, cfg config.File) []string {
+	if runtimeGRPCAuthorityServerConfig(cfg).GetTLS().GetClientCA() == "" {
+		return nil
+	}
+
+	leaf, verified := transportsecurity.VerifiedGRPCClientLeaf(policyPeerAuthInfo(ctx))
+	if !verified {
+		return nil
+	}
+
+	return transportsecurity.CertificateIdentities(leaf)
+}
+
+// authenticateCallerCredentials checks the presented Basic or Bearer credentials without any accounting.
+func authenticateCallerCredentials(
+	ctx context.Context,
+	deps ServerDeps,
+	fullMethod string,
+	basicEnabled bool,
+	oidcEnabled bool,
+) (callerAuthResult, error) {
 	values := authorizationMetadata(ctx)
 	if len(values) == 0 {
-		return callerAuthFailure(ctx, "missing authorization metadata")
+		return callerAuthFailure("missing authorization metadata")
 	}
 
-	if result, ok := authenticateBasicCaller(ctx, cfg, values, basicEnabled); ok {
+	if result, ok := authenticateBasicCaller(ctx, deps.Cfg, values, basicEnabled); ok {
 		return result, nil
 	}
 
 	if !oidcEnabled {
-		return callerAuthFailure(ctx, "invalid backchannel authorization metadata")
+		return callerAuthFailure("invalid backchannel authorization metadata")
 	}
 
 	if result, ok, err := authenticateBearerCaller(ctx, deps, fullMethod, values); ok {
 		return result, err
 	}
 
-	return callerAuthFailure(ctx, "invalid backchannel authorization metadata")
+	return callerAuthFailure("invalid backchannel authorization metadata")
+}
+
+// recordCallerAuthOutcome maps the RPC status to the caller accounting. Only Unauthenticated is a genuine
+// credential rejection that counts towards the lockout; a missing scope is denied without counting, and
+// every other status is treated as undecided so no unforeseen failure can lock out a caller.
+func recordCallerAuthOutcome(guard *mdauth.CallerGuard, err error) {
+	switch code := status.Code(err); code {
+	case codes.OK:
+		guard.Accept()
+	case codes.Unauthenticated:
+		guard.Reject(status.Convert(err).Message())
+	case codes.PermissionDenied:
+		guard.Deny()
+	default:
+		guard.Unavailable()
+	}
 }
 
 // authenticateBasicCaller authenticates the first valid Basic authorization value.
@@ -927,9 +1007,10 @@ func authenticateBasicCaller(ctx context.Context, cfg config.File, values []stri
 	return callerAuthResult{}, false
 }
 
-// authenticateBearerCaller authenticates Bearer authorization values.
+// authenticateBearerCaller authenticates Bearer authorization values. A missing scope or a validation
+// that could not be decided ends the check with that status instead of a credential rejection.
 func authenticateBearerCaller(ctx context.Context, deps ServerDeps, fullMethod string, values []string) (callerAuthResult, bool, error) {
-	var permissionErr error
+	var permissionErr, undecidedErr error
 
 	for _, value := range values {
 		scheme, payload, ok := splitAuthorization(value)
@@ -945,8 +1026,13 @@ func authenticateBearerCaller(ctx context.Context, deps ServerDeps, fullMethod s
 			}, true, nil
 		}
 
-		if status.Code(err) == codes.PermissionDenied {
+		switch status.Code(err) {
+		case codes.PermissionDenied:
 			permissionErr = err
+		case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
+			if undecidedErr == nil {
+				undecidedErr = err
+			}
 		}
 	}
 
@@ -954,12 +1040,15 @@ func authenticateBearerCaller(ctx context.Context, deps ServerDeps, fullMethod s
 		return callerAuthResult{}, true, permissionErr
 	}
 
+	if undecidedErr != nil {
+		return callerAuthResult{}, true, undecidedErr
+	}
+
 	return callerAuthResult{}, false, nil
 }
 
-func callerAuthFailure(ctx context.Context, message string) (callerAuthResult, error) {
-	mdauth.ApplyAuthBackoffOnFailureForIP(callerPeerIP(ctx))
-
+// callerAuthFailure builds the uniform rejection for credentials that were checked and refused.
+func callerAuthFailure(message string) (callerAuthResult, error) {
 	return callerAuthResult{}, status.Error(codes.Unauthenticated, message)
 }
 
@@ -1028,11 +1117,16 @@ func validateBearerAuthorization(
 ) (jwt.MapClaims, error) {
 	validator := deps.effectiveOIDCValidator()
 	if validator == nil {
-		return nil, status.Error(codes.Unauthenticated, "OIDC bearer validator is not configured")
+		// A missing validator is a wiring fault of this instance, never a statement about the caller.
+		return nil, status.Error(codes.Unavailable, "OIDC bearer validator is not configured")
 	}
 
 	claims, err := validator.ValidateToken(ctx, token)
 	if err != nil {
+		if servererrors.IsTokenValidationUnavailable(err) {
+			return nil, undecidedValidationStatus(ctx)
+		}
+
 		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
 
@@ -1047,6 +1141,26 @@ func validateBearerAuthorization(
 	}
 
 	return claims, nil
+}
+
+// undecidedValidationStatus answers a token validation that could not reach a verdict. A request whose
+// own context ended reports that; otherwise the token store is unavailable and the caller may retry.
+// None of these codes may be read as rejected credentials.
+func undecidedValidationStatus(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return endedRequestStatus(ctx)
+	}
+
+	return status.Error(codes.Unavailable, "backchannel authentication is temporarily unavailable")
+}
+
+// endedRequestStatus reports a request whose own context was canceled or ran past its deadline.
+func endedRequestStatus(ctx context.Context) error {
+	if stderrors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return status.Error(codes.DeadlineExceeded, "backchannel authentication deadline exceeded")
+	}
+
+	return status.Error(codes.Canceled, "backchannel authentication canceled")
 }
 
 func requiredScopesForRPC(fullMethod string, request any) []string {

@@ -34,6 +34,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/frontend"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp"
@@ -1288,6 +1289,12 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 			definitions.LogKeyError, err,
 		)
 
+		if servererrors.IsTokenValidationUnavailable(err) {
+			writeIntrospectionUnavailable(ctx)
+
+			return
+		}
+
 		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
 
 		return
@@ -1316,6 +1323,17 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 	response[oidcJSONFieldTokenType] = oidcJSONTokenTypeBearer
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+// writeIntrospectionUnavailable answers an introspection whose token state could not be read.
+//
+// RFC 7662 section 2.2 defines "active": false as a statement that the token is not active. When the
+// token store is unreachable the server cannot make that statement, and a protected resource that
+// receives it would reject a valid token as if it had been revoked. Section 2.3 leaves room for error
+// responses, so a technical failure is reported as HTTP 503 with a short Retry-After instead.
+func writeIntrospectionUnavailable(ctx *gin.Context) {
+	ctx.Header("Retry-After", "1")
+	ctx.JSON(http.StatusServiceUnavailable, gin.H{definitions.LogKeyError: "temporarily_unavailable"})
 }
 
 // authenticateIntrospectionClient selects the configured client authentication path for introspection.

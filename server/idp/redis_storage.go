@@ -535,7 +535,7 @@ func (s *RedisTokenStorage) validateDynamicUserEpoch(ctx context.Context, sessio
 	if stderrors.Is(err, redis.Nil) {
 		epoch = "0"
 	} else if err != nil {
-		return err
+		return tokenStateReadError(err)
 	}
 
 	if epoch != session.DynamicUserEpoch {
@@ -752,7 +752,7 @@ func (s *RedisTokenStorage) getDynamicAccessToken(ctx context.Context, reference
 
 	data, err := s.redis.GetWriteHandle().Get(writeCtx, s.dynamicRefreshKey(oidcAccessTokenKeyKind, reference)).Result()
 	if err != nil {
-		return nil, err
+		return nil, tokenStateReadError(err)
 	}
 
 	session, err := s.decryptSession(data)

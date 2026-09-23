@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -48,7 +49,7 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 	}
 
 	// Reset global cache
-	authFailCache.Flush()
+	callerLockout.reset()
 
 	clientIP := "1.2.3.4"
 
@@ -68,4 +69,29 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 
 	// 6th attempt on /other should be throttled
 	assert.Equal(t, http.StatusTooManyRequests, serveBasicAuthAttempt("/other", cfg, clientIP, "password"))
+}
+
+// TestBasicAuthExemptValidCredentialsPassBlockedBucket pins the Basic pattern for exempt callers: wrong
+// passwords are throttled once the identity counter is blocked, the right password still passes.
+func TestBasicAuthExemptValidCredentialsPassBlockedBucket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	callerLockout.reset()
+
+	f := &config.RuntimeModule{}
+	_ = f.Set(definitions.ControlBruteForce)
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{
+		RuntimeModules: []*config.RuntimeModule{f},
+		BasicAuth:      config.BasicAuth{Enabled: true, Username: "admin", Password: secret.New("password")},
+		BackchannelLockout: config.BackchannelLockout{
+			Threshold: 2, ExemptThreshold: 2, SleepOnFail: time.Millisecond,
+		},
+	}}
+
+	for range 2 {
+		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", cfg, "127.0.0.1", "wrong"))
+	}
+
+	assert.Equal(t, http.StatusTooManyRequests, serveBasicAuthAttempt("/other", cfg, "127.0.0.1", "wrong"))
+	assert.Equal(t, http.StatusOK, serveBasicAuthAttempt("/other", cfg, "127.0.0.1", "password"))
 }

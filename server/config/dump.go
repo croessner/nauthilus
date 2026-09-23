@@ -1114,7 +1114,16 @@ func configDumpRuntimeDefaults() map[string]configDumpValueProvider {
 
 func configDumpAuthDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
-		"auth.backends.remote": func() any { return map[string]any{} },
+		"auth.backends.remote":                           func() any { return map[string]any{} },
+		"auth.backchannel.failure_lockout.threshold":     func() any { return DefaultBackchannelLockoutThreshold },
+		"auth.backchannel.failure_lockout.window":        func() any { return DefaultBackchannelLockoutWindow },
+		"auth.backchannel.failure_lockout.block_time":    func() any { return DefaultBackchannelLockoutBlockTime },
+		"auth.backchannel.failure_lockout.sleep_on_fail": func() any { return DefaultBackchannelLockoutSleepOnFail },
+		"auth.backchannel.failure_lockout.exempt_networks": func() any {
+			return slices.Clone(defaultBackchannelLockoutExemptNetworks)
+		},
+		"auth.backchannel.failure_lockout.trusted_mtls_identities": func() any { return []string{} },
+		"auth.backchannel.failure_lockout.exempt_threshold":        func() any { return DefaultBackchannelLockoutExemptThreshold },
 	}
 }
 

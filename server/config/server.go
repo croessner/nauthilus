@@ -56,6 +56,7 @@ type ServerSection struct {
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
 	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
 	OIDCAuth                  OIDCAuth                 `mapstructure:"oidc_auth" validate:"omitempty"`
+	BackchannelLockout        BackchannelLockout       `mapstructure:"backchannel_lockout" validate:"omitempty"`
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
 	Backends                  []*Backend               `mapstructure:"backends" validate:"omitempty,dive"`

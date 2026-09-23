@@ -386,6 +386,10 @@ func (a *Authenticator) authenticateBearer(ctx context.Context, input decision.A
 
 	token, err := a.tokenValidator.ValidateAccessToken(ctx, credential)
 	if err != nil {
+		if errors.Is(err, ErrAuthenticationUnavailable) {
+			return decision.CallerContext{}, ErrAuthenticationUnavailable
+		}
+
 		return rejected()
 	}
 

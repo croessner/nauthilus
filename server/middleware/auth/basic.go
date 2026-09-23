@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -32,7 +31,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patrickmn/go-cache"
 )
 
 const (
@@ -79,146 +77,66 @@ func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, passwor
 	return secureCompare(username, basicAuth.GetUsername()) && secureCompare(password, expectedPassword)
 }
 
-// --- Minimal brute-force protection helpers (per-IP) ---
-// These helpers implement a tiny in-memory backoff and blocking for repeated auth failures.
-// They are intentionally simple and local to this process.
-
-type failState struct {
-	count         int32 // number of failures in current window
-	resetAtUnix   int64 // unix nano when window resets
-	blockedToUnix int64 // unix nano until which IP is blocked
+// NewHTTPCallerGuard classifies the caller of an HTTP backchannel request for failure accounting.
+// Untrusted callers are locked out by the client IP resolved through runtime.servers.http.trusted_proxies;
+// the exemption only ever considers the direct peer. HTTP has no dedicated client CA for backchannel
+// callers, so client certificates never exempt an HTTP caller.
+func NewHTTPCallerGuard(ctx *gin.Context, cfg config.File, logger *slog.Logger) *CallerGuard {
+	return NewCallerGuard(cfg, logger, CallerIdentity{
+		IP:        requestClientIP(ctx, cfg),
+		PeerIP:    directPeerIP(ctx),
+		Presented: PresentedCredentialIdentity(ctx.Request.Header.Values("Authorization")),
+		Transport: CallerTransportHTTP,
+	})
 }
 
-var authFailCache = cache.New(1*time.Hour, 10*time.Minute) // key: ip(string) -> *failState, TTL-based
-
-const (
-	bfWindow      = 1 * time.Minute
-	bfThreshold   = 5
-	bfBlockTime   = 2 * time.Minute
-	bfSleepOnFail = 300 * time.Millisecond
-)
-
-// authRateLimitExceededForIP checks if given IP is currently blocked. It also resets the window when elapsed.
-// Returns (exceeded, remainingBlockDuration).
-func authRateLimitExceededForIP(ip string) (bool, time.Duration) {
-	now := time.Now()
-
-	var st *failState
-	if v, found := authFailCache.Get(ip); found {
-		st = v.(*failState)
-	} else {
-		st = &failState{resetAtUnix: now.Add(bfWindow).UnixNano()}
-		authFailCache.Set(ip, st, cache.DefaultExpiration)
-	}
-
-	// Fast check: is currently blocked?
-	blockedTo := atomic.LoadInt64(&st.blockedToUnix)
-	if blockedTo > 0 {
-		if now.UnixNano() < blockedTo {
-			authFailCache.Set(ip, st, cache.DefaultExpiration)
-
-			return true, time.Until(time.Unix(0, blockedTo))
-		}
-	}
-
-	resetFailureWindowIfElapsed(st, now)
-
-	authFailCache.Set(ip, st, cache.DefaultExpiration)
-
-	return false, 0
-}
-
-// noteAuthFailureForIP increments failure count and possibly sets a block.
-func noteAuthFailureForIP(ip string) {
-	now := time.Now()
-
-	var st *failState
-	if v, found := authFailCache.Get(ip); found {
-		st = v.(*failState)
-	} else {
-		st = &failState{resetAtUnix: now.Add(bfWindow).UnixNano()}
-		authFailCache.Set(ip, st, cache.DefaultExpiration)
-	}
-
-	resetFailureWindowIfElapsed(st, now)
-
-	newCount := atomic.AddInt32(&st.count, 1)
-	if newCount >= bfThreshold {
-		atomic.StoreInt64(&st.blockedToUnix, now.Add(bfBlockTime).UnixNano())
-	}
-
-	authFailCache.Set(ip, st, cache.DefaultExpiration)
-}
-
-// resetFailureWindowIfElapsed maintains the sliding auth-failure window without locks.
-func resetFailureWindowIfElapsed(st *failState, now time.Time) {
-	for {
-		resetAt := atomic.LoadInt64(&st.resetAtUnix)
-		if resetAt == 0 {
-			if atomic.CompareAndSwapInt64(&st.resetAtUnix, 0, now.Add(bfWindow).UnixNano()) {
-				break
-			}
-
-			continue
-		}
-
-		if now.UnixNano() <= resetAt {
-			break
-		}
-
-		if atomic.CompareAndSwapInt64(&st.resetAtUnix, resetAt, now.Add(bfWindow).UnixNano()) {
-			atomic.StoreInt32(&st.count, 0)
-
-			break
-		}
+// isAuthBypassPath reports routes whose credentials never feed the backchannel caller lockout.
+func isAuthBypassPath(ctx *gin.Context) bool {
+	switch ctx.FullPath() {
+	case authBypassPingPath, authBypassHealthPath, authBypassMetricsPath:
+		return true
+	default:
+		return false
 	}
 }
 
 // MaybeThrottleAuthByIP checks if the client IP is temporarily blocked and, if so, responds with 429 and a Retry-After header.
 // It only enforces throttling if the brute-force control is enabled in the configuration.
 func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
-	if ctx.FullPath() == authBypassPingPath || ctx.FullPath() == authBypassHealthPath || ctx.FullPath() == authBypassMetricsPath {
+	if isAuthBypassPath(ctx) {
 		return false
 	}
 
-	ip := requestClientIP(ctx, cfg)
-
-	exceeded, remaining := MaybeThrottleAuthByIPValue(ip, cfg)
-	if exceeded {
-		ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
-
-		ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
-		ctx.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-			definitions.LogKeyMsg: "Too many authentication failures",
-			"scope":               "brute-force",
-		})
-
-		return true
-	}
-
-	return false
+	return AbortIfThrottled(ctx, NewHTTPCallerGuard(ctx, cfg, nil))
 }
 
-// MaybeThrottleAuthByIPValue checks whether authentication attempts from ip are temporarily blocked.
-func MaybeThrottleAuthByIPValue(ip string, cfg config.File) (bool, time.Duration) {
-	if cfg != nil && !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
-		return false, 0
-	}
-
-	if ip == "" {
-		return false, 0
-	}
-
-	return authRateLimitExceededForIP(ip)
+// AbortIfThrottled answers 429 with Retry-After when guard reports an active lockout before the
+// credentials are checked. Exempt callers are never refused here.
+func AbortIfThrottled(ctx *gin.Context, guard *CallerGuard) bool {
+	return abortThrottled(ctx, guard.Throttled)
 }
 
-// ApplyAuthBackoffOnFailureForIP records a failed authentication attempt for ip and applies the shared delay.
-func ApplyAuthBackoffOnFailureForIP(ip string) {
-	if ip != "" {
-		noteAuthFailureForIP(ip)
+// AbortIfRejectionThrottled answers 429 with Retry-After when rejected credentials meet an active lockout,
+// including the per-identity lockout of exempt callers.
+func AbortIfRejectionThrottled(ctx *gin.Context, guard *CallerGuard) bool {
+	return abortThrottled(ctx, guard.RejectionThrottled)
+}
+
+// abortThrottled writes the uniform throttling response when check reports an active lockout.
+func abortThrottled(ctx *gin.Context, check func() (bool, time.Duration)) bool {
+	exceeded, remaining := check()
+	if !exceeded {
+		return false
 	}
 
-	time.Sleep(bfSleepOnFail)
+	ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
+	ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
+	ctx.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+		definitions.LogKeyMsg: "Too many authentication failures",
+		"scope":               "brute-force",
+	})
+
+	return true
 }
 
 // ApplyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
@@ -226,17 +144,16 @@ func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
 	ApplyAuthBackoffOnFailureWithCfg(ctx, nil)
 }
 
-// ApplyAuthBackoffOnFailureWithCfg notes a failure for the trusted client IP
-// resolved from the request and sleeps a short duration.
+// ApplyAuthBackoffOnFailureWithCfg notes a rejected credential for the trusted client IP
+// resolved from the request and applies the configured delay.
 func ApplyAuthBackoffOnFailureWithCfg(ctx *gin.Context, cfg config.File) {
-	if ctx.FullPath() == "/ping" || ctx.FullPath() == "/healthz" || ctx.FullPath() == "/metrics" {
-		time.Sleep(bfSleepOnFail)
+	if isAuthBypassPath(ctx) {
+		time.Sleep(sleepOnFail(cfg))
 
 		return
 	}
 
-	ip := requestClientIP(ctx, cfg)
-	ApplyAuthBackoffOnFailureForIP(ip)
+	NewHTTPCallerGuard(ctx, cfg, nil).Reject("invalid credentials")
 }
 
 // CheckAndRequireBasicAuth enforces basic authentication if it's enabled in the server configuration.
@@ -256,8 +173,11 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 		return true
 	}
 
+	guard := NewHTTPCallerGuard(ctx, cfg, nil)
+	bypass := isAuthBypassPath(ctx)
+
 	// Simple per-IP throttling for repeated failures
-	if MaybeThrottleAuthByIP(ctx, cfg) {
+	if !bypass && AbortIfThrottled(ctx, guard) {
 		return false
 	}
 
@@ -266,11 +186,23 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
 		ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
 
+		if !bypass {
+			guard.Accept()
+		}
+
 		return true
 	}
 
 	// Failure: count + small fixed delay, then respond uniformly
-	ApplyAuthBackoffOnFailureWithCfg(ctx, cfg)
+	if bypass {
+		time.Sleep(sleepOnFail(cfg))
+	} else {
+		if AbortIfRejectionThrottled(ctx, guard) {
+			return false
+		}
+
+		guard.Reject("invalid basic credentials")
+	}
 
 	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")
 	ctx.AbortWithStatus(http.StatusUnauthorized)
