@@ -18,21 +18,15 @@ package idp
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/croessner/nauthilus/v4/server/rediscli"
-	"github.com/go-redis/redismock/v9"
 	"github.com/redis/go-redis/v9"
 )
 
 func TestDynamicRefreshTokenAncestorReuseRevokesActiveFamily(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	server, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 
 	const ttl = 30 * 24 * time.Hour
@@ -41,7 +35,7 @@ func TestDynamicRefreshTokenAncestorReuseRevokesActiveFamily(t *testing.T) {
 		ClientID:         "dcr_client",
 		UserID:           "user-1",
 		RefreshFamilyID:  "family-1",
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	}
 	if err := storage.StoreInitialDynamicRefreshToken(ctx, "refresh-1", session, ttl); err != nil {
 		t.Fatalf("StoreInitialDynamicRefreshToken() error = %v", err)
@@ -64,7 +58,7 @@ func TestDynamicRefreshTokenAncestorReuseRevokesActiveFamily(t *testing.T) {
 		t.Fatalf("active descendant GetDynamicRefreshToken() error = %v, want redis.Nil after family revocation", err)
 	}
 
-	if !server.Exists("test:oidc:dcr:{dynamic}:dynamic_refresh_revoked:family-1") {
+	if !server.Exists(testSubjectKey("user-1", "refresh_revoked:family-1")) {
 		t.Fatal("refresh family revocation marker missing")
 	}
 
@@ -78,11 +72,9 @@ func TestDynamicRefreshTokenAncestorReuseRevokesActiveFamily(t *testing.T) {
 func TestDynamicAccessTokenDoesNotAppearInRedisKeys(t *testing.T) {
 	const token = "na_at_dcr_sensitive-token"
 
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	server, _, storage := newSlotGuardedTokenStorage(t)
 
-	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", DynamicUserEpoch: "0"}
+	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreAccessToken(context.Background(), token, session, time.Minute); err != nil {
 		t.Fatalf("StoreAccessToken() error = %v", err)
@@ -100,10 +92,8 @@ func TestDynamicAccessTokenDoesNotAppearInRedisKeys(t *testing.T) {
 }
 
 func TestDeleteUserRefreshTokensRevokesDynamicFamily(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
-	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", RefreshFamilyID: "family-logout", DynamicUserEpoch: "0"}
+	server, _, storage := newSlotGuardedTokenStorage(t)
+	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", RefreshFamilyID: "family-logout", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreInitialDynamicRefreshToken(context.Background(), "refresh-logout", session, time.Hour); err != nil {
 		t.Fatalf("StoreInitialDynamicRefreshToken() error = %v", err)
@@ -117,21 +107,19 @@ func TestDeleteUserRefreshTokensRevokesDynamicFamily(t *testing.T) {
 		t.Fatalf("GetDynamicRefreshToken() error = %v, want redis.Nil", err)
 	}
 
-	if !server.Exists("test:oidc:dcr:{dynamic}:dynamic_refresh_revoked:" + session.RefreshFamilyID) {
+	if !server.Exists(testSubjectKey(session.UserID, "refresh_revoked:"+session.RefreshFamilyID)) {
 		t.Fatal("logout did not leave a family revocation marker")
 	}
 }
 
 func TestFlushUserTokensRejectsLateDynamicTokenWrites(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	session := &OIDCSession{
 		ClientID:         "dcr_client",
 		UserID:           "user-1",
 		RefreshFamilyID:  "family-race",
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	}
 
 	if err := storage.StoreInitialDynamicRefreshToken(ctx, "refresh-race", session, time.Hour); err != nil {
@@ -157,14 +145,12 @@ func TestFlushUserTokensRejectsLateDynamicTokenWrites(t *testing.T) {
 }
 
 func TestFlushUserTokensRejectsLateStaticTokenWrites(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	session := &OIDCSession{
 		ClientID:         "static-client",
 		UserID:           "user-static-race",
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	}
 
 	if err := storage.FlushUserTokens(ctx, session.UserID); err != nil {
@@ -181,14 +167,12 @@ func TestFlushUserTokensRejectsLateStaticTokenWrites(t *testing.T) {
 }
 
 func TestConsumeStaticRefreshTokenAllowsOneWinner(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	session := &OIDCSession{
 		ClientID:         "static-client",
 		UserID:           "user-static-consume",
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	}
 
 	if err := storage.StoreRefreshToken(ctx, "na_rt_static_once", session, time.Hour); err != nil {
@@ -235,28 +219,11 @@ func TestConsumeStaticRefreshTokenAllowsOneWinner(t *testing.T) {
 	}
 }
 
-func TestStaticRefreshTokenScriptsUseOneClusterHashTag(t *testing.T) {
-	db, _ := redismock.NewClientMock()
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(db), "test:")
-	reference := storage.staticRefreshTokenReference("na_rt_cluster-safe")
-	keys := []string{
-		storage.dynamicRefreshKey(oidcStaticRefreshToken, reference),
-		storage.dynamicRefreshKey(oidcStaticUserRefreshTokens, "cluster-user"),
-		storage.dynamicUserEpochKey("cluster-user"),
-	}
-
-	if normalized := rediscli.EnsureKeysInSameSlot(keys, "{unexpected}"); !reflect.DeepEqual(normalized, keys) {
-		t.Fatalf("static refresh keys required hash-tag rewriting: got %#v, want %#v", normalized, keys)
-	}
-}
-
 func TestStaticRefreshTokenConsumeRejectsStaleObservedStateAfterReuse(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	token := "na_rt_static_reused"
-	session := &OIDCSession{ClientID: "static-client", UserID: "user-static-reuse", DynamicUserEpoch: "0"}
+	session := &OIDCSession{ClientID: "static-client", UserID: "user-static-reuse", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreRefreshToken(ctx, token, session, time.Hour); err != nil {
 		t.Fatalf("StoreRefreshToken() error = %v", err)
@@ -292,9 +259,7 @@ func TestStaticRefreshTokenConsumeRejectsStaleObservedStateAfterReuse(t *testing
 }
 
 func TestLegacyTokenSchemaIsRejectedAfterHardCut(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, handle, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	userID := "legacy-user"
 	session := &OIDCSession{ClientID: "static-client", UserID: userID}
@@ -322,12 +287,10 @@ func TestLegacyTokenSchemaIsRejectedAfterHardCut(t *testing.T) {
 }
 
 func TestStaticAccessTokenUsesEpochBoundNamespace(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	server, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	token := "na_at_static_hashed"
-	session := &OIDCSession{ClientID: "static-client", UserID: "static-access-user", DynamicUserEpoch: "0"}
+	session := &OIDCSession{ClientID: "static-client", UserID: "static-access-user", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreAccessToken(ctx, token, session, time.Hour); err != nil {
 		t.Fatalf("StoreAccessToken() error = %v", err)
@@ -343,12 +306,10 @@ func TestStaticAccessTokenUsesEpochBoundNamespace(t *testing.T) {
 }
 
 func TestDeleteRefreshTokenRemovesStaticNamespaceState(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
 	token := "na_rt_delete_static"
-	session := &OIDCSession{ClientID: "static-client", UserID: "delete-user", DynamicUserEpoch: "0"}
+	session := &OIDCSession{ClientID: "static-client", UserID: "delete-user", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreRefreshToken(ctx, token, session, time.Hour); err != nil {
 		t.Fatalf("StoreRefreshToken() error = %v", err)
@@ -364,11 +325,9 @@ func TestDeleteRefreshTokenRemovesStaticNamespaceState(t *testing.T) {
 }
 
 func TestDynamicAccessTokenValidationChecksUserEpoch(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
-	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", DynamicUserEpoch: "0"}
+	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreAccessToken(ctx, "na_at_dcr_before-logout", session, time.Hour); err != nil {
 		t.Fatalf("StoreAccessToken() error = %v", err)
@@ -384,11 +343,9 @@ func TestDynamicAccessTokenValidationChecksUserEpoch(t *testing.T) {
 }
 
 func TestListAndDeleteUserSessionsIncludeDynamicAccessTokens(t *testing.T) {
-	server := miniredis.RunT(t)
-	handle := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	storage := NewRedisTokenStorage(rediscli.NewTestClient(handle), "test:")
+	_, _, storage := newSlotGuardedTokenStorage(t)
 	ctx := context.Background()
-	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", DynamicUserEpoch: "0"}
+	session := &OIDCSession{ClientID: "dcr_client", UserID: "user-1", DynamicUserEpoch: testSubjectEpochFloor}
 
 	if err := storage.StoreAccessToken(ctx, "na_at_dcr_managed", session, time.Hour); err != nil {
 		t.Fatalf("StoreAccessToken() error = %v", err)

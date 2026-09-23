@@ -69,7 +69,7 @@ func opaqueSessionData(t *testing.T, clientID string) string {
 		ClientID:         clientID,
 		UserID:           testUserID,
 		Scopes:           []string{definitions.ScopeOpenID},
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	})
 	if err != nil {
 		t.Fatalf("marshal session: %v", err)
@@ -123,41 +123,39 @@ func TestValidateTokenOpaqueClassifiesTokenStateFailures(t *testing.T) {
 		{
 			name: "unknown token",
 			expect: func(_ *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).RedisNil()
+				expectMissingAccessToken(mock, token)
 			},
 		},
 		{
 			name: "undecodable token state",
 			expect: func(_ *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetVal("not-a-session")
+				expectAccessTokenState(mock, testUserID, token).SetVal([]any{"not-a-session", nil})
 			},
 		},
 		{
 			name: "user epoch revoked",
 			expect: func(t *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetVal(opaqueSessionData(t, testClientID))
-				mock.ExpectGet(testUserTokenEpochKey(testUserID)).SetVal("1")
+				expectAccessTokenState(mock, testUserID, token).SetVal([]any{opaqueSessionData(t, testClientID), "1"})
 			},
 		},
 		{
 			name: "dynamic client no longer registered",
 			expect: func(t *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetVal(opaqueSessionData(t, classificationDynamicClientID))
-				expectUserTokenEpoch(mock, testUserID)
+				expectAccessTokenLookup(mock, testUserID, token, opaqueSessionData(t, classificationDynamicClientID))
 				mock.ExpectGet(testDynamicClientKey(classificationDynamicClientID)).RedisNil()
 			},
 		},
 		{
 			name: "token store unreachable",
 			expect: func(_ *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetErr(redisConnectionError())
+				expectAccessTokenLocatorError(mock, token, redisConnectionError())
 			},
 			unavailable: true,
 		},
 		{
 			name: "request context canceled",
 			expect: func(_ *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetErr(context.Canceled)
+				expectAccessTokenLocatorError(mock, token, context.Canceled)
 			},
 			cause:       context.Canceled,
 			unavailable: true,
@@ -165,24 +163,22 @@ func TestValidateTokenOpaqueClassifiesTokenStateFailures(t *testing.T) {
 		{
 			name: "request deadline exceeded",
 			expect: func(_ *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetErr(context.DeadlineExceeded)
+				expectAccessTokenLocatorError(mock, token, context.DeadlineExceeded)
 			},
 			cause:       context.DeadlineExceeded,
 			unavailable: true,
 		},
 		{
-			name: "user epoch unreachable",
-			expect: func(t *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetVal(opaqueSessionData(t, testClientID))
-				mock.ExpectGet(testUserTokenEpochKey(testUserID)).SetErr(redisConnectionError())
+			name: "token state and epoch unreachable",
+			expect: func(_ *testing.T, mock redismock.ClientMock, token string) {
+				expectAccessTokenState(mock, testUserID, token).SetErr(redisConnectionError())
 			},
 			unavailable: true,
 		},
 		{
 			name: "dynamic client registry unreachable",
 			expect: func(t *testing.T, mock redismock.ClientMock, token string) {
-				mock.ExpectGet(testAccessTokenKey(token)).SetVal(opaqueSessionData(t, classificationDynamicClientID))
-				expectUserTokenEpoch(mock, testUserID)
+				expectAccessTokenLookup(mock, testUserID, token, opaqueSessionData(t, classificationDynamicClientID))
 				mock.ExpectGet(testDynamicClientKey(classificationDynamicClientID)).SetErr(redisConnectionError())
 			},
 			cause:       dcr.ErrUnavailable,

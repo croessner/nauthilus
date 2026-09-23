@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp"
+	"github.com/croessner/nauthilus/v4/server/idp/idptest"
 	"github.com/croessner/nauthilus/v4/server/log"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
@@ -85,7 +86,7 @@ func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 		Username:         "alice",
 		DisplayName:      "Alice Example",
 		Scopes:           []string{"openid"},
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: idptest.SubjectEpochFloor,
 	}
 
 	sessionData, err := json.Marshal(session)
@@ -93,9 +94,11 @@ func TestOIDCSessionsAPI_ListSessionsSanitizesTokenKeys(t *testing.T) {
 		t.Fatalf("marshal OIDC session: %v", err)
 	}
 
-	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + userID).SetVal([]string{sessionReference})
-	mock.ExpectGet("test:oidc:dcr:{dynamic}:access_token:" + sessionReference).SetVal(string(sessionData))
-	mock.ExpectGet("test:oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID).RedisNil()
+	mock.ExpectSMembers(idptest.SubjectKey("test:", userID, "access_tokens")).SetVal([]string{sessionReference})
+	mock.ExpectMGet(
+		idptest.SubjectKey("test:", userID, "access_token:"+sessionReference),
+		idptest.SubjectKey("test:", userID, "epoch"),
+	).SetVal([]any{string(sessionData), nil})
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/oidc/sessions/"+userID, nil)
@@ -151,7 +154,7 @@ func TestOIDCSessionsAPI_DeleteSessionDoesNotCrossUserBoundary(t *testing.T) {
 	managementIDSum := sha256.Sum256([]byte("dynamic\x1f" + sessionToken))
 	managementID := hex.EncodeToString(managementIDSum[:])
 
-	mock.ExpectSMembers("test:oidc:dcr:{dynamic}:user_access_tokens:" + pathUserID).SetVal(nil)
+	mock.ExpectSMembers(idptest.SubjectKey("test:", pathUserID, "access_tokens")).SetVal(nil)
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/oidc/sessions/"+pathUserID+"/"+managementID, nil)

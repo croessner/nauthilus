@@ -905,7 +905,7 @@ func (n *NauthilusIDP) validateAccessTokenUserEpoch(ctx context.Context, claims 
 		return tokenStateReadError(fmt.Errorf("load access token revocation epoch: %w", err))
 	}
 
-	if currentEpoch != epoch {
+	if !isCurrentSubjectEpoch(epoch, currentEpoch) {
 		return fmt.Errorf("access token has been revoked")
 	}
 

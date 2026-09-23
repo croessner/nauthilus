@@ -58,5 +58,5 @@ func newOIDCCallbackRedirectTestHandlerWithClient(
 }
 
 func expectOIDCAuthorizationCodeStorage(mock redismock.ClientMock) {
-	mock.Regexp().ExpectSet("test:oidc:code:.*", ".*", 10*time.Minute).SetVal("OK")
+	mock.Regexp().ExpectSet("test:oidc:code:[[:xdigit:]]{64}$", ".*", 10*time.Minute).SetVal("OK")
 }

@@ -18,6 +18,7 @@ package idp
 import (
 	"context"
 	coreidp "github.com/croessner/nauthilus/v4/server/idp"
+	"github.com/croessner/nauthilus/v4/server/idp/idptest"
 	json "github.com/json-iterator/go"
 	"net"
 	"net/http"
@@ -104,7 +105,7 @@ func TestOIDCHandler_OpaqueBackchannelIntrospection(t *testing.T) {
 	cfg.clients[0].AllowBackchannelIntrospection = true
 	token := definitions.OIDCTokenPrefixAccessToken + "introspection-test"
 	session := &coreidp.OIDCSession{
-		ClientID: "service-caller", UserID: "service-caller", ServiceToken: true, DynamicUserEpoch: "0",
+		ClientID: "service-caller", UserID: "service-caller", ServiceToken: true, DynamicUserEpoch: idptest.SubjectEpochFloor,
 		Scopes: []string{definitions.ScopeAuthenticate}, AccessTokenAudience: definitions.AudienceBackchannelAPI,
 		AccessTokenIssuer: f.issuer, AccessTokenIssuedAt: time.Now(), AccessTokenExpiresAt: time.Now().Add(time.Hour),
 	}
@@ -115,16 +116,14 @@ func TestOIDCHandler_OpaqueBackchannelIntrospection(t *testing.T) {
 	encrypted, err := manager.Encrypt(string(encoded))
 	assert.NoError(t, err)
 
-	key := f.staticAccessTokenKey(token)
-	f.mock.ExpectGet(key).SetVal(encrypted)
-	f.mock.ExpectGet(testUserTokenEpochKey(session.UserID)).RedisNil()
+	f.expectStaticAccessTokenState(session.UserID, token, encrypted)
 	w := f.postIntrospection(t, url.Values{"token": {token}}, "test-client", "test-secret")
 	response := mustDecodeOIDCTestJSON(t, w)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assertBackchannelIntrospectionResponse(t, response, f.issuer, session.ClientID)
 	assert.Equal(t, float64(session.AccessTokenExpiresAt.Unix()), response["exp"])
 	// Expired or revoked opaque tokens disappear from authoritative Redis storage.
-	f.mock.ExpectGet(key).RedisNil()
+	f.mock.ExpectGet(f.staticAccessTokenLocatorKey(token)).RedisNil()
 	inactive := f.postIntrospection(t, url.Values{"token": {token}}, "test-client", "test-secret")
 	assert.Equal(t, map[string]any{"active": false}, mustDecodeOIDCTestJSON(t, inactive))
 	assert.NoError(t, f.mock.ExpectationsWereMet())
@@ -148,7 +147,7 @@ func TestOIDCHandler_IntrospectionReportsUnavailableTokenStore(t *testing.T) {
 	f := newOIDCIntrospectionTest(t)
 	token := definitions.OIDCTokenPrefixAccessToken + "store-unavailable"
 
-	f.mock.ExpectGet(f.staticAccessTokenKey(token)).SetErr(&net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET})
+	f.mock.ExpectGet(f.staticAccessTokenLocatorKey(token)).SetErr(&net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET})
 
 	w := f.postIntrospection(t, url.Values{"token": {token}}, "test-client", "test-secret")
 

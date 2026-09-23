@@ -50,10 +50,15 @@ const (
 
 // ErrDeviceCodeNotFound reports an absent or expired device request.
 // ErrDeviceCodeConflict reports a replay or mismatched device transition.
+// ErrDeviceUserCodeCollision reports that a freshly generated user code is already in use.
 var (
-	ErrDeviceCodeNotFound = errors.New("device code not found")
-	ErrDeviceCodeConflict = errors.New("device code state conflict")
+	ErrDeviceCodeNotFound      = errors.New("device code not found")
+	ErrDeviceCodeConflict      = errors.New("device code state conflict")
+	ErrDeviceUserCodeCollision = errors.New("device user code collision")
 )
+
+// deviceCodeTransitionAttempts bounds optimistic retries when a concurrent write touched the same request.
+const deviceCodeTransitionAttempts = 3
 
 // DeviceCodeRequest represents the stored data for a device authorization request.
 type DeviceCodeRequest struct {
@@ -119,68 +124,14 @@ type DeviceCodeStore interface {
 	// UpdateDeviceCode updates the stored device code request.
 	UpdateDeviceCode(ctx context.Context, deviceCode string, request *DeviceCodeRequest) error
 
+	// RecordDeviceCodePoll stores only the poll timestamp of a live request.
+	RecordDeviceCodePoll(ctx context.Context, deviceCode string, polledAt time.Time) error
+
 	// ClaimAuthorizedDeviceCode atomically consumes an authorized request for one client.
 	ClaimAuthorizedDeviceCode(ctx context.Context, deviceCode string, clientID string) (*DeviceCodeRequest, error)
 
 	// DeleteDeviceCode removes a device code from storage.
 	DeleteDeviceCode(ctx context.Context, deviceCode string) error
-}
-
-// ClaimAuthorizedDeviceCode atomically consumes an authorized request for its bound client.
-func (s *RedisDeviceCodeStore) ClaimAuthorizedDeviceCode(
-	ctx context.Context,
-	deviceCode string,
-	clientID string,
-) (*DeviceCodeRequest, error) {
-	if deviceCode == "" || clientID == "" {
-		return nil, ErrDeviceCodeConflict
-	}
-
-	deviceKey := s.deviceCodeKey(deviceCode)
-	handle := s.redis.GetWriteHandle()
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	var claimed *DeviceCodeRequest
-
-	err := handle.Watch(writeCtx, func(tx *redis.Tx) error {
-		encoded, err := redisDeviceCodeString(writeCtx, tx, deviceKey)
-		if err != nil {
-			return err
-		}
-
-		request, err := s.decodeDeviceCodeRequest(encoded)
-		if err != nil {
-			return err
-		}
-
-		if request.ClientID != clientID || request.Status != DeviceCodeStatusAuthorized ||
-			!request.VerificationLocked || time.Now().After(request.ExpiresAt) {
-			return ErrDeviceCodeConflict
-		}
-
-		if _, err = tx.TxPipelined(writeCtx, func(pipe redis.Pipeliner) error {
-			pipe.Del(writeCtx, deviceKey)
-
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		claimed = request
-
-		return nil
-	}, deviceKey)
-	if errors.Is(err, redis.TxFailedErr) {
-		err = ErrDeviceCodeConflict
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("claim authorized device code: %w", err)
-	}
-
-	return claimed, nil
 }
 
 // UserCodeGenerator defines the interface for generating user-facing codes.
@@ -240,97 +191,118 @@ func (s *RedisDeviceCodeStore) redisWriteContext(ctx context.Context) (context.C
 	return util.GetCtxWithDeadlineRedisWrite(ctx, s.cfg)
 }
 
-// StoreDeviceCode stores a device code request in Redis.
-// It stores both the device code entry and a user code -> device code mapping.
+const (
+	// deviceCodeDigestNamespace domain-separates device-code key digests from every other digest.
+	deviceCodeDigestNamespace = "oidc-device-code"
+	// deviceUserCodeDigestNamespace domain-separates user-code locator digests from every other digest.
+	deviceUserCodeDigestNamespace = "oidc-device-user-code"
+)
+
+// deviceCodeEnvelope is the encrypted Redis value of one device request.
+//
+// Keys only carry digests, so the bearer device code travels inside the encrypted value. That lets the
+// browser flow recover it from a user code without a plaintext mapping.
+type deviceCodeEnvelope struct {
+	Request    *DeviceCodeRequest `json:"request"`
+	DeviceCode string             `json:"device_code"`
+}
+
+// StoreDeviceCode stores a device code request and the user-code locator that points to it.
+//
+// Redis Cluster layout: the request lives at oidc:device_code:{<device digest>} and the locator at
+// oidc:device_user_code:{<user-code digest>}. Every transaction touches only the request key, so no
+// operation spans two slots.
 func (s *RedisDeviceCodeStore) StoreDeviceCode(ctx context.Context, deviceCode string, request *DeviceCodeRequest, ttl time.Duration) error {
-	data, err := json.Marshal(request)
+	encoded, err := s.encodeDeviceCodeRequest(deviceCode, request)
 	if err != nil {
-		return fmt.Errorf("failed to marshal device code request: %w", err)
+		return fmt.Errorf("failed to encode device code request: %w", err)
 	}
 
-	encryptedData, err := s.redis.GetSecurityManager().Encrypt(string(data))
-	if err != nil {
-		return fmt.Errorf("failed to encrypt device code data: %w", err)
-	}
-
-	// Store the device code entry
-	deviceKey := s.deviceCodeKey(deviceCode)
+	reference := s.deviceCodeReference(deviceCode)
+	deviceKey := s.deviceCodeKey(reference)
 
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	if err := s.redis.GetWriteHandle().Set(writeCtx, deviceKey, encryptedData, ttl).Err(); err != nil {
+	handle := s.redis.GetWriteHandle()
+
+	if err := handle.Set(writeCtx, deviceKey, encoded, ttl).Err(); err != nil {
 		return fmt.Errorf("failed to store device code: %w", err)
 	}
 
-	// Store the user code -> device code mapping
-	userCodeKey := s.userCodeKey(request.UserCode)
+	stored, err := handle.SetNX(writeCtx, s.userCodeKey(request.UserCode), reference, ttl).Result()
+	if err == nil && stored {
+		return nil
+	}
 
-	if err := s.redis.GetWriteHandle().Set(writeCtx, userCodeKey, deviceCode, ttl).Err(); err != nil {
-		// Clean up the device code entry on failure
-		_ = s.redis.GetWriteHandle().Del(writeCtx, deviceKey).Err()
+	_ = handle.Del(writeCtx, deviceKey).Err()
 
+	if err != nil {
 		return fmt.Errorf("failed to store user code mapping: %w", err)
 	}
 
-	return nil
+	return ErrDeviceUserCodeCollision
 }
 
 // GetDeviceCode retrieves a device code request from Redis.
 func (s *RedisDeviceCodeStore) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCodeRequest, error) {
-	key := s.deviceCodeKey(deviceCode)
+	request, _, err := s.readDeviceCode(ctx, s.deviceCodeReference(deviceCode))
 
-	readCtx, cancel := s.redisReadContext(ctx)
-	defer cancel()
-
-	data, err := s.redis.GetReadHandle().Get(readCtx, key).Result()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("device code not found or expired")
-		}
-
-		return nil, fmt.Errorf("failed to get device code: %w", err)
-	}
-
-	decryptedData, err := s.redis.GetSecurityManager().Decrypt(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt device code data: %w", err)
-	}
-
-	request := &DeviceCodeRequest{}
-
-	if err := json.Unmarshal([]byte(decryptedData), request); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal device code request: %w", err)
-	}
-
-	return request, nil
+	return request, err
 }
 
 // GetDeviceCodeByUserCode retrieves a device code request by looking up the user code.
 func (s *RedisDeviceCodeStore) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (string, *DeviceCodeRequest, error) {
-	userCode = NormalizeDeviceUserCode(userCode)
-
-	userCodeKey := s.userCodeKey(userCode)
 	readCtx, cancel := s.redisReadContext(ctx)
-
-	deviceCode, err := s.redis.GetReadHandle().Get(readCtx, userCodeKey).Result()
+	reference, err := s.resolveUserCode(readCtx, s.redis.GetReadHandle(), userCode)
 
 	cancel()
 
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
+		if errors.Is(err, ErrDeviceCodeNotFound) {
 			return "", nil, fmt.Errorf("user code not found or expired")
 		}
 
 		return "", nil, fmt.Errorf("failed to get user code mapping: %w", err)
 	}
 
-	request, err := s.GetDeviceCode(ctx, deviceCode)
+	request, deviceCode, err := s.readDeviceCode(ctx, reference)
 	if err != nil {
 		return "", nil, err
 	}
 
 	return deviceCode, request, nil
+}
+
+// readDeviceCode loads and decodes one device request by its digest reference.
+func (s *RedisDeviceCodeStore) readDeviceCode(ctx context.Context, reference string) (*DeviceCodeRequest, string, error) {
+	readCtx, cancel := s.redisReadContext(ctx)
+	defer cancel()
+
+	data, err := s.redis.GetReadHandle().Get(readCtx, s.deviceCodeKey(reference)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, "", fmt.Errorf("device code not found or expired")
+		}
+
+		return nil, "", fmt.Errorf("failed to get device code: %w", err)
+	}
+
+	return s.decodeDeviceCodeRequest(data)
+}
+
+// resolveUserCode follows a user-code locator to the digest reference of its device request.
+func (s *RedisDeviceCodeStore) resolveUserCode(ctx context.Context, commands redis.Cmdable, userCode string) (string, error) {
+	reference, err := redisDeviceCodeString(ctx, commands, s.userCodeKey(userCode))
+	if err != nil {
+		return "", err
+	}
+
+	if !isHexDigest(reference) {
+		return "", ErrDeviceCodeNotFound
+	}
+
+	return reference, nil
 }
 
 // NormalizeDeviceUserCode returns the one canonical lookup representation.
@@ -379,80 +351,69 @@ func deviceCodeTerminalTransitionValid(current *DeviceCodeRequest, desired *Devi
 		current.ExpiresAt.Equal(desired.ExpiresAt) && deviceCodeScopesBounded(desired.Scopes, current.Scopes)
 }
 
-func (s *RedisDeviceCodeStore) claimDeviceCodeTransaction(
+// transitionDeviceCode runs one optimistic single-key transaction on a device request.
+//
+// WATCH covers only the request key, so the transaction stays in one Redis Cluster slot. The decision
+// needs the decrypted request, which is why it runs in Go instead of Lua. The transition callback returns
+// the request to persist (nil deletes the key) and the TTL is preserved. A transaction aborted by a
+// concurrent write is re-evaluated on fresh state a bounded number of times.
+func (s *RedisDeviceCodeStore) transitionDeviceCode(
 	ctx context.Context,
-	tx *redis.Tx,
-	userKey string,
 	deviceKey string,
-	deviceCode string,
-	userCode string,
-) (*DeviceCodeRequest, error) {
-	mapped, err := redisDeviceCodeString(ctx, tx, userKey)
-	if err != nil {
-		return nil, err
+	transition func(current *DeviceCodeRequest, deviceCode string) (*DeviceCodeRequest, error),
+) error {
+	for range deviceCodeTransitionAttempts {
+		err := s.transitionDeviceCodeOnce(ctx, deviceKey, transition)
+		if !errors.Is(err, redis.TxFailedErr) {
+			return err
+		}
 	}
 
-	if mapped != deviceCode {
-		return nil, ErrDeviceCodeConflict
-	}
-
-	encoded, err := redisDeviceCodeString(ctx, tx, deviceKey)
-	if err != nil {
-		return nil, err
-	}
-
-	request, err := s.decodeDeviceCodeRequest(encoded)
-	if err != nil {
-		return nil, err
-	}
-
-	if !deviceCodeClaimable(request, userCode) {
-		return nil, ErrDeviceCodeConflict
-	}
-
-	ttl, err := redisDeviceCodeTTL(ctx, tx, deviceKey)
-	if err != nil {
-		return nil, err
-	}
-
-	request.VerificationLocked = true
-
-	encoded, err = s.encodeDeviceCodeRequest(request)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Del(ctx, userKey)
-		pipe.Set(ctx, deviceKey, encoded, ttl)
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return request, nil
+	return ErrDeviceCodeConflict
 }
 
-func (s *RedisDeviceCodeStore) completeDeviceCodeTransaction(
+// transitionDeviceCodeOnce performs a single WATCH/MULTI attempt of transitionDeviceCode.
+func (s *RedisDeviceCodeStore) transitionDeviceCodeOnce(
+	ctx context.Context,
+	deviceKey string,
+	transition func(current *DeviceCodeRequest, deviceCode string) (*DeviceCodeRequest, error),
+) error {
+	return s.redis.GetWriteHandle().Watch(ctx, func(tx *redis.Tx) error {
+		encoded, err := redisDeviceCodeString(ctx, tx, deviceKey)
+		if err != nil {
+			return err
+		}
+
+		current, deviceCode, err := s.decodeDeviceCodeRequest(encoded)
+		if err != nil {
+			return err
+		}
+
+		next, err := transition(current, deviceCode)
+		if err != nil {
+			return err
+		}
+
+		return s.persistDeviceCodeTransition(ctx, tx, deviceKey, deviceCode, next)
+	}, deviceKey)
+}
+
+// persistDeviceCodeTransition writes or deletes the request inside the watched MULTI/EXEC block.
+func (s *RedisDeviceCodeStore) persistDeviceCodeTransition(
 	ctx context.Context,
 	tx *redis.Tx,
 	deviceKey string,
-	desired *DeviceCodeRequest,
+	deviceCode string,
+	next *DeviceCodeRequest,
 ) error {
-	encoded, err := redisDeviceCodeString(ctx, tx, deviceKey)
-	if err != nil {
-		return err
-	}
+	if next == nil {
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(ctx, deviceKey)
 
-	current, err := s.decodeDeviceCodeRequest(encoded)
-	if err != nil {
-		return err
-	}
+			return nil
+		})
 
-	if !deviceCodeTerminalTransitionValid(current, desired) {
-		return ErrDeviceCodeConflict
+		return err
 	}
 
 	ttl, err := redisDeviceCodeTTL(ctx, tx, deviceKey)
@@ -460,7 +421,7 @@ func (s *RedisDeviceCodeStore) completeDeviceCodeTransaction(
 		return err
 	}
 
-	encoded, err = s.encodeDeviceCodeRequest(desired)
+	encoded, err := s.encodeDeviceCodeRequest(deviceCode, next)
 	if err != nil {
 		return err
 	}
@@ -474,7 +435,43 @@ func (s *RedisDeviceCodeStore) completeDeviceCodeTransaction(
 	return err
 }
 
-// ClaimDeviceCodeByUserCode atomically consumes the user-code index and locks its device request.
+// ClaimAuthorizedDeviceCode atomically consumes an authorized request for its bound client.
+func (s *RedisDeviceCodeStore) ClaimAuthorizedDeviceCode(
+	ctx context.Context,
+	deviceCode string,
+	clientID string,
+) (*DeviceCodeRequest, error) {
+	if deviceCode == "" || clientID == "" {
+		return nil, ErrDeviceCodeConflict
+	}
+
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	var claimed *DeviceCodeRequest
+
+	err := s.transitionDeviceCode(writeCtx, s.deviceCodeKey(s.deviceCodeReference(deviceCode)),
+		func(request *DeviceCodeRequest, storedCode string) (*DeviceCodeRequest, error) {
+			if storedCode != deviceCode || request.ClientID != clientID || request.Status != DeviceCodeStatusAuthorized ||
+				!request.VerificationLocked || time.Now().After(request.ExpiresAt) {
+				return nil, ErrDeviceCodeConflict
+			}
+
+			claimed = request
+
+			return nil, nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("claim authorized device code: %w", err)
+	}
+
+	return claimed, nil
+}
+
+// ClaimDeviceCodeByUserCode resolves the user code and locks its device request in one transaction.
+//
+// The lock flag inside the request makes the claim single-use; the user-code locator lives in another
+// slot and is removed afterwards on a best-effort basis.
 func (s *RedisDeviceCodeStore) ClaimDeviceCodeByUserCode(
 	ctx context.Context,
 	userCode string,
@@ -484,36 +481,37 @@ func (s *RedisDeviceCodeStore) ClaimDeviceCodeByUserCode(
 		return "", nil, ErrDeviceCodeNotFound
 	}
 
-	handle := s.redis.GetWriteHandle()
-
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	userKey := s.userCodeKey(userCode)
+	handle := s.redis.GetWriteHandle()
 
-	deviceCode, err := redisDeviceCodeString(writeCtx, handle, userKey)
+	reference, err := s.resolveUserCode(writeCtx, handle, userCode)
 	if err != nil {
 		return "", nil, fmt.Errorf("claim device code mapping: %w", err)
 	}
 
-	deviceKey := s.deviceCodeKey(deviceCode)
+	var (
+		claimed    *DeviceCodeRequest
+		deviceCode string
+	)
 
-	var claimed *DeviceCodeRequest
+	err = s.transitionDeviceCode(writeCtx, s.deviceCodeKey(reference),
+		func(request *DeviceCodeRequest, storedCode string) (*DeviceCodeRequest, error) {
+			if !deviceCodeClaimable(request, userCode) {
+				return nil, ErrDeviceCodeConflict
+			}
 
-	err = handle.Watch(writeCtx, func(tx *redis.Tx) error {
-		claimed, err = s.claimDeviceCodeTransaction(
-			writeCtx, tx, userKey, deviceKey, deviceCode, userCode,
-		)
+			request.VerificationLocked = true
+			claimed, deviceCode = request, storedCode
 
-		return err
-	}, userKey, deviceKey)
-	if errors.Is(err, redis.TxFailedErr) {
-		err = ErrDeviceCodeConflict
-	}
-
+			return request, nil
+		})
 	if err != nil {
 		return "", nil, fmt.Errorf("claim device code: %w", err)
 	}
+
+	_ = handle.Del(writeCtx, s.userCodeKey(userCode)).Err()
 
 	return deviceCode, claimed, nil
 }
@@ -529,19 +527,17 @@ func (s *RedisDeviceCodeStore) CompleteClaimedDeviceCode(
 		return ErrDeviceCodeConflict
 	}
 
-	deviceKey := s.deviceCodeKey(deviceCode)
-	handle := s.redis.GetWriteHandle()
-
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	err := handle.Watch(writeCtx, func(tx *redis.Tx) error {
-		return s.completeDeviceCodeTransaction(writeCtx, tx, deviceKey, desired)
-	}, deviceKey)
-	if errors.Is(err, redis.TxFailedErr) {
-		err = ErrDeviceCodeConflict
-	}
+	err := s.transitionDeviceCode(writeCtx, s.deviceCodeKey(s.deviceCodeReference(deviceCode)),
+		func(current *DeviceCodeRequest, storedCode string) (*DeviceCodeRequest, error) {
+			if storedCode != deviceCode || !deviceCodeTerminalTransitionValid(current, desired) {
+				return nil, ErrDeviceCodeConflict
+			}
 
+			return desired, nil
+		})
 	if err != nil {
 		return fmt.Errorf("complete claimed device code: %w", err)
 	}
@@ -575,22 +571,28 @@ func deviceCodeScopesBounded(granted []string, requested []string) bool {
 	return true
 }
 
-func (s *RedisDeviceCodeStore) decodeDeviceCodeRequest(encoded string) (*DeviceCodeRequest, error) {
+// decodeDeviceCodeRequest decrypts one stored envelope and returns the request with its device code.
+func (s *RedisDeviceCodeStore) decodeDeviceCodeRequest(encoded string) (*DeviceCodeRequest, string, error) {
 	plain, err := s.redis.GetSecurityManager().Decrypt(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt device code data: %w", err)
+		return nil, "", fmt.Errorf("decrypt device code data: %w", err)
 	}
 
-	request := &DeviceCodeRequest{}
-	if err = json.Unmarshal([]byte(plain), request); err != nil {
-		return nil, fmt.Errorf("unmarshal device code request: %w", err)
+	envelope := &deviceCodeEnvelope{}
+	if err = json.Unmarshal([]byte(plain), envelope); err != nil {
+		return nil, "", fmt.Errorf("unmarshal device code request: %w", err)
 	}
 
-	return request, nil
+	if envelope.Request == nil || envelope.DeviceCode == "" {
+		return nil, "", fmt.Errorf("unmarshal device code request: incomplete envelope")
+	}
+
+	return envelope.Request, envelope.DeviceCode, nil
 }
 
-func (s *RedisDeviceCodeStore) encodeDeviceCodeRequest(request *DeviceCodeRequest) (string, error) {
-	data, err := json.Marshal(request)
+// encodeDeviceCodeRequest encrypts one request together with its device code.
+func (s *RedisDeviceCodeStore) encodeDeviceCodeRequest(deviceCode string, request *DeviceCodeRequest) (string, error) {
+	data, err := json.Marshal(deviceCodeEnvelope{Request: request, DeviceCode: deviceCode})
 	if err != nil {
 		return "", fmt.Errorf("marshal device code request: %w", err)
 	}
@@ -603,34 +605,46 @@ func (s *RedisDeviceCodeStore) encodeDeviceCodeRequest(request *DeviceCodeReques
 	return encoded, nil
 }
 
-// UpdateDeviceCode updates the stored device code request, preserving the original TTL.
+// UpdateDeviceCode overwrites a live request and keeps its TTL.
+//
+// SET XX KEEPTTL never recreates a request that was claimed, deleted, or expired in the meantime.
 func (s *RedisDeviceCodeStore) UpdateDeviceCode(ctx context.Context, deviceCode string, request *DeviceCodeRequest) error {
-	key := s.deviceCodeKey(deviceCode)
-	readCtx, readCancel := s.redisReadContext(ctx)
-
-	// Get remaining TTL
-	ttl, err := s.redis.GetReadHandle().TTL(readCtx, key).Result()
-
-	readCancel()
-
-	if err != nil || ttl <= 0 {
-		return fmt.Errorf("device code not found or expired")
-	}
-
-	data, err := json.Marshal(request)
+	encoded, err := s.encodeDeviceCodeRequest(deviceCode, request)
 	if err != nil {
-		return fmt.Errorf("failed to marshal device code request: %w", err)
-	}
-
-	encryptedData, err := s.redis.GetSecurityManager().Encrypt(string(data))
-	if err != nil {
-		return fmt.Errorf("failed to encrypt device code data: %w", err)
+		return fmt.Errorf("failed to encode device code request: %w", err)
 	}
 
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	return s.redis.GetWriteHandle().Set(writeCtx, key, encryptedData, ttl).Err()
+	key := s.deviceCodeKey(s.deviceCodeReference(deviceCode))
+
+	err = s.redis.GetWriteHandle().SetArgs(writeCtx, key, encoded, redis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
+	if errors.Is(err, redis.Nil) {
+		return fmt.Errorf("device code not found or expired")
+	}
+
+	return err
+}
+
+// RecordDeviceCodePoll merges only the poll timestamp into the stored request.
+//
+// Every other field keeps its stored value, so a poll can never overwrite a concurrent claim or completion,
+// and a consumed request stays consumed.
+func (s *RedisDeviceCodeStore) RecordDeviceCodePoll(ctx context.Context, deviceCode string, polledAt time.Time) error {
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	return s.transitionDeviceCode(writeCtx, s.deviceCodeKey(s.deviceCodeReference(deviceCode)),
+		func(current *DeviceCodeRequest, storedCode string) (*DeviceCodeRequest, error) {
+			if storedCode != deviceCode {
+				return nil, ErrDeviceCodeConflict
+			}
+
+			current.LastPoll = polledAt
+
+			return current, nil
+		})
 }
 
 // DeleteDeviceCode removes a device code and its user code mapping from Redis.
@@ -638,27 +652,31 @@ func (s *RedisDeviceCodeStore) DeleteDeviceCode(ctx context.Context, deviceCode 
 	// Get the request to find the user code
 	request, err := s.GetDeviceCode(ctx, deviceCode)
 	if err == nil && request != nil {
-		userCodeKey := s.userCodeKey(request.UserCode)
 		writeCtx, cancel := s.redisWriteContext(ctx)
-		_ = s.redis.GetWriteHandle().Del(writeCtx, userCodeKey).Err()
+		_ = s.redis.GetWriteHandle().Del(writeCtx, s.userCodeKey(request.UserCode)).Err()
 
 		cancel()
 	}
 
-	deviceKey := s.deviceCodeKey(deviceCode)
-
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	return s.redis.GetWriteHandle().Del(writeCtx, deviceKey).Err()
+	return s.redis.GetWriteHandle().Del(writeCtx, s.deviceCodeKey(s.deviceCodeReference(deviceCode))).Err()
 }
 
-// deviceCodeKey returns the Redis key for a device code.
-func (s *RedisDeviceCodeStore) deviceCodeKey(deviceCode string) string {
-	return s.prefix + "oidc:device_code:" + deviceCode
+// deviceCodeReference hides the bearer device code behind a keyed, domain-separated digest.
+func (s *RedisDeviceCodeStore) deviceCodeReference(deviceCode string) string {
+	return s.redis.GetSecurityManager().IndexDigest(deviceCodeDigestNamespace, deviceCode)
 }
 
-// userCodeKey returns the Redis key for a user code mapping.
+// deviceCodeKey returns the request key of one device-code digest in its own hash slot.
+func (s *RedisDeviceCodeStore) deviceCodeKey(reference string) string {
+	return s.prefix + "oidc:device_code:{" + reference + "}"
+}
+
+// userCodeKey returns the locator key of one normalized user code in its own hash slot.
 func (s *RedisDeviceCodeStore) userCodeKey(userCode string) string {
-	return s.prefix + "oidc:user_code:" + userCode
+	reference := s.redis.GetSecurityManager().IndexDigest(deviceUserCodeDigestNamespace, NormalizeDeviceUserCode(userCode))
+
+	return s.prefix + "oidc:device_user_code:{" + reference + "}"
 }

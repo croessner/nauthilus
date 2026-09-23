@@ -709,12 +709,86 @@ To protect sensitive data in Redis, Nauthilus can encrypt all session-related da
 - **What is encrypted?** All data in the categories mentioned above (Authorization Codes, Refresh Tokens, Session Data).
 - **Signing Key**: All OIDC signing keys (static and dynamic) can be published via the JWKS endpoint. Dynamically
   rotated keys are stored encrypted in Redis. Static keys from the configuration are not stored in Redis.
+- **Keyed references**: Opaque tokens, refresh tokens, device codes, user codes, and authorization codes appear in Redis
+  keys only as HMAC-SHA256 digests keyed with the Redis encryption secret (`storage.redis.encryption_secret`), each
+  with its own domain separator. Without a secret the digests fall back to unkeyed, domain-separated SHA-256; short
+  user codes can then be brute-forced offline from a key listing. Configure the secret for every IdP deployment.
+- **Secret rotation**: Changing the encryption secret changes every keyed reference. Running device flows, unredeemed
+  authorization codes, and all opaque access and refresh tokens become invalid. Revocation epochs and dynamic client
+  records are not keyed and survive a rotation.
 
 ### 10.2 Token Storage Cutover
 
 Opaque access tokens and refresh tokens use keyed references in an epoch-bound Redis namespace. Nauthilus does not
 read the retired raw-token key schema. Upgrading from a version that issued tokens in that schema invalidates those
 active tokens and requires the affected users to authenticate again.
+
+### 10.3 Redis Cluster Key Layout
+
+Token state, dynamic clients, device requests, and authorization codes are spread across Redis Cluster hash slots.
+Every key that one Lua script or `MULTI`/`EXEC` transaction touches shares one hash tag, so no operation can fail
+with `CROSSSLOT`. Bearer secrets and user-facing codes never appear in keys; keys carry digests only.
+
+| Keys (below `server.redis.prefix`)                          | Hash tag                      | Atomic unit                                                                   |
+|-------------------------------------------------------------|-------------------------------|-------------------------------------------------------------------------------|
+| `oidc:subject:{<subject digest>}:<kind>[:<value>]`          | SHA-256 of the user/client ID | Revocation epoch, token indexes, token records, refresh families of a subject |
+| `oidc:token:{<token reference>}:subject`                    | Keyed token reference         | None; single-key locator from a bearer token to its subject slot              |
+| `oidc:dcr:client:{<client_id>}` and `...:tombstone`         | Dynamic client ID             | Record and expiry tombstone of one dynamic client                             |
+| `oidc:dcr:{registry}:clients`, `oidc:dcr:{registry}:rate:*` | `registry`                    | Active-client quota index and registration rate limits                        |
+| `oidc:device_code:{<device-code digest>}`                   | Keyed device-code digest      | Device request; claim and completion are single-key `WATCH` transactions      |
+| `oidc:device_user_code:{<user-code digest>}`                | Keyed user-code digest        | None; single-key locator from a user code to its device request               |
+| `oidc:code:<code digest>`                                   | none (single key)             | Authorization code or consent challenge, consumed with `GETDEL`               |
+
+- The subject slot holds the revocation epoch (`epoch`), the access, static refresh, and dynamic refresh token
+  records and indexes, and the refresh-family pointer, consumed, and revoked markers. Token issuance, static refresh
+  consumption, dynamic refresh rotation with reuse detection, and user-wide revocation therefore stay atomic.
+- The subject digest is unkeyed and domain-separated, so it keeps arbitrary user IDs out of the hash tag and does not
+  move when the storage secret rotates.
+- A bearer token only reveals its keyed reference, so each reference has a locator that names the subject slot. The
+  locator is written next to the token state and expires with it. For rotated dynamic refresh tokens it lives as long
+  as the consumed marker, so a replayed ancestor still revokes its family. Locator values that are not a subject
+  digest are treated as absent.
+- The dynamic-client registry deliberately stays in one slot: quota and global registration rate limits need one
+  atomic counter. It is only written on registration, activity updates, and expiry; per-request client lookups read
+  the client's own slot. Registry and client records are kept consistent by ordered writes and by the bounded cleanup
+  after each admitted registration attempt. It expires due clients, realigns index scores with the record expiry,
+  and removes index entries without a record from a small random sample.
+- Device requests keep the device code inside the encrypted value, so the browser flow resolves it from the user code
+  without a plaintext mapping. The lock flag in the request makes the user-code claim single-use; the user-code
+  locator is removed after the claim. The locator is created with `NX`, so a user code that collides with a live one
+  is regenerated instead of taking over the other request.
+- Revocation epochs have no TTL. Run the IdP Redis with `maxmemory-policy noeviction`: an evicted epoch key would fall
+  back to the epoch floor and could make tokens valid again that a revocation had invalidated.
+- Redis 6.2 or newer (or a compatible Valkey) is required: code redemption uses `GETDEL`, the registry repair uses
+  `ZRANDMEMBER`, and device updates use `SET ... XX KEEPTTL`.
+- Device requests are single-key `WATCH`/`MULTI` transitions with a bounded retry. A poll only merges its timestamp,
+  so it can never overwrite a concurrent claim or completion, and no write recreates a consumed request.
+- User codes are short by design. Enable the per-client-IP HTTP rate limit (`runtime.servers.http.middlewares.rate`
+  with `runtime.servers.http.rate_limit.per_second` and `burst`); it covers all HTTP endpoints including the device
+  verification endpoint `/oidc/device/verify`, so user codes cannot be guessed online.
+
+Upgrading from a release that stored this state under the shared `{dynamic}` and `{registry}` hash tags or with raw
+codes in keys is a hard cut without migration. The previous keys are not read. After the upgrade:
+
+- all opaque access tokens and all static and dynamic refresh tokens are invalid, so users authenticate again;
+- all dynamic client registrations are gone, so native clients register again. The former `{registry}:active` index
+  is no longer read and does not count against the quota; the registration rate-limit counters keep their names and
+  stay in effect until their windows end;
+- all JWT access tokens issued before the upgrade are invalid, whether they were revoked or not. Revocation epochs
+  now start at the floor `1000000000000` (a subject without an epoch key is at the floor, and every user-wide
+  revocation increments from there). Former epochs were counters starting at `0` and stay far below the floor, and
+  validation rejects every epoch below the floor as well as tokens without the `nauthilus_user_epoch` claim. This
+  applies to user tokens and to `client_credentials` service tokens alike;
+- running device authorization flows and unredeemed authorization codes are lost; clients start a new flow.
+
+Most retired keys expire with their original TTLs. The former revocation epochs
+(`<prefix>oidc:dcr:{dynamic}:dynamic_user_epoch:*`) and the former active-client index
+(`<prefix>oidc:dcr:{registry}:active`) have no TTL and stay until an operator removes them. All former `{dynamic}`
+keys share one slot, so a cursor-based scan on the master that owns it finds them, for example
+`redis-cli -h <master> --scan --pattern '<prefix>oidc:dcr:{dynamic}:*' | xargs -r -n 100 redis-cli -h <master> unlink`
+and `redis-cli -c unlink '<prefix>oidc:dcr:{registry}:active'`. Leave the other retired keys to their TTLs: former device
+codes, user codes, and authorization codes share key prefixes with the new digest keys, so a pattern scan could
+remove live state.
 
 ---
 

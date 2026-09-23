@@ -708,6 +708,11 @@ func (s *canonicalDeviceStoreFixture) UpdateDeviceCode(context.Context, string, 
 	return nil
 }
 
+// RecordDeviceCodePoll accepts poll timestamps without state changes.
+func (s *canonicalDeviceStoreFixture) RecordDeviceCodePoll(context.Context, string, time.Time) error {
+	return nil
+}
+
 func (s *canonicalDeviceStoreFixture) ClaimAuthorizedDeviceCode(
 	context.Context,
 	string,

@@ -43,6 +43,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp/dcr"
+	"github.com/croessner/nauthilus/v4/server/idp/idptest"
 	"github.com/croessner/nauthilus/v4/server/idp/oidckeys"
 	"github.com/croessner/nauthilus/v4/server/idp/signing"
 	"github.com/croessner/nauthilus/v4/server/pluginloader"
@@ -498,8 +499,62 @@ func (m *mockIdpConfig) GetServer() *config.ServerSection {
 	return m.FileSettings.GetServer()
 }
 
-func testAccessTokenKey(token string) string {
-	return testRedisPrefix + "oidc:dcr:{dynamic}:access_token:" + testAccessTokenReference(token)
+// testSubjectEpochFloor is the independently pinned baseline epoch of a subject without an epoch key.
+const testSubjectEpochFloor = idptest.SubjectEpochFloor
+
+// testSubjectSlot independently derives the subject hash tag that groups one subject's token state.
+func testSubjectSlot(subject string) string {
+	return idptest.SubjectSlot(subject)
+}
+
+// testSubjectKey returns one key inside the Redis Cluster slot of a subject.
+func testSubjectKey(subject string, suffix string) string {
+	return idptest.SubjectKey(testRedisPrefix, subject, suffix)
+}
+
+// testTokenLocatorKey returns the single-key locator of a bearer reference.
+func testTokenLocatorKey(reference string) string {
+	return idptest.TokenLocatorKey(testRedisPrefix, reference)
+}
+
+// testTokenLocatorPattern returns a regular expression for locators whose reference matches referencePattern.
+func testTokenLocatorPattern(referencePattern string) string {
+	return idptest.TokenLocatorPattern(testRedisPrefix, referencePattern)
+}
+
+// testAccessTokenKey returns the subject-slot record key of an opaque access token.
+func testAccessTokenKey(subject string, token string) string {
+	return testSubjectKey(subject, "access_token:"+testAccessTokenReference(token))
+}
+
+// expectAccessTokenLookup expects the locator read followed by the same-slot record and epoch read.
+func expectAccessTokenLookup(mock redismock.ClientMock, subject string, token string, sessionData string) {
+	expectAccessTokenState(mock, subject, token).SetVal([]any{sessionData, nil})
+}
+
+// expectAccessTokenState expects the locator read and returns the pending same-slot record and epoch read.
+func expectAccessTokenState(mock redismock.ClientMock, subject string, token string) *redismock.ExpectedSlice {
+	mock.ExpectGet(testTokenLocatorKey(testAccessTokenReference(token))).SetVal(testSubjectSlot(subject))
+
+	return mock.ExpectMGet(testAccessTokenKey(subject, token), testUserTokenEpochKey(subject))
+}
+
+// expectMissingAccessToken expects a bearer lookup that finds no locator.
+func expectMissingAccessToken(mock redismock.ClientMock, token string) {
+	mock.ExpectGet(testTokenLocatorKey(testAccessTokenReference(token))).RedisNil()
+}
+
+// expectAccessTokenLocatorError expects a bearer lookup whose locator read fails at the backend.
+func expectAccessTokenLocatorError(mock redismock.ClientMock, token string, err error) {
+	mock.ExpectGet(testTokenLocatorKey(testAccessTokenReference(token))).SetErr(err)
+}
+
+// expectAccessTokenDelete expects the locator read and the atomic subject-slot delete with locator cleanup.
+func expectAccessTokenDelete(mock redismock.ClientMock, subject string, token string) {
+	reference := testAccessTokenReference(token)
+	mock.ExpectGet(testTokenLocatorKey(reference)).SetVal(testSubjectSlot(subject))
+	mock.ExpectEval(trackedTokenDeleteScript, []string{testAccessTokenKey(subject, token), testUserAccessTokensKey(subject)}, reference).SetVal(int64(1))
+	mock.ExpectDel(testTokenLocatorKey(reference)).SetVal(1)
 }
 
 func testDeniedAccessTokenKey(token string) string {
@@ -537,7 +592,7 @@ func expectDeniedAccessTokenLookupError(mock redismock.ClientMock, token string,
 }
 
 func testUserAccessTokensKey(userID string) string {
-	return testRedisPrefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
+	return testSubjectKey(userID, "access_tokens")
 }
 
 // testAccessTokenReference returns the bounded Redis reference for an opaque bearer token.
@@ -555,19 +610,19 @@ func testStaticRefreshTokenReference(token string) string {
 	return rediscli.NewSecurityManager(secret.Value{}).IndexDigest("oidc-static-refresh", token)
 }
 
-// testStaticRefreshTokenKey returns the cluster-safe storage key for a static refresh token.
-func testStaticRefreshTokenKey(token string) string {
-	return testRedisPrefix + "oidc:dcr:{dynamic}:static_refresh_token:" + testStaticRefreshTokenReference(token)
+// testStaticRefreshTokenKey returns the subject-slot storage key for a static refresh token.
+func testStaticRefreshTokenKey(subject string, token string) string {
+	return testSubjectKey(subject, "static_refresh_token:"+testStaticRefreshTokenReference(token))
 }
 
-// testStaticUserRefreshTokensKey returns the cluster-safe static refresh-token index key.
+// testStaticUserRefreshTokensKey returns the subject-slot static refresh-token index key.
 func testStaticUserRefreshTokensKey(userID string) string {
-	return testRedisPrefix + "oidc:dcr:{dynamic}:static_user_refresh_tokens:" + userID
+	return testSubjectKey(userID, "static_refresh_tokens")
 }
 
-// testUserTokenEpochKey returns the authoritative user-wide token epoch key.
+// testUserTokenEpochKey returns the authoritative subject-wide token epoch key.
 func testUserTokenEpochKey(userID string) string {
-	return testRedisPrefix + "oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID
+	return testSubjectKey(userID, "epoch")
 }
 
 func testOIDCKeysHashKey() string {
@@ -658,7 +713,7 @@ func signedTestAccessToken(t *testing.T, kid string, pemData string) string {
 		claimExpires:                    time.Now().Add(time.Hour).Unix(),
 		claimScope:                      testScopeClaim,
 		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
-		definitions.ClaimUserTokenEpoch: "0",
+		definitions.ClaimUserTokenEpoch: testSubjectEpochFloor,
 	})
 }
 
@@ -964,7 +1019,7 @@ func testOIDCSession(scopes []string, authTime time.Time) *OIDCSession {
 func testRefreshOIDCSession(accessToken string, authTime time.Time) *OIDCSession {
 	session := testOIDCSession([]string{"openid", "offline_access"}, authTime)
 	session.AccessToken = accessToken
-	session.DynamicUserEpoch = "0"
+	session.DynamicUserEpoch = testSubjectEpochFloor
 
 	return session
 }
@@ -975,9 +1030,9 @@ func expectFixedRefreshTokenStore(mock redismock.ClientMock) {
 }
 
 // expectUserTokenEpoch expects an absent epoch to resolve to the baseline value.
-// testDynamicClientKey returns the authoritative registry key of a dynamic client.
+// testDynamicClientKey returns the authoritative record key of a dynamic client in its own slot.
 func testDynamicClientKey(clientID string) string {
-	return testRedisPrefix + "oidc:dcr:{registry}:client:" + clientID
+	return idptest.DynamicClientKey(testRedisPrefix, clientID)
 }
 
 // expectDynamicClientRecord serves an active public-native dynamic client with the given registered scope.
@@ -1013,21 +1068,22 @@ func expectUserTokenEpoch(mock redismock.ClientMock, userID string) {
 	mock.ExpectGet(testUserTokenEpochKey(userID)).RedisNil()
 }
 
-// expectStaticRefreshTokenStore expects the cluster-safe epoch-guarded storage script.
+// expectStaticRefreshTokenStore expects the locator write and the epoch-guarded subject-slot storage script.
 func expectStaticRefreshTokenStore(mock redismock.ClientMock, refreshToken string) {
 	reference := testStaticRefreshTokenReference(refreshToken)
 	keys := []string{
-		regexp.QuoteMeta(testStaticRefreshTokenKey(refreshToken)),
+		regexp.QuoteMeta(testStaticRefreshTokenKey(testUserID, refreshToken)),
 		regexp.QuoteMeta(testStaticUserRefreshTokensKey(testUserID)),
 		regexp.QuoteMeta(testUserTokenEpochKey(testUserID)),
 	}
+	mock.ExpectSet(testTokenLocatorKey(reference), testSubjectSlot(testUserID), 7*24*time.Hour).SetVal("OK")
 	mock.Regexp().ExpectEval(
 		regexp.QuoteMeta(dynamicTrackedStoreScript),
 		keys,
 		".*",
 		int64((7 * 24 * time.Hour).Milliseconds()),
 		regexp.QuoteMeta(reference),
-		"0",
+		testSubjectEpochFloor,
 	).SetVal(int64(1))
 }
 
@@ -1035,13 +1091,14 @@ func expectStaticRefreshTokenStore(mock redismock.ClientMock, refreshToken strin
 func expectStaticRefreshTokenConsume(mock redismock.ClientMock, refreshToken string, sessionData string) {
 	reference := testStaticRefreshTokenReference(refreshToken)
 	keys := []string{
-		testStaticRefreshTokenKey(refreshToken),
+		testStaticRefreshTokenKey(testUserID, refreshToken),
 		testStaticUserRefreshTokensKey(testUserID),
 		testUserTokenEpochKey(testUserID),
 	}
-	mock.ExpectGet(testStaticRefreshTokenKey(refreshToken)).SetVal(sessionData)
-	expectUserTokenEpoch(mock, testUserID)
-	mock.ExpectEval(staticRefreshConsumeScript, keys, reference, "0", sessionData).SetVal([]any{int64(1), sessionData})
+	mock.ExpectGet(testTokenLocatorKey(reference)).SetVal(testSubjectSlot(testUserID))
+	mock.ExpectMGet(testStaticRefreshTokenKey(testUserID, refreshToken), testUserTokenEpochKey(testUserID)).SetVal([]any{sessionData, nil})
+	mock.ExpectEval(staticRefreshConsumeScript, keys, reference, testSubjectEpochFloor, sessionData).SetVal([]any{int64(1), sessionData})
+	mock.ExpectDel(testTokenLocatorKey(reference)).SetVal(1)
 }
 
 // expectJWTRefreshTokenExchange expects JWT access-token denial and refresh-token rotation.
@@ -1054,11 +1111,7 @@ func expectJWTRefreshTokenExchange(mock redismock.ClientMock, refreshToken strin
 // expectOpaqueRefreshTokenExchange expects opaque access-token deletion and refresh-token rotation.
 func expectOpaqueRefreshTokenExchange(mock redismock.ClientMock, refreshToken string, accessToken string, sessionData string) {
 	expectStaticRefreshTokenConsume(mock, refreshToken, sessionData)
-	mock.ExpectGet(testAccessTokenKey(accessToken)).SetVal(sessionData)
-	mock.ExpectTxPipeline()
-	mock.ExpectDel(testAccessTokenKey(accessToken)).SetVal(1)
-	mock.ExpectSRem(testUserAccessTokensKey(testUserID), testAccessTokenReference(accessToken)).SetVal(1)
-	mock.ExpectTxPipelineExec()
+	expectAccessTokenDelete(mock, testUserID, accessToken)
 	expectFixedRefreshTokenStore(mock)
 }
 
@@ -1295,7 +1348,7 @@ func assertValidateTokenHeuristic(t *testing.T, fixture idpTokenTestFixture) {
 	assert.NoError(t, fixture.mock.ExpectationsWereMet(), "Redis should not have been hit for JWT-like token")
 
 	opaqueToken := "na_at_someopaquevalue"
-	fixture.mock.ExpectGet(testAccessTokenKey(opaqueToken)).RedisNil()
+	expectMissingAccessToken(fixture.mock, opaqueToken)
 	_, err = fixture.idp.ValidateToken(fixture.ctx, opaqueToken)
 	assert.Error(t, err)
 	assert.NoError(t, fixture.mock.ExpectationsWereMet(), "Redis should have been hit for opaque token")
@@ -1312,14 +1365,13 @@ func TestValidateTokenOpaqueUsesSingleSessionLookup(t *testing.T) {
 		UserID:            testUserID,
 		Scopes:            []string{"openid", "profile"},
 		AccessTokenClaims: map[string]any{"role": "reader"},
-		DynamicUserEpoch:  "0",
+		DynamicUserEpoch:  testSubjectEpochFloor,
 	}
 
 	sessionData, err := json.Marshal(session)
 	assert.NoError(t, err)
 
-	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
-	expectUserTokenEpoch(mock, testUserID)
+	expectAccessTokenLookup(mock, testUserID, tokenString, string(sessionData))
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
 	assert.NoError(t, err)
@@ -1348,13 +1400,12 @@ func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T
 		Scopes:               []string{definitions.ScopeOpenID},
 		AccessTokenIssuedAt:  issuedAt,
 		AccessTokenExpiresAt: issuedAt.Add(5 * time.Minute),
-		DynamicUserEpoch:     "0",
+		DynamicUserEpoch:     testSubjectEpochFloor,
 	}
 	sessionData, err := json.Marshal(session)
 	assert.NoError(t, err)
 
-	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
-	expectUserTokenEpoch(mock, testUserID)
+	expectAccessTokenLookup(mock, testUserID, tokenString, string(sessionData))
 	expectDynamicClientRecord(t, mock, clientID, definitions.ScopeOpenID)
 
 	claims, err := idp.ValidateToken(t.Context(), tokenString)
@@ -1439,7 +1490,7 @@ func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, mfa
 		claimExpires:                    time.Now().Add(4 * time.Minute).Unix(),
 		claimScope:                      scope,
 		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
-		definitions.ClaimUserTokenEpoch: "0",
+		definitions.ClaimUserTokenEpoch: testSubjectEpochFloor,
 	})
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
@@ -1485,11 +1536,10 @@ func TestValidateTokenOpaqueFailsClosedWhenDynamicClientUnavailable(t *testing.T
 		},
 	})
 	tokenString := "na_at_dynamic-unavailable"
-	sessionData, err := json.Marshal(&OIDCSession{ClientID: clientID, UserID: testUserID, Scopes: []string{definitions.ScopeOpenID}, DynamicUserEpoch: "0"})
+	sessionData, err := json.Marshal(&OIDCSession{ClientID: clientID, UserID: testUserID, Scopes: []string{definitions.ScopeOpenID}, DynamicUserEpoch: testSubjectEpochFloor})
 	assert.NoError(t, err)
 
-	mock.ExpectGet(testAccessTokenKey(tokenString)).SetVal(string(sessionData))
-	expectUserTokenEpoch(mock, testUserID)
+	expectAccessTokenLookup(mock, testUserID, tokenString, string(sessionData))
 	mock.ExpectGet(testDynamicClientKey(clientID)).SetErr(errors.New("redis unavailable"))
 
 	_, err = idp.ValidateToken(t.Context(), tokenString)
@@ -1642,7 +1692,7 @@ func TestValidateTokenForUserInfoRequiresOpenIDScope(t *testing.T) {
 		claimExpires:                    time.Now().Add(time.Hour).Unix(),
 		claimScope:                      definitions.ScopeProfile,
 		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
-		definitions.ClaimUserTokenEpoch: "0",
+		definitions.ClaimUserTokenEpoch: testSubjectEpochFloor,
 	})
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
@@ -1975,7 +2025,9 @@ func assertClientCredentialsTokenClaims(t *testing.T, idpInst *NauthilusIDP, acc
 func expectOpaqueClientCredentialsTokenStore(mock redismock.ClientMock, capture *redisSessionValueCapture) {
 	accessToken := definitions.OIDCTokenPrefixAccessToken + fixedClientCredentialsTokenBody
 	reference := testAccessTokenReference(accessToken)
-	keys := []string{testAccessTokenKey(accessToken), testUserAccessTokensKey("cc-client"), testUserTokenEpochKey("cc-client")}
+	keys := []string{testAccessTokenKey("cc-client", accessToken), testUserAccessTokensKey("cc-client"), testUserTokenEpochKey("cc-client")}
+
+	mock.ExpectSet(testTokenLocatorKey(reference), testSubjectSlot("cc-client"), time.Hour).SetVal("OK")
 
 	mock.CustomMatch(capture.Match).ExpectEval(
 		dynamicTrackedStoreScript,
@@ -1983,7 +2035,7 @@ func expectOpaqueClientCredentialsTokenStore(mock redismock.ClientMock, capture 
 		"captured-session",
 		time.Hour.Milliseconds(),
 		reference,
-		"0",
+		testSubjectEpochFloor,
 	).SetVal(int64(1))
 }
 
@@ -2006,8 +2058,7 @@ func expectClientCredentialsTokenValidation(
 		}
 
 		for range count {
-			mock.ExpectGet(testAccessTokenKey(accessToken)).SetVal(storedSession)
-			expectUserTokenEpoch(mock, "cc-client")
+			expectAccessTokenLookup(mock, "cc-client", accessToken, storedSession)
 		}
 
 		return

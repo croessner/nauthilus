@@ -16,6 +16,7 @@
 package idp
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -241,6 +242,9 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, deviceAuthorizationResponse(oidcCfg.Issuer, userCode, deviceCode, deviceRequest))
 }
 
+// deviceUserCodeAttempts bounds user-code regeneration after a collision with a live user code.
+const deviceUserCodeAttempts = 3
+
 // createDeviceCodeRequest generates and stores a new device code request.
 func (h *OIDCHandler) createDeviceCodeRequest(
 	ctx *gin.Context,
@@ -248,16 +252,37 @@ func (h *OIDCHandler) createDeviceCodeRequest(
 	oidcCfg *config.OIDCConfig,
 	scopes []string,
 ) (string, string, *idp.DeviceCodeRequest, error) {
-	userCodeLength := oidcCfg.GetDeviceCodeUserCodeLength()
+	var err error
 
-	userCode, err := h.userCodeGen.GenerateUserCode(userCodeLength)
+	for range deviceUserCodeAttempts {
+		var (
+			userCode, deviceCode string
+			request              *idp.DeviceCodeRequest
+		)
+
+		userCode, deviceCode, request, err = h.storeNewDeviceCodeRequest(ctx, client, oidcCfg, scopes)
+		if !errors.Is(err, idp.ErrDeviceUserCodeCollision) {
+			return userCode, deviceCode, request, err
+		}
+	}
+
+	return "", "", nil, err
+}
+
+// storeNewDeviceCodeRequest generates fresh codes and stores one request; a user-code collision is reported.
+func (h *OIDCHandler) storeNewDeviceCodeRequest(
+	ctx *gin.Context,
+	client *config.OIDCClient,
+	oidcCfg *config.OIDCConfig,
+	scopes []string,
+) (string, string, *idp.DeviceCodeRequest, error) {
+	userCode, err := h.userCodeGen.GenerateUserCode(oidcCfg.GetDeviceCodeUserCodeLength())
 	if err != nil {
 		return "", "", nil, err
 	}
 
 	deviceCode := ksuid.New().String()
 	expiry := oidcCfg.GetDeviceCodeExpiry()
-	interval := oidcCfg.GetDeviceCodePollingInterval()
 
 	request := &idp.DeviceCodeRequest{
 		ClientID:  client.ClientID,
@@ -265,7 +290,7 @@ func (h *OIDCHandler) createDeviceCodeRequest(
 		UserCode:  userCode,
 		Status:    idp.DeviceCodeStatusPending,
 		ExpiresAt: time.Now().Add(expiry),
-		Interval:  interval,
+		Interval:  oidcCfg.GetDeviceCodePollingInterval(),
 	}
 
 	if err := h.deviceStore.StoreDeviceCode(ctx.Request.Context(), deviceCode, request, expiry); err != nil {
@@ -311,7 +336,7 @@ func (h *OIDCHandler) prepareDeviceCodePoll(ctx *gin.Context, client *config.OID
 	}
 
 	request.LastPoll = time.Now()
-	_ = h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request)
+	_ = h.deviceStore.RecordDeviceCodePoll(ctx.Request.Context(), deviceCode, request.LastPoll)
 
 	return deviceCode, request, true
 }
@@ -364,9 +389,10 @@ func (h *OIDCHandler) handleDeviceCodeTokenExchange(ctx *gin.Context, client *co
 }
 
 // ensureDeviceCodeRequestClaims recovers missing claims before token issuance.
+// The request was already consumed by its claim, so recovered claims are only used in memory.
 func (h *OIDCHandler) ensureDeviceCodeRequestClaims(ctx *gin.Context, deviceCode string, request *idp.DeviceCodeRequest, client *config.OIDCClient) bool {
 	if request.IDTokenClaims == nil || request.AccessTokenClaims == nil {
-		if err := h.recoverMissingDeviceRequestClaims(ctx, deviceCode, request, client); err != nil {
+		if err := h.recoverMissingDeviceRequestClaims(ctx, request, client); err != nil {
 			util.DebugModuleWithCfg(
 				ctx.Request.Context(),
 				h.deps.Cfg,
@@ -441,9 +467,9 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 	})
 }
 
+// recoverMissingDeviceRequestClaims rebuilds claims of a consumed request without persisting them.
 func (h *OIDCHandler) recoverMissingDeviceRequestClaims(
 	ctx *gin.Context,
-	deviceCode string,
 	request *idp.DeviceCodeRequest,
 	client *config.OIDCClient,
 ) error {
@@ -453,15 +479,7 @@ func (h *OIDCHandler) recoverMissingDeviceRequestClaims(
 		}
 	}
 
-	if err := hydrateDeviceRequestClaims(ctx, h.idp, request, client, nil); err != nil {
-		return err
-	}
-
-	if err := h.deviceStore.UpdateDeviceCode(ctx.Request.Context(), deviceCode, request); err != nil {
-		return fmt.Errorf("failed to persist recovered device claims: %w", err)
-	}
-
-	return nil
+	return hydrateDeviceRequestClaims(ctx, h.idp, request, client, nil)
 }
 
 func (h *OIDCHandler) backfillDeviceRequestSnapshot(ctx *gin.Context, request *idp.DeviceCodeRequest) error {

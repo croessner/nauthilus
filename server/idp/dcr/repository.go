@@ -28,10 +28,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Redis Cluster layout: every dynamic client owns the slot {<client_id>} for its record and tombstone,
+// so per-request lookups spread across the cluster. The active-client index and the registration rate
+// limits stay in the deliberately global {registry} slot because quota and global rate enforcement need
+// one atomic counter. No script or transaction spans both slots; the two sides are kept consistent by
+// ordered writes, compensation, and index repair in CleanupExpired.
+
+// registrationScript reserves quota and index membership inside the {registry} slot.
 const registrationScript = `
-if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[5]) then return 4 end
-if redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[3], 'NX') == false then return 5 end
-redis.call('ZADD', KEYS[2], ARGV[4], ARGV[6])
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then return 4 end
+if redis.call('ZADD', KEYS[1], 'NX', ARGV[2], ARGV[3]) == 0 then return 5 end
 return 1
 `
 
@@ -48,14 +54,32 @@ if global_count == 1 then redis.call('PEXPIRE', KEYS[3], ARGV[5]) end
 return 1
 `
 
-const touchScript = `
-local score = redis.call('ZSCORE', KEYS[2], ARGV[3])
+// touchIndexScript extends index activity only while the registry still considers the client active.
+const touchIndexScript = `
+local score = redis.call('ZSCORE', KEYS[1], ARGV[3])
 if not score or tonumber(score) <= tonumber(ARGV[1]) then return 0 end
-if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
-redis.call('SET', KEYS[1], ARGV[4], 'KEEPTTL')
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3])
 return 1
 `
+
+// touchRecordScript rewrites activity timestamps without resurrecting an expired client record.
+const touchRecordScript = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL')
+return 1
+`
+
+const (
+	// cleanupBatchSize bounds the expired clients processed after one admitted registration attempt.
+	cleanupBatchSize = 100
+	// repairSampleSize bounds the random index entries checked for a missing record per cleanup run.
+	repairSampleSize = 10
+	// repairGracePeriod protects registrations between their index reservation and their record write.
+	// Scores come from the clock of the instance that reserved the entry, while the repair compares them
+	// with its own clock. The period therefore also absorbs clock skew between instances; a few seconds of
+	// write latency alone would need far less.
+	repairGracePeriod = 5 * time.Minute
+)
 
 // attemptRateLimitCauses maps registrationAttemptScript rejection codes to classified causes.
 var attemptRateLimitCauses = map[int64]error{
@@ -74,11 +98,10 @@ type Repository struct {
 }
 
 // ReserveAttempt atomically consumes anonymous registration attempt budget.
+//
+// Expired clients are cleaned up only after the attempt was admitted, so rejected anonymous requests never
+// pay for cleanup reads.
 func (r *Repository) ReserveAttempt(ctx context.Context, sourceHash string, limits config.OIDCDynamicClientRegistrationLimits) error {
-	if err := r.CleanupExpired(ctx, 100); err != nil {
-		return err
-	}
-
 	handle, err := r.writeHandle()
 	if err != nil {
 		return err
@@ -103,7 +126,7 @@ func (r *Repository) ReserveAttempt(ctx context.Context, sourceHash string, limi
 	}
 
 	if result == 1 {
-		return nil
+		return r.CleanupExpired(ctx, cleanupBatchSize)
 	}
 
 	if cause, limited := attemptRateLimitCauses[result]; limited {
@@ -124,7 +147,7 @@ func (r *Repository) CleanupExpired(ctx context.Context, maximum int64) error {
 		return err
 	}
 
-	clientIDs, err := handle.ZRangeByScore(ctx, r.registryKey("active"), &redis.ZRangeBy{
+	clientIDs, err := handle.ZRangeByScore(ctx, r.activeKey(), &redis.ZRangeBy{
 		Min:   "-inf",
 		Max:   strconv.FormatInt(r.now().UnixMilli(), 10),
 		Count: maximum,
@@ -136,15 +159,84 @@ func (r *Repository) CleanupExpired(ctx context.Context, maximum int64) error {
 	}
 
 	for _, clientID := range clientIDs {
-		if _, resolveErr := r.Get(ctx, clientID); resolveErr != nil && !errors.Is(resolveErr, ErrNotFound) {
+		if err := r.cleanupClient(ctx, handle, clientID); err != nil {
 			r.auditor.Record(ctx, AuditEvent{Operation: AuditOperationCleanup, Outcome: AuditOutcomeFailed, Reason: "expiry_failure", ClientID: clientID})
 
-			return resolveErr
+			return err
 		}
 	}
 
 	if len(clientIDs) > 0 {
 		r.auditor.Record(ctx, AuditEvent{Operation: AuditOperationCleanup, Outcome: AuditOutcomeSuccess, Reason: "expired_batch"})
+	}
+
+	return r.repairIndexSample(ctx, handle)
+}
+
+// repairIndexSample removes a bounded random sample of index entries whose client record is gone.
+//
+// Entries are only considered when their score proves that they were not reserved within the last
+// repairGracePeriod, so a registration between its index reservation and its record write is never
+// touched. Remaining orphans are removed by the regular cleanup once their score is due.
+func (r *Repository) repairIndexSample(ctx context.Context, handle redis.UniversalClient) error {
+	members, err := handle.ZRandMemberWithScores(ctx, r.activeKey(), repairSampleSize).Result()
+	if err != nil {
+		return fmt.Errorf("%w: sample client index: %v", ErrUnavailable, err)
+	}
+
+	settledBefore := float64(r.now().Add(r.lifecycle.UnusedTTL - repairGracePeriod).UnixMilli())
+
+	for _, member := range members {
+		clientID, ok := member.Member.(string)
+		if !ok || member.Score >= settledBefore {
+			continue
+		}
+
+		if err := r.removeOrphanedEntry(ctx, handle, clientID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// removeOrphanedEntry drops one index entry after confirming that its client record no longer exists.
+func (r *Repository) removeOrphanedEntry(ctx context.Context, handle redis.UniversalClient, clientID string) error {
+	exists, err := handle.Exists(ctx, r.clientKey(clientID)).Result()
+	if err != nil {
+		return fmt.Errorf("%w: check client record: %v", ErrUnavailable, err)
+	}
+
+	if exists != 0 {
+		return nil
+	}
+
+	if err := handle.ZRem(ctx, r.activeKey(), clientID).Err(); err != nil {
+		return fmt.Errorf("%w: repair client index: %v", ErrUnavailable, err)
+	}
+
+	return nil
+}
+
+// cleanupClient expires one due client and repairs index entries whose record no longer exists.
+// A still-active client gets its index score realigned with the expiry its record actually carries.
+func (r *Repository) cleanupClient(ctx context.Context, handle redis.UniversalClient, clientID string) error {
+	record, err := r.Get(ctx, clientID)
+	if err == nil {
+		score := float64(r.expiresAt(record).UnixMilli())
+		if err := handle.ZAddXX(ctx, r.activeKey(), redis.Z{Score: score, Member: clientID}).Err(); err != nil {
+			return fmt.Errorf("%w: realign client index: %v", ErrUnavailable, err)
+		}
+
+		return nil
+	}
+
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+
+	if err := handle.ZRem(ctx, r.activeKey(), clientID).Err(); err != nil {
+		return fmt.Errorf("%w: repair client index: %v", ErrUnavailable, err)
 	}
 
 	return nil
@@ -160,7 +252,11 @@ func NewRepository(client rediscli.Client, prefix string, lifecycle config.OIDCD
 	return &Repository{redis: client, prefix: prefix, lifecycle: lifecycle, auditor: auditor, now: time.Now}
 }
 
-// Register atomically enforces quotas, rate limits, and unique client creation.
+// Register enforces quota and index membership atomically in the registry slot, then creates the record.
+//
+// The registry reservation comes first so a record never exists without quota admission. A failed or
+// colliding record write releases the reservation again; a reservation orphaned by a crash is removed by
+// CleanupExpired once its unused-client deadline passes.
 func (r *Repository) Register(ctx context.Context, record *DynamicClientRecord, limits config.OIDCDynamicClientRegistrationLimits) error {
 	handle, err := r.writeHandle()
 	if err != nil {
@@ -173,28 +269,22 @@ func (r *Repository) Register(ctx context.Context, record *DynamicClientRecord, 
 	}
 
 	now := r.now()
-	maximumTTL := r.lifecycle.MaximumTTL
-	keys := []string{
-		r.clientKey(record.ClientID),
-		r.registryKey("active"),
-	}
-	arguments := []any{
-		encoded,
-		now.UnixMilli(),
-		maximumTTL.Milliseconds(),
-		now.Add(r.lifecycle.UnusedTTL).UnixMilli(),
-		limits.ActiveClients,
-		record.ClientID,
-	}
 
-	result, evalErr := handle.Eval(ctx, registrationScript, keys, arguments...).Int64()
+	result, evalErr := handle.Eval(
+		ctx,
+		registrationScript,
+		[]string{r.activeKey()},
+		limits.ActiveClients,
+		now.Add(r.lifecycle.UnusedTTL).UnixMilli(),
+		record.ClientID,
+	).Int64()
 	if evalErr != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, evalErr)
 	}
 
 	switch result {
 	case 1:
-		return nil
+		return r.createRecord(ctx, handle, record.ClientID, encoded)
 	case 4:
 		return ErrQuota
 	case 5:
@@ -202,6 +292,25 @@ func (r *Repository) Register(ctx context.Context, record *DynamicClientRecord, 
 	default:
 		return fmt.Errorf("%w: unexpected registration result %d", ErrUnavailable, result)
 	}
+}
+
+// createRecord writes a new client record and releases the registry reservation on a collision.
+//
+// A failed write keeps the reservation because its outcome is unknown: a record written despite a
+// client-side timeout stays counted, and a reservation without a record is removed by the index repair.
+func (r *Repository) createRecord(ctx context.Context, handle redis.UniversalClient, clientID string, encoded []byte) error {
+	created, err := handle.SetNX(ctx, r.clientKey(clientID), encoded, r.lifecycle.MaximumTTL).Result()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+
+	if created {
+		return nil
+	}
+
+	_ = handle.ZRem(ctx, r.activeKey(), clientID).Err()
+
+	return errClientIDCollision
 }
 
 // Get resolves a dynamic client through the authoritative Redis handle without extending activity.
@@ -244,6 +353,10 @@ func (r *Repository) Get(ctx context.Context, clientID string) (*DynamicClientRe
 }
 
 // Touch records activity only after a caller has validated a protocol use of the client.
+//
+// The registry index is extended before the record so a record is only rewritten while the registry
+// still considers the client active. An index entry extended for a record that vanished meanwhile is
+// repaired by CleanupExpired.
 func (r *Repository) Touch(ctx context.Context, clientID string) error {
 	record, err := r.Get(ctx, clientID)
 	if err != nil {
@@ -251,32 +364,29 @@ func (r *Repository) Touch(ctx context.Context, clientID string) error {
 	}
 
 	now := r.now()
-	activeUntil := now.Add(r.lifecycle.InactivityTTL)
-	absoluteExpiry := record.CreatedAt.Add(r.lifecycle.MaximumTTL)
-
-	if activeUntil.After(absoluteExpiry) {
-		activeUntil = absoluteExpiry
-	}
 
 	encoded, err := encodeTouchedRecord(record, now)
 	if err != nil {
 		return err
 	}
 
+	activeUntil := r.expiresAt(record)
+
 	handle, err := r.writeHandle()
 	if err != nil {
 		return err
 	}
 
-	result, err := handle.Eval(
-		ctx,
-		touchScript,
-		[]string{r.clientKey(clientID), r.registryKey("active")},
-		now.UnixMilli(),
-		activeUntil.UnixMilli(),
-		clientID,
-		encoded,
-	).Int64()
+	if err := evalActivity(ctx, handle, touchIndexScript, r.activeKey(), now.UnixMilli(), activeUntil.UnixMilli(), clientID); err != nil {
+		return err
+	}
+
+	return evalActivity(ctx, handle, touchRecordScript, r.clientKey(clientID), encoded)
+}
+
+// evalActivity runs one single-slot activity script and maps a rejected update to ErrNotFound.
+func evalActivity(ctx context.Context, handle redis.UniversalClient, script string, key string, arguments ...any) error {
+	result, err := handle.Eval(ctx, script, []string{key}, arguments...).Int64()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
@@ -315,37 +425,59 @@ func (r *Repository) writeHandle() (redis.UniversalClient, error) {
 
 // expired evaluates unused, inactivity, and absolute profile lifetimes.
 func (r *Repository) expired(record *DynamicClientRecord, now time.Time) bool {
-	if now.Sub(record.CreatedAt) >= r.lifecycle.MaximumTTL {
-		return true
-	}
-
-	if record.FirstUsedAt.IsZero() {
-		return now.Sub(record.CreatedAt) >= r.lifecycle.UnusedTTL
-	}
-
-	return now.Sub(record.LastUsedAt) >= r.lifecycle.InactivityTTL
+	return !now.Before(r.expiresAt(record))
 }
 
-// expire removes active state and leaves a bounded tombstone.
+// expiresAt returns the earliest of the unused or inactivity deadline and the absolute lifetime.
+func (r *Repository) expiresAt(record *DynamicClientRecord) time.Time {
+	deadline := record.CreatedAt.Add(r.lifecycle.UnusedTTL)
+	if !record.FirstUsedAt.IsZero() {
+		deadline = record.LastUsedAt.Add(r.lifecycle.InactivityTTL)
+	}
+
+	if absolute := record.CreatedAt.Add(r.lifecycle.MaximumTTL); absolute.Before(deadline) {
+		return absolute
+	}
+
+	return deadline
+}
+
+// expire removes the record with its tombstone in the client slot, then drops the registry entry.
+// The record is removed first so the client stops resolving even if the index update fails; such a
+// stale index entry is repaired by CleanupExpired, so the index update is best-effort.
 func (r *Repository) expire(ctx context.Context, handle redis.UniversalClient, key string, clientID string) error {
 	pipe := handle.TxPipeline()
 	pipe.Del(ctx, key)
-	pipe.ZRem(ctx, r.registryKey("active"), clientID)
-	pipe.Set(ctx, r.registryKey("tombstone:"+clientID), "expired", r.lifecycle.TombstoneTTL)
+	pipe.Set(ctx, r.tombstoneKey(clientID), "expired", r.lifecycle.TombstoneTTL)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("%w: expire client: %v", ErrUnavailable, err)
 	}
 
+	_ = handle.ZRem(ctx, r.activeKey(), clientID).Err()
+
 	return nil
 }
 
-// clientKey returns the namespaced dynamic-client key.
+// clientKey returns the dynamic-client record key in the client's own hash slot.
 func (r *Repository) clientKey(clientID string) string {
-	return r.registryKey("client:" + clientID)
+	return r.prefix + "oidc:dcr:client:{" + clientID + "}"
 }
 
-// registryKey pins every atomic registry key to one Redis Cluster hash slot.
+// tombstoneKey returns the bounded expiry marker that shares the client's hash slot.
+func (r *Repository) tombstoneKey(clientID string) string {
+	return r.clientKey(clientID) + ":tombstone"
+}
+
+// activeKey returns the registry index of active clients ordered by their next expiry check.
+//
+// The name differs from the index of the former shared-tag layout on purpose: members of that index have no
+// readable record any more and must not count against the quota after the hard cut.
+func (r *Repository) activeKey() string {
+	return r.registryKey("clients")
+}
+
+// registryKey pins the global registry index and rate-limit counters to one Redis Cluster hash slot.
 func (r *Repository) registryKey(suffix string) string {
 	return r.prefix + "oidc:dcr:{registry}:" + suffix
 }

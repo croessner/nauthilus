@@ -49,6 +49,11 @@ func (n *noopDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, _ *d
 	return nil
 }
 
+// RecordDeviceCodePoll accepts poll timestamps without state changes.
+func (n *noopDeviceCodeStore) RecordDeviceCodePoll(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}
+
 func (n *noopDeviceCodeStore) ClaimAuthorizedDeviceCode(_ context.Context, _ string, _ string) (*devicecode.DeviceCodeRequest, error) {
 	return nil, nil
 }
@@ -83,6 +88,11 @@ func (s *countingDeviceCodeStore) GetDeviceCodeByUserCode(_ context.Context, _ s
 func (s *countingDeviceCodeStore) UpdateDeviceCode(_ context.Context, _ string, request *devicecode.DeviceCodeRequest) error {
 	s.updatedRequests = append(s.updatedRequests, request)
 
+	return nil
+}
+
+// RecordDeviceCodePoll is unused by allocation tests and is a no-op.
+func (s *countingDeviceCodeStore) RecordDeviceCodePoll(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
 
@@ -457,4 +467,36 @@ func TestIssueDeviceCodeTokens_RehydratesMissingClaimsFromSnapshot(t *testing.T)
 	claims, err := handler.idp.ValidateToken(context.Background(), idToken)
 	assert.NoError(t, err)
 	assert.Equal(t, "alice", claims["preferred_username"])
+}
+
+// TestRecoverMissingDeviceRequestClaimsDoesNotPersistConsumedRequest keeps claim recovery in memory:
+// the request was consumed by its claim, so persisting would fail and turn a valid grant into an error.
+func TestRecoverMissingDeviceRequestClaimsDoesNotPersistConsumedRequest(t *testing.T) {
+	handler, client := newTestDeviceCodeOIDCHandler(t)
+	store := &countingDeviceCodeStore{}
+	handler.deviceStore = store
+
+	request := &devicecode.DeviceCodeRequest{
+		ClientID: client.ClientID,
+		Scopes:   []string{definitions.ScopeOpenID},
+		UserID:   "device-user",
+		Username: "device-user",
+		Status:   devicecode.DeviceCodeStatusAuthorized,
+	}
+	request.StoreUserSnapshot(backend.NewUser("device-user", "Device User", "device-user"))
+
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/oidc/token", nil)
+
+	if err := handler.recoverMissingDeviceRequestClaims(ginCtx, request, &client); err != nil {
+		t.Fatalf("recoverMissingDeviceRequestClaims() error = %v", err)
+	}
+
+	if request.IDTokenClaims == nil || request.AccessTokenClaims == nil {
+		t.Fatal("recovered request misses claims")
+	}
+
+	if len(store.updatedRequests) != 0 {
+		t.Fatalf("recovered claims were persisted %d times, want none", len(store.updatedRequests))
+	}
 }

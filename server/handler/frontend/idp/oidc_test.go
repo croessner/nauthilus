@@ -43,6 +43,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/idp/clientauth"
+	"github.com/croessner/nauthilus/v4/server/idp/idptest"
 	"github.com/croessner/nauthilus/v4/server/idp/signing"
 	slodomain "github.com/croessner/nauthilus/v4/server/idp/slo"
 	mdcors "github.com/croessner/nauthilus/v4/server/middleware/cors"
@@ -1289,7 +1290,7 @@ func (f *oidcIntrospectionTest) mustValidateAccessTokenClaims(t *testing.T, toke
 
 // assertInvalidTokenIntrospection verifies inactive responses for unknown tokens.
 func (f *oidcIntrospectionTest) assertInvalidTokenIntrospection(t *testing.T) {
-	f.mock.ExpectGet(f.staticAccessTokenKey("invalid-token")).RedisNil()
+	f.mock.ExpectGet(f.staticAccessTokenLocatorKey("invalid-token")).RedisNil()
 
 	w := f.postIntrospection(t, url.Values{"token": {"invalid-token"}}, "test-client", "test-secret")
 	resp := mustDecodeOIDCTestJSON(t, w)
@@ -1298,11 +1299,23 @@ func (f *oidcIntrospectionTest) assertInvalidTokenIntrospection(t *testing.T) {
 	assert.False(t, resp["active"].(bool))
 }
 
-// staticAccessTokenKey returns the authoritative Redis key of a static-client opaque access token.
-func (f *oidcIntrospectionTest) staticAccessTokenKey(token string) string {
-	manager := f.handler.deps.Redis.GetSecurityManager()
+// staticAccessTokenLocatorKey returns the bearer locator of a static-client opaque access token.
+func (f *oidcIntrospectionTest) staticAccessTokenLocatorKey(token string) string {
+	return testTokenLocatorKey(f.staticAccessTokenReference(token))
+}
 
-	return "test:oidc:dcr:{dynamic}:access_token:" + manager.IndexDigest("oidc-static-access", token)
+// staticAccessTokenReference returns the bounded Redis reference of a static-client opaque access token.
+func (f *oidcIntrospectionTest) staticAccessTokenReference(token string) string {
+	return f.handler.deps.Redis.GetSecurityManager().IndexDigest("oidc-static-access", token)
+}
+
+// expectStaticAccessTokenState expects the locator read and the same-slot record and epoch read.
+func (f *oidcIntrospectionTest) expectStaticAccessTokenState(subject string, token string, sessionData string) {
+	f.mock.ExpectGet(f.staticAccessTokenLocatorKey(token)).SetVal(idptest.SubjectSlot(subject))
+	f.mock.ExpectMGet(
+		idptest.SubjectKey(oidcTestRedisPrefix, subject, "access_token:"+f.staticAccessTokenReference(token)),
+		testUserTokenEpochKey(subject),
+	).SetVal([]any{sessionData, nil})
 }
 
 // assertUnauthorizedClient verifies rejected introspection client credentials.
@@ -1334,7 +1347,7 @@ func TestOIDCHandler_PrivateKeyJWTTokenReplayProtection(t *testing.T) {
 	replayKey := expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, audience, jwtID)
 
 	expectOIDCClientAssertionReplayReservation(t, fixture.mock, replayKey, true)
-	fixture.mock.ExpectGetDel("test:oidc:code:token-code-1").SetVal(fixture.authorizationCodeSessionJSON(t))
+	fixture.mock.ExpectGetDel(idptest.AuthorizationCodeKey("test:", "token-code-1")).SetVal(fixture.authorizationCodeSessionJSON(t))
 	fixture.mock.ExpectGet(testUserTokenEpochKey("jwt-user")).RedisNil()
 
 	first := fixture.postPrivateKeyJWTToken(t, "token-code-1", assertion)
@@ -1388,7 +1401,7 @@ func TestOIDCHandler_PrivateKeyJWTReplayScopeIncludesEndpointAudience(t *testing
 		expectedOIDCClientAssertionReplayKey(fixture.client.ClientID, tokenAudience, jwtID),
 		true,
 	)
-	fixture.mock.ExpectGetDel("test:oidc:code:audience-code").SetVal(fixture.authorizationCodeSessionJSON(t))
+	fixture.mock.ExpectGetDel(idptest.AuthorizationCodeKey("test:", "audience-code")).SetVal(fixture.authorizationCodeSessionJSON(t))
 	fixture.mock.ExpectGet(testUserTokenEpochKey("jwt-user")).RedisNil()
 
 	tokenResponse := fixture.postPrivateKeyJWTToken(t, "audience-code", tokenAssertion)
@@ -1663,16 +1676,17 @@ func mustMarshalOIDCSession(t *testing.T, session *idp.OIDCSession) string {
 func (f *oidcTokenTest) expectAuthorizationCodeSession(t *testing.T, code string, session *idp.OIDCSession) {
 	t.Helper()
 
-	f.mock.ExpectGetDel("test:oidc:code:" + code).SetVal(mustMarshalOIDCSession(t, session))
+	f.mock.ExpectGetDel(idptest.AuthorizationCodeKey("test:", code)).SetVal(mustMarshalOIDCSession(t, session))
 }
 
 // expectRefreshTokenSession registers one refresh-token lookup expectation.
 func (f *oidcTokenTest) expectRefreshTokenSession(t *testing.T, refreshToken string, session *idp.OIDCSession) {
 	t.Helper()
 
-	session.DynamicUserEpoch = "0"
-	f.mock.ExpectGet(testStaticRefreshTokenKey(refreshToken)).SetVal(mustMarshalOIDCSession(t, session))
-	f.mock.ExpectGet(testUserTokenEpochKey(session.UserID)).RedisNil()
+	session.DynamicUserEpoch = idptest.SubjectEpochFloor
+	f.mock.ExpectGet(testTokenLocatorKey(testStaticRefreshTokenReference(refreshToken))).SetVal(idptest.SubjectSlot(session.UserID))
+	f.mock.ExpectMGet(testStaticRefreshTokenKey(session.UserID, refreshToken), testUserTokenEpochKey(session.UserID)).
+		SetVal([]any{mustMarshalOIDCSession(t, session), nil})
 }
 
 // expectRefreshTokenRotation registers successful refresh-token rotation expectations.
@@ -1690,32 +1704,35 @@ func (f *oidcTokenTest) expectRefreshTokenConsume(t *testing.T, refreshToken str
 
 	reference := testStaticRefreshTokenReference(refreshToken)
 	keys := []string{
-		regexp.QuoteMeta(testStaticRefreshTokenKey(refreshToken)),
+		regexp.QuoteMeta(testStaticRefreshTokenKey(session.UserID, refreshToken)),
 		regexp.QuoteMeta(testStaticUserRefreshTokensKey(session.UserID)),
 		regexp.QuoteMeta(testUserTokenEpochKey(session.UserID)),
 	}
 	sessionData := mustMarshalOIDCSession(t, session)
-	f.mock.Regexp().ExpectEval("(?s).*", keys, regexp.QuoteMeta(reference), "0", regexp.QuoteMeta(sessionData)).SetVal([]any{int64(1), sessionData})
+	f.mock.Regexp().ExpectEval("(?s).*", keys, regexp.QuoteMeta(reference), idptest.SubjectEpochFloor, regexp.QuoteMeta(sessionData)).SetVal([]any{int64(1), sessionData})
+	f.mock.ExpectDel(testTokenLocatorKey(reference)).SetVal(1)
 }
 
 // expectStaticRefreshTokenStore registers the epoch-guarded cluster-safe token write.
 func (f *oidcTokenTest) expectStaticRefreshTokenStore(refreshToken string, userID string) {
 	var (
 		referencePattern = "[[:xdigit:]]+"
-		tokenKeyPattern  = regexp.QuoteMeta("test:oidc:dcr:{dynamic}:static_refresh_token:") + referencePattern
+		tokenKeyPattern  = regexp.QuoteMeta(testStaticRefreshTokenKeyPrefix(userID)) + referencePattern
 	)
 
 	if refreshToken != "" {
 		referencePattern = regexp.QuoteMeta(testStaticRefreshTokenReference(refreshToken))
-		tokenKeyPattern = regexp.QuoteMeta(testStaticRefreshTokenKey(refreshToken))
+		tokenKeyPattern = regexp.QuoteMeta(testStaticRefreshTokenKey(userID, refreshToken))
 	}
+
+	f.mock.Regexp().ExpectSet(idptest.TokenLocatorPattern(oidcTestRedisPrefix, referencePattern), idptest.SubjectSlot(userID), 30*24*time.Hour).SetVal("OK")
 
 	keys := []string{
 		tokenKeyPattern,
 		regexp.QuoteMeta(testStaticUserRefreshTokensKey(userID)),
 		regexp.QuoteMeta(testUserTokenEpochKey(userID)),
 	}
-	f.mock.Regexp().ExpectEval("(?s).*", keys, ".*", int64((30 * 24 * time.Hour).Milliseconds()), referencePattern, "0").SetVal(int64(1))
+	f.mock.Regexp().ExpectEval("(?s).*", keys, ".*", int64((30 * 24 * time.Hour).Milliseconds()), referencePattern, idptest.SubjectEpochFloor).SetVal(int64(1))
 }
 
 // testStaticRefreshTokenReference returns the bounded Redis reference for a static bearer token.
@@ -1723,19 +1740,32 @@ func testStaticRefreshTokenReference(token string) string {
 	return rediscli.NewSecurityManager(secret.Value{}).IndexDigest("oidc-static-refresh", token)
 }
 
-// testStaticRefreshTokenKey returns the cluster-safe key for one static refresh token.
-func testStaticRefreshTokenKey(token string) string {
-	return "test:oidc:dcr:{dynamic}:static_refresh_token:" + testStaticRefreshTokenReference(token)
+// oidcTestRedisPrefix is the Redis key prefix of the mocked OIDC handler fixtures.
+const oidcTestRedisPrefix = "test:"
+
+// testStaticRefreshTokenKeyPrefix returns the subject-slot prefix of static refresh-token records.
+func testStaticRefreshTokenKeyPrefix(userID string) string {
+	return idptest.SubjectKey(oidcTestRedisPrefix, userID, "static_refresh_token:")
 }
 
-// testStaticUserRefreshTokensKey returns the cluster-safe static refresh-token index.
+// testStaticRefreshTokenKey returns the subject-slot key for one static refresh token.
+func testStaticRefreshTokenKey(userID string, token string) string {
+	return testStaticRefreshTokenKeyPrefix(userID) + testStaticRefreshTokenReference(token)
+}
+
+// testStaticUserRefreshTokensKey returns the subject-slot static refresh-token index.
 func testStaticUserRefreshTokensKey(userID string) string {
-	return "test:oidc:dcr:{dynamic}:static_user_refresh_tokens:" + userID
+	return idptest.SubjectKey(oidcTestRedisPrefix, userID, "static_refresh_tokens")
 }
 
-// testUserTokenEpochKey returns the authoritative user-wide token epoch key.
+// testUserTokenEpochKey returns the authoritative subject-wide token epoch key.
 func testUserTokenEpochKey(userID string) string {
-	return "test:oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID
+	return idptest.SubjectKey(oidcTestRedisPrefix, userID, "epoch")
+}
+
+// testTokenLocatorKey returns the single-key locator of a bearer reference.
+func testTokenLocatorKey(reference string) string {
+	return idptest.TokenLocatorKey(oidcTestRedisPrefix, reference)
 }
 
 // testDeniedAccessTokenKey returns the digest denylist key that never embeds the raw token.
@@ -1758,7 +1788,7 @@ func newRefreshTokenSession(clientID string) *idp.OIDCSession {
 		UserID:           "user123",
 		Scopes:           []string{definitions.ScopeOpenID, definitions.ScopeOfflineAccess},
 		AuthTime:         time.Now(),
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: idptest.SubjectEpochFloor,
 	}
 }
 
@@ -1954,7 +1984,7 @@ func (f *oidcTokenTest) assertRefreshCombinedAuthAcceptedForConfidentialClient(t
 // assertInvalidRefreshToken verifies invalid_grant for a missing refresh token.
 func (f *oidcTokenTest) assertInvalidRefreshToken(t *testing.T) {
 	refreshToken := "missing-refresh-token"
-	f.mock.ExpectGet(testStaticRefreshTokenKey(refreshToken)).RedisNil()
+	f.mock.ExpectGet(testTokenLocatorKey(testStaticRefreshTokenReference(refreshToken))).RedisNil()
 
 	w := f.postToken(t, tokenRefreshForm(refreshToken), withBasicTokenAuth("test-client", "test-secret"))
 
@@ -1993,7 +2023,7 @@ func (f *oidcTokenTest) assertRefreshWithoutRotation(t *testing.T) {
 // assertRefreshInvalidTokenLogsFailureReason verifies the notice failure reason.
 func (f *oidcTokenTest) assertRefreshInvalidTokenLogsFailureReason(t *testing.T) {
 	refreshToken := "missing-refresh-token-log-reason"
-	f.mock.ExpectGet(testStaticRefreshTokenKey(refreshToken)).RedisNil()
+	f.mock.ExpectGet(testTokenLocatorKey(testStaticRefreshTokenReference(refreshToken))).RedisNil()
 
 	handler := &noticeCaptureHandler{}
 	previousLogger := f.deps.Logger

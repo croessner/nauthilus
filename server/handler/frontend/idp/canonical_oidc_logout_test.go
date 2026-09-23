@@ -62,8 +62,8 @@ func TestOIDCLogoutCanonicalUsesTypedIndexRevokesAndIgnoresLegacyManager(t *test
 
 	assertCanonicalOIDCLogoutRevoked(t, runtime, browserCookie, response)
 
-	if tokenRedis.Exists("test:oidc:dcr:{dynamic}:dynamic_user_epoch:identity-42") != true ||
-		tokenRedis.Exists("test:oidc:dcr:{dynamic}:dynamic_user_epoch:legacy-identity") {
+	if tokenRedis.Exists(testUserTokenEpochKey("identity-42")) != true ||
+		tokenRedis.Exists(testUserTokenEpochKey("legacy-identity")) {
 		t.Fatalf("canonical logout token epochs = %v", tokenRedis.Keys())
 	}
 
@@ -145,8 +145,8 @@ func TestOIDCLogoutCanonicalRejectsMismatchedIDTokenHintWithoutTokenMutation(t *
 
 	assertCanonicalOIDCLogoutRevoked(t, runtime, browserCookie, response)
 
-	if tokenRedis.Exists("test:oidc:dcr:{dynamic}:dynamic_user_epoch:identity-42") ||
-		tokenRedis.Exists("test:oidc:dcr:{dynamic}:dynamic_user_epoch:legacy-identity") {
+	if tokenRedis.Exists(testUserTokenEpochKey("identity-42")) ||
+		tokenRedis.Exists(testUserTokenEpochKey("legacy-identity")) {
 		t.Fatalf("mismatched hint mutated token epochs = %v", tokenRedis.Keys())
 	}
 

@@ -150,6 +150,23 @@ storage:
       write_timeout: 500ms
 ```
 
+## Hash Tags of Atomic State
+
+Lua scripts and `MULTI`/`EXEC` transactions only work in Redis Cluster when all their keys hash to one slot. Nauthilus
+therefore gives each atomic unit its own hash tag instead of one tag per feature, so that busy state spreads across
+all masters:
+
+- OIDC token state uses one tag per subject (`oidc:subject:{<digest>}:...`) plus a single-key locator per bearer
+  reference (`oidc:token:{<reference>}:subject`).
+- Dynamic client records use one tag per client (`oidc:dcr:client:{<client_id>}`); only the quota index and the
+  registration rate limits share the `{registry}` tag.
+- Device requests and user-code locators use one tag per digest; device claims are single-key transactions.
+
+The IdP keeps revocation epochs without a TTL, so its Redis must run with `maxmemory-policy noeviction`.
+
+See section 10.3 of [IDP.md](IDP.md) for the complete layout and the upgrade impact. Tests attach the
+`server/testing/redisslot` guard to their Redis client to fail on any operation that would raise `CROSSSLOT`.
+
 ## Benefits
 
 This implementation provides several benefits:

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,18 +49,27 @@ var (
 const (
 	oidcAccessTokenKeyKind       = "access_token"
 	oidcRefreshTokenKeyKind      = "refresh_token"
-	oidcUserAccessTokensKeyKind  = "user_access_tokens"
-	oidcUserRefreshTokensKeyKind = "user_refresh_tokens"
-	oidcDynamicRefreshConsumed   = "dynamic_refresh_consumed"
-	oidcDynamicRefreshFamily     = "dynamic_refresh_family"
-	oidcDynamicRefreshRevoked    = "dynamic_refresh_revoked"
-	oidcDynamicUserEpoch         = "dynamic_user_epoch"
+	oidcUserAccessTokensKeyKind  = "access_tokens"
+	oidcUserRefreshTokensKeyKind = "refresh_tokens"
+	oidcDynamicRefreshConsumed   = "refresh_consumed"
+	oidcDynamicRefreshFamily     = "refresh_family"
+	oidcDynamicRefreshRevoked    = "refresh_revoked"
 	oidcStaticRefreshToken       = "static_refresh_token"
-	oidcStaticUserRefreshTokens  = "static_user_refresh_tokens"
+	oidcStaticUserRefreshTokens  = "static_refresh_tokens"
 )
 
+// oidcAuthorizationCodeDigestNamespace domain-separates authorization-code key digests.
+const oidcAuthorizationCodeDigestNamespace = "oidc-authorization-code"
+
+// oidcDynamicRefreshRevokedTTL bounds how long a revoked refresh family keeps rejecting its tokens.
+const oidcDynamicRefreshRevokedTTL = 30 * 24 * time.Hour
+
+// All token scripts below receive only keys of one subject slot (see oidcTokenKeys). Keys that a script
+// derives from ARGV prefixes are built from the same subject slot, so Redis Cluster never sees a
+// cross-slot access.
+
 const dynamicTrackedStoreScript = `
-local epoch = redis.call('GET', KEYS[3]) or '0'
+local epoch = redis.call('GET', KEYS[3]) or '` + oidcSubjectEpochFloor + `'
 if epoch ~= ARGV[4] then return 0 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[3])
@@ -69,7 +79,7 @@ return 1
 `
 
 const dynamicInitialRefreshStoreScript = `
-local epoch = redis.call('GET', KEYS[4]) or '0'
+local epoch = redis.call('GET', KEYS[4]) or '` + oidcSubjectEpochFloor + `'
 if epoch ~= ARGV[4] then return 0 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 redis.call('SADD', KEYS[2], ARGV[3])
@@ -80,7 +90,7 @@ return 1
 `
 
 const dynamicRefreshRotateScript = `
-local epoch = redis.call('GET', KEYS[7]) or '0'
+local epoch = redis.call('GET', KEYS[7]) or '` + oidcSubjectEpochFloor + `'
 if epoch ~= ARGV[7] then return 4 end
 if redis.call('EXISTS', KEYS[6]) == 1 then return 3 end
 if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -105,7 +115,7 @@ return 1
 
 const dynamicRefreshResolveScript = `
 local data = redis.call('GET', KEYS[1])
-if data then return {1, data} end
+if data then return {1, data, redis.call('GET', KEYS[3]) or '` + oidcSubjectEpochFloor + `'} end
 local family = redis.call('GET', KEYS[2])
 if not family then return {0} end
 local active = redis.call('GET', ARGV[1] .. family)
@@ -116,7 +126,7 @@ return {2}
 `
 
 const staticRefreshConsumeScript = `
-local epoch = redis.call('GET', KEYS[3]) or '0'
+local epoch = redis.call('GET', KEYS[3]) or '` + oidcSubjectEpochFloor + `'
 if epoch ~= ARGV[2] then return {2} end
 local data = redis.call('GET', KEYS[1])
 if not data then return {0} end
@@ -126,7 +136,7 @@ redis.call('SREM', KEYS[2], ARGV[1])
 return {1, data}
 `
 
-const staticRefreshDeleteScript = `
+const trackedTokenDeleteScript = `
 local existed = redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[2], ARGV[1])
 return existed
@@ -170,6 +180,7 @@ type RedisTokenStorage struct {
 	redis   rediscli.Client
 	cfg     config.File
 	auditor dcr.Auditor
+	keys    oidcTokenKeys
 	prefix  string
 }
 
@@ -185,7 +196,7 @@ func NewRedisTokenStorageWithConfig(redis rediscli.Client, prefix string, cfg co
 		auditor = auditors[0]
 	}
 
-	return &RedisTokenStorage{redis: redis, cfg: cfg, auditor: auditor, prefix: prefix}
+	return &RedisTokenStorage{redis: redis, cfg: cfg, auditor: auditor, keys: oidcTokenKeys{prefix: prefix}, prefix: prefix}
 }
 
 func (s *RedisTokenStorage) redisReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -244,14 +255,20 @@ func (s *RedisTokenStorage) oidcKey(kind string, value string) string {
 	return s.prefix + fmt.Sprintf("oidc:%s:%s", kind, value)
 }
 
+// authorizationCodeKey returns the single-use code key without embedding the bearer code itself.
+// Authorization codes and consent challenges are only referenced by their keyed, domain-separated digest.
+func (s *RedisTokenStorage) authorizationCodeKey(code string) string {
+	return s.oidcKey("code", s.redis.GetSecurityManager().IndexDigest(oidcAuthorizationCodeDigestNamespace, code))
+}
+
 // StoreSession stores an OIDC session with a given code and TTL.
 func (s *RedisTokenStorage) StoreSession(ctx context.Context, code string, session *OIDCSession, ttl time.Duration) error {
-	return s.storeSessionAtKey(ctx, s.oidcKey("code", code), session, ttl)
+	return s.storeSessionAtKey(ctx, s.authorizationCodeKey(code), session, ttl)
 }
 
 // GetSession retrieves an OIDC session from Redis.
 func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCSession, error) {
-	return s.getSessionAtKey(ctx, s.oidcKey("code", code))
+	return s.getSessionAtKey(ctx, s.authorizationCodeKey(code))
 }
 
 // ConsumeSession atomically reads and removes a one-time authorization code.
@@ -259,7 +276,7 @@ func (s *RedisTokenStorage) ConsumeSession(ctx context.Context, code string) (*O
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	data, err := s.redis.GetWriteHandle().GetDel(writeCtx, s.oidcKey("code", code)).Result()
+	data, err := s.redis.GetWriteHandle().GetDel(writeCtx, s.authorizationCodeKey(code)).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -269,19 +286,34 @@ func (s *RedisTokenStorage) ConsumeSession(ctx context.Context, code string) (*O
 
 // DeleteSession removes an OIDC session from Redis.
 func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) error {
-	return s.deleteKey(ctx, s.oidcKey("code", code))
+	return s.deleteKey(ctx, s.authorizationCodeKey(code))
 }
 
 // StoreRefreshToken stores a refresh token session in Redis and tracks it for the user.
 func (s *RedisTokenStorage) StoreRefreshToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
-	return s.storeStaticRefreshToken(ctx, token, session, ttl)
+	return s.storeEpochBoundToken(ctx, oidcStaticRefreshToken, oidcStaticUserRefreshTokens, s.staticRefreshTokenReference(token), session, ttl)
 }
 
 // GetRefreshToken retrieves authoritative epoch-bound static refresh state.
 func (s *RedisTokenStorage) GetRefreshToken(ctx context.Context, token string) (*OIDCSession, error) {
 	reference := s.staticRefreshTokenReference(token)
 
-	return s.getEpochBoundSession(ctx, s.dynamicRefreshKey(oidcStaticRefreshToken, reference))
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	owner, err := s.resolveTokenOwner(writeCtx, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	session, data, err := s.loadEpochBoundSession(writeCtx, owner, owner.entry(oidcStaticRefreshToken, reference))
+	if err != nil {
+		return nil, err
+	}
+
+	session.staticRefreshData = data
+
+	return session, nil
 }
 
 // ConsumeRefreshToken atomically claims one static refresh token for a single exchange.
@@ -295,14 +327,15 @@ func (s *RedisTokenStorage) ConsumeRefreshToken(ctx context.Context, token strin
 	}
 
 	reference := s.staticRefreshTokenReference(token)
+	owner := s.keys.subject(expected.UserID)
 
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
 	keys := []string{
-		s.dynamicRefreshKey(oidcStaticRefreshToken, reference),
-		s.dynamicRefreshKey(oidcStaticUserRefreshTokens, expected.UserID),
-		s.dynamicUserEpochKey(expected.UserID),
+		owner.entry(oidcStaticRefreshToken, reference),
+		owner.index(oidcStaticUserRefreshTokens),
+		owner.epoch(),
 	}
 
 	result, err := s.redis.GetWriteHandle().Eval(
@@ -317,7 +350,14 @@ func (s *RedisTokenStorage) ConsumeRefreshToken(ctx context.Context, token strin
 		return nil, err
 	}
 
-	return s.resolveStaticRefreshConsumeResult(result)
+	session, err := s.resolveStaticRefreshConsumeResult(result)
+	if err != nil {
+		return nil, err
+	}
+
+	s.deleteTokenLocators(writeCtx, reference)
+
+	return session, nil
 }
 
 // resolveStaticRefreshConsumeResult decodes the bounded Lua consume response.
@@ -361,27 +401,33 @@ func (s *RedisTokenStorage) StoreInitialDynamicRefreshToken(ctx context.Context,
 	defer cancel()
 
 	tokenReference := s.dynamicTokenReference(token)
+	owner := s.keys.subject(session.UserID)
 	keys := []string{
-		s.dynamicRefreshKey(oidcRefreshTokenKeyKind, tokenReference),
-		s.dynamicRefreshKey(oidcUserRefreshTokensKeyKind, session.UserID),
-		s.dynamicRefreshFamilyKey(session.RefreshFamilyID),
-		s.dynamicUserEpochKey(session.UserID),
+		owner.entry(oidcRefreshTokenKeyKind, tokenReference),
+		owner.index(oidcUserRefreshTokensKeyKind),
+		owner.entry(oidcDynamicRefreshFamily, session.RefreshFamilyID),
+		owner.epoch(),
 	}
 
-	result, err := s.redis.GetWriteHandle().Eval(
+	result, err := s.evalWithLocators(
 		writeCtx,
+		owner,
+		ttl,
+		[]string{tokenReference},
 		dynamicInitialRefreshStoreScript,
 		keys,
 		encryptedData,
 		ttl.Milliseconds(),
 		tokenReference,
 		session.DynamicUserEpoch,
-	).Int64()
+	)
 	if err != nil {
 		return err
 	}
 
 	if result != 1 {
+		s.deleteTokenLocators(writeCtx, tokenReference)
+
 		return ErrDynamicTokenRevoked
 	}
 
@@ -394,15 +440,22 @@ func (s *RedisTokenStorage) GetDynamicRefreshToken(ctx context.Context, token st
 	defer cancel()
 
 	tokenReference := s.dynamicTokenReference(token)
+
+	owner, err := s.resolveTokenOwner(writeCtx, tokenReference)
+	if err != nil {
+		return nil, err
+	}
+
 	keys := []string{
-		s.dynamicRefreshKey(oidcRefreshTokenKeyKind, tokenReference),
-		s.dynamicRefreshKey(oidcDynamicRefreshConsumed, tokenReference),
+		owner.entry(oidcRefreshTokenKeyKind, tokenReference),
+		owner.entry(oidcDynamicRefreshConsumed, tokenReference),
+		owner.epoch(),
 	}
 	arguments := []any{
-		s.dynamicRefreshKey(oidcDynamicRefreshFamily, ""),
-		s.dynamicRefreshKey(oidcRefreshTokenKeyKind, ""),
-		s.dynamicRefreshKey(oidcDynamicRefreshRevoked, ""),
-		(30 * 24 * time.Hour).Milliseconds(),
+		owner.entry(oidcDynamicRefreshFamily, ""),
+		owner.entry(oidcRefreshTokenKeyKind, ""),
+		owner.entry(oidcDynamicRefreshRevoked, ""),
+		oidcDynamicRefreshRevokedTTL.Milliseconds(),
 	}
 
 	result, err := s.redis.GetWriteHandle().Eval(writeCtx, dynamicRefreshResolveScript, keys, arguments...).Slice()
@@ -423,25 +476,7 @@ func (s *RedisTokenStorage) GetDynamicRefreshToken(ctx context.Context, token st
 	case 0:
 		return nil, redis.Nil
 	case 1:
-		if len(result) != 2 {
-			return nil, fmt.Errorf("missing dynamic refresh session")
-		}
-
-		data, ok := result[1].(string)
-		if !ok {
-			return nil, fmt.Errorf("invalid dynamic refresh session")
-		}
-
-		session, err := s.decryptSession(data)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := s.validateDynamicUserEpoch(writeCtx, session); err != nil {
-			return nil, err
-		}
-
-		return session, nil
+		return s.decodeResolvedDynamicRefresh(owner, result)
 	case 2:
 		s.auditor.Record(ctx, dcr.AuditEvent{Operation: "refresh_replay", Outcome: dcr.AuditOutcomeRevoked, Reason: "ancestor_reuse"})
 
@@ -451,7 +486,35 @@ func (s *RedisTokenStorage) GetDynamicRefreshToken(ctx context.Context, token st
 	}
 }
 
+// decodeResolvedDynamicRefresh validates an active refresh session against the epoch read by the same script.
+func (s *RedisTokenStorage) decodeResolvedDynamicRefresh(owner oidcSubjectKeys, result []any) (*OIDCSession, error) {
+	if len(result) != 3 {
+		return nil, fmt.Errorf("missing dynamic refresh session")
+	}
+
+	data, dataOK := result[1].(string)
+	epoch, epochOK := result[2].(string)
+
+	if !dataOK || !epochOK {
+		return nil, fmt.Errorf("invalid dynamic refresh session")
+	}
+
+	session, err := s.decryptSession(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := verifyEpochBoundSession(owner, session, epoch); err != nil {
+		return nil, err
+	}
+
+	return session, nil
+}
+
 // RotateDynamicRefreshToken atomically consumes the current token and installs its successor.
+//
+// The successor locator is published and the predecessor locator is renewed with the rotation TTL, so
+// a replayed predecessor still reaches the consumed marker and triggers family revocation.
 func (s *RedisTokenStorage) RotateDynamicRefreshToken(ctx context.Context, oldToken string, newToken string, session *OIDCSession, ttl time.Duration) error {
 	encryptedData, err := s.encryptSession(session)
 	if err != nil {
@@ -463,20 +526,33 @@ func (s *RedisTokenStorage) RotateDynamicRefreshToken(ctx context.Context, oldTo
 
 	oldReference := s.dynamicTokenReference(oldToken)
 	newReference := s.dynamicTokenReference(newToken)
+	owner := s.keys.subject(session.UserID)
 	keys := []string{
-		s.dynamicRefreshKey(oidcRefreshTokenKeyKind, oldReference),
-		s.dynamicRefreshKey(oidcRefreshTokenKeyKind, newReference),
-		s.dynamicRefreshKey(oidcDynamicRefreshConsumed, oldReference),
-		s.dynamicRefreshKey(oidcUserRefreshTokensKeyKind, session.UserID),
-		s.dynamicRefreshFamilyKey(session.RefreshFamilyID),
-		s.dynamicRefreshKey(oidcDynamicRefreshRevoked, session.RefreshFamilyID),
-		s.dynamicUserEpochKey(session.UserID),
+		owner.entry(oidcRefreshTokenKeyKind, oldReference),
+		owner.entry(oidcRefreshTokenKeyKind, newReference),
+		owner.entry(oidcDynamicRefreshConsumed, oldReference),
+		owner.index(oidcUserRefreshTokensKeyKind),
+		owner.entry(oidcDynamicRefreshFamily, session.RefreshFamilyID),
+		owner.entry(oidcDynamicRefreshRevoked, session.RefreshFamilyID),
+		owner.epoch(),
 	}
-	arguments := []any{oldReference, newReference, session.RefreshFamilyID, ttl.Milliseconds(), encryptedData, s.dynamicRefreshKey(oidcRefreshTokenKeyKind, ""), session.DynamicUserEpoch}
+	arguments := []any{
+		oldReference,
+		newReference,
+		session.RefreshFamilyID,
+		ttl.Milliseconds(),
+		encryptedData,
+		owner.entry(oidcRefreshTokenKeyKind, ""),
+		session.DynamicUserEpoch,
+	}
 
-	result, err := s.redis.GetWriteHandle().Eval(writeCtx, dynamicRefreshRotateScript, keys, arguments...).Int64()
+	result, err := s.evalWithLocators(writeCtx, owner, ttl, []string{newReference, oldReference}, dynamicRefreshRotateScript, keys, arguments...)
 	if err != nil {
 		return err
+	}
+
+	if result != 1 {
+		s.deleteTokenLocators(writeCtx, newReference)
 	}
 
 	switch result {
@@ -493,29 +569,14 @@ func (s *RedisTokenStorage) RotateDynamicRefreshToken(ctx context.Context, oldTo
 	}
 }
 
-// dynamicRefreshFamilyKey returns the active-token pointer for one refresh family.
-func (s *RedisTokenStorage) dynamicRefreshFamilyKey(familyID string) string {
-	return s.dynamicRefreshKey(oidcDynamicRefreshFamily, familyID)
-}
-
-// dynamicRefreshKey pins refresh-family state to one Redis Cluster hash slot.
-func (s *RedisTokenStorage) dynamicRefreshKey(kind string, value string) string {
-	return s.prefix + "oidc:dcr:{dynamic}:" + kind + ":" + value
-}
-
-// dynamicUserEpochKey returns the per-user revocation authority key.
-func (s *RedisTokenStorage) dynamicUserEpochKey(userID string) string {
-	return s.dynamicRefreshKey(oidcDynamicUserEpoch, userID)
-}
-
 // DynamicUserEpoch reads the authoritative user-wide token revocation epoch.
 func (s *RedisTokenStorage) DynamicUserEpoch(ctx context.Context, userID string) (string, error) {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	epoch, err := s.redis.GetWriteHandle().Get(writeCtx, s.dynamicUserEpochKey(userID)).Result()
+	epoch, err := s.redis.GetWriteHandle().Get(writeCtx, s.keys.subject(userID).epoch()).Result()
 	if stderrors.Is(err, redis.Nil) {
-		return "0", nil
+		return oidcSubjectEpochFloor, nil
 	}
 
 	if err != nil {
@@ -525,32 +586,120 @@ func (s *RedisTokenStorage) DynamicUserEpoch(ctx context.Context, userID string)
 	return epoch, nil
 }
 
-// validateDynamicUserEpoch rejects epoch-bound state issued before a user-wide revocation.
-func (s *RedisTokenStorage) validateDynamicUserEpoch(ctx context.Context, session *OIDCSession) error {
-	if session == nil || session.DynamicUserEpoch == "" {
-		return ErrDynamicTokenRevoked
+// advanceDynamicUserEpoch invalidates every epoch-bound token minted for an earlier epoch.
+// A subject without an epoch key starts at oidcSubjectEpochFloor, so the first revocation yields floor+1.
+func (s *RedisTokenStorage) advanceDynamicUserEpoch(ctx context.Context, userID string) error {
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	return s.redis.GetWriteHandle().Eval(writeCtx, subjectEpochAdvanceScript, []string{s.keys.subject(userID).epoch()}, oidcSubjectEpochFloor).Err()
+}
+
+// verifyEpochBoundSession rejects state outside its subject slot or issued before a subject-wide revocation.
+func verifyEpochBoundSession(owner oidcSubjectKeys, session *OIDCSession, currentEpoch string) error {
+	if !owner.owns(session) {
+		return redis.Nil
 	}
 
-	epoch, err := s.redis.GetWriteHandle().Get(ctx, s.dynamicUserEpochKey(session.UserID)).Result()
-	if stderrors.Is(err, redis.Nil) {
-		epoch = "0"
-	} else if err != nil {
-		return tokenStateReadError(err)
-	}
-
-	if epoch != session.DynamicUserEpoch {
+	if !isCurrentSubjectEpoch(session.DynamicUserEpoch, currentEpoch) {
 		return ErrDynamicTokenRevoked
 	}
 
 	return nil
 }
 
-// advanceDynamicUserEpoch invalidates every epoch-bound token minted for an earlier epoch.
-func (s *RedisTokenStorage) advanceDynamicUserEpoch(ctx context.Context, userID string) error {
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
+// resolveTokenOwner follows a bearer reference locator to the subject slot that holds the token state.
+// A locator value that is not a subject digest is treated as absent, so it can never redirect key building.
+func (s *RedisTokenStorage) resolveTokenOwner(ctx context.Context, reference string) (oidcSubjectKeys, error) {
+	slot, err := s.redis.GetWriteHandle().Get(ctx, s.keys.locator(reference)).Result()
+	if err != nil {
+		return oidcSubjectKeys{}, err
+	}
 
-	return s.redis.GetWriteHandle().Incr(writeCtx, s.dynamicUserEpochKey(userID)).Err()
+	if !isHexDigest(slot) {
+		return oidcSubjectKeys{}, redis.Nil
+	}
+
+	return s.keys.subjectBySlot(slot), nil
+}
+
+// loadEpochBoundSession reads token state and its subject epoch in one same-slot round trip.
+// It returns the encrypted record as well, so single-use consumers can compare it atomically later.
+func (s *RedisTokenStorage) loadEpochBoundSession(ctx context.Context, owner oidcSubjectKeys, key string) (*OIDCSession, string, error) {
+	values, err := s.redis.GetWriteHandle().MGet(ctx, key, owner.epoch()).Result()
+	if err != nil {
+		return nil, "", tokenStateReadError(err)
+	}
+
+	if len(values) != 2 {
+		return nil, "", fmt.Errorf("unexpected token state read result")
+	}
+
+	data, ok := values[0].(string)
+	if !ok {
+		return nil, "", redis.Nil
+	}
+
+	epoch, ok := values[1].(string)
+	if !ok {
+		epoch = oidcSubjectEpochFloor
+	}
+
+	session, err := s.decryptSession(data)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if err := verifyEpochBoundSession(owner, session, epoch); err != nil {
+		return nil, "", err
+	}
+
+	return session, data, nil
+}
+
+// evalWithLocators runs one subject-slot script and publishes bearer locators in the same round trip.
+//
+// The locators live in their own slots, so they are written through a plain pipeline instead of the
+// script. A locator without token state is harmless: a lookup through it finds no record. Callers
+// remove locators again when the script rejects the write.
+func (s *RedisTokenStorage) evalWithLocators(
+	ctx context.Context,
+	owner oidcSubjectKeys,
+	ttl time.Duration,
+	references []string,
+	script string,
+	keys []string,
+	arguments ...any,
+) (int64, error) {
+	pipe := s.redis.GetWriteHandle().Pipeline()
+
+	for _, reference := range references {
+		pipe.Set(ctx, s.keys.locator(reference), owner.slot, ttl)
+	}
+
+	result := pipe.Eval(ctx, script, keys, arguments...)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+
+	return result.Int64()
+}
+
+// deleteTokenLocators removes bearer locators on a best-effort basis.
+// A surviving locator only points at a subject slot without token state and expires with its TTL.
+func (s *RedisTokenStorage) deleteTokenLocators(ctx context.Context, references ...string) {
+	if len(references) == 0 {
+		return
+	}
+
+	pipe := s.redis.GetWriteHandle().Pipeline()
+
+	for _, reference := range references {
+		pipe.Del(ctx, s.keys.locator(reference))
+	}
+
+	_, _ = pipe.Exec(ctx)
 }
 
 // dynamicTokenReference hides bearer credentials from Redis keys and indices.
@@ -560,62 +709,15 @@ func (s *RedisTokenStorage) dynamicTokenReference(token string) string {
 
 // DeleteRefreshToken removes a refresh token session from Redis and its user tracking.
 func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string) error {
-	session, err := s.GetRefreshToken(ctx, token)
-	if stderrors.Is(err, redis.Nil) {
-		return nil
-	}
-
-	if err != nil {
-		return err
-	}
-
-	reference := s.staticRefreshTokenReference(token)
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	staticKeys := []string{
-		s.dynamicRefreshKey(oidcStaticRefreshToken, reference),
-		s.dynamicRefreshKey(oidcStaticUserRefreshTokens, session.UserID),
-	}
-
-	return s.redis.GetWriteHandle().Eval(writeCtx, staticRefreshDeleteScript, staticKeys, reference).Err()
+	return s.deleteLocatedToken(ctx, oidcStaticRefreshToken, oidcStaticUserRefreshTokens, s.staticRefreshTokenReference(token))
 }
 
 // DeleteUserRefreshTokens removes all refresh tokens for a given user from Redis.
 func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID string) error {
-	staticErr := s.deleteUserStaticRefreshTokens(ctx, userID)
+	staticErr := s.deleteUserTrackedTokens(ctx, userID, oidcStaticRefreshToken, oidcStaticUserRefreshTokens)
 	dynamicErr := s.deleteUserDynamicRefreshTokens(ctx, userID)
 
 	return stderrors.Join(staticErr, dynamicErr)
-}
-
-// deleteUserStaticRefreshTokens removes epoch-bound static refresh state authoritatively.
-func (s *RedisTokenStorage) deleteUserStaticRefreshTokens(ctx context.Context, userID string) error {
-	if userID == "" {
-		return nil
-	}
-
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	handle := s.redis.GetWriteHandle()
-	indexKey := s.dynamicRefreshKey(oidcStaticUserRefreshTokens, userID)
-
-	references, err := handle.SMembers(writeCtx, indexKey).Result()
-	if err != nil && !stderrors.Is(err, redis.Nil) {
-		return err
-	}
-
-	pipe := handle.Pipeline()
-	for _, reference := range references {
-		pipe.Del(writeCtx, s.dynamicRefreshKey(oidcStaticRefreshToken, reference))
-	}
-
-	pipe.Del(writeCtx, indexKey)
-	_, err = pipe.Exec(writeCtx)
-
-	return err
 }
 
 // DeleteDynamicRefreshToken revokes one active dynamic refresh family.
@@ -625,12 +727,23 @@ func (s *RedisTokenStorage) DeleteDynamicRefreshToken(ctx context.Context, token
 
 	tokenReference := s.dynamicTokenReference(token)
 
-	session, err := s.dynamicRefreshSessionByReference(writeCtx, tokenReference)
+	owner, err := s.resolveTokenOwner(writeCtx, tokenReference)
 	if err != nil {
 		return err
 	}
 
-	return s.revokeDynamicRefreshSession(writeCtx, tokenReference, session)
+	session, err := s.dynamicRefreshSessionByReference(writeCtx, owner, tokenReference)
+	if err != nil {
+		return err
+	}
+
+	if err := s.revokeDynamicRefreshSession(writeCtx, owner, tokenReference, session); err != nil {
+		return err
+	}
+
+	s.deleteTokenLocators(writeCtx, tokenReference)
+
+	return nil
 }
 
 // deleteUserDynamicRefreshTokens revokes every active DCR refresh family for a user.
@@ -639,7 +752,8 @@ func (s *RedisTokenStorage) deleteUserDynamicRefreshTokens(ctx context.Context, 
 	defer cancel()
 
 	handle := s.redis.GetWriteHandle()
-	indexKey := s.dynamicRefreshKey(oidcUserRefreshTokensKeyKind, userID)
+	owner := s.keys.subject(userID)
+	indexKey := owner.index(oidcUserRefreshTokensKeyKind)
 
 	references, err := handle.SMembers(writeCtx, indexKey).Result()
 	if err != nil && !stderrors.Is(err, redis.Nil) {
@@ -649,7 +763,7 @@ func (s *RedisTokenStorage) deleteUserDynamicRefreshTokens(ctx context.Context, 
 	var result error
 
 	for _, reference := range references {
-		session, getErr := s.dynamicRefreshSessionByReference(writeCtx, reference)
+		session, getErr := s.dynamicRefreshSessionByReference(writeCtx, owner, reference)
 		if stderrors.Is(getErr, redis.Nil) {
 			continue
 		}
@@ -660,17 +774,18 @@ func (s *RedisTokenStorage) deleteUserDynamicRefreshTokens(ctx context.Context, 
 			continue
 		}
 
-		result = stderrors.Join(result, s.revokeDynamicRefreshSession(writeCtx, reference, session))
+		result = stderrors.Join(result, s.revokeDynamicRefreshSession(writeCtx, owner, reference, session))
 	}
 
 	result = stderrors.Join(result, handle.Del(writeCtx, indexKey).Err())
+	s.deleteTokenLocators(writeCtx, references...)
 
 	return result
 }
 
 // dynamicRefreshSessionByReference loads an active dynamic refresh session without bearer material.
-func (s *RedisTokenStorage) dynamicRefreshSessionByReference(ctx context.Context, reference string) (*OIDCSession, error) {
-	data, err := s.redis.GetWriteHandle().Get(ctx, s.dynamicRefreshKey(oidcRefreshTokenKeyKind, reference)).Result()
+func (s *RedisTokenStorage) dynamicRefreshSessionByReference(ctx context.Context, owner oidcSubjectKeys, reference string) (*OIDCSession, error) {
+	data, err := s.redis.GetWriteHandle().Get(ctx, owner.entry(oidcRefreshTokenKeyKind, reference)).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -678,13 +793,13 @@ func (s *RedisTokenStorage) dynamicRefreshSessionByReference(ctx context.Context
 	return s.decryptSession(data)
 }
 
-// revokeDynamicRefreshSession removes active state and leaves a bounded family marker.
-func (s *RedisTokenStorage) revokeDynamicRefreshSession(ctx context.Context, reference string, session *OIDCSession) error {
+// revokeDynamicRefreshSession removes active state and leaves a bounded family marker in one subject slot.
+func (s *RedisTokenStorage) revokeDynamicRefreshSession(ctx context.Context, owner oidcSubjectKeys, reference string, session *OIDCSession) error {
 	pipe := s.redis.GetWriteHandle().TxPipeline()
-	pipe.Del(ctx, s.dynamicRefreshKey(oidcRefreshTokenKeyKind, reference))
-	pipe.SRem(ctx, s.dynamicRefreshKey(oidcUserRefreshTokensKeyKind, session.UserID), reference)
-	pipe.Del(ctx, s.dynamicRefreshFamilyKey(session.RefreshFamilyID))
-	pipe.Set(ctx, s.dynamicRefreshKey(oidcDynamicRefreshRevoked, session.RefreshFamilyID), "1", 30*24*time.Hour)
+	pipe.Del(ctx, owner.entry(oidcRefreshTokenKeyKind, reference))
+	pipe.SRem(ctx, owner.index(oidcUserRefreshTokensKeyKind), reference)
+	pipe.Del(ctx, owner.entry(oidcDynamicRefreshFamily, session.RefreshFamilyID))
+	pipe.Set(ctx, owner.entry(oidcDynamicRefreshRevoked, session.RefreshFamilyID), "1", oidcDynamicRefreshRevokedTTL)
 	_, err := pipe.Exec(ctx)
 
 	return err
@@ -692,22 +807,22 @@ func (s *RedisTokenStorage) revokeDynamicRefreshSession(ctx context.Context, ref
 
 // StoreAccessToken stores an opaque access token in Redis and tracks it for the user.
 func (s *RedisTokenStorage) StoreAccessToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
-	return s.storeDynamicAccessToken(ctx, s.accessTokenReference(token), session, ttl)
+	return s.storeEpochBoundToken(ctx, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind, s.accessTokenReference(token), session, ttl)
 }
 
 // GetAccessToken retrieves an opaque access token session from Redis.
 func (s *RedisTokenStorage) GetAccessToken(ctx context.Context, token string) (*OIDCSession, error) {
-	return s.getDynamicAccessToken(ctx, s.accessTokenReference(token))
+	return s.getAccessToken(ctx, s.accessTokenReference(token))
 }
 
 // GetAccessTokenAuthoritative retrieves an opaque access token from the write handle.
 func (s *RedisTokenStorage) GetAccessTokenAuthoritative(ctx context.Context, token string) (*OIDCSession, error) {
-	return s.getDynamicAccessToken(ctx, s.accessTokenReference(token))
+	return s.getAccessToken(ctx, s.accessTokenReference(token))
 }
 
 // DeleteAccessToken removes an opaque access token from Redis and its user tracking.
 func (s *RedisTokenStorage) DeleteAccessToken(ctx context.Context, token string) error {
-	return s.deleteDynamicAccessToken(ctx, s.accessTokenReference(token))
+	return s.deleteLocatedToken(ctx, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind, s.accessTokenReference(token))
 }
 
 // accessTokenReference selects a stable digest domain for each opaque token class.
@@ -729,52 +844,28 @@ func isDynamicAccessToken(token string) bool {
 	return strings.HasPrefix(token, definitions.OIDCTokenPrefixAccessToken+dcr.ClientIDPrefix)
 }
 
-// storeDynamicAccessToken atomically binds opaque access state to the current user revocation epoch.
-func (s *RedisTokenStorage) storeDynamicAccessToken(ctx context.Context, reference string, session *OIDCSession, ttl time.Duration) error {
-	if session == nil {
-		return ErrDynamicTokenRevoked
-	}
-
-	return s.storeEpochBoundToken(
-		ctx,
-		s.dynamicRefreshKey(oidcAccessTokenKeyKind, reference),
-		s.dynamicRefreshKey(oidcUserAccessTokensKeyKind, session.UserID),
-		reference,
-		session,
-		ttl,
-	)
-}
-
-// getDynamicAccessToken validates encrypted access-token state against the user epoch.
-func (s *RedisTokenStorage) getDynamicAccessToken(ctx context.Context, reference string) (*OIDCSession, error) {
+// getAccessToken validates encrypted access-token state against its subject epoch.
+func (s *RedisTokenStorage) getAccessToken(ctx context.Context, reference string) (*OIDCSession, error) {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	data, err := s.redis.GetWriteHandle().Get(writeCtx, s.dynamicRefreshKey(oidcAccessTokenKeyKind, reference)).Result()
+	owner, err := s.resolveTokenOwner(writeCtx, reference)
 	if err != nil {
 		return nil, tokenStateReadError(err)
 	}
 
-	session, err := s.decryptSession(data)
-	if err != nil {
-		return nil, err
-	}
+	session, _, err := s.loadEpochBoundSession(writeCtx, owner, owner.entry(oidcAccessTokenKeyKind, reference))
 
-	if err := s.validateDynamicUserEpoch(writeCtx, session); err != nil {
-		return nil, err
-	}
-
-	return session, nil
+	return session, err
 }
 
-// deleteDynamicAccessToken removes a dynamic access token and its user index entry.
-func (s *RedisTokenStorage) deleteDynamicAccessToken(ctx context.Context, reference string) error {
+// deleteLocatedToken resolves a bearer reference and removes its record, index entry, and locator.
+// An unknown reference is treated as already deleted.
+func (s *RedisTokenStorage) deleteLocatedToken(ctx context.Context, recordKind string, indexKind string, reference string) error {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	key := s.dynamicRefreshKey(oidcAccessTokenKeyKind, reference)
-
-	data, err := s.redis.GetWriteHandle().Get(writeCtx, key).Result()
+	owner, err := s.resolveTokenOwner(writeCtx, reference)
 	if stderrors.Is(err, redis.Nil) {
 		return nil
 	}
@@ -783,26 +874,26 @@ func (s *RedisTokenStorage) deleteDynamicAccessToken(ctx context.Context, refere
 		return err
 	}
 
-	session, err := s.decryptSession(data)
-	if err != nil {
-		return err
-	}
+	return s.deleteTrackedToken(writeCtx, owner, recordKind, indexKind, reference)
+}
 
-	pipe := s.redis.GetWriteHandle().TxPipeline()
-	pipe.Del(writeCtx, key)
-	pipe.SRem(writeCtx, s.dynamicRefreshKey(oidcUserAccessTokensKeyKind, session.UserID), reference)
-	_, err = pipe.Exec(writeCtx)
+// deleteTrackedToken atomically removes one record with its subject index entry and drops its locator.
+func (s *RedisTokenStorage) deleteTrackedToken(ctx context.Context, owner oidcSubjectKeys, recordKind string, indexKind string, reference string) error {
+	pipe := s.redis.GetWriteHandle().Pipeline()
+	pipe.Eval(ctx, trackedTokenDeleteScript, []string{owner.entry(recordKind, reference), owner.index(indexKind)}, reference)
+	pipe.Del(ctx, s.keys.locator(reference))
+	_, err := pipe.Exec(ctx)
 
 	return err
 }
 
 // DeleteUserAccessTokens removes all access tokens for a given user from Redis.
 func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID string) error {
-	return s.deleteUserDynamicAccessTokens(ctx, userID)
+	return s.deleteUserTrackedTokens(ctx, userID, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
 }
 
-// deleteUserDynamicAccessTokens removes the bounded dynamic access-token index for a user.
-func (s *RedisTokenStorage) deleteUserDynamicAccessTokens(ctx context.Context, userID string) error {
+// deleteUserTrackedTokens removes every indexed record of one token class, the index, and the locators.
+func (s *RedisTokenStorage) deleteUserTrackedTokens(ctx context.Context, userID string, recordKind string, indexKind string) error {
 	if userID == "" {
 		return nil
 	}
@@ -811,7 +902,8 @@ func (s *RedisTokenStorage) deleteUserDynamicAccessTokens(ctx context.Context, u
 	defer cancel()
 
 	handle := s.redis.GetWriteHandle()
-	indexKey := s.dynamicRefreshKey(oidcUserAccessTokensKeyKind, userID)
+	owner := s.keys.subject(userID)
+	indexKey := owner.index(indexKind)
 
 	references, err := handle.SMembers(writeCtx, indexKey).Result()
 	if err != nil && !stderrors.Is(err, redis.Nil) {
@@ -825,7 +917,8 @@ func (s *RedisTokenStorage) deleteUserDynamicAccessTokens(ctx context.Context, u
 	pipe := handle.Pipeline()
 
 	for _, reference := range references {
-		pipe.Del(writeCtx, s.dynamicRefreshKey(oidcAccessTokenKeyKind, reference))
+		pipe.Del(writeCtx, owner.entry(recordKind, reference))
+		pipe.Del(writeCtx, s.keys.locator(reference))
 	}
 
 	pipe.Del(writeCtx, indexKey)
@@ -893,22 +986,9 @@ func (s *RedisTokenStorage) deleteKey(ctx context.Context, key string) error {
 	return s.redis.GetWriteHandle().Del(writeCtx, key).Err()
 }
 
-// storeStaticRefreshToken binds static refresh state to the current user revocation epoch.
-func (s *RedisTokenStorage) storeStaticRefreshToken(ctx context.Context, token string, session *OIDCSession, ttl time.Duration) error {
-	reference := s.staticRefreshTokenReference(token)
-
-	return s.storeEpochBoundToken(
-		ctx,
-		s.dynamicRefreshKey(oidcStaticRefreshToken, reference),
-		s.dynamicRefreshKey(oidcStaticUserRefreshTokens, session.UserID),
-		reference,
-		session,
-		ttl,
-	)
-}
-
-// storeEpochBoundToken atomically stores token state only while its user epoch remains current.
-func (s *RedisTokenStorage) storeEpochBoundToken(ctx context.Context, key string, indexKey string, reference string, session *OIDCSession, ttl time.Duration) error {
+// storeEpochBoundToken atomically stores token state only while its subject epoch remains current.
+// Record, subject index, and epoch share the subject slot; the bearer locator is written alongside.
+func (s *RedisTokenStorage) storeEpochBoundToken(ctx context.Context, recordKind string, indexKind string, reference string, session *OIDCSession, ttl time.Duration) error {
 	if session == nil || session.DynamicUserEpoch == "" {
 		return ErrDynamicTokenRevoked
 	}
@@ -921,22 +1001,28 @@ func (s *RedisTokenStorage) storeEpochBoundToken(ctx context.Context, key string
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	keys := []string{key, indexKey, s.dynamicUserEpochKey(session.UserID)}
+	owner := s.keys.subject(session.UserID)
+	keys := []string{owner.entry(recordKind, reference), owner.index(indexKind), owner.epoch()}
 
-	result, err := s.redis.GetWriteHandle().Eval(
+	result, err := s.evalWithLocators(
 		writeCtx,
+		owner,
+		ttl,
+		[]string{reference},
 		dynamicTrackedStoreScript,
 		keys,
 		encryptedData,
 		ttl.Milliseconds(),
 		reference,
 		session.DynamicUserEpoch,
-	).Int64()
+	)
 	if err != nil {
 		return err
 	}
 
 	if result != 1 {
+		s.deleteTokenLocators(writeCtx, reference)
+
 		return ErrDynamicTokenRevoked
 	}
 
@@ -946,30 +1032,6 @@ func (s *RedisTokenStorage) storeEpochBoundToken(ctx context.Context, key string
 // staticRefreshTokenReference hides static bearer credentials from Redis keys and indices.
 func (s *RedisTokenStorage) staticRefreshTokenReference(token string) string {
 	return s.redis.GetSecurityManager().IndexDigest("oidc-static-refresh", token)
-}
-
-// getEpochBoundSession reads and validates token state against the authoritative user epoch.
-func (s *RedisTokenStorage) getEpochBoundSession(ctx context.Context, key string) (*OIDCSession, error) {
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	data, err := s.redis.GetWriteHandle().Get(writeCtx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	session, err := s.decryptSession(data)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.validateDynamicUserEpoch(writeCtx, session); err != nil {
-		return nil, err
-	}
-
-	session.staticRefreshData = data
-
-	return session, nil
 }
 
 // FlushUserTokens removes all OIDC access tokens and refresh tokens for a given user.
@@ -986,8 +1048,8 @@ func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) 
 		return epochErr
 	}
 
-	accessErr := s.deleteUserDynamicAccessTokens(ctx, userID)
-	refreshErr := stderrors.Join(s.deleteUserStaticRefreshTokens(ctx, userID), s.deleteUserDynamicRefreshTokens(ctx, userID))
+	accessErr := s.DeleteUserAccessTokens(ctx, userID)
+	refreshErr := s.DeleteUserRefreshTokens(ctx, userID)
 
 	err := stderrors.Join(accessErr, refreshErr)
 	if err != nil {
@@ -1003,7 +1065,9 @@ func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) 
 
 // ListUserSessions returns all active OIDC sessions (via access tokens) for a user.
 func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string) (map[string]*OIDCSession, error) {
-	references, err := s.userSessionReferences(ctx, userID)
+	owner := s.keys.subject(userID)
+
+	references, err := s.userSessionReferences(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,14 +1075,14 @@ func (s *RedisTokenStorage) ListUserSessions(ctx context.Context, userID string)
 	sessions := make(map[string]*OIDCSession)
 
 	for _, reference := range references {
-		session, err := s.userSessionByReference(ctx, reference)
+		session, err := s.userSessionByReference(ctx, owner, reference)
 		if err == nil {
 			sessions[s.userSessionManagementID(reference)] = session
 
 			continue
 		}
 
-		s.removeStaleUserSessionReference(ctx, userID, reference)
+		s.removeStaleUserSessionReference(ctx, owner, reference)
 	}
 
 	return sessions, nil
@@ -1029,19 +1093,17 @@ type userSessionReference struct {
 }
 
 // userSessionReferences reads the epoch-bound opaque access-token index authoritatively.
-func (s *RedisTokenStorage) userSessionReferences(ctx context.Context, userID string) ([]userSessionReference, error) {
+func (s *RedisTokenStorage) userSessionReferences(ctx context.Context, owner oidcSubjectKeys) ([]userSessionReference, error) {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	handle := s.redis.GetWriteHandle()
-
-	dynamic, err := handle.SMembers(writeCtx, s.dynamicRefreshKey(oidcUserAccessTokensKeyKind, userID)).Result()
+	values, err := s.redis.GetWriteHandle().SMembers(writeCtx, owner.index(oidcUserAccessTokensKeyKind)).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	references := make([]userSessionReference, 0, len(dynamic))
-	for _, value := range dynamic {
+	references := make([]userSessionReference, 0, len(values))
+	for _, value := range values {
 		references = append(references, userSessionReference{value: value})
 	}
 
@@ -1049,8 +1111,13 @@ func (s *RedisTokenStorage) userSessionReferences(ctx context.Context, userID st
 }
 
 // userSessionByReference loads one management-visible session without bearer exposure.
-func (s *RedisTokenStorage) userSessionByReference(ctx context.Context, reference userSessionReference) (*OIDCSession, error) {
-	return s.getDynamicAccessToken(ctx, reference.value)
+func (s *RedisTokenStorage) userSessionByReference(ctx context.Context, owner oidcSubjectKeys, reference userSessionReference) (*OIDCSession, error) {
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	session, _, err := s.loadEpochBoundSession(writeCtx, owner, owner.entry(oidcAccessTokenKeyKind, reference.value))
+
+	return session, err
 }
 
 // userSessionManagementID derives the stable non-secret identifier exposed by the management API.
@@ -1061,29 +1128,31 @@ func (s *RedisTokenStorage) userSessionManagementID(reference userSessionReferen
 }
 
 // removeStaleUserSessionReference prunes an index entry after authoritative resolution fails.
-func (s *RedisTokenStorage) removeStaleUserSessionReference(ctx context.Context, userID string, reference userSessionReference) {
-	indexKey := s.dynamicRefreshKey(oidcUserAccessTokensKeyKind, userID)
-
+func (s *RedisTokenStorage) removeStaleUserSessionReference(ctx context.Context, owner oidcSubjectKeys, reference userSessionReference) {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	_ = s.redis.GetWriteHandle().SRem(writeCtx, indexKey, reference.value).Err()
+	_ = s.redis.GetWriteHandle().SRem(writeCtx, owner.index(oidcUserAccessTokensKeyKind), reference.value).Err()
 }
 
 // DeleteUserSession removes one session selected through its non-secret management identifier.
 func (s *RedisTokenStorage) DeleteUserSession(ctx context.Context, userID string, managementID string) error {
-	references, err := s.userSessionReferences(ctx, userID)
+	owner := s.keys.subject(userID)
+
+	references, err := s.userSessionReferences(ctx, owner)
 	if err != nil {
 		return err
 	}
 
-	for _, reference := range references {
-		if s.userSessionManagementID(reference) != managementID {
-			continue
-		}
-
-		return s.deleteDynamicAccessToken(ctx, reference.value)
+	index := slices.IndexFunc(references, func(reference userSessionReference) bool {
+		return s.userSessionManagementID(reference) == managementID
+	})
+	if index < 0 {
+		return redis.Nil
 	}
 
-	return redis.Nil
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	return s.deleteTrackedToken(writeCtx, owner, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind, references[index].value)
 }

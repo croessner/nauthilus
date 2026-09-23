@@ -28,6 +28,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/idp/idptest"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/go-redis/redismock/v9"
@@ -128,7 +129,7 @@ func assertStoreSession(t *testing.T, fixture redisTokenStorageFixture) {
 		UserID:   "user123",
 	}
 	ttl := time.Minute
-	key := fixture.prefix + "oidc:code:" + code
+	key := idptest.AuthorizationCodeKey(fixture.prefix, code)
 
 	data, _ := json.Marshal(session)
 	fixture.mock.ExpectSet(key, string(data), ttl).SetVal("OK")
@@ -147,7 +148,7 @@ func assertGetSession(t *testing.T, fixture redisTokenStorageFixture) {
 		ClientID: "test-client",
 		UserID:   "user123",
 	}
-	key := fixture.prefix + "oidc:code:" + code
+	key := idptest.AuthorizationCodeKey(fixture.prefix, code)
 
 	data, _ := json.Marshal(session)
 	fixture.mock.ExpectGet(key).SetVal(string(data))
@@ -164,7 +165,7 @@ func assertDeleteSession(t *testing.T, fixture redisTokenStorageFixture) {
 	t.Helper()
 
 	code := "test-code"
-	key := fixture.prefix + "oidc:code:" + code
+	key := idptest.AuthorizationCodeKey(fixture.prefix, code)
 
 	fixture.mock.ExpectDel(key).SetVal(1)
 
@@ -231,8 +232,7 @@ func assertDeleteUserAccessTokensNoTokens(t *testing.T, fixture redisTokenStorag
 	t.Helper()
 
 	userID := "user-no-tokens"
-	dynamicUserKey := fixture.prefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
-	fixture.mock.ExpectSMembers(dynamicUserKey).SetVal([]string{})
+	fixture.mock.ExpectSMembers(testUserAccessTokensKey(userID)).SetVal([]string{})
 
 	err := fixture.storage.DeleteUserAccessTokens(fixture.ctx, userID)
 	assert.NoError(t, err)
@@ -244,17 +244,10 @@ func assertFlushUserTokens(t *testing.T, fixture redisTokenStorageFixture) {
 	t.Helper()
 
 	userID := "user-flush"
-	dynamicEpochKey := fixture.prefix + "oidc:dcr:{dynamic}:dynamic_user_epoch:" + userID
 
-	fixture.mock.ExpectIncr(dynamicEpochKey).SetVal(1)
-	dynamicAccessKey := fixture.prefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
-	fixture.mock.ExpectSMembers(dynamicAccessKey).SetVal(nil)
-	staticRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:static_user_refresh_tokens:" + userID
-	fixture.mock.ExpectSMembers(staticRefreshKey).SetVal(nil)
-	fixture.mock.ExpectDel(staticRefreshKey).SetVal(0)
-	dynamicRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:user_refresh_tokens:" + userID
-	fixture.mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
-	fixture.mock.ExpectDel(dynamicRefreshKey).SetVal(0)
+	fixture.mock.ExpectEval(subjectEpochAdvanceScript, []string{testUserTokenEpochKey(userID)}, testSubjectEpochFloor).SetVal(int64(1000000000001))
+	fixture.mock.ExpectSMembers(testUserAccessTokensKey(userID)).SetVal(nil)
+	expectEmptyUserRefreshTokenIndexes(fixture.mock, userID)
 
 	err := fixture.storage.FlushUserTokens(fixture.ctx, userID)
 	assert.NoError(t, err)
@@ -300,8 +293,8 @@ func TestDeleteUserRefreshTokensUsesAuthoritativeIndex(t *testing.T) {
 	session := &OIDCSession{ClientID: "static-client", UserID: "authoritative-user"}
 	token := "na_rt_authoritative"
 	reference := storage.staticRefreshTokenReference(token)
-	tokenKey := storage.dynamicRefreshKey(oidcStaticRefreshToken, reference)
-	indexKey := storage.dynamicRefreshKey(oidcStaticUserRefreshTokens, session.UserID)
+	tokenKey := testStaticRefreshTokenKey(session.UserID, token)
+	indexKey := testStaticUserRefreshTokensKey(session.UserID)
 
 	data, err := storage.encryptSession(session)
 	if err != nil {
@@ -368,16 +361,17 @@ func TestRefreshTokenUserIndexTTLTracksTokenLifetime(t *testing.T) {
 	session := &OIDCSession{
 		ClientID:         "test-client",
 		UserID:           userID,
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	}
 	data, _ := json.Marshal(session)
 	reference := fixture.storage.staticRefreshTokenReference(token)
 	keys := []string{
-		fixture.storage.dynamicRefreshKey(oidcStaticRefreshToken, reference),
-		fixture.storage.dynamicRefreshKey(oidcStaticUserRefreshTokens, userID),
-		fixture.storage.dynamicUserEpochKey(userID),
+		testStaticRefreshTokenKey(userID, token),
+		testStaticUserRefreshTokensKey(userID),
+		testUserTokenEpochKey(userID),
 	}
-	fixture.mock.ExpectEval(dynamicTrackedStoreScript, keys, string(data), ttl.Milliseconds(), reference, "0").SetVal(int64(1))
+	fixture.mock.ExpectSet(testTokenLocatorKey(reference), testSubjectSlot(userID), ttl).SetVal("OK")
+	fixture.mock.ExpectEval(dynamicTrackedStoreScript, keys, string(data), ttl.Milliseconds(), reference, testSubjectEpochFloor).SetVal(int64(1))
 
 	err := fixture.storage.StoreRefreshToken(fixture.ctx, token, session, ttl)
 	assert.NoError(t, err)
@@ -392,18 +386,21 @@ func TestDeleteUserRefreshTokensAfterFormerIndexBoundary(t *testing.T) {
 	session := &OIDCSession{
 		ClientID:         "test-client",
 		UserID:           userID,
-		DynamicUserEpoch: "0",
+		DynamicUserEpoch: testSubjectEpochFloor,
 	}
 	data, _ := json.Marshal(session)
 	reference := fixture.storage.staticRefreshTokenReference(token)
-	tokenKey := fixture.storage.dynamicRefreshKey(oidcStaticRefreshToken, reference)
-	staticUserKey := fixture.storage.dynamicRefreshKey(oidcStaticUserRefreshTokens, userID)
-	keys := []string{tokenKey, staticUserKey, fixture.storage.dynamicUserEpochKey(userID)}
-	fixture.mock.ExpectEval(dynamicTrackedStoreScript, keys, string(data), ttl.Milliseconds(), reference, "0").SetVal(int64(1))
+	tokenKey := testStaticRefreshTokenKey(userID, token)
+	staticUserKey := testStaticUserRefreshTokensKey(userID)
+	keys := []string{tokenKey, staticUserKey, testUserTokenEpochKey(userID)}
+	fixture.mock.ExpectSet(testTokenLocatorKey(reference), testSubjectSlot(userID), ttl).SetVal("OK")
+	fixture.mock.ExpectEval(dynamicTrackedStoreScript, keys, string(data), ttl.Milliseconds(), reference, testSubjectEpochFloor).SetVal(int64(1))
 	fixture.mock.ExpectSMembers(staticUserKey).SetVal([]string{reference})
 	fixture.mock.ExpectDel(tokenKey).SetVal(1)
+	fixture.mock.ExpectDel(testTokenLocatorKey(reference)).SetVal(1)
 	fixture.mock.ExpectDel(staticUserKey).SetVal(1)
-	dynamicRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:user_refresh_tokens:" + userID
+
+	dynamicRefreshKey := testSubjectKey(userID, "refresh_tokens")
 	fixture.mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
 	fixture.mock.ExpectDel(dynamicRefreshKey).SetVal(0)
 
@@ -448,16 +445,19 @@ func assertDeleteUserRefreshTokens(t *testing.T, fixture redisTokenStorageFixtur
 	t.Helper()
 
 	userID := "user123"
-	staticRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:static_user_refresh_tokens:" + userID
-	fixture.mock.ExpectSMembers(staticRefreshKey).SetVal(nil)
-	fixture.mock.ExpectDel(staticRefreshKey).SetVal(0)
-	dynamicRefreshKey := fixture.prefix + "oidc:dcr:{dynamic}:user_refresh_tokens:" + userID
-	fixture.mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
-	fixture.mock.ExpectDel(dynamicRefreshKey).SetVal(0)
+	expectEmptyUserRefreshTokenIndexes(fixture.mock, userID)
 
 	err := fixture.storage.DeleteUserRefreshTokens(context.Background(), userID)
 	assert.NoError(t, err)
 	assert.NoError(t, fixture.mock.ExpectationsWereMet())
+}
+
+// expectEmptyUserRefreshTokenIndexes expects cleanup of a subject without static or dynamic refresh tokens.
+func expectEmptyUserRefreshTokenIndexes(mock redismock.ClientMock, userID string) {
+	mock.ExpectSMembers(testStaticUserRefreshTokensKey(userID)).SetVal(nil)
+	dynamicRefreshKey := testSubjectKey(userID, "refresh_tokens")
+	mock.ExpectSMembers(dynamicRefreshKey).SetVal(nil)
+	mock.ExpectDel(dynamicRefreshKey).SetVal(0)
 }
 
 // assertDeleteUserAccessTokens verifies cleanup of the epoch-bound access-token namespace.
@@ -465,8 +465,7 @@ func assertDeleteUserAccessTokens(t *testing.T, fixture redisTokenStorageFixture
 	t.Helper()
 
 	userID := "user123"
-	dynamicAccessKey := fixture.prefix + "oidc:dcr:{dynamic}:user_access_tokens:" + userID
-	fixture.mock.ExpectSMembers(dynamicAccessKey).SetVal(nil)
+	fixture.mock.ExpectSMembers(testUserAccessTokensKey(userID)).SetVal(nil)
 
 	err := fixture.storage.DeleteUserAccessTokens(context.Background(), userID)
 	assert.NoError(t, err)

@@ -21,8 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/idp/idptest"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/go-redis/redismock/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -129,7 +131,7 @@ func TestRedisDeviceCodeStore_StoreAndGet(t *testing.T) {
 	})
 
 	t.Run("GetDeviceCode returns error for expired/missing code", func(t *testing.T) {
-		mock.ExpectGet(prefix + "oidc:device_code:nonexistent").RedisNil()
+		mock.ExpectGet(idptest.DeviceCodeKey(prefix, "nonexistent")).RedisNil()
 
 		_, err := store.GetDeviceCode(t.Context(), "nonexistent")
 
@@ -155,10 +157,8 @@ func assertStoreDeviceCodeStoresMappings(t *testing.T, store *RedisDeviceCodeSto
 	deviceCode := "device-abc123"
 	ttl := 10 * time.Minute
 	request := testDeviceCodeRequest([]string{"openid", "email"}, "ABCD-EFGH", ttl)
-	data, _ := json.Marshal(request)
-
-	mock.ExpectSet(prefix+"oidc:device_code:"+deviceCode, string(data), ttl).SetVal("OK")
-	mock.ExpectSet(prefix+"oidc:user_code:ABCD-EFGH", deviceCode, ttl).SetVal("OK")
+	mock.ExpectSet(idptest.DeviceCodeKey(prefix, deviceCode), testDeviceCodeEnvelope(t, deviceCode, request), ttl).SetVal("OK")
+	mock.ExpectSetNX(idptest.DeviceUserCodeKey(prefix, "ABCD-EFGH"), idptest.Reference("oidc-device-code", deviceCode), ttl).SetVal(true)
 
 	err := store.StoreDeviceCode(t.Context(), deviceCode, request, ttl)
 
@@ -172,9 +172,7 @@ func assertGetDeviceCodeRetrievesRequest(t *testing.T, store *RedisDeviceCodeSto
 
 	deviceCode := "device-get123"
 	request := testDeviceCodeRequest([]string{"openid"}, "XYZW-MNPQ", 5*time.Minute)
-	data, _ := json.Marshal(request)
-
-	mock.ExpectGet(prefix + "oidc:device_code:" + deviceCode).SetVal(string(data))
+	mock.ExpectGet(idptest.DeviceCodeKey(prefix, deviceCode)).SetVal(testDeviceCodeEnvelope(t, deviceCode, request))
 
 	retrieved, err := store.GetDeviceCode(t.Context(), deviceCode)
 
@@ -183,6 +181,18 @@ func assertGetDeviceCodeRetrievesRequest(t *testing.T, store *RedisDeviceCodeSto
 	assert.Equal(t, request.UserCode, retrieved.UserCode)
 	assert.Equal(t, DeviceCodeStatusPending, retrieved.Status)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// testDeviceCodeEnvelope returns the plaintext envelope that the test security manager stores unencrypted.
+func testDeviceCodeEnvelope(t *testing.T, deviceCode string, request *DeviceCodeRequest) string {
+	t.Helper()
+
+	data, err := json.Marshal(deviceCodeEnvelope{Request: request, DeviceCode: deviceCode})
+	if err != nil {
+		t.Fatalf("marshal device code envelope: %v", err)
+	}
+
+	return string(data)
 }
 
 // testDeviceCodeRequest builds a pending device-code request for Redis store tests.
@@ -210,7 +220,7 @@ func TestRedisDeviceCodeStore_GetByUserCode(t *testing.T) {
 	}
 
 	t.Run("GetDeviceCodeByUserCode returns error for invalid code", func(t *testing.T) {
-		mock.ExpectGet(prefix + "oidc:user_code:INVA-LIDC").RedisNil()
+		mock.ExpectGet(idptest.DeviceUserCodeKey(prefix, "INVA-LIDC")).RedisNil()
 
 		_, _, err := store.GetDeviceCodeByUserCode(t.Context(), "INVA-LIDC")
 
@@ -265,10 +275,8 @@ func assertDeviceCodeByUserCode(
 ) {
 	t.Helper()
 
-	data, _ := json.Marshal(tc.request)
-
-	mock.ExpectGet(prefix + "oidc:user_code:" + tc.lookupCode).SetVal(tc.deviceCode)
-	mock.ExpectGet(prefix + "oidc:device_code:" + tc.deviceCode).SetVal(string(data))
+	mock.ExpectGet(idptest.DeviceUserCodeKey(prefix, tc.lookupCode)).SetVal(idptest.Reference("oidc-device-code", tc.deviceCode))
+	mock.ExpectGet(idptest.DeviceCodeKey(prefix, tc.deviceCode)).SetVal(testDeviceCodeEnvelope(t, tc.deviceCode, tc.request))
 
 	deviceCode, req, err := store.GetDeviceCodeByUserCode(t.Context(), tc.input)
 
@@ -294,14 +302,9 @@ func TestRedisDeviceCodeStore_Update(t *testing.T) {
 			UserID:   "user123",
 		}
 
-		key := prefix + "oidc:device_code:" + deviceCode
-		remainingTTL := 5 * time.Minute
+		key := idptest.DeviceCodeKey(prefix, deviceCode)
 
-		data, _ := json.Marshal(request)
-		encryptedData := string(data)
-
-		mock.ExpectTTL(key).SetVal(remainingTTL)
-		mock.ExpectSet(key, encryptedData, remainingTTL).SetVal("OK")
+		mock.ExpectSetArgs(key, testDeviceCodeEnvelope(t, deviceCode, request), redis.SetArgs{Mode: "XX", KeepTTL: true}).SetVal("OK")
 
 		err := store.UpdateDeviceCode(ctx, deviceCode, request)
 
@@ -315,8 +318,7 @@ func TestRedisDeviceCodeStore_Update(t *testing.T) {
 			Status: DeviceCodeStatusAuthorized,
 		}
 
-		key := prefix + "oidc:device_code:" + deviceCode
-		mock.ExpectTTL(key).SetVal(-1 * time.Second)
+		mock.ExpectSetArgs(idptest.DeviceCodeKey(prefix, deviceCode), testDeviceCodeEnvelope(t, deviceCode, request), redis.SetArgs{Mode: "XX", KeepTTL: true}).RedisNil()
 
 		err := store.UpdateDeviceCode(ctx, deviceCode, request)
 
@@ -341,12 +343,10 @@ func TestRedisDeviceCodeStore_Delete(t *testing.T) {
 			Status:   DeviceCodeStatusAuthorized,
 		}
 
-		data, _ := json.Marshal(request)
-
 		// GetDeviceCode is called first to find user code
-		mock.ExpectGet(prefix + "oidc:device_code:" + deviceCode).SetVal(string(data))
-		mock.ExpectDel(prefix + "oidc:user_code:ABCD-EFGH").SetVal(1)
-		mock.ExpectDel(prefix + "oidc:device_code:" + deviceCode).SetVal(1)
+		mock.ExpectGet(idptest.DeviceCodeKey(prefix, deviceCode)).SetVal(testDeviceCodeEnvelope(t, deviceCode, request))
+		mock.ExpectDel(idptest.DeviceUserCodeKey(prefix, "ABCD-EFGH")).SetVal(1)
+		mock.ExpectDel(idptest.DeviceCodeKey(prefix, deviceCode)).SetVal(1)
 
 		err := store.DeleteDeviceCode(ctx, deviceCode)
 
