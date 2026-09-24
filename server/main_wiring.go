@@ -129,7 +129,7 @@ func newPolicyGenerationStore() *policyruntime.GenerationStore {
 // newConfigDeps constructs config dependencies for fx.
 //
 // It depends on the bootstrap token to keep the candidate unpublished until generation commit.
-func newConfigDeps(bootstrap *bootstrapped, generations *policyruntime.GenerationStore) (configDeps, error) {
+func newConfigDeps(lc fx.Lifecycle, bootstrap *bootstrapped, generations *policyruntime.GenerationStore) (configDeps, error) {
 	if bootstrap == nil || bootstrap.file == nil {
 		return configDeps{}, fmt.Errorf("prepared configuration is nil")
 	}
@@ -148,6 +148,14 @@ func newConfigDeps(bootstrap *bootstrapped, generations *policyruntime.Generatio
 	}); err != nil {
 		return configDeps{}, fmt.Errorf("bind active generation config projection: %w", err)
 	}
+
+	// The binding was registered early, so this stop hook runs last and lets a new runtime in the same
+	// process bind again.
+	lc.Append(fx.Hook{OnStop: func(context.Context) error {
+		config.ReleaseActiveFileSource()
+
+		return nil
+	}})
 
 	r := configfx.NewProviderWithCandidate(bootstrap.file, generations)
 

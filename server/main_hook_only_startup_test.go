@@ -38,7 +38,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/app/signalsfx"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/svcctx"
 
 	"github.com/spf13/viper"
 	"go.uber.org/fx"
@@ -56,7 +55,9 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 	configPath := writeHookOnlyConfig(t, miniRedis.Addr(), listenAddress)
 	prepared := prepareHookOnlyConfiguration(t, configPath)
 
-	ctx, cancel := svcctx.GetCtxWithCancel()
+	// A fresh runtime context per run: stopping the runtime cancels its context, and the process-wide
+	// service context cannot be reused by a second run in the same test binary (-count>1).
+	ctx, cancel := context.WithCancel(context.Background())
 	app := newHookOnlyTestApp(ctx, cancel, prepared)
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 10*time.Second)

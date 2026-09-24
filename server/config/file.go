@@ -117,6 +117,13 @@ func BindActiveFileSource(source func() File) error {
 	return nil
 }
 
+// ReleaseActiveFileSource lets a later runtime bind its own config projection after the current one has
+// stopped. The projection itself stays installed, so reads during the rest of the shutdown still see the last
+// active configuration instead of falling back to the boot file.
+func ReleaseActiveFileSource() {
+	activeFileSourceBound.Store(false)
+}
+
 // SetTestFile sets the global `file` variable to the provided `testFile` implementing the `File` interface.
 func SetTestFile(testFile File) {
 	if testFile == nil {

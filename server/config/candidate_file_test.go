@@ -141,3 +141,40 @@ func configureCandidateFileTest(t *testing.T, content string) {
 		SetTestFile(nil)
 	})
 }
+
+func TestReleasedActiveFileSourceKeepsProjectionAndAllowsRebinding(t *testing.T) {
+	activeFileSource = atomic.Value{}
+
+	activeFileSourceBound.Store(false)
+	t.Cleanup(func() {
+		activeFileSource = atomic.Value{}
+
+		activeFileSourceBound.Store(false)
+		SetTestFile(nil)
+	})
+
+	first := &FileSettings{}
+	second := &FileSettings{}
+
+	if err := BindActiveFileSource(func() File { return first }); err != nil {
+		t.Fatalf("BindActiveFileSource() error = %v", err)
+	}
+
+	ReleaseActiveFileSource()
+
+	if GetFile() != first {
+		t.Fatal("GetFile() lost the released projection before a new runtime bound its own")
+	}
+
+	if err := BindActiveFileSource(func() File { return second }); err != nil {
+		t.Fatalf("BindActiveFileSource() after release error = %v", err)
+	}
+
+	if GetFile() != second {
+		t.Fatal("GetFile() did not project the newly bound runtime")
+	}
+
+	if err := BindActiveFileSource(func() File { return first }); err == nil {
+		t.Fatal("binding a second source without a release succeeded")
+	}
+}
