@@ -46,6 +46,16 @@ the intended first prerelease is `v4.0.0-alpha.1`.
   validation with `master` `required`. As soon as any Sentinel field is set,
   the block is validated strictly as before, and `addresses` must then list at
   least one Sentinel; `master` with `addresses: []` fails validation.
+- Remote backend error classes on the edge: `ErrRemoteAuthorityRejected`
+  (authority answered `InvalidArgument`, `FailedPrecondition`,
+  `AlreadyExists` or `OPERATION_RESULT_CONFLICT`) now wraps the temporary
+  backend failure class. The answer stays a temporary failure, but the
+  password pipeline classifies it, so the "Unclassified backend error" warning
+  disappears. `ErrRemoteCallerRejected` is used only for `UNAUTHENTICATED`; it
+  still declines (the next backend decides) and is logged at warning level
+  with backend and authority names. `PERMISSION_DENIED` is unchanged: it maps
+  to `ErrRemoteOperationDenied`, declines, and is logged at debug level only,
+  because the authority also answers it for user-level results.
 - Edge nodes discard an authority caller token that the authority rejects.
   On `UNAUTHENTICATED` the edge deletes the cached token from its Redis only
   if the cache still holds exactly that token, fetches a replacement through

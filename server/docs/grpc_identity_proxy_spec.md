@@ -1879,7 +1879,8 @@ The edge remote backend classifies these transport errors without ever counting 
 | Authority answer | Edge class | Edge behavior |
 | --- | --- | --- |
 | `Unavailable`, `DeadlineExceeded`, `ResourceExhausted`, unknown codes | Temporary backend failure | Tempfail |
-| `Unauthenticated`, `PermissionDenied` | Decline (edge caller credentials rejected) | Next backend decides; logged as a warning. A rejected cached caller token is replaced and the RPC retried once first |
+| `Unauthenticated` | Decline (edge caller credentials rejected, `ErrRemoteCallerRejected`) | Next backend decides; logged as a warning. A rejected cached caller token is replaced and the RPC retried once first |
+| `PermissionDenied` | Decline (`ErrRemoteOperationDenied`) | Next backend decides; logged at debug level with the authority status message. The authority also answers it for user-level results (denied identity lookup, principal mismatch, pre-authentication rejection), so it is not reported as a caller rejection |
 | `InvalidArgument`, `FailedPrecondition`, `AlreadyExists`, `OPERATION_RESULT_CONFLICT` | Temporary backend failure (request refused) | Tempfail; no statement about the credentials |
 | `OPERATION_RESULT_DENIED`, operation outside `allowed_operations` | Decline | Next backend decides |
 

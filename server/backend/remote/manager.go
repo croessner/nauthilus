@@ -31,7 +31,8 @@ import (
 //
 //   - Unavailable is a technical fault and answers a temporary failure.
 //   - Denied is a decline: the remote backend is not responsible and the next backend decides.
-//   - CallerRejected is a Denied caused by the authority refusing the edge's own caller credentials.
+//   - CallerRejected is a Denied caused by the authority refusing the edge's own caller credentials
+//     (UNAUTHENTICATED). PERMISSION_DENIED is a plain Denied.
 //   - Rejected means the authority refused a malformed or conflicting request. It answers a temporary failure,
 //     because the request could not be decided.
 var (
@@ -40,9 +41,10 @@ var (
 	// operation. The backend declines rather than fails, so the remaining
 	// backends in the chain still decide the request.
 	ErrRemoteOperationDenied = fmt.Errorf("%w: remote backend operation denied", errors.ErrBackendNotResponsible)
-	// ErrRemoteCallerRejected means the authority answered UNAUTHENTICATED or PERMISSION_DENIED to the edge's
-	// caller credentials. It declines like ErrRemoteOperationDenied and is logged, so an invalid edge
-	// credential stays visible when the chain falls through to another backend.
+	// ErrRemoteCallerRejected means the authority answered UNAUTHENTICATED to the edge's caller credentials.
+	// It declines like ErrRemoteOperationDenied and is logged, so an invalid edge credential stays visible
+	// when the chain falls through to another backend. PERMISSION_DENIED is not a caller rejection: the
+	// authority also answers it for user-level results, so it maps to ErrRemoteOperationDenied.
 	ErrRemoteCallerRejected = fmt.Errorf("%w: remote authority rejected the edge caller credentials", ErrRemoteOperationDenied)
 	// ErrRemoteAuthorityRejected means the authority refused the request itself (invalid argument, failed
 	// precondition, conflict). It is classified as a temporary backend failure.
@@ -976,19 +978,38 @@ func unavailable(err error) error {
 	return fmt.Errorf("%w: %w: %v", errors.ErrBackendTemporaryFailure, ErrRemoteAuthorityUnavailable, err)
 }
 
-// mapAuthorityError maps an authority RPC error and logs a rejection of the edge caller credentials.
+// mapAuthorityError maps an authority RPC error and logs the declines it produces.
 func (m *Manager) mapAuthorityError(err error) error {
 	mapped := classifyAuthorityError(err)
-	if m.logger != nil && stderrors.Is(mapped, ErrRemoteCallerRejected) {
+	m.logAuthorityDecline(mapped, err)
+
+	return mapped
+}
+
+// logAuthorityDecline logs a declining authority answer. Rejected edge caller credentials are a configuration
+// fault and warn; a denied operation is usually a user-level result, so it is logged at debug level with the
+// authority status message only.
+func (m *Manager) logAuthorityDecline(mapped error, err error) {
+	if m.logger == nil {
+		return
+	}
+
+	switch {
+	case stderrors.Is(mapped, ErrRemoteCallerRejected):
 		level.Warn(m.logger).Log(
 			definitions.LogKeyMsg, "Authority rejected the edge caller credentials; the remote backend declines and the next backend decides",
 			"backend", m.backendName,
 			"authority", m.authorityName,
 			definitions.LogKeyError, err,
 		)
+	case status.Code(err) == codes.PermissionDenied:
+		level.Debug(m.logger).Log(
+			definitions.LogKeyMsg, "Authority denied the remote operation; the remote backend declines and the next backend decides",
+			"backend", m.backendName,
+			"authority", m.authorityName,
+			"status_message", status.Convert(err).Message(),
+		)
 	}
-
-	return mapped
 }
 
 // classifyAuthorityError classifies an authority RPC error into the remote backend error classes.
@@ -1005,8 +1026,10 @@ func classifyAuthorityError(err error) error {
 		switch st.Code() {
 		case codes.DeadlineExceeded, codes.Unavailable, codes.ResourceExhausted:
 			return unavailable(err)
-		case codes.PermissionDenied, codes.Unauthenticated:
+		case codes.Unauthenticated:
 			return fmt.Errorf("%w: %v", ErrRemoteCallerRejected, err)
+		case codes.PermissionDenied:
+			return fmt.Errorf("%w: %v", ErrRemoteOperationDenied, err)
 		case codes.FailedPrecondition, codes.InvalidArgument, codes.AlreadyExists:
 			return fmt.Errorf("%w: %v", ErrRemoteAuthorityRejected, err)
 		default:

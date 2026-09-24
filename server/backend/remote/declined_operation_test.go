@@ -16,7 +16,11 @@
 package remote
 
 import (
+	"bytes"
+	"encoding/json"
 	stderrors "errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
@@ -69,18 +73,68 @@ func TestRemoteAuthorityRejectedIsAClassifiedTemporaryFailure(t *testing.T) {
 	}
 }
 
-// TestRemoteCallerRejectionStaysADecline pins that invalid edge caller credentials decline like a denied
-// operation, while the distinct sentinel keeps them visible in logs.
+// TestRemoteCallerRejectionStaysADecline pins that rejected edge caller credentials (UNAUTHENTICATED) decline
+// like a denied operation, while the distinct sentinel keeps them visible in logs.
 func TestRemoteCallerRejectionStaysADecline(t *testing.T) {
-	for _, code := range []codes.Code{codes.Unauthenticated, codes.PermissionDenied} {
-		err := classifyAuthorityError(status.Error(code, "caller rejected"))
+	err := classifyAuthorityError(status.Error(codes.Unauthenticated, "caller rejected"))
 
-		if !stderrors.Is(err, ErrRemoteCallerRejected) || !stderrors.Is(err, ErrRemoteOperationDenied) {
-			t.Fatalf("%s mapped to %v, want ErrRemoteCallerRejected wrapping ErrRemoteOperationDenied", code, err)
-		}
+	if !stderrors.Is(err, ErrRemoteCallerRejected) || !stderrors.Is(err, ErrRemoteOperationDenied) {
+		t.Fatalf("UNAUTHENTICATED mapped to %v, want ErrRemoteCallerRejected wrapping ErrRemoteOperationDenied", err)
+	}
 
-		if !errors.IsBackendNotResponsible(err) || errors.IsBackendTechnicalFailure(err) {
-			t.Fatalf("%s must stay a decline: %v", code, err)
-		}
+	if !errors.IsBackendNotResponsible(err) || errors.IsBackendTechnicalFailure(err) {
+		t.Fatalf("UNAUTHENTICATED must stay a decline: %v", err)
+	}
+}
+
+// TestRemotePermissionDeniedIsAnOperationDenial pins that PERMISSION_DENIED is a plain decline. The authority also
+// answers it for user-level results (denied identity lookup, principal mismatch, pre-authentication rejection),
+// so it must not be reported as rejected edge caller credentials.
+func TestRemotePermissionDeniedIsAnOperationDenial(t *testing.T) {
+	err := classifyAuthorityError(status.Error(codes.PermissionDenied, "identity lookup was denied"))
+
+	if !stderrors.Is(err, ErrRemoteOperationDenied) || stderrors.Is(err, ErrRemoteCallerRejected) {
+		t.Fatalf("PERMISSION_DENIED mapped to %v, want ErrRemoteOperationDenied without ErrRemoteCallerRejected", err)
+	}
+
+	if !errors.IsBackendNotResponsible(err) || errors.IsBackendTechnicalFailure(err) {
+		t.Fatalf("PERMISSION_DENIED must stay a decline: %v", err)
+	}
+}
+
+// TestMapAuthorityErrorLogLevels pins that only rejected caller credentials warn, while a denied operation is
+// logged at debug level with the authority status message.
+func TestMapAuthorityErrorLogLevels(t *testing.T) {
+	for name, tc := range map[string]struct {
+		code      codes.Code
+		wantLevel string
+	}{
+		"unauthenticated":   {code: codes.Unauthenticated, wantLevel: "WARN"},
+		"permission denied": {code: codes.PermissionDenied, wantLevel: "DEBUG"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buffer bytes.Buffer
+
+			manager := &Manager{
+				logger:        slog.New(slog.NewJSONHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelDebug})),
+				backendName:   "remote",
+				authorityName: "authority",
+			}
+
+			_ = manager.mapAuthorityError(status.Error(tc.code, "authority status text"))
+
+			var record map[string]any
+			if err := json.Unmarshal(buffer.Bytes(), &record); err != nil {
+				t.Fatalf("decode log record %q: %v", buffer.String(), err)
+			}
+
+			if record["level"] != tc.wantLevel {
+				t.Fatalf("log level = %v, want %s", record["level"], tc.wantLevel)
+			}
+
+			if !strings.Contains(buffer.String(), "authority status text") {
+				t.Fatalf("log record %q misses the authority status message", buffer.String())
+			}
+		})
 	}
 }
