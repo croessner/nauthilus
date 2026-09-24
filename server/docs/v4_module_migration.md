@@ -41,6 +41,30 @@ the intended first prerelease is `v4.0.0-alpha.1`.
 
 ## Changes Between v4 Prereleases
 
+- Redis password state uses only the full 64-hex password hash. The eight-hex
+  short hash of earlier prereleases is no longer read or written: password
+  history sets (`pw_hist`, `pw_hist_ips`), the RWP allowance sets and the
+  positive password cache ignore short values, and the admin brute-force flush
+  no longer deletes `pw_hist_total` keys, which were never written anyway. No
+  cleanup is required. Stray short members in existing history and RWP sets and
+  leftover `pw_hist_total` keys expire with their TTL; until then a short member
+  only misses a one-time known-password hint and a short positive-cache value is
+  a cache miss.
+- Brute-force Redis reads and writes are pipelined, which changes the `kind`
+  labels of `bruteforce_redis_roundtrips_total`. New labels are
+  `pipeline_pw_hist_load`, `pipeline_preauth_check`,
+  `pipeline_eval_bucket_counter_save`, `pipeline_affected_account` and
+  `pipeline_pw_hist_save`. `pipeline_exists_ban_preresult` and
+  `pipeline_exists_ban_policy_facts` now count only fallback reads without a
+  pre-authentication prefetch and stay flat on the regular authentication
+  path. See section 3.5 of the [brute-force guide](bruteforce_protection.md)
+  for the full label table; update dashboards that select on the old labels.
+- `redis_write_total` counts every pipelined brute-force script once. Failed-
+  login counter writes and failed-password history writes were counted twice
+  before, so their share of the rate halves.
+- The `bf_update_loop_total` task of the function-duration metric observes the
+  batched failed-login counter write once per failed login instead of every
+  rule iteration.
 - `auth.backchannel.failure_lockout` (introduced in `v4.0.0-beta.5`) was
   removed without a compatibility shim. Backchannel callers are never locked
   out anymore; a genuine caller rejection is delayed by a fixed 300 ms and

@@ -154,7 +154,9 @@ through normal brute-force enforcement.
     * `brute_force.rwp_allowed_unique_hashes`: The maximum number of remembered wrong password hashes within the
       window (default: 3).
     * `brute_force.rwp_window`: The sliding window duration (default: 15 minutes).
-* **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (read-only) and `RWPSlidingWindowCommit` (write).
+* **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (check) and `RWPSlidingWindowCommit` (commit). The check
+  never records the password hash, but it trims expired window entries with `ZREMRANGEBYSCORE` and therefore runs on
+  the write handle.
   The check runs early in `CheckBruteForce` and produces an allowance candidate, but does **not** record the hash
   or yet know whether the password is wrong. Successful authentication clears that candidate. After a genuine
   authentication failure, `UpdateBruteForceBucketsCounter` logs the active allowance and commits the hash even when
@@ -180,19 +182,28 @@ because a pipeline only reports its first error.
   password hash in that set, and `SCARD` of the IP-scoped set run as one pipeline on the read handle. Account-less
   requests skip the account reads; a password-less request skips the membership read. The pipeline never carries
   Lua, so a cluster keeps routing it to read replicas.
-* **Pre-authentication check (`pipeline_preauth_check`):** `PrefetchPreAuthState` queues the read-only
+* **Pre-authentication check (`pipeline_preauth_check`):** `PrefetchPreAuthState` queues the
   `RWPSlidingWindowCheck` script, `EXISTS` of every candidate ban key and `HGET` of the reputation `positive`
-  counter into one pipeline. With the RWP script the pipeline runs on the write handle, because `EVALSHA` is routed
-  to masters anyway; account-less requests keep it on the read handle. The following checks consume these values,
-  so a normal check needs this pipeline plus the bucket-counter pipeline (`pipeline_eval_bucket_counter`) instead
-  of four sequential round trips. The reputation value is a request-scoped snapshot that later bucket evaluations of
-  the same request reuse. An L1 block decision skips the prefetch; the RWP check then runs alone as before.
-  A script that is missing on a node is re-uploaded and only the failed script calls run again
-  (`rediscli.ScriptPipeline`).
+  counter into one pipeline. With the RWP script the pipeline runs on the write handle, because the script trims its
+  window and `EVALSHA` is routed to masters anyway; account-less requests keep it on the read handle. The following
+  checks consume these values, so a normal check needs this pipeline plus the bucket-counter pipeline
+  (`pipeline_eval_bucket_counter`) instead of four sequential round trips. The reputation value is a request-scoped
+  snapshot that later bucket evaluations of the same request reuse. A cached L1 block decision does not skip the
+  prefetch: the policy-fact collection after the L1 hit reads the same ban keys and the same reputation counter and
+  consumes the prefetched values, so an L1 block also needs two round trips instead of four. Every read happens
+  before the first write of the request. A script that is missing on a node is re-uploaded and only the failed
+  script calls run again (`rediscli.ScriptPipeline`).
+* **Ban-key fallbacks:** `pipeline_exists_ban_preresult` and `pipeline_exists_ban_policy_facts` now count only
+  dedicated `EXISTS` pipelines that run when no matching prefetch exists, for example when a caller evaluates a
+  different rule list or uses a bucket manager without `PrefetchPreAuthState`. On the regular authentication path
+  these labels stay flat; the reads are counted as `pipeline_preauth_check`. `pipeline_exists_ban_is_blocked` is
+  unchanged.
 * **Failed-login counters (`pipeline_eval_bucket_counter_save`):** after the RWP commit has classified a failure as
   counted, `SaveBruteForceBucketCountersToRedis` reads the reputation once and increments every selected rule with
   one `SlidingWindowCounter` pipeline on the write handle. A failed login therefore needs the RWP commit plus two
-  round trips, independent of the number of rules. Each rule still logs and counts its own write and failure.
+  round trips, independent of the number of rules. Each rule still logs its own failure. The
+  `bf_update_loop_total` function-duration task observes this batch write once per failed login; it used to observe
+  every rule iteration.
 * **Blocked requests:** the matched rule's counter is reused from the same request's bucket evaluation instead of
   running `SlidingWindowCounter` again. The affected account is written with one `SADD` + `ZADD NX` pipeline
   (`pipeline_affected_account`) without a membership read; `ZADD NX` keeps the first-seen timestamp of an indexed
@@ -200,6 +211,22 @@ because a pipeline only reports its first error.
   `AddToSetAndExpireLimit` pipeline (`pipeline_pw_hist_save`). The burst gate stays a separate round trip because
   only the burst leader records the hash. The `SISMEMBER` before learning a `pw_hist_ips` entry also stays: it
   decides whether the set TTL is refreshed.
+* **Write accounting:** `redis_write_total` counts every script executed through `rediscli.ScriptPipeline` exactly
+  once, including a NOSCRIPT retry of that call. Callers no longer add a second increment per script, so the
+  counter matches `rediscli.ExecuteScript` and failed-login writes no longer count twice.
+
+| `kind` label | Pipeline |
+|---|---|
+| `pipeline_pw_hist_load` | Password-history reads (`SCARD`/`SISMEMBER`) |
+| `pipeline_preauth_check` | RWP check, candidate ban keys and reputation before authentication |
+| `pipeline_eval_bucket_counter` | Read-side `SlidingWindowCounter` evaluation of all matched buckets |
+| `pipeline_eval_bucket_counter_save` | Counter increments of a counted failed login |
+| `pipeline_affected_account` | `SADD` + `ZADD NX` of the affected account on the blocked path |
+| `pipeline_pw_hist_save` | `AddToSetAndExpireLimit` into the account and IP history sets |
+| `pipeline_exists_ban_preresult` | Fallback ban-key read of the repeating check without prefetch |
+| `pipeline_exists_ban_policy_facts` | Fallback ban-key read of the policy facts without prefetch |
+| `pipeline_exists_ban_is_blocked` | Ban-key read of `IsIPAddressBlocked` |
+| `lua_increment_and_expire` | Burst gate of the blocked path (single script, not a pipeline) |
 
 ## 4. Sequence Diagram
 
