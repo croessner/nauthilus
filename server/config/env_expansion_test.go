@@ -318,6 +318,18 @@ func TestFileSettings_HandleFile_NauthilusEnvOverrideWinsAfterExpansion(t *testi
 func loadFileSettingsFromContent(t *testing.T, content string) *FileSettings {
 	t.Helper()
 
+	cfg, err := handleFileFromContent(t, content)
+	if err != nil {
+		t.Fatalf("handle file: %v", err)
+	}
+
+	return cfg
+}
+
+// handleFileFromContent loads content through the regular file pipeline and returns the HandleFile result.
+func handleFileFromContent(t *testing.T, content string) (*FileSettings, error) {
+	t.Helper()
+
 	root := t.TempDir()
 	path := writeConfigFile(t, root, "nauthilus.yml", content)
 
@@ -352,11 +364,8 @@ func loadFileSettingsFromContent(t *testing.T, content string) *FileSettings {
 	}
 
 	cfg := &FileSettings{}
-	if err := cfg.HandleFile(); err != nil {
-		t.Fatalf("handle file: %v", err)
-	}
 
-	return cfg
+	return cfg, cfg.HandleFile()
 }
 
 func requireMapValue(t *testing.T, settings map[string]any, key string) map[string]any {

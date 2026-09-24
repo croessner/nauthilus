@@ -2130,6 +2130,14 @@ func (r *Redis) GetStandaloneReplica() Replica {
 	return r.Replica
 }
 
+// normalizeEmptySentinels resets a Sentinel block without any value to its zero value, so the omitempty
+// validation skips it. A block with at least one value keeps the strict Sentinel validation.
+func (r *Redis) normalizeEmptySentinels() {
+	if r != nil && r.Sentinels.IsEmpty() {
+		r.Sentinels = Sentinels{}
+	}
+}
+
 // GetSentinel returns a pointer to the Sentinels configuration of the Redis instance.
 // Returns a new empty Sentinels struct if the Redis is nil.
 func (r *Redis) GetSentinel() *Sentinels {
@@ -2196,6 +2204,12 @@ type Sentinels struct {
 	Addresses []string     `mapstructure:"addresses" validate:"required,dive,hostname_port"`
 	Username  string       `mapstructure:"username" validate:"omitempty,excludesall= "`
 	Password  secret.Value `mapstructure:"password" validate:"omitempty,secret_excludesall= "`
+}
+
+// IsEmpty reports whether no Sentinel field is set. The configuration dump prints the sentinels block with
+// empty values, so such a block means "Sentinel not configured" rather than an incomplete Sentinel setup.
+func (s *Sentinels) IsEmpty() bool {
+	return s == nil || (s.Master == "" && len(s.Addresses) == 0 && s.Username == "" && s.Password.IsZero())
 }
 
 // GetMasterName returns the name of the master Redis instance configured in the Sentinels struct.

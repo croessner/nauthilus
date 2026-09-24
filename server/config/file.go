@@ -4106,10 +4106,20 @@ func (f *FileSettings) unmarshalAndNormalize(reader *viper.Viper) error {
 	}
 
 	f.normalizePolicySoftAllowlists()
+	f.normalizeStorage()
 	f.materializeLegacySections()
 	f.normalizeConfigAliases()
 
 	return nil
+}
+
+// normalizeStorage canonicalizes storage settings before they are copied into the runtime server section.
+func (f *FileSettings) normalizeStorage() {
+	if f == nil || f.Storage == nil {
+		return
+	}
+
+	f.Storage.Redis.normalizeEmptySentinels()
 }
 
 // normalizePolicySoftAllowlists canonicalizes declarative network allowlist entries.
