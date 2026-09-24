@@ -610,29 +610,17 @@ func ProcessXForwardedFor(ctx *gin.Context, cfg config.File, logger *slog.Logger
 	}
 }
 
-// RequestClientIP resolves the client IP using Gin's configured trust model.
-func RequestClientIP(ctx *gin.Context) string {
-	if ctx == nil || ctx.Request == nil {
-		return ""
-	}
-
-	if clientIP := strings.TrimSpace(ctx.ClientIP()); clientIP != "" {
-		return clientIP
-	}
-
-	return directRequestClientIP(ctx)
-}
-
 // RequestClientIPWithConfig resolves the client IP from trusted forwarding
 // headers using the Nauthilus proxy configuration before falling back to the
-// direct peer address.
+// direct peer address. Without a configuration no proxy is trusted, so the
+// direct peer address is returned.
 func RequestClientIPWithConfig(ctx *gin.Context, cfg config.File, logger *slog.Logger) string {
 	if ctx == nil || ctx.Request == nil {
 		return ""
 	}
 
 	if cfg == nil || cfg.GetServer() == nil {
-		return RequestClientIP(ctx)
+		return directRequestClientIP(ctx)
 	}
 
 	if clientIP := trustedForwardedClientIP(ctx, cfg, logger); clientIP != "" {

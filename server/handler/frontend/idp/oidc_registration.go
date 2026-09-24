@@ -20,14 +20,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/idp/dcr"
 	"github.com/croessner/nauthilus/v4/server/stats"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -65,7 +68,7 @@ func (h *OIDCHandler) RegisterDynamicClient(ctx *gin.Context) { //nolint:funlen
 
 	setRegistrationNoStoreHeaders(ctx)
 
-	source := registrationSource(ctx)
+	source := registrationSource(ctx, h.deps.Cfg, h.deps.Logger)
 	if err := h.registrationService.ReserveAttempt(ctx.Request.Context(), source); err != nil {
 		if errors.Is(err, dcr.ErrRateLimited) {
 			writeRegistrationRateLimited(ctx, err)
@@ -176,8 +179,11 @@ func registrationContentTypeIsJSON(value string) bool {
 }
 
 // registrationSource returns the canonical source address after trusted-proxy handling.
-func registrationSource(ctx *gin.Context) string {
-	if clientIP := net.ParseIP(ctx.ClientIP()); clientIP != nil {
+// It uses the same client-IP semantics as the other public endpoints: forwarding headers count only from a
+// configured trusted proxy, and an invalid X-Forwarded-For chain falls back to the direct peer instead of
+// X-Real-IP.
+func registrationSource(ctx *gin.Context, cfg config.File, logger *slog.Logger) string {
+	if clientIP := net.ParseIP(util.RequestClientIPWithConfig(ctx, cfg, logger)); clientIP != nil {
 		return clientIP.String()
 	}
 

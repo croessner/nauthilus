@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/handler/asyncjobs"
+	"github.com/croessner/nauthilus/v4/server/handler/custom"
 	handlerbruteforce "github.com/croessner/nauthilus/v4/server/handler/bruteforce"
 	handlercache "github.com/croessner/nauthilus/v4/server/handler/cache"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
@@ -53,7 +55,7 @@ func TestBackchannelNativeHooksUseOnlyInjectedRunner(t *testing.T) {
 		t.Fatal("backchannel retains ambient native plugin runner lookup")
 	}
 
-	if hooks := nativeHookBindings(nil); len(hooks) != 0 {
+	if hooks := nativeHookBindings(nil, nil); len(hooks) != 0 {
 		t.Fatalf("nil injected runner produced %d native hooks", len(hooks))
 	}
 }
@@ -405,4 +407,38 @@ func (v *recordingTokenValidator) ValidateToken(context.Context, string) (jwt.Ma
 	v.calls++
 
 	return v.claims, nil
+}
+
+func TestNativeHookRequestIgnoresXRealIPForInvalidForwardedChain(t *testing.T) {
+	const (
+		proxy    = "10.0.0.1"
+		realIP   = "203.0.113.9"
+		proxyNet = "10.0.0.0/8"
+	)
+
+	ctx, engine := gin.CreateTestContext(httptest.NewRecorder())
+	if err := engine.SetTrustedProxies([]string{proxyNet}); err != nil {
+		t.Fatalf("SetTrustedProxies() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/custom/hook", nil)
+	request.RemoteAddr = proxy + ":40000"
+	request.Header.Set("X-Forwarded-For", "unknown")
+	request.Header.Set("X-Real-IP", realIP)
+	ctx.Request = request
+
+	if gin := ctx.ClientIP(); gin != realIP {
+		t.Fatalf("fixture precondition: Gin ClientIP() = %q, want the X-Real-IP fallback %q", gin, realIP)
+	}
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{TrustedProxies: []string{proxyNet}}}
+
+	hookRequest, err := newNativeHookRequestBuilder(slog.New(slog.DiscardHandler))(ctx, cfg, pluginapi.HookDescriptor{}, custom.NativeHookCaller{}, nil)
+	if err != nil {
+		t.Fatalf("native hook request error = %v", err)
+	}
+
+	if hookRequest.Snapshot.ClientIP != proxy {
+		t.Fatalf("hook ClientIP = %q, want the direct peer %q", hookRequest.Snapshot.ClientIP, proxy)
+	}
 }

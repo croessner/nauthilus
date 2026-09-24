@@ -38,6 +38,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/handler/policyhttp"
 	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
+	"github.com/croessner/nauthilus/v4/server/util"
 
 	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	mdlua "github.com/croessner/nauthilus/v4/server/middleware/lua"
@@ -360,7 +361,7 @@ func registerCustomHookRoutes(router *gin.Engine, deps *handlerdeps.Deps, nauthi
 		deps.Logger,
 		deps.Redis,
 		nauthilusIDP,
-		custom.WithNativeHooks(nativeHookBindings(deps.PluginRunner)),
+		custom.WithNativeHooks(nativeHookBindings(deps.PluginRunner, deps.Logger)),
 	).Register(hookGroup)
 }
 
@@ -372,7 +373,7 @@ func registerDevUIRoutes(deps *handlerdeps.Deps, authenticatedGroup *gin.RouterG
 }
 
 // nativeHookBindings adapts hooks from the explicitly injected native runtime into custom routes.
-func nativeHookBindings(runner *pluginruntime.Runner) []custom.NativeHook {
+func nativeHookBindings(runner *pluginruntime.Runner, logger *slog.Logger) []custom.NativeHook {
 	if runner == nil {
 		return nil
 	}
@@ -386,7 +387,7 @@ func nativeHookBindings(runner *pluginruntime.Runner) []custom.NativeHook {
 	for _, component := range components {
 		hooks = append(hooks, custom.NativeHook{
 			Runner:        runner,
-			BuildRequest:  nativeHookRequest,
+			BuildRequest:  newNativeHookRequestBuilder(logger),
 			Descriptor:    component.HookDescriptor,
 			QualifiedName: component.QualifiedName,
 			ModuleName:    component.ModuleName,
@@ -397,10 +398,26 @@ func nativeHookBindings(runner *pluginruntime.Runner) []custom.NativeHook {
 	return hooks
 }
 
+// newNativeHookRequestBuilder returns the hook request builder that resolves client addresses with logger.
+func newNativeHookRequestBuilder(logger *slog.Logger) custom.NativeHookRequestBuilder {
+	return func(
+		ctx *gin.Context,
+		cfg config.File,
+		descriptor pluginapi.HookDescriptor,
+		caller custom.NativeHookCaller,
+		body []byte,
+	) (pluginapi.HookRequest, error) {
+		return nativeHookRequest(ctx, cfg, logger, descriptor, caller, body)
+	}
+}
+
 // nativeHookRequest builds the public plugin hook request from the Gin boundary.
+// The client IP follows the host's trusted-proxy semantics (util.RequestClientIPWithConfig), so plugins see
+// the same address as the rest of the request pipeline.
 func nativeHookRequest(
 	ctx *gin.Context,
 	cfg config.File,
+	logger *slog.Logger,
 	_ pluginapi.HookDescriptor,
 	caller custom.NativeHookCaller,
 	body []byte,
@@ -415,7 +432,7 @@ func nativeHookRequest(
 		Service:       "custom_hook",
 		Protocol:      "http",
 		Username:      caller.Subject,
-		ClientIP:      ctx.ClientIP(),
+		ClientIP:      util.RequestClientIPWithConfig(ctx, cfg, logger),
 		ClientPort:    clientPort,
 		ClientHost:    ctx.Request.Host,
 		OIDCCID:       caller.ClientID,
