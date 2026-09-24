@@ -8,7 +8,9 @@ import base64
 import getpass
 import http.client
 import json
+import math
 import os
+import re
 import socket
 import ssl
 import stat
@@ -22,6 +24,18 @@ from typing import Any, Iterable
 DEFAULT_URL = "https://nauthilus.example.invalid"
 DEFAULT_SCOPES = "nauthilus:authenticate nauthilus:admin nauthilus:security"
 DEFAULT_TIMEOUT = 15.0
+
+REPUTATION_KINDS = ("ip", "network", "asn", "dns_domain", "account", "service")
+REPUTATION_BANDS = ("blocked", "trusted", "neutral")
+REPUTATION_MAX_TTL = 31536000
+REPUTATION_MAX_BODY = 4096
+REPUTATION_IDENTIFIER = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+REPUTATION_IMPORT_SCHEMA = "reputation-static-import.v1"
+REPUTATION_IMPORT_KEYS = frozenset(("schema", "overrides", "ip_override_networks", "identity_contracts", "policy_rules"))
+REPUTATION_IMPORT_ENTRY_KEYS = frozenset(
+    ("kind", "subject", "band", "reason", "creator", "audit_id", "origin", "expires_at"))
+REPUTATION_IMPORT_MAX_BYTES = 4 * 1024 * 1024
+REPUTATION_IMPORT_MAX_EXPIRES_AT = 100_000_000_000
 
 
 class ClientError(RuntimeError):
@@ -969,11 +983,34 @@ def add_wait_args(parser: argparse.ArgumentParser, *, include_switch: bool = Tru
     parser.add_argument("--wait-interval", type=float, default=1.0, help="seconds between status polls")
 
 
-def reputation_request(client: NauthilusClient, args: argparse.Namespace) -> Response:
-    """Send one bounded administrative operation without retrying uncertain mutations."""
+def require_reputation_bearer(client: NauthilusClient) -> None:
+    """Reject Basic backchannel credentials, which cannot authorize reputation administration."""
 
     if not client.config.bearer_token and client.config.basic_user and client.config.basic_password:
         raise ClientError("reputation administration requires a backchannel bearer token with nauthilus:admin")
+
+
+def send_reputation(client: NauthilusClient, method: str, path: str, body: dict[str, Any], *,
+                    mutation: bool) -> Response:
+    """Send one bounded administrative operation without retrying uncertain mutations."""
+
+    require_reputation_bearer(client)
+    if len(json.dumps(body).encode("utf-8")) > REPUTATION_MAX_BODY:
+        raise ClientError(f"reputation request exceeds {REPUTATION_MAX_BODY} bytes")
+    try:
+        return client.request(method, "/api/v1/custom/reputation/" + path, body=body)
+    except (ClientError, OSError, http.client.HTTPException) as exc:
+        if isinstance(exc, HTTPClientError) and 400 <= exc.status < 500 and exc.status != 408:
+            raise
+        if mutation:
+            raise ClientError("reputation mutation failed; outcome may be unknown. Inspect lookup/status before retrying the same change.") from exc
+        raise
+
+
+def reputation_request(client: NauthilusClient, args: argparse.Namespace) -> Response:
+    """Build one administrative request from CLI arguments and send it once."""
+
+    require_reputation_bearer(client)
     body = {field: getattr(args, field) for field in args.reputation_fields if getattr(args, field, None) is not None}
     if "kind" in body:
         if bool(args.subject) == bool(args.subject_file):
@@ -989,25 +1026,158 @@ def reputation_request(client: NauthilusClient, args: argparse.Namespace) -> Res
             raise ClientError("subject must contain 1 to 512 UTF-8 bytes")
     if args.reputation_action:
         body["action"] = args.reputation_action
-    if len(json.dumps(body).encode("utf-8")) > 4096:
-        raise ClientError("reputation request exceeds 4096 bytes")
-    try:
-        return client.request(args.reputation_method, "/api/v1/custom/reputation/" + args.reputation_path, body=body)
-    except (ClientError, OSError, http.client.HTTPException) as exc:
-        if isinstance(exc, HTTPClientError) and 400 <= exc.status < 500 and exc.status != 408:
-            raise
-        if args.reputation_mutation:
-            raise ClientError("reputation mutation failed; outcome may be unknown. Inspect lookup/status before retrying the same change.") from exc
-        raise
+    return send_reputation(client, args.reputation_method, args.reputation_path, body,
+                           mutation=args.reputation_mutation)
 
 
 def reputation_ttl(value: str) -> int:
     """Require an explicit bounded lifetime; zero deliberately means no expiry."""
 
     seconds = int(value)
-    if not 0 <= seconds <= 31536000:
-        raise argparse.ArgumentTypeError("TTL must be between 0 and 31536000 seconds")
+    if not 0 <= seconds <= REPUTATION_MAX_TTL:
+        raise argparse.ArgumentTypeError(f"TTL must be between 0 and {REPUTATION_MAX_TTL} seconds")
     return seconds
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate JSON keys so no artifact entry is silently shadowed."""
+
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def reputation_import_ttl(expires_at: int, now: float) -> int | None:
+    """Convert an absolute expiry into ttl_seconds; 0 stays non-expiring and None means already expired."""
+
+    if expires_at == 0:
+        return 0
+
+    # Round the clock up so the relative lifetime never outlives the absolute expiry.
+    remaining = expires_at - math.ceil(now)
+    return remaining if remaining > 0 else None
+
+
+def reputation_import_body(entry: dict[str, Any], ttl_seconds: int) -> dict[str, Any]:
+    """Map one artifact entry to the override PUT body; creator is derived server-side and never sent."""
+
+    body = {field: entry[field] for field in ("kind", "subject", "band", "reason", "origin", "audit_id")}
+    body.update(slot="active", ttl_seconds=ttl_seconds)
+    return body
+
+
+def reputation_import_problem(entry: Any, now: float) -> str | None:
+    """Return the first validation problem of one artifact entry, or None when it can be applied."""
+
+    if not isinstance(entry, dict):
+        return "entry must be a JSON object"
+    missing, unknown = REPUTATION_IMPORT_ENTRY_KEYS - entry.keys(), entry.keys() - REPUTATION_IMPORT_ENTRY_KEYS
+    if missing:
+        return "missing fields: " + ", ".join(sorted(missing))
+    if unknown:
+        return "unknown fields: " + ", ".join(sorted(unknown))
+    for field in ("kind", "subject", "band", "reason", "creator", "audit_id", "origin"):
+        if not isinstance(entry[field], str):
+            return f"{field} must be a string"
+    if entry["kind"] not in REPUTATION_KINDS:
+        return "kind must be one of " + ", ".join(REPUTATION_KINDS)
+    if entry["band"] not in REPUTATION_BANDS:
+        return "band must be one of " + ", ".join(REPUTATION_BANDS)
+    if not 1 <= len(entry["subject"].encode("utf-8")) <= 512:
+        return "subject must contain 1 to 512 UTF-8 bytes"
+    for field in ("reason", "origin"):
+        if not REPUTATION_IDENTIFIER.fullmatch(entry[field]):
+            return f"{field} must match {REPUTATION_IDENTIFIER.pattern}"
+    audit_id = entry["audit_id"]
+    if not 1 <= len(audit_id.encode("utf-8")) <= 128 or audit_id.strip() != audit_id or any(
+            ord(character) < 32 or ord(character) == 127 for character in audit_id):
+        return "audit_id must contain 1 to 128 bytes without control characters or surrounding whitespace"
+    expires_at = entry["expires_at"]
+    if isinstance(expires_at, bool) or not isinstance(expires_at, int) or not 0 <= expires_at <= REPUTATION_IMPORT_MAX_EXPIRES_AT:
+        return "expires_at must be an absolute Unix time in seconds; 0 means non-expiring"
+    ttl_seconds = reputation_import_ttl(expires_at, now)
+    if ttl_seconds is not None and ttl_seconds > REPUTATION_MAX_TTL:
+        return f"expires_at is more than {REPUTATION_MAX_TTL} seconds in the future"
+    if len(json.dumps(reputation_import_body(entry, ttl_seconds or 0)).encode("utf-8")) > REPUTATION_MAX_BODY:
+        return f"override request exceeds {REPUTATION_MAX_BODY} bytes"
+    return None
+
+
+def load_reputation_import(path: str, now: float) -> list[dict[str, Any]]:
+    """Load and validate a whole static import artifact before any request is sent."""
+
+    with Path(path).open("rb") as source:
+        raw = source.read(REPUTATION_IMPORT_MAX_BYTES + 1)
+    if len(raw) > REPUTATION_IMPORT_MAX_BYTES:
+        raise ClientError(f"import artifact exceeds {REPUTATION_IMPORT_MAX_BYTES} bytes")
+    try:
+        artifact = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate_keys)
+    except ValueError as exc:
+        raise ClientError(f"import artifact is not valid JSON: {exc}") from exc
+
+    if not isinstance(artifact, dict) or artifact.get("schema") != REPUTATION_IMPORT_SCHEMA:
+        raise ClientError(f"import artifact schema must be {REPUTATION_IMPORT_SCHEMA!r}")
+    unknown = artifact.keys() - REPUTATION_IMPORT_KEYS
+    if unknown:
+        raise ClientError("import artifact has unknown top-level fields: " + ", ".join(sorted(unknown)))
+    entries = artifact.get("overrides")
+    if not isinstance(entries, list):
+        raise ClientError("import artifact field 'overrides' must be a list")
+
+    problems: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for index, entry in enumerate(entries):
+        problem = reputation_import_problem(entry, now)
+        if problem is None:
+            key = (entry["kind"], entry["subject"])
+            problem = "duplicate kind and subject" if key in seen else None
+            seen.add(key)
+        if problem is not None:
+            problems.append(f"overrides[{index}]: {problem}")
+    if problems:
+        raise ClientError("invalid import artifact; nothing was applied:\n  " + "\n  ".join(problems))
+
+    return entries
+
+
+def reputation_override_import(client: NauthilusClient, args: argparse.Namespace) -> dict[str, Any]:
+    """Apply every override of a validated static import artifact sequentially and without retries."""
+
+    entries = load_reputation_import(args.artifact, time.time())
+    require_reputation_bearer(client)
+    creators = sorted({entry["creator"] for entry in entries})
+    if creators:
+        print("note: artifact creator " + ", ".join(map(repr, creators))
+              + " is ignored; the server records the authenticated token identity", file=sys.stderr)
+
+    results: list[dict[str, Any]] = []
+    stopped = False
+    for entry in entries:
+        result: dict[str, Any] = {"kind": entry["kind"], "subject": entry["subject"], "audit_id": entry["audit_id"]}
+        # Recompute the lifetime right before each request so slow batches do not extend expiries.
+        ttl_seconds = reputation_import_ttl(entry["expires_at"], time.time())
+        if stopped:
+            result["status"] = "not-attempted"
+        elif ttl_seconds is None:
+            result.update(status="skipped-expired", expires_at=entry["expires_at"])
+        else:
+            try:
+                send_reputation(client, "PUT", "override", reputation_import_body(entry, ttl_seconds), mutation=True)
+                result.update(status="applied", ttl_seconds=ttl_seconds)
+            except ClientError as exc:
+                result.update(status="failed", error=str(exc))
+                stopped = not args.continue_on_error
+        results.append(result)
+        details = " ".join(f"{key}={value}" for key, value in result.items() if key != "status")
+        print(f"{result['status']} {details}", file=sys.stderr, flush=True)
+
+    counts = {status: sum(1 for result in results if result["status"] == status)
+              for status in ("applied", "skipped-expired", "failed", "not-attempted")}
+    return {"requested": len(entries), "applied": counts["applied"], "skipped_expired": counts["skipped-expired"],
+            "failed": counts["failed"], "not_attempted": counts["not-attempted"], "results": results}
 
 
 def add_reputation_arguments(parser: argparse.ArgumentParser, *, subject: bool, audit: bool) -> list[str]:
@@ -1015,7 +1185,7 @@ def add_reputation_arguments(parser: argparse.ArgumentParser, *, subject: bool, 
 
     fields = []
     if subject:
-        parser.add_argument("kind", choices=("ip", "network", "asn", "dns_domain", "account", "service"))
+        parser.add_argument("kind", choices=REPUTATION_KINDS)
         parser.add_argument("subject", nargs="?", help="exact subject; use --subject-file to keep it out of process arguments")
         parser.add_argument("--subject-file", help="read one exact subject from a private UTF-8 file")
         fields.append("kind")
@@ -1043,11 +1213,15 @@ def add_reputation_commands(subcommands: Any) -> None:
         command.add_argument("--previous-audit", required=operation == "delete", help="current override audit ID for optimistic replacement/removal")
         fields.extend(("slot", "previous_audit"))
         if operation == "put":
-            command.add_argument("--band", choices=("blocked", "trusted", "neutral"), required=True)
+            command.add_argument("--band", choices=REPUTATION_BANDS, required=True)
             command.add_argument("--ttl-seconds", type=reputation_ttl, required=True, help="explicit expiry; 0 means non-expiring")
             fields.extend(("band", "ttl_seconds"))
         command.set_defaults(func=reputation_request, reputation_fields=fields, reputation_method=method,
                              reputation_path="override", reputation_action=None, reputation_mutation=True)
+    importer = overrides.add_parser("import", help=f"apply the overrides of a {REPUTATION_IMPORT_SCHEMA} artifact")
+    importer.add_argument("artifact", help="artifact written by scripts/convert-static-reputation.py")
+    importer.add_argument("--continue-on-error", action="store_true", help="continue after per-entry failures")
+    importer.set_defaults(func=reputation_override_import, local_object=True, fail_on_entry_errors=True)
     allocation = commands.add_parser("allocation", help="inspect or fence writers before allocation-key rotation")
     allocations = allocation.add_subparsers(dest="allocation_command", required=True)
     for action in ("status", "drain"):
@@ -1196,6 +1370,8 @@ def main(argv: list[str] | None = None) -> int:
         result = args.func(client, args)
         if getattr(args, "local_object", False):
             print_object(result, args)
+            if getattr(args, "fail_on_entry_errors", False) and result.get("failed"):
+                return 1
         elif isinstance(result, Response):
             print_response(result, args)
         else:

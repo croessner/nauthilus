@@ -468,7 +468,11 @@ snapshot into exact same-band override import records, this CIDR catalog,
 explicit identity contracts and same-hop Recipe deny guards. It records origin
 `cutover.static_dkim2_v4` and deterministic audit correlation. Absent entries
 produce no override. The tool creates a new mode-0600 file and never accesses
-Redis or credentials. Apply overrides through authenticated management and
+Redis or credentials. Apply the overrides with
+`contrib/client/nauthilus-admin.py reputation override import <artifact>`,
+which validates the artifact, converts each absolute expiry into `ttl_seconds`
+at request time and skips already expired entries (see the
+[admin client](../../client/README.md#reputation-administration)), and
 merge all generated guards after invariant denies and before permits; the
 converter never grants a permit or bypasses freshness, identity or integrity
 requirements. Absolute expiry is preserved in the import artifact, including

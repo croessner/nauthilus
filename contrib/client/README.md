@@ -54,6 +54,7 @@ The server derives the audit actor from the authenticated identity.
 ./nauthilus-admin.py reputation lookup account --subject-file /run/private/account.txt
 ./nauthilus-admin.py reputation override put ip 192.0.2.8 --band blocked --ttl-seconds 3600 --reason incident --origin operator --audit-id ticket-123
 ./nauthilus-admin.py reputation override delete ip 192.0.2.8 --previous-audit ticket-123 --reason resolved --origin operator --audit-id ticket-124
+./nauthilus-admin.py reputation override import /run/private/static-import.json
 ./nauthilus-admin.py reputation allocation status
 ./nauthilus-admin.py reputation allocation drain --reason key_rotation --origin operator --audit-id rotation-123
 ```
@@ -63,6 +64,27 @@ process arguments and shell history. No command offers enumeration or storage
 key access. Override lifetime is mandatory: `--ttl-seconds 0` explicitly means
 no expiration. Replacing an existing override requires `--previous-audit`;
 `--slot previous` explicitly addresses the previous subject-key generation.
+
+`override import` applies the `overrides` of a `reputation-static-import.v1`
+artifact written by `scripts/convert-static-reputation.py`. The whole artifact
+is validated first (schema, exact entry fields, kind, band, audit fields,
+`expires_at`, duplicate subjects); any problem aborts the import with the
+offending `overrides[N]` indices and nothing is sent. Each valid entry becomes
+one `override put` to the active slot: `ttl_seconds` is computed as
+`expires_at - now` immediately before its request, `expires_at: 0` maps to
+`ttl_seconds: 0` (non-expiring), and entries whose expiry has already passed are
+skipped and reported as `skipped-expired`. The artifact `creator` is ignored
+because the server records the authenticated token identity. The import does
+not send `previous_audit`, so replacing an existing override still requires an
+explicit `override put --previous-audit`. The other artifact sections
+(`ip_override_networks`, `identity_contracts`, `policy_rules`) are
+configuration and Policy input and are not applied by the client.
+
+Entries are applied sequentially without retries. Each entry produces a result
+line on stderr (`applied`, `skipped-expired`, `failed` with the reason, or
+`not-attempted`) and a JSON summary on stdout. The first failure stops the
+import unless `--continue-on-error` is given; any failed entry makes the command
+exit non-zero.
 
 The client does not retry mutations. On a transport error, timeout or uncertain
 response, inspect lookup/status before repeating the same change. Drain retry

@@ -4,6 +4,8 @@
 This offline tool is never linked into the server. It does not open Redis or
 load production credentials. Its output is a proposal for authenticated override
 import and ordered Policy/config integration, not an automatic deployment.
+Apply the overrides with `contrib/client/nauthilus-admin.py reputation override
+import <artifact>`.
 """
 
 import argparse
