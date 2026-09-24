@@ -138,3 +138,28 @@ the intended first prerelease is `v4.0.0-alpha.1`.
   300 ms and never blocks; verification no longer uses Redis. Existing
   `nauthilus:policy:basic:{...}` keys are no longer read or written and expire
   on their own. No configuration change is required.
+- `GET /livez` is the new liveness endpoint. It checks no dependency and
+  answers `200` with the fixed JSON document `{"status":"up"}`. `/healthz`
+  keeps its test login, Redis and LDAP checks and is meant only for readiness
+  and startup probes. Kubernetes liveness probes that point at `/healthz`
+  should switch to `/livez`, because a slow dependency or a busy pod otherwise
+  gets healthy pods restarted. `/ping` answers the plain text `pong`, which the
+  image's `healthcheck` binary cannot decode, so it is not a valid target for
+  that binary. See [Health Endpoints](health_endpoints.md).
+- Startup failures are logged once at `ERROR` with the failing startup step,
+  for example `start HTTP entry points: privilege drop failed: ...`.
+  Previously the reason went through the standard library log bridge at
+  `INFO` and was invisible at log level `warn`. The exit code stays `1`. When
+  the runtime startup fails, the background Lua script upload is cancelled
+  before the startup rollback closes the Redis client.
+- The reputation plugin retries transient Redis errors while its storage
+  starts: at most 10 attempts within about 50 s, each retry logged at `WARN`
+  with an `error_class` field such as `loading`, `connection` or `timeout`.
+  Permanent errors fail at once: ACL rejections, Lua script errors, and model
+  or allocation identity mismatches. This also applies to a start with
+  `allocation_maintenance` enabled. The start error now carries the Redis
+  cause; request-time storage errors stay sanitized. The plugin starts before
+  the HTTP listener, so the startup probe budget must cover the Redis readiness
+  loop of the host (up to 10 attempts 5 s apart) plus this retry before
+  `/healthz` can answer. The `startupProbe` example in
+  [Health Endpoints](health_endpoints.md) allows 150 s.
