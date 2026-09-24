@@ -2777,6 +2777,12 @@ func (a *AuthState) ShouldEnforceBucketUpdate() (bool, error) {
 	return bm.ShouldEnforceBucketUpdate()
 }
 
+// PrefetchPreAuthState reads the pre-authentication brute-force state for the given rules in one round trip.
+func (a *AuthState) PrefetchPreAuthState(rules []config.BruteForceRule) {
+	bm := a.createBucketManager(a.Ctx())
+	bm.PrefetchPreAuthState(rules)
+}
+
 // PrepareNetcalc pre-calculates network CIDRs for brute force rules.
 func (a *AuthState) PrepareNetcalc(rules []config.BruteForceRule) {
 	bm := a.createBucketManager(a.Ctx())

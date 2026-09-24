@@ -167,15 +167,32 @@ func (a *AuthState) CheckBruteForce(ctx *gin.Context) (blockClientIP bool) {
 	}
 
 	bm := a.newBruteForceBucketManager(ctx)
+	activeRules := a.prepareActiveBruteForceRules(ctx, tr, bm, rules)
+
+	// One pipeline fetches the RWP precheck, the cached bans and the reputation before any decision.
+	bm.PrefetchPreAuthState(activeRules)
 	a.cacheBruteForceRWPDecision(ctx, bm)
 
 	if a.Runtime.BruteForceError {
 		return true
 	}
 
-	triggered, ruleTriggered := a.runBruteForceRuleCheck(ctx, tr, bm, rules)
+	triggered, ruleTriggered := a.runBruteForceRuleCheck(ctx, bm, activeRules)
 
 	return triggered
+}
+
+// prepareActiveBruteForceRules filters the rules for this request and precomputes their client networks.
+func (a *AuthState) prepareActiveBruteForceRules(
+	ctx *gin.Context,
+	tr monittrace.Tracer,
+	bm bruteforce.BucketManager,
+	rules []config.BruteForceRule,
+) []config.BruteForceRule {
+	activeRules := a.filterActiveBruteForceRules(ctx, tr, rules, net.ParseIP(a.Request.ClientIP))
+	bm.PrepareNetcalc(activeRules)
+
+	return activeRules
 }
 
 // observeBruteForceEvaluation records the elapsed time of one brute-force rule evaluation.
@@ -221,14 +238,13 @@ func (a *AuthState) isBruteForceCheckProtocolEnabled(cfg config.File) bool {
 	return false
 }
 
-// runBruteForceRuleCheck evaluates configured rules and applies matched brute-force state.
+// runBruteForceRuleCheck evaluates the active rules and applies matched brute-force state.
 func (a *AuthState) runBruteForceRuleCheck(
 	ctx *gin.Context,
-	tr monittrace.Tracer,
 	bm bruteforce.BucketManager,
-	rules []config.BruteForceRule,
+	activeRules []config.BruteForceRule,
 ) (bool, bool) {
-	eval, abort := a.evaluateBruteForceRules(ctx, tr, bm, rules)
+	eval, abort := a.evaluateBruteForceRules(bm, activeRules)
 	if abort {
 		a.Runtime.BruteForceError = true
 		return true, false
@@ -379,17 +395,11 @@ func (a *AuthState) cacheBruteForceRWPDecision(ctx *gin.Context, bm bruteforce.B
 	}
 }
 
-// evaluateBruteForceRules filters active rules and evaluates repeat and over-limit paths.
+// evaluateBruteForceRules evaluates the repeat and over-limit paths for the active rules.
 func (a *AuthState) evaluateBruteForceRules(
-	ctx *gin.Context,
-	tr monittrace.Tracer,
 	bm bruteforce.BucketManager,
-	rules []config.BruteForceRule,
+	activeRules []config.BruteForceRule,
 ) (bruteForceRuleEvaluation, bool) {
-	ip := net.ParseIP(a.Request.ClientIP)
-	activeRules := a.filterActiveBruteForceRules(ctx, tr, rules, ip)
-	bm.PrepareNetcalc(activeRules)
-
 	eval := bruteForceRuleEvaluation{
 		network: &net.IPNet{},
 		rules:   activeRules,

@@ -201,6 +201,11 @@ type BucketManager interface {
 	// This must only be called after confirming that the rejection was due to a genuine authentication
 	// failure, not a environment-based rejection (e.g., RBL) where the password was never verified.
 	CommitRWPSlidingWindow() (bool, error)
+
+	// PrefetchPreAuthState reads the RWP precheck, the cached ban state and the adaptive reputation for the
+	// given active rules in one Redis round trip. An L1 block decision skips the prefetch. Later checks of the
+	// same request consume the prefetched values instead of issuing their own reads.
+	PrefetchPreAuthState(rules []config.BruteForceRule)
 }
 
 // BucketPolicyFact is the read-only policy view of one configured brute-force bucket.
@@ -248,6 +253,7 @@ type bucketManagerImpl struct {
 	ipIsV6               bool
 	ipv6Validated        bool
 	rwpDecision          *bool
+	preAuth              *preAuthPrefetch
 }
 
 func (bm *bucketManagerImpl) cfg() config.File {
@@ -879,7 +885,7 @@ func (bm *bucketManagerImpl) CheckRepeatingBruteForcer(rules []config.BruteForce
 	logger := bm.logger()
 	*network = nil
 
-	result := bm.gatherRepeatingCandidates(ctx, rules)
+	result := bm.repeatingCandidates(ctx, rules)
 	if result.withError {
 		return true, false, result.ruleNumber
 	}
@@ -926,8 +932,8 @@ func (bm *bucketManagerImpl) checkRepeatingL1Hit(
 	return bm.applyRepeatingL1Decision(sp, rules, network, message, dec)
 }
 
-// repeatingL1Decision returns a burst or network cached decision when available.
-func (bm *bucketManagerImpl) repeatingL1Decision(rules []config.BruteForceRule) (l1.Decision, bool) {
+// lookupRepeatingL1Decision returns a burst or network cached decision when available.
+func (bm *bucketManagerImpl) lookupRepeatingL1Decision(rules []config.BruteForceRule) (l1.Decision, bool) {
 	dec, ok := l1.GetEngine().Get(bm.ctx, l1.KeyBurst(bm.bfBurstKey()))
 	if ok {
 		return dec, true
@@ -1051,7 +1057,7 @@ func (bm *bucketManagerImpl) applyRepeatingPreResult(
 		return false, 0
 	}
 
-	cmds, err := bm.pipelineExistsBanKeys(bm.ctx, repeatingCandidateFields(candidates), "pipeline_exists_ban_preresult")
+	cmds, err := bm.existsBanKeys(bm.ctx, repeatingCandidateFields(candidates), "pipeline_exists_ban_preresult")
 	if err != nil && !errors2.Is(err, redis.Nil) {
 		level.Warn(logger).Log(definitions.LogKeyGUID, bm.guid, definitions.LogKeyMsg, fmt.Sprintf("Pipeline EXISTS ban-key failed: %v", err))
 
@@ -1349,7 +1355,7 @@ func (bm *bucketManagerImpl) markBucketPolicyBanState(
 		networks[i] = cands[i].network.String()
 	}
 
-	cmds, err := bm.pipelineExistsBanKeys(ctx, networks, "pipeline_exists_ban_policy_facts")
+	cmds, err := bm.existsBanKeys(ctx, networks, "pipeline_exists_ban_policy_facts")
 	if err != nil && !errors2.Is(err, redis.Nil) {
 		_ = level.Warn(bm.logger()).Log(
 			definitions.LogKeyGUID, bm.guid,
@@ -2360,6 +2366,10 @@ func (bm *bucketManagerImpl) currentPasswordHash() string {
 // only when its hash is already recorded within the rolling window. New hashes never qualify.
 // This is a read-only check; the actual write is deferred to CommitRWPSlidingWindow.
 func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err error) {
+	if call := bm.preAuth.takeRWPCheck(); call != nil {
+		return rwpCheckResult(call.Result())
+	}
+
 	logger := bm.logger()
 
 	args := bm.buildRWPScriptArgs()
@@ -2376,26 +2386,16 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 
 	// Read-only check using Lua script (no ZADD — the write is deferred to CommitRWPSlidingWindow)
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-	res, execErr := rediscli.ExecuteScript(
+	defer cancel()
+
+	return rwpCheckResult(rediscli.ExecuteScript(
 		dCtx,
 		bm.redis(),
-		"RWPSlidingWindowCheck",
-		rediscli.LuaScripts["RWPSlidingWindowCheck"],
+		rwpCheckScriptName,
+		rediscli.LuaScripts[rwpCheckScriptName],
 		[]string{args.allowKey},
 		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
-	)
-
-	cancel()
-
-	if execErr != nil {
-		return false, execErr
-	}
-
-	if v, ok := res.(int64); ok && v == 1 {
-		return true, nil
-	}
-
-	return false, nil
+	))
 }
 
 // checkEnforceBruteForceComputation determines if brute force computation must be enforced based on user and password state.
@@ -2917,13 +2917,7 @@ func (bm *bucketManagerImpl) resolveAccountNameForHistory() string {
 func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64) {
 	if bm.tolerate() != nil {
 		repKey = bm.tolerate().GetReputationKey(bm.clientIP)
-
-		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
-		defer cancel()
-
-		if val, err := bm.redis().GetReadHandle().HGet(dCtx, repKey, "positive").Int64(); err == nil {
-			positive = val
-		}
+		positive = bm.reputationPositive(repKey)
 	}
 
 	bfCfg := bm.cfg().GetBruteForce()

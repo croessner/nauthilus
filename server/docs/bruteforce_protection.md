@@ -34,15 +34,18 @@ The following flowchart illustrates the decision process during `CheckBruteForce
 flowchart TD
     A[Request Start] --> B{Protocol Enabled?}
     B -- No --> C[Allow Request]
-    B -- Yes --> RWP_EARLY[ShouldEnforceBucketUpdate]
+    B -- Yes --> D[Filter Active Rules]
+    D --> E[Prepare Netcalc]
+    E --> PF{L1 Engine Block?}
+    PF -- Yes --> RWP_EARLY
+    PF -- No --> PF_PIPE[PrefetchPreAuthState: one pipeline with RWP check, ban EXISTS and reputation HGET]
+    PF_PIPE --> RWP_EARLY[ShouldEnforceBucketUpdate]
 
     subgraph RWP_Cache [Early RWP Check & Context Cache]
         RWP_EARLY --> RWP_STORE[Store RWP Result in gin.Context]
     end
 
-    RWP_STORE --> D[Filter Active Rules]
-    D --> E[Prepare Netcalc]
-    E --> F[CheckRepeatingBruteForcer]
+    RWP_STORE --> F[CheckRepeatingBruteForcer]
     
     subgraph L1_L2_Check [L1 & L2 Cached Block Check]
         F --> F1{L1 Engine Hit?}
@@ -177,6 +180,15 @@ because a pipeline only reports its first error.
   password hash in that set, and `SCARD` of the IP-scoped set run as one pipeline on the read handle. Account-less
   requests skip the account reads; a password-less request skips the membership read. The pipeline never carries
   Lua, so a cluster keeps routing it to read replicas.
+* **Pre-authentication check (`pipeline_preauth_check`):** `PrefetchPreAuthState` queues the read-only
+  `RWPSlidingWindowCheck` script, `EXISTS` of every candidate ban key and `HGET` of the reputation `positive`
+  counter into one pipeline. With the RWP script the pipeline runs on the write handle, because `EVALSHA` is routed
+  to masters anyway; account-less requests keep it on the read handle. The following checks consume these values,
+  so a normal check needs this pipeline plus the bucket-counter pipeline (`pipeline_eval_bucket_counter`) instead
+  of four sequential round trips. The reputation value is a request-scoped snapshot that later bucket evaluations of
+  the same request reuse. An L1 block decision skips the prefetch; the RWP check then runs alone as before.
+  A script that is missing on a node is re-uploaded and only the failed script calls run again
+  (`rediscli.ScriptPipeline`).
 
 ## 4. Sequence Diagram
 
@@ -192,16 +204,14 @@ sequenceDiagram
     participant PS as Redis Pub/Sub
 
     C->>BM: CheckBruteForce()
-    Note over BM, R: Early RWP check
-    BM ->> R: EVAL (RWPSlidingWindowCheck)
-    R -->> BM: Enforce=true
-    BM ->> Ctx: Set(CtxRWPResultKey, true)
-    Note over BM, L1: Rule evaluation
     BM->>L1: Get(BurstKey)
     L1-->>BM: Miss
-    BM ->> R: EXISTS (Ban Keys via Pipeline)
-    R -->> BM: 0 (no active ban)
-    BM->>R: EVAL (SlidingWindowCounter)
+    Note over BM, R: One pre-authentication pipeline
+    BM ->> R: EVALSHA (RWPSlidingWindowCheck) + EXISTS (Ban Keys) + HGET (Reputation)
+    R -->> BM: Enforce=true, 0 (no active ban), positive
+    BM ->> Ctx: Set(CtxRWPResultKey, true)
+    Note over BM, R: Rule evaluation reuses the prefetched values
+    BM->>R: EVALSHA (SlidingWindowCounter via Pipeline)
     R-->>BM: Total > Limit
     BM->>BM: ProcessBruteForce(triggered=true)
     BM->>BM: checkEnforceBruteForceComputation()
