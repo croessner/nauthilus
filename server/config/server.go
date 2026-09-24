@@ -2201,7 +2201,7 @@ func (r Replica) GetAddresses() []string {
 // Sentinels represents the configuration for Redis Sentinel.
 type Sentinels struct {
 	Master    string       `mapstructure:"master" validate:"required,printascii,excludesall= "`
-	Addresses []string     `mapstructure:"addresses" validate:"required,dive,hostname_port"`
+	Addresses []string     `mapstructure:"addresses" validate:"required,min=1,dive,hostname_port"`
 	Username  string       `mapstructure:"username" validate:"omitempty,excludesall= "`
 	Password  secret.Value `mapstructure:"password" validate:"omitempty,secret_excludesall= "`
 }

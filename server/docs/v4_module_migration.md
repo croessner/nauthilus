@@ -44,7 +44,8 @@ the intended first prerelease is `v4.0.0-alpha.1`.
 - A `storage.redis.sentinels` block whose fields are all empty, as printed by
   `nauthilus -d`, is treated as "Sentinel not configured" and no longer fails
   validation with `master` `required`. As soon as any Sentinel field is set,
-  the block is validated strictly as before.
+  the block is validated strictly as before, and `addresses` must then list at
+  least one Sentinel; `master` with `addresses: []` fails validation.
 - Edge nodes discard an authority caller token that the authority rejects.
   On `UNAUTHENTICATED` the edge deletes the cached token from its Redis only
   if the cache still holds exactly that token, fetches a replacement through

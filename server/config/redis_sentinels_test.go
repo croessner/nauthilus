@@ -87,9 +87,10 @@ func TestHandleFileAcceptsEmptySentinelsFromDefaultDump(t *testing.T) {
 
 func TestHandleFileKeepsPartialSentinelsStrict(t *testing.T) {
 	for name, sentinels := range map[string]string{
-		"addresses without master": "sentinels:\n  master: \"\"\n  addresses:\n    - sentinel.example.test:26379\n",
-		"username only":            "sentinels:\n  username: sentinel-user\n",
-		"password only":            "sentinels:\n  password: sentinel-secret\n",
+		"addresses without master":    "sentinels:\n  master: \"\"\n  addresses:\n    - sentinel.example.test:26379\n",
+		"master with empty addresses": "sentinels:\n  master: mymaster\n  addresses: []\n",
+		"username only":               "sentinels:\n  username: sentinel-user\n",
+		"password only":               "sentinels:\n  password: sentinel-secret\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := handleFileFromContent(t, sentinelConfig(sentinels))
