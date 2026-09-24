@@ -40,7 +40,7 @@ services:
       - /etc/ssl/certs/localhost.localdomain_mail.pem:/etc/nauthilus/localhost.localdomain_mail.pem:ro,Z
       - /etc/ssl/private/localhost.localdomain_mail.key.pem://etc/nauthilus/localhost.localdomain_mail.key.pem:ro,Z
     healthcheck:
-      test: [ "CMD", "/usr/app/healthcheck", "--url", "https://127.0.0.1:19443/ping", "--tls-skip-verify" ]
+      test: [ "CMD", "/usr/app/healthcheck", "--url", "https://127.0.0.1:19443/livez", "--tls-skip-verify" ]
       timeout: 30s
       interval: 10s
       retries: 2

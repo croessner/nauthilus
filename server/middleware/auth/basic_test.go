@@ -87,7 +87,11 @@ func TestBasicAuthAccountsOnlyBackchannelRoutes(t *testing.T) {
 	rejectedBefore := httpCallerAuthCount(callerOutcomeRejected)
 	acceptedBefore := httpCallerAuthCount(callerOutcomeAccepted)
 
-	assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/metrics", cfg, "1.2.3.5", "wrong"))
+	for _, path := range []string{"/ping", "/livez", "/healthz", "/metrics"} {
+		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt(path, cfg, "1.2.3.5", "wrong"), path)
+		assert.Equal(t, http.StatusOK, serveBasicAuthAttempt(path, cfg, "1.2.3.5", "password"), path)
+	}
+
 	assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", cfg, "1.2.3.5", "wrong"))
 	assert.Equal(t, http.StatusOK, serveBasicAuthAttempt("/other", cfg, "1.2.3.5", "password"))
 

@@ -123,7 +123,7 @@ func (c *Client) Run(ctx context.Context) error {
 }
 
 func main() {
-	pflag.StringP("url", "u", nauthilusURL, "nauthilus url to test")
+	pflag.StringP("url", "u", nauthilusURL, "nauthilus health url to test (/livez for liveness, /healthz for readiness)")
 	pflag.BoolP("verbose", "v", false, "Be verbose")
 	pflag.BoolP("tls-skip-verify", "t", false, "Skip TLS server certificate verification")
 	pflag.Parse()

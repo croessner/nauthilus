@@ -38,11 +38,14 @@ func New(cfg config.File, logger *slog.Logger, redis rediscli.Client) *Handler {
 	return &Handler{cfg: cfg, logger: logger, redis: redis}
 }
 
-// Register provides the exported Register method.
+// Register registers /ping, the dependency-free liveness probe /livez and the readiness probe /healthz.
 func (h *Handler) Register(router gin.IRouter) {
 	deps := HealthzDeps{Cfg: h.cfg, Logger: h.logger, Redis: h.redis}
 
 	router.GET("/ping", approuter.HealthCheck)
+	router.GET(LivenessPath, func(ctx *gin.Context) {
+		LivenessCheck(ctx, h.logger)
+	})
 	router.GET("/healthz", func(ctx *gin.Context) {
 		ReadinessCheck(ctx, deps)
 	})

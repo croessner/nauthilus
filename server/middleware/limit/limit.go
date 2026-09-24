@@ -33,11 +33,12 @@ import (
 )
 
 const (
-	limitBypassHealthPath  = "/healthz"
-	limitBypassMetricsPath = "/metrics"
-	limitBypassPingPath    = "/ping"
-	limitResponseKeyScope  = "scope"
-	limitScopeConcurrency  = "concurrency"
+	limitBypassHealthPath   = "/healthz"
+	limitBypassLivenessPath = "/livez"
+	limitBypassMetricsPath  = "/metrics"
+	limitBypassPingPath     = "/ping"
+	limitResponseKeyScope   = "scope"
+	limitScopeConcurrency   = "concurrency"
 )
 
 // Counter tracks the current number of active connections and limits them based on a specified maximum.
@@ -87,9 +88,15 @@ func (lc *Counter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-// isLimitBypassPath reports whether a path bypasses concurrency limits.
+// isLimitBypassPath reports whether a route bypasses the concurrency and rate limits. Probes and
+// metrics scrapes must keep answering while the server is saturated.
 func isLimitBypassPath(path string) bool {
-	return path == limitBypassPingPath || path == limitBypassHealthPath || path == limitBypassMetricsPath
+	switch path {
+	case limitBypassPingPath, limitBypassLivenessPath, limitBypassHealthPath, limitBypassMetricsPath:
+		return true
+	default:
+		return false
+	}
 }
 
 // rejectOverLimit writes the concurrency-limit response when the counter is full.

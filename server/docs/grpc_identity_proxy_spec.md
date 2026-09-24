@@ -1458,7 +1458,7 @@ A token validation that cannot be decided for technical reasons is not a rejecti
 
 The metric `backchannel_caller_auth_total{transport,outcome}` counts caller authentication outcomes;
 `transport` is `http` or `grpc`, `outcome` is `accepted`, `rejected`, or `unavailable`. Rejected Basic
-credentials on `/ping`, `/healthz`, and `/metrics` are delayed as well but not counted.
+credentials on `/ping`, `/livez`, `/healthz`, and `/metrics` are delayed as well but not counted.
 
 The Policy API (`POST /api/v1/policy/decisions` and `PolicyDecisionService/Evaluate`) is backchannel as well and follows
 the same rule for Policy-Basic callers: a wrong password is delayed by a fixed 300 ms, nobody is locked out,

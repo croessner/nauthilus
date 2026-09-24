@@ -33,9 +33,10 @@ import (
 )
 
 const (
-	authBypassHealthPath  = "/healthz"
-	authBypassMetricsPath = "/metrics"
-	authBypassPingPath    = "/ping"
+	authBypassHealthPath   = "/healthz"
+	authBypassLivenessPath = "/livez"
+	authBypassMetricsPath  = "/metrics"
+	authBypassPingPath     = "/ping"
 )
 
 // secureCompare compares two strings in constant time by hashing them first.
@@ -85,7 +86,7 @@ func NewHTTPCallerAccounting(ctx *gin.Context, cfg config.File, logger *slog.Log
 // isAuthBypassPath reports routes whose rejected credentials are delayed without caller accounting.
 func isAuthBypassPath(ctx *gin.Context) bool {
 	switch ctx.FullPath() {
-	case authBypassPingPath, authBypassHealthPath, authBypassMetricsPath:
+	case authBypassPingPath, authBypassLivenessPath, authBypassHealthPath, authBypassMetricsPath:
 		return true
 	default:
 		return false
