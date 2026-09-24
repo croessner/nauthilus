@@ -17,10 +17,14 @@ package rediscli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -31,19 +35,35 @@ import (
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const redisCommandClient = "client"
+
+// errBatchFlushPanic marks commands whose batching flush panicked before it
+// could report a regular result.
+var errBatchFlushPanic = errors.New("redis batching flush panicked")
+
+// Ownership states of a queued command. A command is shared between its caller
+// and the flush worker, so exactly one side may touch it at any time: the
+// caller until the worker claims it, the worker from the claim until it
+// reports back on done.
+const (
+	batchItemQueued int32 = iota
+	batchItemClaimed
+	batchItemAbandoned
+)
 
 // BatchingHook implements redis.Hook and batches individual Process calls
 // into short-lived pipelines to reduce network round-trips.
 //
 // Design goals:
-// - Preserve command ordering within a batch.
-// - Respect context cancellations by unblocking waiters; actual execution may still occur.
-// - Bypass batching when queue is saturated or for explicitly skipped commands.
-// - Keep the public client API intact by operating at Hook level.
+//   - Preserve command ordering within a batch.
+//   - Respect context cancellations for commands that are still queued: such a command
+//     is abandoned and never executed. A command already claimed by a flush stays owned
+//     by that flush, so its caller waits for the flush result (bounded by the pipeline
+//     and socket timeouts) instead of racing the executing pipeline on the command.
+//   - Bypass batching when queue is saturated or for explicitly skipped commands.
+//   - Keep the public client API intact by operating at Hook level.
 type BatchingHook struct {
 	client redis.UniversalClient
 
@@ -65,9 +85,40 @@ type BatchingHook struct {
 }
 
 type batchItem struct {
-	ctx  context.Context
-	cmd  redis.Cmder
-	done chan error
+	ctx   context.Context
+	cmd   redis.Cmder
+	done  chan error
+	state atomic.Int32
+}
+
+// claim transfers ownership of a queued command to the flush worker. It fails
+// when the caller has already abandoned the command.
+func (it *batchItem) claim() bool {
+	return it.state.CompareAndSwap(batchItemQueued, batchItemClaimed)
+}
+
+// abandon returns ownership of a still queued command to its caller. It fails
+// when the flush worker has already claimed the command.
+func (it *batchItem) abandon() bool {
+	return it.state.CompareAndSwap(batchItemQueued, batchItemAbandoned)
+}
+
+// wait blocks until the command result is available or the caller gives up.
+// go-redis stores the returned error on the command right after the hook
+// returns, so the caller may only return while it owns the command: either
+// the command was never claimed, or the worker has reported back.
+func (it *batchItem) wait(ctx context.Context) error {
+	select {
+	case err := <-it.done:
+		return err
+	case <-ctx.Done():
+		if it.abandon() {
+			return ctx.Err()
+		}
+
+		// The command is part of an executing pipeline; wait for the flush.
+		return <-it.done
+	}
 }
 
 // NewBatchingHook provides the exported NewBatchingHook function.
@@ -181,23 +232,58 @@ func stopBatchTimer(timeout *time.Timer) {
 }
 
 // flushBatch executes a collected command batch and notifies command waiters.
+// Waiters of claimed commands are always notified, even if the flush panics,
+// because they no longer honor their own context once the flush owns the command.
 func (h *BatchingHook) flushBatch(batch []*batchItem) {
-	fsp, execErr := h.executeBatchPipeline(batch)
-	if execErr != nil {
-		level.Debug(h.logger).Log(
-			definitions.LogKeyMsg, "Redis batching pipeline returned error",
-			definitions.LogKeyError, execErr,
-		)
-
-		fsp.RecordError(execErr)
+	claimed := claimBatchItems(batch)
+	if len(claimed) == 0 {
+		return
 	}
 
-	fsp.End()
-	notifyBatchWaiters(batch)
+	defer notifyBatchWaiters(claimed)
+	defer h.recoverFlushPanic(claimed)
+
+	h.executeBatchPipeline(claimed)
+}
+
+// claimBatchItems takes ownership of all commands whose callers are still
+// waiting and drops abandoned ones. It filters the batch in place.
+func claimBatchItems(batch []*batchItem) []*batchItem {
+	claimed := batch[:0]
+
+	for _, it := range batch {
+		if it.claim() {
+			claimed = append(claimed, it)
+		}
+	}
+
+	return claimed
+}
+
+// recoverFlushPanic turns a panic on the flush goroutine into a command error
+// so neither the process nor the waiting callers are taken down by it.
+func (h *BatchingHook) recoverFlushPanic(batch []*batchItem) {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+
+	err := fmt.Errorf("%w: %v", errBatchFlushPanic, recovered)
+
+	level.Error(h.logger).Log(
+		definitions.LogKeyMsg, "Redis batching flush panicked; failing the affected commands",
+		definitions.LogKeyError, err,
+		"batch_size", len(batch),
+		"stack", string(debug.Stack()),
+	)
+
+	for _, it := range batch {
+		it.cmd.SetErr(err)
+	}
 }
 
 // executeBatchPipeline traces and executes one Redis pipeline flush.
-func (h *BatchingHook) executeBatchPipeline(batch []*batchItem) (trace.Span, error) {
+func (h *BatchingHook) executeBatchPipeline(batch []*batchItem) {
 	tr := monittrace.New("nauthilus/redis_batch")
 	base := svcctx.Get()
 	fctx, fsp := tr.Start(base, "redis.uc.flush",
@@ -205,6 +291,8 @@ func (h *BatchingHook) executeBatchPipeline(batch []*batchItem) (trace.Span, err
 		attribute.Int("max_batch", h.maxBatch),
 		attribute.Int("max_wait_ms", int(h.maxWait.Milliseconds())),
 	)
+
+	defer fsp.End()
 
 	dCtx, cancel := context.WithTimeout(fctx, h.pipelineTimeout)
 	defer cancel()
@@ -215,7 +303,14 @@ func (h *BatchingHook) executeBatchPipeline(batch []*batchItem) (trace.Span, err
 		return nil
 	})
 
-	return fsp, execErr
+	if execErr != nil {
+		level.Debug(h.logger).Log(
+			definitions.LogKeyMsg, "Redis batching pipeline returned error",
+			definitions.LogKeyError, execErr,
+		)
+
+		fsp.RecordError(execErr)
+	}
 }
 
 // queuePipelineBatch queues all commands into the Redis pipeline.
@@ -234,7 +329,8 @@ func (h *BatchingHook) queuePipelineBatch(pipe redis.Pipeliner, batch []*batchIt
 	}
 }
 
-// notifyBatchWaiters sends individual command errors to waiting callers.
+// notifyBatchWaiters hands claimed commands back to their callers together with
+// the command error. Each done channel is buffered for exactly this one send.
 func notifyBatchWaiters(batch []*batchItem) {
 	for _, it := range batch {
 		var err error
@@ -242,11 +338,7 @@ func notifyBatchWaiters(batch []*batchItem) {
 			err = it.cmd.Err()
 		}
 
-		select {
-		case it.done <- err:
-		default:
-			// If waiter already gave up (ctx canceled), avoid blocking
-		}
+		it.done <- err
 	}
 }
 
@@ -285,22 +377,14 @@ func (h *BatchingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 		// Non-blocking enqueue; on overflow, fallback to direct execution
 		select {
 		case h.queue <- item:
-			// wait for completion or context
-			select {
-			case err := <-item.done:
-				if err != nil {
-					esp.RecordError(err)
-				}
-
-				esp.End()
-
-				return err
-			case <-ctx.Done():
-				esp.RecordError(ctx.Err())
-				esp.End()
-
-				return ctx.Err()
+			err := item.wait(ctx)
+			if err != nil {
+				esp.RecordError(err)
 			}
+
+			esp.End()
+
+			return err
 		default:
 			// Queue saturated – fallback to direct execution
 			esp.SetAttributes(attribute.Bool("fallback_direct", true))
