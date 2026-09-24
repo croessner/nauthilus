@@ -1428,19 +1428,27 @@ The values shown are the defaults. Only genuine rejections count:
 | Caller currently blocked | `RESOURCE_EXHAUSTED` | 429 | no |
 
 Exempt callers are never blocked per address, because they typically multiplex many independent requests
-over one address, for example a sidecar that reaches the authority through `127.0.0.1`. A caller is exempt
-when either
+over one address, for example a sidecar that reaches the authority through `127.0.0.1`. The exemption is
+decided by the **lockout address**, the address the caller is counted by: the client address resolved
+through trusted proxies, otherwise the direct transport peer. A caller is exempt when either
 
-- its **direct** transport peer lies in `exempt_networks`. The direct peer is the TCP upstream of the
-  connection: neither forwarding headers (`X-Forwarded-For`, `X-Real-IP`) nor a PROXY protocol header
-  (`runtime.servers.http.haproxy_v2`) can claim an exempt address. `trusted_proxies` itself grants no
-  exemption. When a trusted proxy resolves a client address that differs from the direct peer, the caller
-  is that client: it is never exempt and is locked out by the resolved address with the normal
-  `threshold`, so a guesser behind a loopback reverse proxy does not lock out the other clients of that
-  proxy. The same applies to a PROXY protocol source that differs from the TCP upstream. With Istio sidecar
-  interception the application sees inbound connections from `127.0.0.6`, which the loopback default
-  already covers; narrow `exempt_networks` to `127.0.0.1` if the mesh forwards external callers through
-  loopback; or
+- its lockout address lies in `exempt_networks` and is one of:
+  - the **direct** transport peer, that is, the TCP upstream of the connection. A PROXY protocol header
+    (`runtime.servers.http.haproxy_v2`) never supplies it; or
+  - the `X-Forwarded-For` client that a trusted proxy reported (HTTP only). This requires the direct TCP
+    peer itself to match `runtime.servers.http.trusted_proxies` (default loopback), no PROXY header to
+    have replaced the connection source, and the address to be the hop that the right-to-left walk over
+    `X-Forwarded-For` resolves: the first hop, from the right, that is not a trusted proxy. `X-Real-IP` is
+    never considered, and a loopback address counts only when the direct peer is loopback as well.
+
+  The proxy's own exemption never transfers: when a trusted proxy resolves a client address, the caller is
+  that client and is exempt only if that client address is listed, otherwise it is locked out by it with
+  the normal `threshold`, so a guesser behind a loopback reverse proxy does not lock out the other clients
+  of that proxy. A PROXY protocol source that differs from the TCP upstream is never exempt.
+  `trusted_proxies` itself grants no exemption; it only decides which reported address is the lockout
+  address. With Istio sidecar interception the application sees inbound connections from `127.0.0.6`,
+  which the loopback default already covers; narrow `exempt_networks` to `127.0.0.1` if the mesh forwards
+  external callers through loopback; or
 - it presents a client certificate that the gRPC listener verified against the dedicated
   `runtime.servers.grpc.authority.tls.client_ca` and whose common name, DNS SAN, or URI SAN is listed in
   `trusted_mtls_identities`. Matching is exact: DNS SANs are compared case-sensitively, and URI SANs in Go's
@@ -1462,9 +1470,36 @@ presentation from the same exempt network for `block_time`; valid tokens are not
 exempt callers are still refused and delayed; single
 rejections are logged at debug level, the start of a block at warning level.
 
+Example: Dovecot reaches the HTTP API through a TCP load balancer (HAProxy on `10.0.0.5` and
+`10.0.0.6`), a Kubernetes NodePort, and an HTTP sidecar in the pod that connects to Nauthilus on
+`127.0.0.1` and appends its TCP peer to `X-Forwarded-For`. With the default `trusted_proxies` (loopback),
+the lockout address is the load balancer, because it is the first untrusted hop from the right; any
+address before it was supplied by the client and is ignored. All Dovecot instances therefore share the
+load balancer address, and listing it keeps one client with a stale token from blocking all of them:
+
+```yaml
+auth:
+  backchannel:
+    failure_lockout:
+      exempt_networks: [127.0.0.0/8, ::1/128, 10.0.0.5/32, 10.0.0.6/32]
+```
+
+The exempt scope is then `10.0.0.5/32` or `10.0.0.6/32`, and each presented identity behind it is
+blocked only after `exempt_threshold` rejections. The load balancer address must reach the sidecar
+unchanged: source NAT in front of it, for example a Kubernetes Service with `externalTrafficPolicy:
+Cluster`, replaces it with a node address, and the callers fall back to the normal `threshold` together. Do not add the TCP load balancers to `trusted_proxies`:
+they do not write `X-Forwarded-For`, so the hop before them would be whatever the client sent. Only trust a
+proxy that appends its real peer to `X-Forwarded-For`; a trusted proxy that relays the header unchanged
+lets its clients claim any listed address. Nauthilus reads every `X-Forwarded-For` header line in the
+order received, so the proxy may extend the existing line or add its own.
+
+Because valid credentials of an exempt caller pass while its identity is blocked, a blocked rejection is
+still delayed by `sleep_on_fail`. An exempt scope is nevertheless a weaker brake than the per-address
+lockout, so the exempt addresses must be reachable only by the intended callers.
+
 The metric `backchannel_caller_auth_total{transport,outcome,trusted}` counts outcomes (`accepted`,
-`rejected`, `unavailable`, `throttled`); `trusted` reports the exemption. The start of every block is logged
-once at warning level. Neither log contains credentials, tokens, or presented identities.
+`rejected`, `unavailable`, `throttled`); `trusted` reports the exemption of the lockout address. The start
+of every block is logged once at warning level. Neither log contains credentials, tokens, or presented identities.
 
 The OIDC endpoints `/oidc/token` and `/oidc/introspect` authenticate OIDC clients and are **not** covered by
 this lockout; they have no per-address brake for client-secret guessing. Token introspection answers 503

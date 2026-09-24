@@ -78,15 +78,19 @@ func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, passwor
 }
 
 // NewHTTPCallerGuard classifies the caller of an HTTP backchannel request for failure accounting.
-// Untrusted callers are locked out by the client IP resolved through runtime.servers.http.trusted_proxies;
-// the exemption only ever considers the direct peer. HTTP has no dedicated client CA for backchannel
-// callers, so client certificates never exempt an HTTP caller.
+// Callers are locked out by the client IP resolved through runtime.servers.http.trusted_proxies. The
+// exemption considers that address only when it is the direct TCP peer or the X-Forwarded-For client of a
+// trusted direct peer. HTTP has no dedicated client CA for backchannel callers, so client certificates
+// never exempt an HTTP caller.
 func NewHTTPCallerGuard(ctx *gin.Context, cfg config.File, logger *slog.Logger) *CallerGuard {
+	peerIP := directPeerIP(ctx)
+
 	return NewCallerGuard(cfg, logger, CallerIdentity{
-		IP:        requestClientIP(ctx, cfg),
-		PeerIP:    directPeerIP(ctx),
-		Presented: PresentedCredentialIdentity(ctx.Request.Header.Values("Authorization")),
-		Transport: CallerTransportHTTP,
+		IP:          requestClientIP(ctx, cfg),
+		PeerIP:      peerIP,
+		ForwardedIP: trustedForwardedIP(ctx, cfg, peerIP),
+		Presented:   PresentedCredentialIdentity(ctx.Request.Header.Values("Authorization")),
+		Transport:   CallerTransportHTTP,
 	})
 }
 

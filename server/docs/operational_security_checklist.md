@@ -18,13 +18,22 @@ This checklist is intended for release readiness and recurring security operatio
       `auth.backchannel.failure_lockout.exempt_networks` (default loopback) or present a client certificate
       listed in `trusted_mtls_identities` and verified by the dedicated gRPC `client_ca`. Exemptions stay
       narrow: no cluster or ingress CIDRs, and `trusted_proxies` is not an exemption.
+- [ ] The exemption is checked against the lockout address: the direct TCP peer, or the `X-Forwarded-For`
+      client that a trusted direct peer reported (first untrusted hop from the right). For
+      HAProxy (TCP) -> HTTP sidecar on loopback -> Nauthilus, the lockout address is the HAProxy address that
+      the sidecar appends, so `exempt_networks` lists the HAProxy addresses as `/32`, not the sidecar or the
+      pod network. Every proxy in `trusted_proxies` appends its real peer to `X-Forwarded-For`; verify with
+      `backchannel_caller_auth_total{transport="http",trusted="true"}`.
+- [ ] No source NAT sits between an exempt load balancer and the sidecar (for Kubernetes,
+      `externalTrafficPolicy: Local`), and the exempt load balancer frontend is reachable only from the
+      intended backchannel callers.
 - [ ] `auth.backchannel.failure_lockout` is reviewed, including `exempt_threshold`; alerts watch
       `backchannel_caller_auth_total{outcome=~"throttled|unavailable"}`.
 - [ ] `/oidc/token` and `/oidc/introspect` are not covered by the backchannel lockout; client-secret guessing
       there is limited by network exposure and upstream rate limits.
 - [ ] With `runtime.servers.http.haproxy_v2` enabled, the listener accepts PROXY headers from every TCP peer.
-      The lockout exemption ignores PROXY sources, but lockout keys and logs still use them, so the listener is
-      reachable only from the PROXY-speaking load balancers.
+      The lockout exemption ignores PROXY sources and forwarding headers behind them, but lockout keys and
+      logs still use them, so the listener is reachable only from the PROXY-speaking load balancers.
 - [ ] **Staging**: `/api/v1/*` is not publicly exposed.
 
 Evidence:

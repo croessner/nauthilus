@@ -61,13 +61,17 @@ type callerAuthMetrics interface {
 
 // CallerIdentity describes the transport-level facts that decide how a backchannel caller is accounted.
 type CallerIdentity struct {
-	// IP is the source address that untrusted callers are locked out by. HTTP may resolve it from
-	// forwarding headers of trusted proxies.
+	// IP is the lockout address: the source address the caller is accounted by. HTTP may resolve it from
+	// forwarding headers of trusted proxies or take it from a PROXY protocol header.
 	IP string
 	// PeerIP is the direct transport peer: the TCP upstream of the connection, even when a PROXY protocol
-	// header supplied a different source. It is the only address considered for the exemption, so neither
-	// forwarding headers nor PROXY headers can claim an exempt address.
+	// header supplied a different source. When IP is the direct peer, the exemption considers PeerIP.
 	PeerIP string
+	// ForwardedIP is the X-Forwarded-For client, resolved right to left, that the direct transport peer
+	// reported as a trusted proxy while no PROXY protocol header replaced the connection source. When IP is
+	// this address, the exemption considers it; any other resolved IP is never exempt, so neither PROXY
+	// headers nor forwarding headers from untrusted peers can claim an exempt address.
+	ForwardedIP string
 	// Presented is the credential identity the request presents, see PresentedCredentialIdentity.
 	Presented string
 	// Transport is CallerTransportGRPC or CallerTransportHTTP.
@@ -78,12 +82,12 @@ type CallerIdentity struct {
 
 // CallerGuard applies failure lockout and outcome accounting to one backchannel caller.
 //
-// Callers whose direct peer lies in auth.backchannel.failure_lockout.exempt_networks, or whose verified
+// Callers whose lockout address lies in auth.backchannel.failure_lockout.exempt_networks, or whose verified
 // client certificate carries an identity from trusted_mtls_identities, are exempt from the address lockout:
 // they typically multiplex many independent requests over one address, so an address lockout would reject
-// all of them. Exempt callers are counted per (exempt scope, presented identity) with exempt_threshold
-// instead, which still stops a single guesser. A caller whose address a trusted proxy resolved to a different
-// client is never exempt. A guard serves one request and is not safe for concurrent use.
+// all of them. The lockout address is the direct peer, or the client that a trusted direct peer reported in
+// X-Forwarded-For. Exempt callers are counted per (exempt scope, presented identity) with exempt_threshold
+// instead, which still stops a single guesser. A guard serves one request and is not safe for concurrent use.
 type CallerGuard struct {
 	cfg         config.File
 	logger      *slog.Logger
@@ -111,9 +115,10 @@ func NewCallerGuard(cfg config.File, logger *slog.Logger, caller CallerIdentity)
 
 // Exempt reports whether the caller is exempt from the address lockout.
 //
-// A caller is exempt only when its lockout address is its direct peer. When a trusted proxy resolved a
-// different client address, the caller is that client and is locked out by it with the normal threshold;
-// exempting the proxy address would let every client behind it guess with the higher exempt threshold.
+// The exemption is decided by the lockout address. When a trusted proxy resolved a client address, the
+// caller is that client: it is exempt only when the client address itself lies in exempt_networks, never
+// because the proxy is. Exempting by the proxy address would let every client behind it guess with the
+// higher exempt threshold.
 func (g *CallerGuard) Exempt() bool {
 	return g.exemptScope() != ""
 }
@@ -126,20 +131,48 @@ func (g *CallerGuard) exemptScope() string {
 	}
 
 	g.exemptKnown = true
-
-	if g.caller.IP != "" && !sameAddress(g.caller.IP, g.caller.PeerIP) {
-		return g.scope
-	}
-
-	settings := lockoutSettings(g.cfg)
-
-	if identity, ok := firstAllowedIdentity(settings.GetTrustedMTLSIdentities(), g.caller.MTLSIdentities); ok {
-		g.scope = exemptScopeMTLS + identity
-	} else if network, ok := matchingNetwork(g.caller.PeerIP, settings.GetExemptNetworks()); ok {
-		g.scope = exemptScopeNetwork + network
-	}
+	g.scope = g.classifyExemption(lockoutSettings(g.cfg))
 
 	return g.scope
+}
+
+// classifyExemption returns the exempt scope of the lockout address. A caller accounted by its direct peer
+// is exempted by its verified mTLS identity or by the peer's network. A caller accounted by a trusted
+// forwarded address is exempted only by that address's network: mTLS authenticates the proxy connection,
+// not the client behind it. Any other lockout address, such as a PROXY protocol source, is never exempt.
+func (g *CallerGuard) classifyExemption(settings *config.BackchannelLockout) string {
+	switch {
+	case g.caller.IP == "" || sameAddress(g.caller.IP, g.caller.PeerIP):
+		if identity, ok := firstAllowedIdentity(settings.GetTrustedMTLSIdentities(), g.caller.MTLSIdentities); ok {
+			return exemptScopeMTLS + identity
+		}
+
+		return exemptNetworkScope(g.caller.PeerIP, settings)
+	case g.lockedOutByTrustedForwardedAddress():
+		return exemptNetworkScope(g.caller.IP, settings)
+	default:
+		return ""
+	}
+}
+
+// lockedOutByTrustedForwardedAddress reports whether the lockout address is the X-Forwarded-For client
+// that a trusted direct peer reported. A forwarded loopback address only counts from a loopback peer,
+// because no other host has a loopback client; a remote proxy reporting one relays an unverified header.
+func (g *CallerGuard) lockedOutByTrustedForwardedAddress() bool {
+	if g.caller.ForwardedIP == "" || !sameAddress(g.caller.IP, g.caller.ForwardedIP) {
+		return false
+	}
+
+	return !isLoopbackAddress(g.caller.IP) || isLoopbackAddress(g.caller.PeerIP)
+}
+
+// lockoutAddress returns the address the caller is accounted and logged by.
+func (g *CallerGuard) lockoutAddress() string {
+	if g.caller.IP != "" {
+		return g.caller.IP
+	}
+
+	return g.caller.PeerIP
 }
 
 // Throttled reports, before the credentials are checked, whether the caller is locked out and for how much
@@ -156,9 +189,16 @@ func (g *CallerGuard) Throttled() (bool, time.Duration) {
 }
 
 // RejectionThrottled reports, for credentials that were just rejected, whether the caller's counter is
-// already blocked. A throttled rejection is answered as throttled and is neither counted nor delayed again.
+// already blocked. A throttled rejection is answered as throttled and is not counted again, but it is
+// delayed like a counted one: an exempt identity is blocked only after its credentials were checked, so
+// without the delay a guesser would learn at full speed whether a guess is valid while it is blocked.
 func (g *CallerGuard) RejectionThrottled() (bool, time.Duration) {
-	return g.throttled()
+	blocked, remaining := g.throttled()
+	if blocked {
+		time.Sleep(lockoutPolicyFor(g.cfg).sleepOnFail)
+	}
+
+	return blocked, remaining
 }
 
 // throttled checks the caller's counter without registering a new exempt identity.
@@ -218,7 +258,7 @@ func (g *CallerGuard) Reject(reason string) {
 		_ = level.Debug(g.logger).Log(
 			definitions.LogKeyMsg, "Exempt backchannel caller authentication rejected",
 			logKeyCallerTransport, g.caller.Transport,
-			definitions.LogKeyClientIP, g.caller.PeerIP,
+			definitions.LogKeyClientIP, g.lockoutAddress(),
 			logKeyCallerReason, reason,
 		)
 	}
@@ -244,15 +284,10 @@ func (g *CallerGuard) Unavailable() {
 
 // logLockout reports the start of one lockout exactly once. It never logs presented identities.
 func (g *CallerGuard) logLockout(policy lockoutPolicy) {
-	ip := g.caller.IP
-	if g.Exempt() {
-		ip = g.caller.PeerIP
-	}
-
 	_ = level.Warn(g.logger).Log(
 		definitions.LogKeyMsg, "Backchannel caller locked out after repeated authentication failures",
 		logKeyCallerTransport, g.caller.Transport,
-		definitions.LogKeyClientIP, ip,
+		definitions.LogKeyClientIP, g.lockoutAddress(),
 		logKeyCallerExempt, g.Exempt(),
 		"threshold", policy.threshold,
 		"window", policy.window.String(),
@@ -276,6 +311,15 @@ func lockoutSettings(cfg config.File) *config.BackchannelLockout {
 	}
 
 	return cfg.GetServer().GetBackchannelLockout()
+}
+
+// exemptNetworkScope returns the exempt scope of the exempt_networks entry that contains ip, or "".
+func exemptNetworkScope(ip string, settings *config.BackchannelLockout) string {
+	if network, ok := matchingNetwork(ip, settings.GetExemptNetworks()); ok {
+		return exemptScopeNetwork + network
+	}
+
+	return ""
 }
 
 // matchingNetwork returns the configured address or CIDR network that contains ip.
@@ -315,6 +359,13 @@ func sameAddress(left string, right string) bool {
 	}
 
 	return leftAddress.Unmap() == rightAddress.Unmap()
+}
+
+// isLoopbackAddress reports whether ip is a loopback address, including IPv4-mapped IPv6 forms.
+func isLoopbackAddress(ip string) bool {
+	address, err := netip.ParseAddr(ip)
+
+	return err == nil && address.Unmap().IsLoopback()
 }
 
 // firstAllowedIdentity returns the first certificate identity that is allow-listed exactly.

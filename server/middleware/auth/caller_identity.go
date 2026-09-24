@@ -21,6 +21,8 @@ import (
 	"net"
 	"strings"
 
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 )
 
@@ -88,6 +90,12 @@ func directPeerIP(ctx *gin.Context) string {
 		return address
 	}
 
+	return remoteAddrIP(ctx)
+}
+
+// remoteAddrIP returns the host of http.Request.RemoteAddr, which carries the PROXY protocol source when
+// PROXY is enabled.
+func remoteAddrIP(ctx *gin.Context) string {
 	remoteAddr := strings.TrimSpace(ctx.Request.RemoteAddr)
 
 	host, _, err := net.SplitHostPort(remoteAddr)
@@ -96,4 +104,15 @@ func directPeerIP(ctx *gin.Context) string {
 	}
 
 	return host
+}
+
+// trustedForwardedIP returns the X-Forwarded-For client that the direct transport peer reported as a
+// trusted proxy. It is empty when a PROXY protocol header replaced the connection source, so neither a
+// PROXY header nor forwarding headers from an untrusted peer can supply an address for the exemption.
+func trustedForwardedIP(ctx *gin.Context, cfg config.File, peerIP string) string {
+	if peerIP == "" || !sameAddress(peerIP, remoteAddrIP(ctx)) {
+		return ""
+	}
+
+	return util.TrustedProxyForwardedForIP(ctx, cfg, nil, peerIP)
 }

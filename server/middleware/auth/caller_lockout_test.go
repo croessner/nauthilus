@@ -147,12 +147,23 @@ func httpGuardContext(remoteAddr string, headers map[string]string) *gin.Context
 	return ctx
 }
 
-// TestNewHTTPCallerGuardClassifiesOnlyTheDirectPeer pins that forwarding headers never claim an exempt
-// address, even when a trusted proxy resolves the lockout key from them, and that HTTP client certificates
-// never exempt a caller because HTTP has no dedicated backchannel client CA.
-func TestNewHTTPCallerGuardClassifiesOnlyTheDirectPeer(t *testing.T) {
+// proxyProtocolGuardContext builds a request context whose PROXY protocol header claimed source differs
+// from the connection's TCP upstream transportPeer.
+func proxyProtocolGuardContext(source string, transportPeer string, headers map[string]string) *gin.Context {
+	ctx := httpGuardContext(source+":40000", headers)
+	ctx.Request = ctx.Request.WithContext(ContextWithTransportPeer(ctx.Request.Context(), transportPeer))
+
+	return ctx
+}
+
+// TestNewHTTPCallerGuardNeverExemptsUnverifiedAddresses pins that only the direct peer or the
+// X-Forwarded-For client of a trusted direct peer can be exempt: spoofed forwarding headers, headers from
+// untrusted peers, PROXY protocol sources, and loopback addresses relayed by a remote proxy never are, and
+// HTTP client certificates never exempt a caller because HTTP has no dedicated backchannel client CA.
+func TestNewHTTPCallerGuardNeverExemptsUnverifiedAddresses(t *testing.T) {
 	spoofed := map[string]string{"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
-	cfg := &config.FileSettings{Server: &config.ServerSection{TrustedProxies: []string{"10.0.0.5"}}}
+	balancer := map[string]string{"X-Forwarded-For": "192.168.0.5"}
+	cfg := &config.FileSettings{Server: &config.ServerSection{TrustedProxies: []string{"10.0.0.5", "127.0.0.1"}}}
 	certificate := &x509.Certificate{Subject: pkix.Name{CommonName: "doppelgaenger"}}
 
 	tests := []struct {
@@ -161,8 +172,18 @@ func TestNewHTTPCallerGuardClassifiesOnlyTheDirectPeer(t *testing.T) {
 		exempt bool
 	}{
 		{name: "direct loopback peer", ctx: httpGuardContext("127.0.0.1:40000", nil), exempt: true},
+		{name: "exempt client forwarded by trusted loopback proxy", ctx: httpGuardContext("127.0.0.1:40000", balancer), exempt: true},
 		{name: "spoofed headers from untrusted peer", ctx: httpGuardContext("203.0.113.5:40000", spoofed)},
-		{name: "loopback forwarded by trusted proxy", ctx: httpGuardContext("10.0.0.5:40000", spoofed)},
+		{name: "loopback forwarded by remote trusted proxy", ctx: httpGuardContext("10.0.0.5:40000", spoofed)},
+		{
+			name: "exempt address prepended before the untrusted hop",
+			ctx:  httpGuardContext("127.0.0.1:40000", map[string]string{"X-Forwarded-For": "192.168.0.5, 198.51.100.7"}),
+		},
+		{name: "exempt address forwarded by untrusted peer", ctx: httpGuardContext("198.51.100.7:40000", balancer)},
+		{name: "exempt address in X-Real-IP only", ctx: httpGuardContext("127.0.0.1:40000", map[string]string{"X-Real-IP": "192.168.0.5"})},
+		{name: "exempt PROXY source from foreign peer", ctx: proxyProtocolGuardContext("192.168.0.5", "198.51.100.7", nil)},
+		{name: "trusted PROXY source forwarding for foreign peer", ctx: proxyProtocolGuardContext("127.0.0.1", "198.51.100.7", balancer)},
+		{name: "PROXY source behind trusted balancer", ctx: proxyProtocolGuardContext("198.51.100.7", "127.0.0.1", balancer)},
 		{
 			name: "verified client certificate",
 			ctx: func() *gin.Context {
@@ -179,6 +200,7 @@ func TestNewHTTPCallerGuardClassifiesOnlyTheDirectPeer(t *testing.T) {
 	}
 
 	cfg.Server.BackchannelLockout.TrustedMTLSIdentities = []string{"doppelgaenger"}
+	cfg.Server.BackchannelLockout.ExemptNetworks = []string{"127.0.0.0/8", "::1/128", "192.168.0.5/32"}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -270,6 +292,54 @@ func TestExemptCallerIsBlockedPerPresentedIdentity(t *testing.T) {
 	}
 }
 
+// TestBlockedExemptRejectionIsDelayed pins that a rejection against a blocked exempt identity still costs
+// the configured delay. Valid credentials pass while the identity is blocked, so an undelayed 429 would let
+// a guesser test candidates at full speed.
+func TestBlockedExemptRejectionIsDelayed(t *testing.T) {
+	var bruteForce config.RuntimeModule
+	if err := bruteForce.Set(definitions.ControlBruteForce); err != nil {
+		t.Fatalf("set brute-force control: %v", err)
+	}
+
+	const sleep = 40 * time.Millisecond
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{
+		RuntimeModules: []*config.RuntimeModule{&bruteForce},
+		BackchannelLockout: config.BackchannelLockout{
+			Threshold: 1, ExemptThreshold: 1, SleepOnFail: sleep,
+		},
+	}}
+	guard := NewCallerGuard(cfg, nil, CallerIdentity{IP: "127.0.0.9", PeerIP: "127.0.0.9", Presented: "basic:guesser", Transport: CallerTransportGRPC})
+
+	callerLockout.reset()
+	guard.Reject("test")
+
+	started := time.Now()
+	blocked, _ := guard.RejectionThrottled()
+	elapsed := time.Since(started)
+
+	if !blocked {
+		t.Fatal("exempt identity must be blocked after exempt_threshold rejections")
+	}
+
+	if elapsed < sleep {
+		t.Fatalf("blocked rejection returned after %s, want at least %s", elapsed, sleep)
+	}
+
+	other := NewCallerGuard(cfg, nil, CallerIdentity{IP: "127.0.0.9", PeerIP: "127.0.0.9", Presented: "bearer", Transport: CallerTransportGRPC})
+	started = time.Now()
+	blocked, _ = other.RejectionThrottled()
+	elapsed = time.Since(started)
+
+	if blocked {
+		t.Fatal("another identity behind the exempt address must stay usable")
+	}
+
+	if elapsed >= sleep {
+		t.Fatalf("an unblocked caller was delayed by %s", elapsed)
+	}
+}
+
 // guardLockoutConfig enables brute-force control with a small lockout and a trusted loopback proxy.
 func guardLockoutConfig(t *testing.T) *config.FileSettings {
 	t.Helper()
@@ -331,6 +401,45 @@ func TestProxyProtocolSourceNeverExempts(t *testing.T) {
 
 	if !NewHTTPCallerGuard(local, &config.FileSettings{Server: &config.ServerSection{}}, nil).Exempt() {
 		t.Fatal("a genuine loopback TCP peer must stay exempt")
+	}
+}
+
+// TestForwardedExemptClientIsScopedByItsOwnNetwork pins that a client forwarded by a trusted loopback
+// proxy is exempted by the exempt_networks entry of the client address, not by the proxy's loopback entry.
+func TestForwardedExemptClientIsScopedByItsOwnNetwork(t *testing.T) {
+	cfg := guardLockoutConfig(t)
+	cfg.Server.BackchannelLockout.ExemptNetworks = []string{"127.0.0.0/8", "::1/128", "192.168.0.5/32", "192.168.0.6/32"}
+
+	guard := NewHTTPCallerGuard(httpGuardContext("127.0.0.1:40000", map[string]string{"X-Forwarded-For": "203.0.113.9, 192.168.0.5"}), cfg, nil)
+
+	if got, want := guard.exemptScope(), exemptScopeNetwork+"192.168.0.5/32"; got != want {
+		t.Fatalf("exemptScope() = %q, want %q", got, want)
+	}
+
+	if got := guard.lockoutAddress(); got != "192.168.0.5" {
+		t.Fatalf("lockoutAddress() = %q, want the forwarded client", got)
+	}
+}
+
+// TestMTLSIdentityNeverExemptsForwardedClient pins that an mTLS identity authenticates only the direct
+// connection: a forwarded client address outside exempt_networks stays non-exempt.
+func TestMTLSIdentityNeverExemptsForwardedClient(t *testing.T) {
+	cfg := guardLockoutConfig(t)
+	cfg.Server.BackchannelLockout.TrustedMTLSIdentities = []string{"doppelgaenger"}
+
+	caller := CallerIdentity{
+		IP: "198.51.100.7", PeerIP: "127.0.0.1", ForwardedIP: "198.51.100.7",
+		Transport: CallerTransportGRPC, MTLSIdentities: []string{"doppelgaenger"},
+	}
+
+	if NewCallerGuard(cfg, nil, caller).Exempt() {
+		t.Fatal("an mTLS identity of the proxy connection must not exempt the forwarded client")
+	}
+
+	caller.IP, caller.ForwardedIP = "127.0.0.1", ""
+
+	if got := NewCallerGuard(cfg, nil, caller).exemptScope(); got != exemptScopeMTLS+"doppelgaenger" {
+		t.Fatalf("direct mTLS caller scope = %q, want the mTLS identity", got)
 	}
 }
 

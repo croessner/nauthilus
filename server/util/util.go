@@ -621,18 +621,41 @@ func RequestClientIPWithConfig(ctx *gin.Context, cfg config.File, logger *slog.L
 
 // DirectPeerIsTrustedProxy reports whether the immediate peer matches trusted_proxies.
 func DirectPeerIsTrustedProxy(ctx *gin.Context, cfg config.File, logger *slog.Logger) bool {
-	if ctx == nil || ctx.Request == nil || cfg == nil || cfg.GetServer() == nil {
+	if ctx == nil || ctx.Request == nil {
 		return false
 	}
 
-	remoteIP := directRequestClientIP(ctx)
-	if remoteIP == "" {
+	return isTrustedProxy(ctx, cfg, logger, directRequestClientIP(ctx))
+}
+
+// TrustedProxyForwardedForIP returns the X-Forwarded-For client that peerIP reported, resolved right to
+// left like RequestClientIPWithConfig. It returns "" unless peerIP matches trusted_proxies, and it never
+// consults X-Real-IP. Callers pass the connection's TCP upstream to keep PROXY protocol sources out of the
+// trust decision.
+func TrustedProxyForwardedForIP(ctx *gin.Context, cfg config.File, logger *slog.Logger, peerIP string) string {
+	if !isTrustedProxy(ctx, cfg, logger, peerIP) {
+		return ""
+	}
+
+	return trustedForwardedForClientIP(forwardedForHeader(ctx), ctx, cfg, logger, ctx.GetString(definitions.CtxGUIDKey))
+}
+
+// forwardedForHeader joins every X-Forwarded-For header line in wire order. A proxy may append its peer as
+// a separate line instead of extending the existing one; reading only the first line would then resolve a
+// client-controlled entry.
+func forwardedForHeader(ctx *gin.Context) string {
+	return strings.Join(ctx.Request.Header.Values("X-Forwarded-For"), ",")
+}
+
+// isTrustedProxy reports whether peerIP matches runtime.servers.http.trusted_proxies.
+func isTrustedProxy(ctx *gin.Context, cfg config.File, logger *slog.Logger, peerIP string) bool {
+	if ctx == nil || ctx.Request == nil || cfg == nil || cfg.GetServer() == nil || peerIP == "" {
 		return false
 	}
 
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 
-	return IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, cfg.GetServer().GetTrustedProxies(), guid, remoteIP)
+	return IsInNetworkWithCfg(ctx.Request.Context(), cfg, logger, cfg.GetServer().GetTrustedProxies(), guid, peerIP)
 }
 
 // directRequestClientIP returns the immediate peer address without consulting
@@ -664,8 +687,11 @@ func trustedForwardedClientIP(ctx *gin.Context, cfg config.File, logger *slog.Lo
 		return ""
 	}
 
-	if clientIP := trustedForwardedForClientIP(ctx.GetHeader("X-Forwarded-For"), ctx, cfg, logger, guid); clientIP != "" {
-		return clientIP
+	forwardedFor := forwardedForHeader(ctx)
+	if strings.TrimSpace(forwardedFor) != "" {
+		// An X-Forwarded-For chain that does not resolve to a valid client falls back to the direct peer.
+		// X-Real-IP is not consulted then, because it may carry a client-controlled value.
+		return trustedForwardedForClientIP(forwardedFor, ctx, cfg, logger, guid)
 	}
 
 	return parseForwardedHeaderIP(ctx.GetHeader("X-Real-IP"))
