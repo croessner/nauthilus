@@ -83,11 +83,18 @@ func (b DefaultBootstrap) InitGinLogging() {
 	gin.DefaultWriter = io.MultiWriter(&customWriter{logger: b.logger, lvl: slog.LevelDebug})
 	gin.DefaultErrorWriter = io.MultiWriter(&customWriter{logger: b.logger, lvl: slog.LevelError})
 
-	if b.cfg.GetServer().GetLog().GetLogLevel() != definitions.LogLevelDebug {
-		gin.SetMode(gin.ReleaseMode)
-	}
+	SetGinMode(b.cfg)
 
 	gin.DisableConsoleColor()
+}
+
+// SetGinMode selects Gin's release mode unless the configured log level is debug. The first gin.New
+// prints Gin's debug-mode warning, so startup calls this as soon as the configuration is loaded, before
+// any component builds an engine.
+func SetGinMode(cfg config.File) {
+	if cfg == nil || cfg.GetServer().GetLog().GetLogLevel() != definitions.LogLevelDebug {
+		gin.SetMode(gin.ReleaseMode)
+	}
 }
 
 // DefaultRouterComposer builds the gin.Engine and registers routes/middlewares in the exact order.

@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/app/signalsfx"
 	remotebackend "github.com/croessner/nauthilus/v4/server/backend/remote"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/core"
 	_ "github.com/croessner/nauthilus/v4/server/core/auth"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/svcctx"
@@ -88,6 +89,8 @@ func main() {
 	if err != nil {
 		stdlog.Fatalln("unable to load config file:", err)
 	}
+
+	core.SetGinMode(prepared)
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
 	fApp := newFxApplication(ctx, cancel, prepared)
