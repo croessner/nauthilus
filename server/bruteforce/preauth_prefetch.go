@@ -123,18 +123,18 @@ func (bm *bucketManagerImpl) execPreAuthPrefetch(ctx context.Context, sp trace.S
 	pipeline := rediscli.NewScriptPipeline(bm.redis(), handle)
 
 	// Every command is evaluated on its own by its consumer; the first pipeline error is not authoritative.
-	_ = pipeline.Exec(dCtx, func(pipe redis.Pipeliner) {
+	_ = pipeline.Exec(dCtx, func(pctx context.Context, pipe redis.Pipeliner) {
 		if rwpArgs != nil {
-			prefetch.rwp = pipeline.EvalSha(dCtx, pipe, rwpCheckScriptName, []string{rwpArgs.allowKey},
+			prefetch.rwp = pipeline.EvalSha(pctx, pipe, rwpCheckScriptName, []string{rwpArgs.allowKey},
 				rwpArgs.passwordHash, rwpArgs.argNow, rwpArgs.argTTL, rwpArgs.argThreshold)
 		}
 
 		for _, field := range banFields {
-			prefetch.banCmds = append(prefetch.banCmds, pipe.Exists(dCtx, rediscli.GetBruteForceBanKey(prefix, field)))
+			prefetch.banCmds = append(prefetch.banCmds, pipe.Exists(pctx, rediscli.GetBruteForceBanKey(prefix, field)))
 		}
 
 		if reputationKey != "" {
-			prefetch.reputation = pipe.HGet(dCtx, reputationKey, reputationPositiveField)
+			prefetch.reputation = pipe.HGet(pctx, reputationKey, reputationPositiveField)
 		}
 	})
 

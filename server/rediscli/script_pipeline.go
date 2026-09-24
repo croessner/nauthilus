@@ -63,8 +63,8 @@ func (c *ScriptCall) Err() error {
 // ScriptPipeline runs one Redis pipeline that mixes plain commands with EVALSHA calls to LuaScripts.
 //
 // It keeps the guarantees of ExecuteScript for pipelined scripts: SHAs are resolved (and uploaded when
-// needed) before the pipeline starts, keys are normalized for Redis Cluster, every execution is counted as a
-// Redis write, a script that is missing on a node is re-uploaded once and only the calls that failed with
+// needed) before the pipeline starts, keys are normalized for Redis Cluster, every execution is counted once
+// as a Redis write (callers must not count the script again), a script that is missing on a node is re-uploaded once and only the calls that failed with
 // NOSCRIPT run again, and failed calls are logged like ExecuteScript does. Plain commands are never repeated,
 // so the retry is safe for pipelines that write.
 type ScriptPipeline struct {
@@ -106,16 +106,18 @@ func (p *ScriptPipeline) EvalSha(ctx context.Context, pipe redis.Pipeliner, scri
 }
 
 // Exec runs queue in one pipeline and retries script calls that failed with NOSCRIPT once.
+// queue receives the context of the redis.script_pipeline span and must build every command and every
+// EvalSha call with it, so that Redis hook spans nest under the pipeline span.
 // It returns the first failed command after that retry, in queue order. Callers must still evaluate every
 // command and every ScriptCall on its own because a pipeline only reports its first failure.
-func (p *ScriptPipeline) Exec(ctx context.Context, queue func(pipe redis.Pipeliner)) error {
+func (p *ScriptPipeline) Exec(ctx context.Context, queue func(ctx context.Context, pipe redis.Pipeliner)) error {
 	tr := monittrace.New("nauthilus/redis_batch")
 
 	sctx, sp := tr.Start(ctx, "redis.script_pipeline")
 	defer sp.End()
 
 	cmds, _ := p.handle.Pipelined(sctx, func(pipe redis.Pipeliner) error {
-		queue(pipe)
+		queue(sctx, pipe)
 
 		return nil
 	})

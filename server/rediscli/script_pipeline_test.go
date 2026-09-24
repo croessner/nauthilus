@@ -16,6 +16,7 @@
 package rediscli
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -65,9 +66,9 @@ func execScriptPipelineWrites(t *testing.T, db *redis.Client, client Client) (*r
 	ctx := t.Context()
 	pipeline := NewScriptPipeline(client, db)
 
-	err := pipeline.Exec(ctx, func(pipe redis.Pipeliner) {
-		counter = pipe.Incr(ctx, "plain-counter")
-		call = pipeline.EvalSha(ctx, pipe, scriptPipelineSetScript, []string{"script-set"}, "member", 60, 10)
+	err := pipeline.Exec(ctx, func(pctx context.Context, pipe redis.Pipeliner) {
+		counter = pipe.Incr(pctx, "plain-counter")
+		call = pipeline.EvalSha(pctx, pipe, scriptPipelineSetScript, []string{"script-set"}, "member", 60, 10)
 	})
 	if err != nil {
 		t.Fatalf("pipeline error after NOSCRIPT retry = %v", err)
@@ -129,8 +130,8 @@ func TestScriptPipelineReportsUnknownScriptsWithoutQueueing(t *testing.T) {
 
 	var call *ScriptCall
 
-	err := pipeline.Exec(ctx, func(pipe redis.Pipeliner) {
-		call = pipeline.EvalSha(ctx, pipe, "UnknownScript", []string{"key"})
+	err := pipeline.Exec(ctx, func(pctx context.Context, pipe redis.Pipeliner) {
+		call = pipeline.EvalSha(pctx, pipe, "UnknownScript", []string{"key"})
 	})
 
 	if !errors.Is(err, ErrScriptNotFound) || !errors.Is(call.Err(), ErrScriptNotFound) || call.Name() != "UnknownScript" {

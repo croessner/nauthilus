@@ -63,7 +63,9 @@ const (
 	// slidingWindowCounterScriptName is the Lua script that reads and increments bucket counters.
 	slidingWindowCounterScriptName = "SlidingWindowCounter"
 
-	// rwpCheckScriptName is the read-only RWP script that joins the pre-authentication pipeline.
+	// rwpCheckScriptName is the RWP check script that joins the pre-authentication pipeline. It does not
+	// record the password hash, but it trims expired window entries with ZREMRANGEBYSCORE and therefore
+	// runs on the write handle.
 	rwpCheckScriptName = "RWPSlidingWindowCheck"
 
 	// addToSetAndExpireLimitScriptName is the Lua script that stores failed password hashes in bounded sets.
@@ -1898,7 +1900,7 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCountersToRedis(rules []config.
 	pipeline := rediscli.NewScriptPipeline(bm.redis(), bm.redis().GetWriteHandle())
 
 	// Every call is evaluated on its own below; the first pipeline error is not authoritative.
-	_ = pipeline.Exec(dCtx, func(pipe redis.Pipeliner) {
+	_ = pipeline.Exec(dCtx, func(pctx context.Context, pipe redis.Pipeliner) {
 		for i := range writes {
 			write := &writes[i]
 			ttl := 2 * bucketWindowSeconds(write.rule.Period)
@@ -1907,16 +1909,15 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCountersToRedis(rules []config.
 			// to maintain script logic.
 			limit := int64(write.rule.FailedRequests) - 1
 
-			write.call = pipeline.EvalSha(dCtx, pipe, slidingWindowCounterScriptName,
+			write.call = pipeline.EvalSha(pctx, pipe, slidingWindowCounterScriptName,
 				[]string{write.currentKey, write.prevKey},
 				write.increment, write.weight, ttl, limit,
 				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, rwpFloor)
 		}
 	})
 
+	// ScriptPipeline counts every executed script as one Redis write.
 	for i := range writes {
-		stats.GetMetrics().GetRedisWriteCounter().Inc()
-
 		if err := writes[i].call.Err(); err != nil {
 			level.Error(bm.logger()).Log(
 				definitions.LogKeyGUID, bm.guid,
@@ -2035,13 +2036,12 @@ func (bm *bucketManagerImpl) saveFailedPasswordHash(passwordHash string) []*redi
 
 	// We use a simple script to add to set and expire, but also respect maxEntries if possible.
 	// Since it's now a Set, we don't track counters per password, just existence.
-	_ = pipeline.Exec(dCtx, func(pipe redis.Pipeliner) {
+	// ScriptPipeline counts every executed script as one Redis write.
+	_ = pipeline.Exec(dCtx, func(pctx context.Context, pipe redis.Pipeliner) {
 		for _, key := range keys {
-			calls = append(calls, pipeline.EvalSha(dCtx, pipe, addToSetAndExpireLimitScriptName, []string{key}, passwordHash, argTTL, argMaxEntries))
+			calls = append(calls, pipeline.EvalSha(pctx, pipe, addToSetAndExpireLimitScriptName, []string{key}, passwordHash, argTTL, argMaxEntries))
 		}
 	})
-
-	stats.GetMetrics().GetRedisWriteCounter().Add(float64(len(calls)))
 
 	return calls
 }
