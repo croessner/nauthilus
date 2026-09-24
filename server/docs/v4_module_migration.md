@@ -41,6 +41,29 @@ the intended first prerelease is `v4.0.0-alpha.1`.
 
 ## Changes Between v4 Prereleases
 
+- `nauthilus -d` prints a dump of the built-in defaults, not a loadable
+  profile: secrets such as `storage.redis.password_nonce` and
+  `storage.redis.encryption_secret` print empty and LDAP pool sizes such as
+  `auth_pool_size` and `lookup_pool_size` print as `0`; set them before the
+  output can be used as a configuration.
+- Client addresses of `POST /oidc/register` (the dynamic client registration
+  budget) and of native plugin hooks are resolved with the common resolver and
+  follow `runtime.servers.http.trusted_proxies`, like the rest of the request
+  pipeline, instead of Gin's `ClientIP`. When a trusted proxy sends an
+  `X-Forwarded-For` chain that cannot be parsed, the direct peer address is
+  used; the former fallback to a client-supplied `X-Real-IP` no longer
+  applies. Go consumers of the module: `util.RequestClientIP` was removed; use
+  `util.RequestClientIPWithConfig`, which trusts no proxy and returns the
+  direct peer when no configuration is passed.
+- `storage.redis.batching` caveat: the batching hook drains its queue with a
+  single flush worker per Redis client, so every single command of that
+  client is serialized behind that worker. Under concurrent load callers wait
+  in the queue; a load test measured waits of up to 1.7 s per command and
+  authentication timeouts at about 40 logins/s across 3 pods. The brute-force
+  paths no longer depend on the hook: since `v4.0.0-beta.8` they issue their
+  own explicit pipelines, which the hook passes through unchanged. Leave
+  batching disabled (the default) unless a measurement on your own workload
+  shows a gain.
 - A `storage.redis.sentinels` block whose fields are all empty, as printed by
   `nauthilus -d`, is treated as "Sentinel not configured" and no longer fails
   validation with `master` `required`. As soon as any Sentinel field is set,

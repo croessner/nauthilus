@@ -228,6 +228,12 @@ because a pipeline only reports its first error.
 | `pipeline_exists_ban_is_blocked` | Ban-key read of `IsIPAddressBlocked` |
 | `lua_increment_and_expire` | Burst gate of the blocked path (single script, not a pipeline) |
 
+These pipelines are explicit caller pipelines and do not rely on the optional client-side batching hook
+(`storage.redis.batching`); the hook passes explicit pipelines through unchanged. Keep the hook disabled unless a
+measurement shows a gain: it drains its queue with a single flush worker per Redis client, so all single commands of
+that client are serialized, and under concurrent load callers wait in its queue. A load test measured waits of up to
+1.7 s per command and authentication timeouts at about 40 logins/s across 3 pods with batching enabled.
+
 ## 4. Sequence Diagram
 
 This diagram shows the interaction between components during a blocked request.

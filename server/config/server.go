@@ -1648,7 +1648,14 @@ type Redis struct {
 // RedisBatching controls optional client-side command batching.
 // When enabled, individual commands issued by the application are queued briefly
 // and flushed as a single Redis pipeline based on size/time thresholds.
-// This can significantly reduce network round-trips under high concurrency.
+// This can reduce network round-trips under high concurrency.
+//
+// Caveat: a single flush worker per Redis client drains the queue, so all single
+// commands of that client are serialized behind it. Under concurrent load callers
+// wait in the queue (a load test measured up to 1.7 s per command and
+// authentication timeouts at about 40 logins/s across 3 pods). Explicit caller
+// pipelines, which the brute-force paths use, pass through the hook unchanged.
+// Leave batching disabled unless a measurement on the actual workload shows a gain.
 type RedisBatching struct {
 	// Enabled toggles the batching hook.
 	Enabled bool `mapstructure:"enabled"`
