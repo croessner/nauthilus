@@ -39,6 +39,29 @@ var (
 	errQuotaExceeded      = errors.New("reputation storage quota exceeded")
 )
 
+// stateTransportError carries the concrete Redis failure of one storage step. It matches
+// errStateUnavailable, so every caller keeps its closed failure class, while the startup path can
+// classify the cause for bounded retries and report it.
+type stateTransportError struct {
+	cause error
+	step  string
+}
+
+// newStateTransportError wraps the Redis failure of step.
+func newStateTransportError(step string, cause error) *stateTransportError {
+	return &stateTransportError{step: step, cause: cause}
+}
+
+// Error names the failed step and the Redis failure.
+func (e *stateTransportError) Error() string {
+	return errStateUnavailable.Error() + ": " + e.step + ": " + e.cause.Error()
+}
+
+// Unwrap exposes the closed failure class and the concrete cause.
+func (e *stateTransportError) Unwrap() []error {
+	return []error{errStateUnavailable, e.cause}
+}
+
 type stateOwner struct {
 	journal   observationJournal
 	telemetry *reputationTelemetry
@@ -106,7 +129,7 @@ func (s *stateOwner) start(ctx context.Context) error {
 
 	for _, name := range names {
 		if _, err := s.redis.Scripts().Upload(ctx, name, sources[name]); err != nil {
-			return errStateUnavailable
+			return newStateTransportError("upload script "+name, err)
 		}
 	}
 
@@ -115,7 +138,7 @@ func (s *stateOwner) start(ctx context.Context) error {
 		return err
 	}
 
-	response, err := s.run(ctx, scriptMetadata, s.keys.metadata(), s.metadataRequest("activate"))
+	response, err := s.execute(ctx, scriptMetadata, s.keys.metadata(), s.metadataRequest("activate"))
 	if err != nil {
 		return err
 	}
@@ -130,7 +153,7 @@ func (s *stateOwner) start(ctx context.Context) error {
 	}
 
 	for shard := range manifestShardCount {
-		_, err := s.run(ctx, scriptControl, []string{s.keys.control(shard)}, controlRequest{Operation: "activate", Schema: manifestSchema, Identity: s.identity, Previous: previous})
+		_, err := s.execute(ctx, scriptControl, []string{s.keys.control(shard)}, controlRequest{Operation: "activate", Schema: manifestSchema, Identity: s.identity, Previous: previous})
 		if err != nil {
 			return err
 		}
@@ -139,6 +162,11 @@ func (s *stateOwner) start(ctx context.Context) error {
 	s.ready.Store(true)
 
 	return nil
+}
+
+// startWithRetry runs start under the bounded startup retry, which repeats it only on transient Redis failures.
+func (s *stateOwner) startWithRetry(ctx context.Context, logger pluginapi.Logger) error {
+	return newStartupRetry(logger).run(ctx, s.start)
 }
 
 // metadataRequest detaches only bounded model fingerprints and allocation protocol metadata.
@@ -177,7 +205,18 @@ func (s *stateOwner) quiesceAudited(ctx context.Context, audit *allocationAudit)
 }
 
 // run routes every script through the host's primary-backed registry and exposes only closed failure classes.
-func (s *stateOwner) run(ctx context.Context, name string, keys []string, request any) (output []any, err error) {
+func (s *stateOwner) run(ctx context.Context, name string, keys []string, request any) ([]any, error) {
+	output, err := s.execute(ctx, name, keys, request)
+	if _, transport := errors.AsType[*stateTransportError](err); transport {
+		return nil, errStateUnavailable
+	}
+
+	return output, err
+}
+
+// execute runs one named script like run, but keeps the concrete Redis failure in a stateTransportError.
+// Only the startup path uses it directly, so request-time callers never see Redis details.
+func (s *stateOwner) execute(ctx context.Context, name string, keys []string, request any) (output []any, err error) {
 	defer func() {
 		if s.telemetry != nil {
 			s.telemetry.storage.Add(ctx, name, storageMetricResult(err))
@@ -190,7 +229,7 @@ func (s *stateOwner) run(ctx context.Context, name string, keys []string, reques
 
 	raw, err := s.redis.Scripts().Run(ctx, name, keys, string(encoded))
 	if err != nil {
-		return nil, errStateUnavailable
+		return nil, newStateTransportError("run script "+name, err)
 	}
 
 	result, ok := raw.([]any)

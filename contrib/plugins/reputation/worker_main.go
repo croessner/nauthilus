@@ -136,7 +136,7 @@ func serveReputationWorker(ctx context.Context, file serverconfig.File, cfg *con
 		return err
 	}
 
-	if err := state.start(ctx); err != nil {
+	if err := state.startWithRetry(ctx, host.Logger(pluginName)); err != nil {
 		return err
 	}
 

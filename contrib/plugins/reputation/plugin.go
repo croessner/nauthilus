@@ -134,7 +134,7 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 
 	state.telemetry = metrics
 
-	if err := state.start(ctx); err != nil {
+	if err := state.startWithRetry(ctx, host.Logger(pluginName)); err != nil {
 		return err
 	}
 

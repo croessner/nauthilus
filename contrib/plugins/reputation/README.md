@@ -6,6 +6,17 @@ observation provider validates evidence without writing it. Startup registers
 the immutable model and fenced allocation shards through the host Redis facade.
 Only Policy-selected storage or background authentication learning commits admitted evidence.
 
+The storage start retries transient Redis failures, such as refused or reset
+connections, timeouts, `LOADING`, `TRYAGAIN`, `CLUSTERDOWN`, `READONLY`,
+`MASTERDOWN`, `MOVED`/`ASK` and `NOSCRIPT`, with a backoff from one to five
+seconds for at most ten attempts within about fifty seconds, the budget of the
+host's own Redis readiness check. Each retry is logged at warn with its attempt
+and error class. Permanent failures, for example ACL rejections, script errors,
+model or allocation mismatches and invalid stored state, end the start at once.
+The module Start error names the failed step and keeps the concrete Redis error,
+so the host's startup error log shows why the module could not start.
+Request-time storage errors still expose only the closed failure classes.
+
 The complete [operator example](../../../server/docs/examples/go_plugin_reputation.yml)
 is the configuration authority for the admission tests. Its values are
 calibration examples, not implicit production defaults. It includes a closed
