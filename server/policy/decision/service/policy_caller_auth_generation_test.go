@@ -37,10 +37,12 @@ const (
 	policyCallerAuthGenerationNew      = "generation-new-password"
 )
 
-type policyCallerAuthBlockingThrottler struct {
-	started chan struct{}
-	release <-chan struct{}
-	once    sync.Once
+// policyCallerAuthBlockingAuthenticator holds generation-specific authentication after generation capture.
+type policyCallerAuthBlockingAuthenticator struct {
+	delegate policyruntime.CallerAuthenticator
+	started  chan struct{}
+	release  <-chan struct{}
+	once     sync.Once
 }
 
 type policyCallerAuthReloadFixture struct {
@@ -53,34 +55,43 @@ type policyCallerAuthReloadFixture struct {
 	releaseOnce     sync.Once
 }
 
-// BeforeAttempt blocks the first generation-specific Basic attempt after generation capture.
-func (t *policyCallerAuthBlockingThrottler) BeforeAttempt(ctx context.Context, _ callerauth.BasicThrottleKey) error {
-	if t.started != nil {
-		t.once.Do(func() {
-			close(t.started)
-		})
-	}
-
-	if t.release == nil {
-		return nil
-	}
+// Authenticate blocks until released and then verifies the evidence with the captured generation's rules.
+func (a *policyCallerAuthBlockingAuthenticator) Authenticate(
+	ctx context.Context,
+	input decision.AuthenticationInput,
+) (decision.CallerContext, error) {
+	a.once.Do(func() {
+		close(a.started)
+	})
 
 	select {
-	case <-t.release:
-		return nil
+	case <-a.release:
 	case <-ctx.Done():
-		return ctx.Err()
+		return decision.CallerContext{}, ctx.Err()
 	}
+
+	return a.delegate.Authenticate(ctx, input)
 }
 
-// RecordFailure records no state because the generation test observes only the preparation boundary.
-func (*policyCallerAuthBlockingThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
+// blockPolicyCallerAuthentication wraps one prepared generation authenticator with a release gate.
+func blockPolicyCallerAuthentication(
+	prepared policyruntime.CallerAuthenticationPreparation,
+	started chan struct{},
+	release <-chan struct{},
+) policyruntime.CallerAuthenticationPreparation {
+	prepared.Authenticator = &policyCallerAuthBlockingAuthenticator{
+		delegate: prepared.Authenticator,
+		started:  started,
+		release:  release,
+	}
+
+	return prepared
 }
 
-// RecordSuccess records no state because the generation test observes only the preparation boundary.
-func (*policyCallerAuthBlockingThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
+// policyCallerAuthGate names the start and release channels of one blocked generation authentication.
+type policyCallerAuthGate struct {
+	started chan struct{}
+	release <-chan struct{}
 }
 
 // TestPolicyBasicAuthenticationRetainsCredentialGenerationAcrossConcurrentReload proves caller rules and evaluation stay coherent.
@@ -106,18 +117,11 @@ func newPolicyCallerAuthReloadFixture(t *testing.T) *policyCallerAuthReloadFixtu
 		t,
 		store,
 		map[uint64]callerauth.Configuration{
-			1: policyCallerAuthBasicConfiguration(
-				policyCallerAuthGenerationOld,
-				&policyCallerAuthBlockingThrottler{started: started, release: release},
-				true,
-			),
-			2: policyCallerAuthBasicConfiguration(
-				policyCallerAuthGenerationNew,
-				&policyCallerAuthBlockingThrottler{},
-				true,
-			),
+			1: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationOld, true),
+			2: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationNew, true),
 		},
 		map[uint64]checkpointEvaluator{1: firstEvaluator, 2: secondEvaluator},
+		map[uint64]policyCallerAuthGate{1: {started: started, release: release}},
 	)
 	applyPolicyCallerAuthGeneration(t, coordinator, 1)
 
@@ -141,7 +145,7 @@ func newPolicyCallerAuthReloadFixture(t *testing.T) *policyCallerAuthReloadFixtu
 	return fixture
 }
 
-// exercisePolicyCallerAuthConcurrentReload replaces the active generation while old Basic verification is blocked.
+// exercisePolicyCallerAuthConcurrentReload replaces the active generation while old Basic authentication is blocked.
 func exercisePolicyCallerAuthConcurrentReload(
 	t *testing.T,
 	fixture *policyCallerAuthReloadFixture,
@@ -238,18 +242,11 @@ func TestPolicyBasicAuthenticationInvalidReloadPreservesActiveGeneration(t *test
 		t,
 		store,
 		map[uint64]callerauth.Configuration{
-			1: policyCallerAuthBasicConfiguration(
-				policyCallerAuthGenerationOld,
-				&policyCallerAuthBlockingThrottler{},
-				true,
-			),
-			2: policyCallerAuthBasicConfiguration(
-				policyCallerAuthGenerationNew,
-				&policyCallerAuthBlockingThrottler{},
-				false,
-			),
+			1: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationOld, true),
+			2: policyCallerAuthBasicConfiguration(policyCallerAuthGenerationNew, false),
 		},
 		map[uint64]checkpointEvaluator{1: evaluator},
+		nil,
 	)
 	applyPolicyCallerAuthGeneration(t, coordinator, 1)
 
@@ -286,11 +283,13 @@ func TestPolicyBasicAuthenticationInvalidReloadPreservesActiveGeneration(t *test
 }
 
 // newPolicyCallerAuthGenerationCoordinator assembles generation-specific authenticators and evaluators.
+// A generation listed in gates authenticates only after its gate is released.
 func newPolicyCallerAuthGenerationCoordinator(
 	t *testing.T,
 	store *policyruntime.GenerationStore,
 	configurations map[uint64]callerauth.Configuration,
 	evaluators map[uint64]checkpointEvaluator,
+	gates map[uint64]policyCallerAuthGate,
 ) *policyruntime.Coordinator {
 	t.Helper()
 
@@ -311,7 +310,14 @@ func newPolicyCallerAuthGenerationCoordinator(
 			return policyruntime.CallerAuthenticationPreparation{}, fmt.Errorf("missing test caller authentication generation %d", input.ID())
 		}
 
-		return callerauth.Prepare(configuration)
+		prepared, prepareErr := callerauth.Prepare(configuration)
+
+		gate, gated := gates[input.ID()]
+		if prepareErr != nil || !gated {
+			return prepared, prepareErr
+		}
+
+		return blockPolicyCallerAuthentication(prepared, gate.started, gate.release), nil
 	})
 	slots.Admission = policyruntime.AdmissionPreparationFunc(func(
 		_ context.Context,
@@ -369,13 +375,8 @@ func newPolicyCallerAuthGenerationCoordinator(
 }
 
 // policyCallerAuthBasicConfiguration creates one immutable dedicated Basic credential rule.
-func policyCallerAuthBasicConfiguration(
-	password string,
-	throttler callerauth.BasicThrottler,
-	protectedCapability bool,
-) callerauth.Configuration {
+func policyCallerAuthBasicConfiguration(password string, protectedCapability bool) callerauth.Configuration {
 	return callerauth.Configuration{
-		Throttler: throttler,
 		TransportCapabilities: callerauth.TransportCapabilities{
 			HTTPProtected: protectedCapability,
 		},

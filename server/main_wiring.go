@@ -211,7 +211,6 @@ func newRedisDeps(lc fx.Lifecycle, _ *bootstrapped, cfgProvider configfx.Provide
 func policyFactoryModule() fx.Option {
 	return fx.Options(
 		fx.Provide(newPolicyAccessTokenValidatorFactory),
-		fx.Provide(newPolicyBasicThrottlerFactory),
 		fx.Provide(newPolicyTransportCapabilitiesFactory),
 	)
 }
@@ -313,21 +312,6 @@ func capturePolicyTokenAuthorityBaseline(candidate config.File) (policyTokenAuth
 // equal compares secret-bearing token state in memory without rendering or logging it.
 func (b policyTokenAuthorityBaseline) equal(candidate policyTokenAuthorityBaseline) bool {
 	return reflect.DeepEqual(b, candidate)
-}
-
-// newPolicyBasicThrottlerFactory binds Policy-Basic state to the explicit swap-capable Redis facade.
-func newPolicyBasicThrottlerFactory(redisClient redifx.Client) policyfx.BasicThrottlerFactory {
-	return func(ctx context.Context, candidate config.File) (callerauth.BasicThrottler, error) {
-		if ctx == nil || candidate == nil {
-			return nil, fmt.Errorf("policy-Basic candidate dependencies are incomplete")
-		}
-
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		return callerauth.NewDefaultRedisBasicThrottler(redisClient)
-	}
 }
 
 // newPolicyTransportCapabilitiesFactory freezes the listener/evidence baseline used by live transports.

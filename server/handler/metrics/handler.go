@@ -67,7 +67,7 @@ func (h *Handler) authorize(ctx *gin.Context) bool {
 		return true
 	}
 
-	mdauth.ApplyAuthBackoffOnFailureWithCfg(ctx, h.cfg)
+	mdauth.ApplyAuthBackoffOnFailure(ctx, h.cfg)
 	ctx.Header("WWW-Authenticate", "Basic realm=\"metrics\", charset=\"UTF-8\"")
 	ctx.AbortWithStatus(http.StatusUnauthorized)
 

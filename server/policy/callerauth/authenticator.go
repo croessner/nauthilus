@@ -25,7 +25,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
-	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -36,20 +36,25 @@ import (
 const (
 	maximumCallerIdentityBytes = 512
 	transportKindGRPC          = "grpc"
+
+	// basicRejectionDelay matches the fixed delay of every other rejected backchannel caller
+	// (server/middleware/auth). It is the only brake on Policy-Basic guessing and deliberately not
+	// configurable: callers are never locked out, because many callers share one address behind load
+	// balancers and a lockout would become an outage.
+	basicRejectionDelay = 300 * time.Millisecond
 )
 
 var dummyBasicPasswordDigest = sha256.Sum256([]byte("nauthilus-policy-basic-dummy-verifier"))
 
 // Authenticator owns compiled credential rules for exactly one runtime generation.
 type Authenticator struct {
-	tokenValidator           AccessTokenValidator
-	throttler                BasicThrottler
-	external                 map[string]*externalRule
-	basic                    map[string]*externalRule
-	internal                 map[string][]internalRule
-	profileIDs               []string
-	basicThrottleUnavailable atomic.Bool
-	requireGRPCMTLS          bool
+	tokenValidator  AccessTokenValidator
+	external        map[string]*externalRule
+	basic           map[string]*externalRule
+	internal        map[string][]internalRule
+	delayRejection  func(context.Context)
+	profileIDs      []string
+	requireGRPCMTLS bool
 }
 
 type externalRule struct {
@@ -80,10 +85,10 @@ func New(configuration Configuration) (*Authenticator, error) {
 
 	authenticator := &Authenticator{
 		tokenValidator:  configuration.TokenValidator,
-		throttler:       configuration.Throttler,
 		external:        make(map[string]*externalRule, len(configuration.ExternalProfiles)),
 		basic:           make(map[string]*externalRule),
 		internal:        make(map[string][]internalRule),
+		delayRejection:  delayBasicRejection,
 		requireGRPCMTLS: configuration.RequireGRPCMTLS,
 	}
 
@@ -134,12 +139,8 @@ func (a *Authenticator) requiresExternalMTLS() bool {
 
 // validateConfigurationDependencies rejects interface values that conceal nil references.
 func validateConfigurationDependencies(configuration Configuration) error {
-	if typedNilInterface(configuration.TokenValidator) || typedNilInterface(configuration.Throttler) {
+	if typedNilInterface(configuration.TokenValidator) {
 		return configurationError("caller-authentication dependency is typed nil")
-	}
-
-	if configuration.RequiresBasicThrottler() && configuration.Throttler == nil {
-		return configurationError("Policy-Basic profiles require a generation-owned throttler")
 	}
 
 	return nil
@@ -422,62 +423,46 @@ func (a *Authenticator) authenticateBasic(ctx context.Context, input decision.Au
 	credential := input.Credential()
 	defer clear(credential)
 
-	username, provided, key, valid := parseBasicPresentation(credential, input.Peer())
+	username, provided, valid := parseBasicPresentation(credential)
 	if !valid {
 		return rejected()
 	}
 
-	profile, verified := a.verifyBasicPresentation(ctx, username, provided, key)
-	if !verified || !a.validExternalMTLS(profile, input) {
+	profile, verified := a.verifyBasicPresentation(username, provided)
+	if !verified {
+		a.delayRejection(ctx)
+
 		return rejected()
 	}
 
-	caller, err := newTrustedCaller(decision.TrustedCallerInput{
+	if !a.validExternalMTLS(profile, input) {
+		return rejected()
+	}
+
+	return newTrustedCaller(decision.TrustedCallerInput{
 		Principal:          profile.principal,
 		AuthenticationKind: policy.CallerAuthenticationKindBasic,
 	}, input)
-	if err != nil {
-		return decision.CallerContext{}, err
-	}
-
-	if !a.recordBasicSuccess(ctx, key) {
-		return rejected()
-	}
-
-	return caller, nil
 }
 
 // parseBasicPresentation extracts a bounded username and fixed-size password verifier.
-func parseBasicPresentation(credential []byte, peer string) (string, [32]byte, BasicThrottleKey, bool) {
+func parseBasicPresentation(credential []byte) (string, [32]byte, bool) {
 	usernameBytes, password, found := bytes.Cut(credential, []byte{':'})
 	if !found || len(usernameBytes) == 0 {
-		return "", [32]byte{}, BasicThrottleKey{}, false
+		return "", [32]byte{}, false
 	}
 
 	username := string(usernameBytes)
 	if !validCallerIdentity(username) {
-		return "", [32]byte{}, BasicThrottleKey{}, false
+		return "", [32]byte{}, false
 	}
 
-	key := BasicThrottleKey{
-		peer:           basicThrottlePeer(peer),
-		identityDigest: sha256.Sum256(usernameBytes),
-	}
-
-	return username, sha256.Sum256(password), key, true
+	return username, sha256.Sum256(password), true
 }
 
-// verifyBasicPresentation applies throttling and one constant-time generation verifier comparison.
-func (a *Authenticator) verifyBasicPresentation(
-	ctx context.Context,
-	username string,
-	provided [32]byte,
-	key BasicThrottleKey,
-) (*externalRule, bool) {
-	if !a.beforeBasicAttempt(ctx, key) {
-		return nil, false
-	}
-
+// verifyBasicPresentation applies one constant-time generation verifier comparison. Unknown usernames are
+// compared against a dummy verifier so that they cost the same as known ones.
+func (a *Authenticator) verifyBasicPresentation(username string, provided [32]byte) (*externalRule, bool) {
 	profile := a.basic[username]
 	expected := dummyBasicPasswordDigest
 
@@ -485,64 +470,23 @@ func (a *Authenticator) verifyBasicPresentation(
 		expected = profile.basic.passwordDigest
 	}
 
-	matched := subtle.ConstantTimeCompare(expected[:], provided[:]) == 1 && profile != nil
-
-	if !matched {
-		a.recordBasicFailure(ctx, key)
-
+	if subtle.ConstantTimeCompare(expected[:], provided[:]) != 1 || profile == nil {
 		return nil, false
 	}
 
 	return profile, true
 }
 
-// beforeBasicAttempt fails the generation closed after any throttle-state error.
-func (a *Authenticator) beforeBasicAttempt(ctx context.Context, key BasicThrottleKey) bool {
-	if a.basicThrottleUnavailable.Load() {
-		return false
+// delayBasicRejection holds a rejected Policy-Basic comparison for the fixed rejection delay, or until the
+// caller's request ends. It never blocks later attempts.
+func delayBasicRejection(ctx context.Context) {
+	timer := time.NewTimer(basicRejectionDelay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
 	}
-
-	if err := a.throttler.BeforeAttempt(ctx, key); err != nil {
-		if !errors.Is(err, ErrBasicThrottleLimit) {
-			a.basicThrottleUnavailable.Store(true)
-		}
-
-		return false
-	}
-
-	return !a.basicThrottleUnavailable.Load()
-}
-
-// recordBasicFailure records one failed comparison and closes the generation on state loss.
-func (a *Authenticator) recordBasicFailure(ctx context.Context, key BasicThrottleKey) {
-	if err := a.throttler.RecordFailure(ctx, key); err != nil {
-		a.basicThrottleUnavailable.Store(true)
-	}
-}
-
-// recordBasicSuccess records one verified comparison and reports whether throttle state stayed healthy.
-func (a *Authenticator) recordBasicSuccess(ctx context.Context, key BasicThrottleKey) bool {
-	if a.basicThrottleUnavailable.Load() {
-		return false
-	}
-
-	if err := a.throttler.RecordSuccess(ctx, key); err != nil {
-		a.basicThrottleUnavailable.Store(true)
-
-		return false
-	}
-
-	return !a.basicThrottleUnavailable.Load()
-}
-
-// basicThrottlePeer reduces trusted peer evidence to one stable source-IP bucket.
-func basicThrottlePeer(peer string) string {
-	address := sourceIP(peer)
-	if !address.IsValid() {
-		return ""
-	}
-
-	return address.String()
 }
 
 // authenticateInternal verifies one exact generation-owned named capability rule.

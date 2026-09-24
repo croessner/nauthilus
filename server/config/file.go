@@ -2490,7 +2490,6 @@ func (f *FileSettings) validate() (err error) {
 		f.validatePlugins,
 		f.validateGRPCAuthServer,
 		f.validateMetricsEndpointAuth,
-		f.validateBackchannelLockout,
 		f.validateOpenAPIValidation,
 		f.validateBackendHealthCheckTLSModes,
 
@@ -2560,18 +2559,6 @@ func (f *FileSettings) validatePlugins() error {
 	}
 
 	return ValidatePlugins(f.Plugins)
-}
-
-// validateBackchannelLockout normalizes and checks the caller lockout settings in the declared section and
-// in its runtime materialization, so both views carry the same trimmed allowlist.
-func (f *FileSettings) validateBackchannelLockout() error {
-	if f.Auth != nil {
-		if err := f.Auth.Backchannel.FailureLockout.Validate(); err != nil {
-			return err
-		}
-	}
-
-	return f.GetServer().GetBackchannelLockout().Validate()
 }
 
 func (f *FileSettings) validateMetricsEndpointAuth() error {

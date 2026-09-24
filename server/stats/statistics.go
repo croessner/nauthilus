@@ -166,7 +166,6 @@ const (
 	metricTaskLabel             = "task"
 	metricToLabel               = "to"
 	metricTransportLabel        = "transport"
-	metricTrustedLabel          = "trusted"
 	metricTypeLabel             = "type"
 	metricVersionLabel          = "version"
 	pluginCallMetricResultLabel = "result"
@@ -266,7 +265,7 @@ type Metrics interface {
 	// GetBruteForceRejected tracks the total number of brute force attempts rejected, categorized by bucket, as a Prometheus CounterVec.
 	GetBruteForceRejected() *prometheus.CounterVec
 
-	// GetBackchannelCallerAuthTotal counts backchannel caller authentication outcomes by bounded transport, outcome, and trust.
+	// GetBackchannelCallerAuthTotal counts backchannel caller authentication outcomes by bounded transport and outcome.
 	GetBackchannelCallerAuthTotal() *prometheus.CounterVec
 
 	// GetRWPDecisionsTotal counts repeating-wrong-password verdicts by outcome:
@@ -929,8 +928,8 @@ func (m *metricsImpl) initAuthMetrics() {
 	m.bruteForceRejected = newCounterVecMetric("bruteforce_rejected_total", "The total number of brute force rejected attempts", metricBucketLabel)
 	m.bruteForceHits = newCounterVecMetric("bruteforce_hits_total", "The total number of brute force hits before rejection", metricBucketLabel)
 	m.backchannelCallerAuthTotal = newCounterVecMetric("backchannel_caller_auth_total",
-		"Backchannel caller authentication outcomes: accepted, rejected, unavailable, or throttled",
-		metricTransportLabel, metricOutcomeLabel, metricTrustedLabel)
+		"Backchannel caller authentication outcomes: accepted, rejected, or unavailable",
+		metricTransportLabel, metricOutcomeLabel)
 	m.rwpDecisionsTotal = newCounterVecMetric("bruteforce_rwp_decisions_total",
 		"Repeating-wrong-password verdicts by outcome: repeated, counted or undecided", metricVerdictLabel)
 	m.rwpWindowDuration = newHistogramMetric("bruteforce_rwp_window_duration_seconds",

@@ -21,7 +21,6 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -77,20 +76,13 @@ func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, passwor
 	return secureCompare(username, basicAuth.GetUsername()) && secureCompare(password, expectedPassword)
 }
 
-// NewHTTPCallerGuard classifies the caller of an HTTP backchannel request for failure accounting.
-// Untrusted callers are locked out by the client IP resolved through runtime.servers.http.trusted_proxies;
-// the exemption only ever considers the direct peer. HTTP has no dedicated client CA for backchannel
-// callers, so client certificates never exempt an HTTP caller.
-func NewHTTPCallerGuard(ctx *gin.Context, cfg config.File, logger *slog.Logger) *CallerGuard {
-	return NewCallerGuard(cfg, logger, CallerIdentity{
-		IP:        requestClientIP(ctx, cfg),
-		PeerIP:    directPeerIP(ctx),
-		Presented: PresentedCredentialIdentity(ctx.Request.Header.Values("Authorization")),
-		Transport: CallerTransportHTTP,
-	})
+// NewHTTPCallerAccounting records the outcome of an HTTP backchannel caller. The client IP is resolved
+// through runtime.servers.http.trusted_proxies and only ever logged.
+func NewHTTPCallerAccounting(ctx *gin.Context, cfg config.File, logger *slog.Logger) *CallerAccounting {
+	return NewCallerAccounting(logger, CallerTransportHTTP, requestClientIP(ctx, cfg))
 }
 
-// isAuthBypassPath reports routes whose credentials never feed the backchannel caller lockout.
+// isAuthBypassPath reports routes whose rejected credentials are delayed without caller accounting.
 func isAuthBypassPath(ctx *gin.Context) bool {
 	switch ctx.FullPath() {
 	case authBypassPingPath, authBypassHealthPath, authBypassMetricsPath:
@@ -100,65 +92,21 @@ func isAuthBypassPath(ctx *gin.Context) bool {
 	}
 }
 
-// MaybeThrottleAuthByIP checks if the client IP is temporarily blocked and, if so, responds with 429 and a Retry-After header.
-// It only enforces throttling if the brute-force control is enabled in the configuration.
-func MaybeThrottleAuthByIP(ctx *gin.Context, cfg config.File) bool {
+// ApplyAuthBackoffOnFailure delays a rejected credential by the fixed rejection delay. Outside the
+// bypass routes the rejection is also accounted for the client IP resolved from the request.
+func ApplyAuthBackoffOnFailure(ctx *gin.Context, cfg config.File) {
 	if isAuthBypassPath(ctx) {
-		return false
-	}
-
-	return AbortIfThrottled(ctx, NewHTTPCallerGuard(ctx, cfg, nil))
-}
-
-// AbortIfThrottled answers 429 with Retry-After when guard reports an active lockout before the
-// credentials are checked. Exempt callers are never refused here.
-func AbortIfThrottled(ctx *gin.Context, guard *CallerGuard) bool {
-	return abortThrottled(ctx, guard.Throttled)
-}
-
-// AbortIfRejectionThrottled answers 429 with Retry-After when rejected credentials meet an active lockout,
-// including the per-identity lockout of exempt callers.
-func AbortIfRejectionThrottled(ctx *gin.Context, guard *CallerGuard) bool {
-	return abortThrottled(ctx, guard.RejectionThrottled)
-}
-
-// abortThrottled writes the uniform throttling response when check reports an active lockout.
-func abortThrottled(ctx *gin.Context, check func() (bool, time.Duration)) bool {
-	exceeded, remaining := check()
-	if !exceeded {
-		return false
-	}
-
-	ctx.Set(definitions.CtxRateLimitReasonKey, "brute-force")
-	ctx.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())))
-	ctx.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-		definitions.LogKeyMsg: "Too many authentication failures",
-		"scope":               "brute-force",
-	})
-
-	return true
-}
-
-// ApplyAuthBackoffOnFailure notes a failure for this IP and sleeps a short duration.
-func ApplyAuthBackoffOnFailure(ctx *gin.Context) {
-	ApplyAuthBackoffOnFailureWithCfg(ctx, nil)
-}
-
-// ApplyAuthBackoffOnFailureWithCfg notes a rejected credential for the trusted client IP
-// resolved from the request and applies the configured delay.
-func ApplyAuthBackoffOnFailureWithCfg(ctx *gin.Context, cfg config.File) {
-	if isAuthBypassPath(ctx) {
-		time.Sleep(sleepOnFail(cfg))
+		time.Sleep(callerRejectionDelay)
 
 		return
 	}
 
-	NewHTTPCallerGuard(ctx, cfg, nil).Reject("invalid credentials")
+	NewHTTPCallerAccounting(ctx, cfg, nil).Reject("invalid credentials")
 }
 
 // CheckAndRequireBasicAuth enforces basic authentication if it's enabled in the server configuration.
 // It validates credentials provided in the request against the configured username and password.
-// Returns true if authentication is successful or not required, false if the authentication fails or is throttled.
+// Returns true if authentication is successful or not required, false if the authentication fails.
 func CheckAndRequireBasicAuth(ctx *gin.Context, cfg config.File) bool {
 	return CheckAndRequireBasicAuthWithCfg(ctx, cfg)
 }
@@ -173,13 +121,7 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 		return true
 	}
 
-	guard := NewHTTPCallerGuard(ctx, cfg, nil)
 	bypass := isAuthBypassPath(ctx)
-
-	// Simple per-IP throttling for repeated failures
-	if !bypass && AbortIfThrottled(ctx, guard) {
-		return false
-	}
 
 	username, password, ok := ctx.Request.BasicAuth()
 	if ok && ValidateBasicCredentials(cfg, username, password) {
@@ -187,21 +129,17 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 		ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
 
 		if !bypass {
-			guard.Accept()
+			NewHTTPCallerAccounting(ctx, cfg, nil).Accept()
 		}
 
 		return true
 	}
 
-	// Failure: count + small fixed delay, then respond uniformly
+	// Failure: fixed delay, then respond uniformly. Callers are never blocked.
 	if bypass {
-		time.Sleep(sleepOnFail(cfg))
+		time.Sleep(callerRejectionDelay)
 	} else {
-		if AbortIfRejectionThrottled(ctx, guard) {
-			return false
-		}
-
-		guard.Reject("invalid basic credentials")
+		NewHTTPCallerAccounting(ctx, cfg, nil).Reject("invalid basic credentials")
 	}
 
 	ctx.Header("WWW-Authenticate", "Basic realm=\"restricted\", charset=\"UTF-8\"")

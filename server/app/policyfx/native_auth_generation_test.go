@@ -268,7 +268,6 @@ func newNativeAuthGenerationRuntime(
 		nil,
 		state,
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{}, nil
 		},

@@ -779,7 +779,7 @@ func grpcPolicyAuthorityConfiguration(reference registry.ClientAdmissionReferenc
 			{AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}, Principal: "policy-grpc"},
 			{Basic: &callerauth.BasicCredential{Username: "policy-grpc-basic", Password: secret.New("policy-grpc-basic-secret")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}, Principal: "policy-grpc-basic", RequireMTLS: true},
 		},
-		TokenValidator: grpcPolicyTokenValidator{}, Throttler: &grpcAcceptingPolicyBasicThrottler{}, TransportCapabilities: callerauth.TransportCapabilities{
+		TokenValidator: grpcPolicyTokenValidator{}, TransportCapabilities: callerauth.TransportCapabilities{
 			GRPCProtected:                 true,
 			GRPCVerifiedClientCertificate: true,
 		},
@@ -793,23 +793,6 @@ func grpcPolicyAuthorityConfiguration(reference registry.ClientAdmissionReferenc
 	}
 
 	return caller, admission
-}
-
-type grpcAcceptingPolicyBasicThrottler struct{}
-
-// BeforeAttempt accepts one focused gRPC adapter-fixture verification attempt.
-func (*grpcAcceptingPolicyBasicThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordFailure accepts one focused gRPC adapter-fixture verification failure.
-func (*grpcAcceptingPolicyBasicThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordSuccess accepts one focused gRPC adapter-fixture verification success.
-func (*grpcAcceptingPolicyBasicThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
 }
 
 // enabledGRPCPolicyAuthorityConfig supplies generation-owned gRPC activation and wire bounds to fixtures.

@@ -74,7 +74,6 @@ func TestProductionCoordinatorRetainsGenerationWhenConfiguredAuthnLuaActionBecom
 		nil,
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{}, nil
 		},

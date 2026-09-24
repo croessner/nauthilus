@@ -175,3 +175,26 @@ func TestUnknownConfigParameters_RootExtensionsIgnored(t *testing.T) {
 		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
 	}
 }
+
+// TestUnknownConfigParameters_RemovedBackchannelFailureLockout pins the hard removal of the backchannel
+// caller lockout: its former section is reported like any other unknown key.
+func TestUnknownConfigParameters_RemovedBackchannelFailureLockout(t *testing.T) {
+	settings := map[string]any{
+		"auth": map[string]any{
+			"backchannel": map[string]any{
+				"failure_lockout": map[string]any{"threshold": 5},
+			},
+		},
+	}
+
+	got, err := unknownConfigParameters(settings)
+	if err != nil {
+		t.Fatalf("unknownConfigParameters() error = %v", err)
+	}
+
+	want := []string{"auth.backchannel.failure_lockout.threshold"}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unknownConfigParameters() = %v, want %v", got, want)
+	}
+}

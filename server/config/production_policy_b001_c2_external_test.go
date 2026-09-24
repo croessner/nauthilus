@@ -330,7 +330,6 @@ func newProductionMigrationRuntime(t *testing.T, candidate config.File) *product
 		nil,
 		&pluginloader.State{},
 		unexpectedProductionMigrationTokenFactory,
-		unexpectedProductionMigrationThrottlerFactory,
 		productionMigrationTransportFactory,
 		localization.NewMapCatalog(nil),
 		startup,
@@ -371,11 +370,6 @@ func newProductionMigrationRuntime(t *testing.T, candidate config.File) *product
 // unexpectedProductionMigrationTokenFactory rejects accidental bearer activation in this internal-only fixture.
 func unexpectedProductionMigrationTokenFactory(context.Context, config.File) (callerauth.AccessTokenValidator, error) {
 	return nil, errors.New("unexpected B001-C2 access-token factory call")
-}
-
-// unexpectedProductionMigrationThrottlerFactory rejects accidental Policy-Basic activation in this fixture.
-func unexpectedProductionMigrationThrottlerFactory(context.Context, config.File) (callerauth.BasicThrottler, error) {
-	return nil, errors.New("unexpected B001-C2 Basic throttler factory call")
 }
 
 // productionMigrationTransportFactory returns the disabled external transport projection authored by the fixture.

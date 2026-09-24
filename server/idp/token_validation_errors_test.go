@@ -252,7 +252,7 @@ func TestValidateTokenJWTClassifiesTokenStateFailures(t *testing.T) {
 }
 
 // TestValidateTokenJWTRejectsForgedTokensWithoutTechnicalClassification pins that attacker-controlled input
-// never reaches the technical classification, which would exempt it from caller lockout.
+// never reaches the technical classification, which would turn a rejection into a 503 without delay.
 func TestValidateTokenJWTRejectsForgedTokensWithoutTechnicalClassification(t *testing.T) {
 	const kid = "forged-key"
 

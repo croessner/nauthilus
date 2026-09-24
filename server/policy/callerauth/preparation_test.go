@@ -120,23 +120,30 @@ func TestPolicyCallerAuthenticationPreparationAcceptsClientMTLSWithVerifiedCerti
 	}
 }
 
-func TestPolicyCallerAuthenticationPreparationRequiresBasicThrottler(t *testing.T) {
+// TestPolicyCallerAuthenticationPreparationNeedsNoExternalStateForBasic pins that Policy-Basic prepares and
+// authenticates from the generation's own material alone, with no Redis or other external dependency.
+func TestPolicyCallerAuthenticationPreparationNeedsNoExternalStateForBasic(t *testing.T) {
 	t.Parallel()
 
-	configuration := policyPreparationConfiguration()
-	configuration.Throttler = nil
-
-	preparation, err := Prepare(configuration)
-	if !errors.Is(err, ErrConfiguration) {
-		t.Fatalf("Prepare() error = %v, want ErrConfiguration", err)
+	preparation, err := Prepare(Configuration{
+		TransportCapabilities: TransportCapabilities{HTTPProtected: true},
+		ExternalProfiles: []ExternalProfile{{
+			Basic:               &BasicCredential{Password: secret.New(policyTestPassword), Username: "policy-user"},
+			AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic},
+			Principal:           policyTestPrincipal,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
 	}
 
-	if preparation.Authenticator != nil || len(preparation.Credentials.IDs()) != 0 || len(preparation.Resources) != 0 {
-		t.Fatalf("failed preparation = %#v, want zero", preparation)
-	}
+	input := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "http", true, "")
+
+	caller, err := preparation.Authenticator.Authenticate(context.Background(), input)
+	assertPolicyBasicAuthenticationResult(t, caller, err, true)
 }
 
-func TestPolicyCallerAuthenticationPreparationNeedsNoThrottlerWithoutBasic(t *testing.T) {
+func TestPolicyCallerAuthenticationPreparationNeedsNoDependenciesForInternalCallers(t *testing.T) {
 	t.Parallel()
 
 	preparation, err := Prepare(Configuration{InternalCallers: []InternalCaller{{
@@ -158,7 +165,6 @@ func TestPolicyCallerAuthenticationPreparationNeedsNoThrottlerWithoutBasic(t *te
 func policyPreparationConfiguration() Configuration {
 	return Configuration{
 		TokenValidator:        policyStaticTokenValidator{},
-		Throttler:             &policyRecordingThrottler{},
 		TransportCapabilities: TransportCapabilities{HTTPProtected: true},
 		ExternalProfiles: []ExternalProfile{
 			{

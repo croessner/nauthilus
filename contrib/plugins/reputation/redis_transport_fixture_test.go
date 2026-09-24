@@ -31,23 +31,6 @@ import (
 
 const transportTestPassword = "isolated-reputation-test"
 
-type transportTestThrottler struct{}
-
-// BeforeAttempt leaves rate admission to the real configured admission authority in this isolated fixture.
-func (transportTestThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordFailure has no external state in the isolated authentication fixture.
-func (transportTestThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordSuccess has no external state in the isolated authentication fixture.
-func (transportTestThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
 // transportPolicyInput loads the actual operator example with a disposable credential and both unary transports.
 func transportPolicyInput(t *testing.T, raw map[string]any) configinput.UnifiedPolicyInput {
 	t.Helper()
@@ -155,7 +138,6 @@ func reputationTransportSlots(normalized configinput.UnifiedPolicyInput, catalog
 		}),
 		CallerAuthentication: policyruntime.CallerAuthenticationPreparationFunc(func(context.Context, policyruntime.AuthorityPreparationInput) (policyruntime.CallerAuthenticationPreparation, error) {
 			authentication := normalized.CallerAuthentication()
-			authentication.Throttler = transportTestThrottler{}
 			authentication.TransportCapabilities = callerauth.TransportCapabilities{HTTPProtected: true, GRPCProtected: true}
 
 			return callerauth.Prepare(authentication)

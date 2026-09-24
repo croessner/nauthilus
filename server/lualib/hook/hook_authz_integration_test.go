@@ -30,6 +30,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -248,8 +249,19 @@ func TestHasRequiredScopes_UnscopedNonPublicHookRejectsInvalidBackchannelBasicAu
 	ctx, rec := newHookTestContext(http.MethodGet, "/custom/foo")
 	ctx.Request.SetBasicAuth("hook-client", "wrong-secret")
 
+	const delay = 40 * time.Millisecond
+
+	t.Cleanup(mdauth.SetCallerRejectionDelayForTest(delay))
+
+	started := time.Now()
 	ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/foo", http.MethodGet)
+	elapsed := time.Since(started)
+
 	assertHookBasicAuthDenied(t, ctx, rec, ok, "expected invalid backchannel Basic Auth to deny unscoped non-public hook")
+
+	if elapsed < delay {
+		t.Fatalf("wrong Basic credentials were answered after %s, want the rejection delay of at least %s", elapsed, delay)
+	}
 }
 
 func TestHasRequiredScopes_UnscopedNonPublicHookRejectsBasicWhenDisabled(t *testing.T) {

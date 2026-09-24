@@ -549,23 +549,6 @@ func (acceptingPostAction) Accept(context.Context, effectsupervisor.Plan) (effec
 	return effectsupervisor.Receipt{}, nil
 }
 
-type acceptingPolicyBasicThrottler struct{}
-
-// BeforeAttempt accepts one focused adapter-fixture verification attempt.
-func (*acceptingPolicyBasicThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordFailure accepts one focused adapter-fixture verification failure.
-func (*acceptingPolicyBasicThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordSuccess accepts one focused adapter-fixture verification success.
-func (*acceptingPolicyBasicThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
 type generatedPolicyTokenValidator struct{}
 
 // ValidateAccessToken returns fixed issuer-validated token evidence for HTTP boundary coverage.
@@ -621,7 +604,6 @@ func newGeneratedDecisionService(t *testing.T) (*decisionservice.DecisionService
 			Principal:           "policy-bearer",
 		}},
 		TokenValidator:        generatedPolicyTokenValidator{},
-		Throttler:             &acceptingPolicyBasicThrottler{},
 		TransportCapabilities: callerauth.TransportCapabilities{HTTPProtected: true},
 	}
 	admissionConfiguration := admission.Configuration{

@@ -35,7 +35,9 @@ provide the same separation.
 
 Policy-Basic, when enabled for an exact client profile, is a separate
 credential family with no OAuth scope and no management-Basic fallback. It is
-accepted only over the Policy transport's protected-transport boundary.
+accepted only over the Policy transport's protected-transport boundary. A
+rejected Policy-Basic password is delayed by a fixed 300 ms; callers are never
+locked out, and verification keeps no Redis state.
 
 Audience and caller identity are authenticated transport properties, not
 fields controlled by `DecisionRequest`. The unary adapter supplies admitted

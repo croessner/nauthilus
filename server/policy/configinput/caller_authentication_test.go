@@ -44,10 +44,6 @@ func requirePolicyCallerAuthAssemblyFieldsUnset(t *testing.T, configuration call
 		t.Fatal("projection injected a token validator")
 	}
 
-	if configuration.Throttler != nil {
-		t.Fatal("projection injected a Basic throttler")
-	}
-
 	if configuration.TransportCapabilities.HTTPProtected || configuration.TransportCapabilities.GRPCProtected {
 		t.Fatal("projection injected transport capabilities")
 	}

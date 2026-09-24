@@ -38,3 +38,23 @@ normalization. Any other descriptor change remains a compatibility failure.
 Release tags must use the same major version as the module path. The release
 metadata guard rejects a tag whose major differs from `go.mod`; for this module
 the intended first prerelease is `v4.0.0-alpha.1`.
+
+## Changes Between v4 Prereleases
+
+- `auth.backchannel.failure_lockout` (introduced in `v4.0.0-beta.5`) was
+  removed without a compatibility shim. Backchannel callers are never locked
+  out anymore; a genuine caller rejection is delayed by a fixed 300 ms and
+  logged at warning level. The key is now rejected like any other unknown
+  configuration key, so remove the whole block from the configuration. See
+  section 11.1.1 of the [gRPC identity proxy spec](grpc_identity_proxy_spec.md).
+- The metric `backchannel_caller_auth_total` lost its `trusted` label and the
+  `throttled` outcome. It now carries only `transport` and `outcome`
+  (`accepted`, `rejected`, `unavailable`); update dashboards and alerts that
+  select on the removed label or outcome.
+- The Policy-Basic failure throttler (present since `v4.0.0-alpha.1`) was
+  removed. It blocked a username and source address for 5 minutes after 5
+  wrong passwords and failed closed for the whole configuration generation on
+  any Redis error. A wrong Policy-Basic password is now delayed by a fixed
+  300 ms and never blocks; verification no longer uses Redis. Existing
+  `nauthilus:policy:basic:{...}` keys are no longer read or written and expire
+  on their own. No configuration change is required.

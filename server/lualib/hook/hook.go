@@ -355,9 +355,9 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	}
 
 	_, ok = oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
-		RequiredScopes:         requiredScopes,
-		MissingScopeMessage:    "insufficient permissions",
-		ThrottleOnMissingToken: false,
+		RequiredScopes:      requiredScopes,
+		MissingScopeMessage: "insufficient permissions",
+		DelayOnMissingToken: false,
 	})
 	if !ok {
 		return handleHookBearerAuthFailure(ctx)
@@ -373,7 +373,14 @@ func allowBackchannelBasicAuthHook(ctx *gin.Context, cfg config.File, logger *sl
 	}
 
 	username, password, ok := ctx.Request.BasicAuth()
-	if !ok || !mdauth.ValidateBasicCredentials(cfg, username, password) {
+	if !ok {
+		return false
+	}
+
+	if !mdauth.ValidateBasicCredentials(cfg, username, password) {
+		// Presented but wrong Basic credentials are a genuine caller rejection: delayed and logged, never blocked.
+		mdauth.NewHTTPCallerAccounting(ctx, cfg, logger).Reject("invalid basic credentials")
+
 		return false
 	}
 

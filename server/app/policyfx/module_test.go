@@ -33,7 +33,6 @@ import (
 
 var (
 	errCandidateToken     = errors.New("candidate token validation failed")
-	errCandidateThrottler = errors.New("candidate Basic throttler preparation failed")
 	errCandidateTransport = errors.New("candidate transport validation failed")
 )
 
@@ -48,15 +47,6 @@ func (g *candidateFactoryGate) tokenValidator(context.Context, config.File) (cal
 	}
 
 	return nil, nil
-}
-
-// basicThrottler rejects only the selected candidate preparation phase.
-func (g *candidateFactoryGate) basicThrottler(context.Context, config.File) (callerauth.BasicThrottler, error) {
-	if g.rejected == "throttler" {
-		return nil, errCandidateThrottler
-	}
-
-	return &productionBasicThrottler{}, nil
 }
 
 // transportCapabilities rejects only the selected candidate preparation phase.
@@ -101,7 +91,6 @@ func newCandidateFactoryCoordinator(
 		nil,
 		&pluginloader.State{},
 		gate.tokenValidator,
-		gate.basicThrottler,
 		gate.transportCapabilities,
 		localization.NewMapCatalog(nil),
 		mustStartupCatalog(t, configured, nil),
@@ -147,7 +136,6 @@ func assertCandidateFactoryRejections(
 		factory   string
 	}{
 		{candidate: productionBearerNonAuthDecisionCandidate(t), want: errCandidateToken, factory: "token"},
-		{candidate: productionNonAuthDecisionCandidate(t), want: errCandidateThrottler, factory: "throttler"},
 		{candidate: productionNonAuthDecisionCandidate(t), want: errCandidateTransport, factory: "transport"},
 	}
 	for _, test := range tests {
@@ -223,7 +211,6 @@ func TestProductionCoordinatorLayersStartupCatalogBetweenSystemAndPolicy(t *test
 		nil,
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{}, nil
 		},
@@ -275,7 +262,6 @@ func TestProductionCoordinatorRejectsStartupScriptDriftWithoutReplacingGeneratio
 		nil,
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{}, nil
 		},
@@ -334,7 +320,6 @@ func TestProductionCoordinatorRejectsSystemLocalizationDriftWithoutReplacingGene
 		nil,
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{}, nil
 		},
@@ -384,11 +369,6 @@ func TestInternalCallerMaterialIsPairedAndDetached(t *testing.T) {
 // unusedTokenFactory fails if a test unexpectedly activates bearer authority.
 func unusedTokenFactory(context.Context, config.File) (callerauth.AccessTokenValidator, error) {
 	return nil, errors.New("unexpected bearer factory call")
-}
-
-// unusedThrottlerFactory fails if a test unexpectedly activates Basic authority.
-func unusedThrottlerFactory(context.Context, config.File) (callerauth.BasicThrottler, error) {
-	return nil, errors.New("unexpected Basic factory call")
 }
 
 // mustStartupCatalog freezes one test-owned startup layer and script baseline.

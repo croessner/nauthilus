@@ -372,9 +372,9 @@ func enforceNativeHookToken(
 	}
 
 	_, ok := oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
-		RequiredScopes:         requiredScopes,
-		MissingScopeMessage:    nativeHookInsufficientPermissions,
-		ThrottleOnMissingToken: false,
+		RequiredScopes:      requiredScopes,
+		MissingScopeMessage: nativeHookInsufficientPermissions,
+		DelayOnMissingToken: false,
 	})
 
 	return ok

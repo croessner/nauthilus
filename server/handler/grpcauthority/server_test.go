@@ -521,43 +521,6 @@ func TestUnaryServerInterceptorAllowsClientCertificateWhenConfigured(t *testing.
 	}
 }
 
-func TestUnaryServerInterceptorThrottlesInvalidCallerAuthByPeerIP(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
-		Enabled:  true,
-		Username: "grpc-client",
-		Password: secret.New("grpc-secret-1234"),
-	}, config.OIDCAuth{})
-	enableBruteForceControl(t, cfg)
-
-	interceptor := UnaryServerInterceptor(ServerDeps{
-		Cfg:    cfg,
-		Logger: slog.Default(),
-	})
-	ctx := metadata.NewIncomingContext(
-		context.Background(),
-		metadata.Pairs("authorization", basicAuthorization("grpc-client", "wrong-secret")),
-	)
-	ctx = peer.NewContext(ctx, &peer.Peer{
-		Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.211"), Port: 9444},
-	})
-
-	for i := range 5 {
-		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{
-			FullMethod: authv1.AuthService_Authenticate_FullMethodName,
-		}, okUnaryHandler)
-		if status.Code(err) != codes.Unauthenticated {
-			t.Fatalf("attempt %d code = %v, want %v", i+1, status.Code(err), codes.Unauthenticated)
-		}
-	}
-
-	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{
-		FullMethod: authv1.AuthService_Authenticate_FullMethodName,
-	}, okUnaryHandler)
-	if status.Code(err) != codes.ResourceExhausted {
-		t.Fatalf("code = %v, want %v", status.Code(err), codes.ResourceExhausted)
-	}
-}
-
 //nolint:funlen
 func TestLoggingTracingInterceptorIncludesAuthorityFields(t *testing.T) {
 	var logBuffer bytes.Buffer

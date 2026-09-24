@@ -69,39 +69,6 @@ func newEvidence(protected bool, tlsState *tls.ConnectionState, normalizedMTLSId
 	return evidence
 }
 
-// VerifiedGRPCClientLeaf returns the presented client leaf only when the protected gRPC transport verified its
-// chain. It applies the same gate as MTLSIdentity without requiring a common name.
-func VerifiedGRPCClientLeaf(authInfo credentials.AuthInfo) (*x509.Certificate, bool) {
-	tlsState, securityLevel, ok := grpcTLSState(authInfo)
-	if !ok || !completedTLS(tlsState) || securityLevel != credentials.PrivacyAndIntegrity || !hasVerifiedClientChain(tlsState) {
-		return nil, false
-	}
-
-	return tlsState.PeerCertificates[0], true
-}
-
-// CertificateIdentities lists the exact identities a certificate asserts: its common name, DNS names, and URIs.
-func CertificateIdentities(certificate *x509.Certificate) []string {
-	if certificate == nil {
-		return nil
-	}
-
-	identities := make([]string, 0, 1+len(certificate.DNSNames)+len(certificate.URIs))
-	if commonName := strings.TrimSpace(certificate.Subject.CommonName); commonName != "" {
-		identities = append(identities, commonName)
-	}
-
-	identities = append(identities, certificate.DNSNames...)
-
-	for _, uri := range certificate.URIs {
-		if uri != nil {
-			identities = append(identities, uri.String())
-		}
-	}
-
-	return identities
-}
-
 // LeafCommonName returns the presented leaf certificate's common name without claiming chain verification.
 // It is the identity candidate that NewHTTP and NewGRPC gate on a verified client chain.
 func LeafCommonName(certificates []*x509.Certificate) string {

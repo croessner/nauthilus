@@ -571,9 +571,8 @@ type AuthRequestSection struct {
 
 // AuthBackchannelSection configures API/backchannel authentication.
 type AuthBackchannelSection struct {
-	BasicAuth      BasicAuth          `mapstructure:"basic_auth" validate:"omitempty"`
-	OIDCBearer     OIDCAuth           `mapstructure:"oidc_bearer" validate:"omitempty"`
-	FailureLockout BackchannelLockout `mapstructure:"failure_lockout" validate:"omitempty"`
+	BasicAuth  BasicAuth `mapstructure:"basic_auth" validate:"omitempty"`
+	OIDCBearer OIDCAuth  `mapstructure:"oidc_bearer" validate:"omitempty"`
 }
 
 // AuthPipelineSection configures authentication pipeline limits and shared behavior.
@@ -1046,7 +1045,6 @@ func (f *FileSettings) applyAuthSection(server *ServerSection) {
 
 	server.BasicAuth = auth.Backchannel.BasicAuth
 	server.OIDCAuth = auth.Backchannel.OIDCBearer
-	server.BackchannelLockout = auth.Backchannel.FailureLockout
 	server.MaxConcurrentRequests = auth.Pipeline.MaxConcurrentRequests
 	server.MaxLoginAttempts = auth.Pipeline.MaxLoginAttempts
 	server.NginxWaitDelay = auth.Pipeline.WaitDelay

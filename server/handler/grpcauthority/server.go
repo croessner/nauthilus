@@ -870,7 +870,8 @@ func firstIncomingMetadata(ctx context.Context, key string) string {
 	return strings.TrimSpace(values[0])
 }
 
-// authenticateCaller authenticates one authority RPC and feeds the result into the caller lockout.
+// authenticateCaller authenticates one authority RPC and records the outcome in the caller accounting.
+// Callers are never blocked; a genuine rejection is only delayed.
 func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string) (callerAuthResult, error) {
 	cfg := deps.Cfg
 	if cfg == nil || cfg.GetServer() == nil {
@@ -884,70 +885,20 @@ func authenticateCaller(ctx context.Context, deps ServerDeps, fullMethod string)
 		return callerAuthResult{}, status.Error(codes.Unauthenticated, "backchannel authentication is not configured")
 	}
 
-	guard := newGRPCCallerGuard(ctx, deps)
+	accounting := mdauth.NewCallerAccounting(deps.effectiveLogger(), mdauth.CallerTransportGRPC, callerPeerIP(ctx))
 
-	// A request that already ended must not reach the lockout or the token store.
+	// A request that already ended must not reach the token store.
 	if ctx.Err() != nil {
-		guard.Unavailable()
+		accounting.Unavailable()
 
 		return callerAuthResult{}, endedRequestStatus(ctx)
 	}
 
-	if exceeded, retryAfter := guard.Throttled(); exceeded {
-		return callerAuthResult{}, callerThrottledStatus(retryAfter)
-	}
-
 	result, err := authenticateCallerCredentials(ctx, deps, fullMethod, basicEnabled, oidcEnabled)
 
-	// Exempt callers are throttled only after a genuine rejection, so valid credentials always pass.
-	if status.Code(err) == codes.Unauthenticated {
-		if exceeded, retryAfter := guard.RejectionThrottled(); exceeded {
-			return callerAuthResult{}, callerThrottledStatus(retryAfter)
-		}
-	}
-
-	recordCallerAuthOutcome(guard, err)
+	recordCallerAuthOutcome(accounting, err)
 
 	return result, err
-}
-
-// callerThrottledStatus answers a caller whose failure counter is blocked.
-func callerThrottledStatus(retryAfter time.Duration) error {
-	return status.Errorf(
-		codes.ResourceExhausted,
-		"too many backchannel authentication failures; retry after %s",
-		retryAfter.Truncate(time.Second),
-	)
-}
-
-// newGRPCCallerGuard describes the gRPC peer for failure accounting. The peer address is the direct
-// transport peer, so it serves both as lockout key and as the only address considered for the exemption.
-func newGRPCCallerGuard(ctx context.Context, deps ServerDeps) *mdauth.CallerGuard {
-	peerIP := callerPeerIP(ctx)
-
-	return mdauth.NewCallerGuard(deps.Cfg, deps.effectiveLogger(), mdauth.CallerIdentity{
-		IP:             peerIP,
-		PeerIP:         peerIP,
-		Presented:      mdauth.PresentedCredentialIdentity(authorizationMetadata(ctx)),
-		Transport:      mdauth.CallerTransportGRPC,
-		MTLSIdentities: callerMTLSIdentities(ctx, deps.Cfg),
-	})
-}
-
-// callerMTLSIdentities returns the identities of a client certificate whose chain the listener verified
-// against the dedicated runtime.servers.grpc.authority.tls.client_ca. Without that CA no certificate is
-// eligible for the lockout exemption.
-func callerMTLSIdentities(ctx context.Context, cfg config.File) []string {
-	if runtimeGRPCAuthorityServerConfig(cfg).GetTLS().GetClientCA() == "" {
-		return nil
-	}
-
-	leaf, verified := transportsecurity.VerifiedGRPCClientLeaf(policyPeerAuthInfo(ctx))
-	if !verified {
-		return nil
-	}
-
-	return transportsecurity.CertificateIdentities(leaf)
 }
 
 // authenticateCallerCredentials checks the presented Basic or Bearer credentials without any accounting.
@@ -979,18 +930,18 @@ func authenticateCallerCredentials(
 }
 
 // recordCallerAuthOutcome maps the RPC status to the caller accounting. Only Unauthenticated is a genuine
-// credential rejection that counts towards the lockout; a missing scope is denied without counting, and
-// every other status is treated as undecided so no unforeseen failure can lock out a caller.
-func recordCallerAuthOutcome(guard *mdauth.CallerGuard, err error) {
+// credential rejection that is logged and delayed; a missing scope is denied without delay, and every
+// other status is treated as undecided.
+func recordCallerAuthOutcome(accounting *mdauth.CallerAccounting, err error) {
 	switch code := status.Code(err); code {
 	case codes.OK:
-		guard.Accept()
+		accounting.Accept()
 	case codes.Unauthenticated:
-		guard.Reject(status.Convert(err).Message())
+		accounting.Reject(status.Convert(err).Message())
 	case codes.PermissionDenied:
-		guard.Deny()
+		accounting.Deny()
 	default:
-		guard.Unavailable()
+		accounting.Unavailable()
 	}
 }
 

@@ -158,7 +158,7 @@ func newCallerAdmissionGenerationFixture(t *testing.T) *callerAdmissionGeneratio
 	}
 	coordinator := newCallerAdmissionGenerationCoordinator(t, store, callerAdmissionGenerationAssembly{
 		authorities: authorities,
-		authThrottler: &policyCallerAuthBlockingThrottler{
+		authGate: policyCallerAuthGate{
 			started: authStarted,
 			release: authRelease,
 		},
@@ -211,7 +211,7 @@ func (f *callerAdmissionGenerationFixture) releaseEvaluation() {
 
 type callerAdmissionGenerationAssembly struct {
 	authorities     *callerAdmissionGenerationAuthorities
-	authThrottler   callerauth.BasicThrottler
+	authGate        policyCallerAuthGate
 	firstEvaluator  checkpointEvaluator
 	secondEvaluator checkpointEvaluator
 }
@@ -369,24 +369,23 @@ func callerAdmissionGenerationAuthenticationSlot(
 		_ context.Context,
 		input policyruntime.AuthorityPreparationInput,
 	) (policyruntime.CallerAuthenticationPreparation, error) {
-		var (
-			throttler callerauth.BasicThrottler
-			password  = callerAdmissionGenerationNewSecret
-		)
-
+		password := callerAdmissionGenerationNewSecret
 		if input.ID() == 1 {
 			password = callerAdmissionGenerationOldSecret
-			throttler = assembly.authThrottler
-		} else {
-			throttler = &policyCallerAuthBlockingThrottler{}
 		}
 
-		prepared, err := callerauth.Prepare(policyCallerAuthBasicConfiguration(password, throttler, true))
-		if err == nil {
-			assembly.authorities.record(input.ID(), prepared.Authenticator, nil)
+		prepared, err := callerauth.Prepare(policyCallerAuthBasicConfiguration(password, true))
+		if err != nil {
+			return prepared, err
 		}
 
-		return prepared, err
+		assembly.authorities.record(input.ID(), prepared.Authenticator, nil)
+
+		if input.ID() == 1 {
+			prepared = blockPolicyCallerAuthentication(prepared, assembly.authGate.started, assembly.authGate.release)
+		}
+
+		return prepared, nil
 	})
 }
 

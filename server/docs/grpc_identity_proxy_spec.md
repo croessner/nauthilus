@@ -1394,82 +1394,47 @@ Caller bearer auth and `BackendRef.opaque_token` are separate:
 - `BackendRef.opaque_token` answers "which authority-side backend selection was previously made for this user and flow?";
 - every identity/MFA/WebAuthn call that carries a backend reference must pass both validations.
 
-### 11.1.1 Caller Failure Lockout
+### 11.1.1 Backchannel Caller Rejections
 
-Rejected caller authentications are counted in a process-local table. After `threshold` rejections from one
-source address within `window`, the address is blocked for `block_time`, and the authority answers
-`RESOURCE_EXHAUSTED` until the block expires. Every rejected credential is delayed by `sleep_on_fail`. The
-lockout is enforced only while the brute-force control is enabled; the same table protects the HTTP
-backchannel API (`/api/v1/*` with Basic or Bearer caller authentication).
+The backchannel (the HTTP API under `/api/v1/*` and the gRPC authority listener) is a tunnel: the caller
+does not authenticate itself as the subject of the request, it carries a payload whose user and client are
+authenticated. The subject inside the payload is protected by the `auth.controls` `brute_force` buckets,
+keyed on the payload's client IP. The caller itself is authenticated only by its credentials, an OIDC
+`client_credentials` bearer token or HTTP Basic auth, and the backchannel listeners must only be reachable
+from a trusted network segment. They are never internet-facing.
 
-```yaml
-auth:
-  backchannel:
-    failure_lockout:
-      threshold: 5              # 1..1000
-      window: 1m                # > 0, at most 1h
-      block_time: 2m            # > 0, at most 24h
-      sleep_on_fail: 300ms      # > 0, at most 5s
-      exempt_networks:          # default: loopback only; [] disables the address exemption
-        - 127.0.0.0/8
-        - ::1
-      exempt_threshold: 50      # unset: max(50, threshold); if set: >= threshold, at most 100000
-      trusted_mtls_identities: [] # CN, DNS SAN, or URI SAN (trimmed); empty disables the mTLS exemption
-```
+Backchannel callers are never locked out, neither per address nor per identity. Callers behind load
+balancers, trusted proxies, or sidecars share one address, so a lockout would turn one caller with a stale
+token into an outage for all of them. Instead, every genuine rejection is delayed by a fixed 300 ms and
+logged at warning level with the transport, the client IP, and a fixed reason; the log never contains
+credentials, tokens, or usernames.
 
-The values shown are the defaults. Only genuine rejections count:
+| Caller authentication result | gRPC status | HTTP | Outcome | Delayed |
+|---|---|---|---|---|
+| Missing metadata, wrong Basic credentials, unknown, expired, revoked, denylisted, or wrongly signed token | `UNAUTHENTICATED` | 401 | `rejected` | yes |
+| Valid token without the required scope | `PERMISSION_DENIED` | 403 | `rejected` | no |
+| Valid token that is not a backchannel access token | `UNAUTHENTICATED` | 401 | `rejected` | gRPC only |
+| Missing token on a custom hook route | - | 401 | `rejected` | no |
+| Token state or signing keys unreachable (Redis error, timeout), token validator not wired | `UNAVAILABLE` | 503 + `Retry-After` | `unavailable` | no |
+| Request context of the caller canceled or past its deadline | `CANCELED` / `DEADLINE_EXCEEDED` | 503 | `unavailable` | no |
 
-| Caller authentication result | gRPC status | HTTP | Counted |
-|---|---|---|---|
-| Missing metadata, wrong Basic credentials, unknown, expired, revoked, denylisted, or wrongly signed token | `UNAUTHENTICATED` | 401 | yes |
-| Valid token without the required scope | `PERMISSION_DENIED` | 403 | no |
-| Token state or signing keys unreachable (Redis error, timeout), token validator not wired | `UNAVAILABLE` | 503 + `Retry-After` | no |
-| Request context of the caller canceled or past its deadline | `CANCELED` / `DEADLINE_EXCEEDED` | 503 | no |
-| Caller currently blocked | `RESOURCE_EXHAUSTED` | 429 | no |
+A token validation that cannot be decided for technical reasons is not a rejection: it answers 503 with
+`Retry-After` or `UNAVAILABLE`, so a degraded token store never reads as invalid credentials.
 
-Exempt callers are never blocked per address, because they typically multiplex many independent requests
-over one address, for example a sidecar that reaches the authority through `127.0.0.1`. A caller is exempt
-when either
+The metric `backchannel_caller_auth_total{transport,outcome}` counts caller authentication outcomes;
+`transport` is `http` or `grpc`, `outcome` is `accepted`, `rejected`, or `unavailable`. Rejected Basic
+credentials on `/ping`, `/healthz`, and `/metrics` are delayed as well but not counted.
 
-- its **direct** transport peer lies in `exempt_networks`. The direct peer is the TCP upstream of the
-  connection: neither forwarding headers (`X-Forwarded-For`, `X-Real-IP`) nor a PROXY protocol header
-  (`runtime.servers.http.haproxy_v2`) can claim an exempt address. `trusted_proxies` itself grants no
-  exemption. When a trusted proxy resolves a client address that differs from the direct peer, the caller
-  is that client: it is never exempt and is locked out by the resolved address with the normal
-  `threshold`, so a guesser behind a loopback reverse proxy does not lock out the other clients of that
-  proxy. The same applies to a PROXY protocol source that differs from the TCP upstream. With Istio sidecar
-  interception the application sees inbound connections from `127.0.0.6`, which the loopback default
-  already covers; narrow `exempt_networks` to `127.0.0.1` if the mesh forwards external callers through
-  loopback; or
-- it presents a client certificate that the gRPC listener verified against the dedicated
-  `runtime.servers.grpc.authority.tls.client_ca` and whose common name, DNS SAN, or URI SAN is listed in
-  `trusted_mtls_identities`. Matching is exact: DNS SANs are compared case-sensitively, and URI SANs in Go's
-  URL serialization (for example `spiffe://cluster.local/ns/mail/sa/doppelgaenger`). The HTTP listener has no
-  dedicated backchannel client CA, so certificates never exempt HTTP callers;
-  `runtime.servers.http.tls.ca_file` is not a trust anchor for this exemption.
+The Policy API (`POST /api/v1/policy/decisions` and `PolicyDecisionService/Evaluate`) is backchannel as well and follows
+the same rule for Policy-Basic callers: a wrong password is delayed by a fixed 300 ms, nobody is locked out,
+and verification compares only against the active generation's credentials, without Redis, so a Redis outage
+never affects Policy-Basic authentication. Rejected Policy bearer tokens are not delayed, because a signed
+token cannot be guessed, and Policy caller outcomes are reported by the Policy observer, not by
+`backchannel_caller_auth_total`.
 
-Exempt callers keep a residual brake: rejections are counted per (exempt scope, presented identity). The
-scope is the matched `exempt_networks` entry or the matched mTLS identity, not the individual peer address,
-so a local process cannot reset its counter by rotating through `127.0.0.0/8`. The presented identity is the
-Basic username or the Bearer scheme. `exempt_threshold` rejections within `window` block that pair for
-`block_time`. The block only applies to further rejections: exempt callers are never refused before their
-credentials are checked, so valid credentials always pass, and rejected ones are answered with
-`RESOURCE_EXHAUSTED` (HTTP 429) while the pair is blocked. One scope tracks at most 1024 identities; beyond
-that bound, new identities share one overflow counter, so spreading guesses over fresh usernames blocks
-the overflow as a whole. This is a deliberate trade-off: because all Bearer presentations share one identity, a
-host-local process that produces `exempt_threshold` Bearer rejections throttles every rejected Bearer
-presentation from the same exempt network for `block_time`; valid tokens are not affected. Rejections of
-exempt callers are still refused and delayed; single
-rejections are logged at debug level, the start of a block at warning level.
-
-The metric `backchannel_caller_auth_total{transport,outcome,trusted}` counts outcomes (`accepted`,
-`rejected`, `unavailable`, `throttled`); `trusted` reports the exemption. The start of every block is logged
-once at warning level. Neither log contains credentials, tokens, or presented identities.
-
-The OIDC endpoints `/oidc/token` and `/oidc/introspect` authenticate OIDC clients and are **not** covered by
-this lockout; they have no per-address brake for client-secret guessing. Token introspection answers 503
-instead of `"active": false` when token state cannot be read, because an inactive answer would make a
-protected resource treat a valid token as revoked.
+The OIDC endpoints `/oidc/token` and `/oidc/introspect` authenticate OIDC clients and are not backchannel
+caller authentication. Token introspection answers 503 instead of `"active": false` when token state cannot
+be read, because an inactive answer would make a protected resource treat a valid token as revoked.
 
 JWT access-token revocations are stored under a SHA-256 digest key. For one release they are also written
 to the legacy key that embeds the raw token, so an instance rolled back to the previous release still sees

@@ -66,9 +66,6 @@ const (
 // AccessTokenValidatorFactory builds candidate-scoped token authority from the unpublished config.
 type AccessTokenValidatorFactory func(context.Context, config.File) (callerauth.AccessTokenValidator, error)
 
-// BasicThrottlerFactory builds candidate-scoped Policy-Basic attempt authority.
-type BasicThrottlerFactory func(context.Context, config.File) (callerauth.BasicThrottler, error)
-
 // TransportCapabilitiesFactory validates and projects protected Policy transport capabilities.
 type TransportCapabilitiesFactory func(context.Context, config.File) (callerauth.TransportCapabilities, error)
 
@@ -117,7 +114,6 @@ type catalogPreparationSlot struct{}
 
 type callerAuthenticationPreparationSlot struct {
 	tokens     AccessTokenValidatorFactory
-	throttlers BasicThrottlerFactory
 	transports TransportCapabilitiesFactory
 }
 
@@ -174,13 +170,12 @@ func NewCoordinator(
 	logger *slog.Logger,
 	pluginState *pluginloader.State,
 	tokens AccessTokenValidatorFactory,
-	throttlers BasicThrottlerFactory,
 	transports TransportCapabilitiesFactory,
 	system localization.Catalog,
 	startup *StartupCatalog,
 	restart RestartBaselineValidator,
 ) (*Coordinator, error) {
-	if store == nil || pluginState == nil || tokens == nil || throttlers == nil || transports == nil ||
+	if store == nil || pluginState == nil || tokens == nil || transports == nil ||
 		system == nil || startup == nil || restart == nil {
 		return nil, fmt.Errorf("%w: production Policy dependencies are incomplete", policyruntime.ErrInvalidGeneration)
 	}
@@ -197,7 +192,7 @@ func NewCoordinator(
 			Policy:               policyPreparationSlot{},
 			Extensions:           extensionPreparationSlot{native: native, pools: vmpool.NewManager(), logger: logger},
 			Catalog:              catalogPreparationSlot{},
-			CallerAuthentication: callerAuthenticationPreparationSlot{tokens: tokens, throttlers: throttlers, transports: transports},
+			CallerAuthentication: callerAuthenticationPreparationSlot{tokens: tokens, transports: transports},
 			Admission:            admissionPreparationSlot{},
 			Settings:             settingsPreparationSlot{system: system, startup: startup},
 			Application:          decisionservice.NewRuntimeApplicationPreparationSlot(),
@@ -217,7 +212,6 @@ func provideCoordinator(
 	logger *slog.Logger,
 	pluginState *pluginloader.State,
 	tokens AccessTokenValidatorFactory,
-	throttlers BasicThrottlerFactory,
 	transports TransportCapabilitiesFactory,
 	languageManager corelanguage.Manager,
 	startup *StartupCatalog,
@@ -232,7 +226,6 @@ func provideCoordinator(
 		logger,
 		pluginState,
 		tokens,
-		throttlers,
 		transports,
 		localization.NewManagerCatalog(languageManager),
 		startup,
@@ -916,13 +909,6 @@ func (s callerAuthenticationPreparationSlot) Prepare(
 	configuration := prepared.CallerAuthentication()
 	if requiresBearer(configuration) {
 		configuration.TokenValidator, err = s.tokens(ctx, input.Config())
-		if err != nil {
-			return policyruntime.CallerAuthenticationPreparation{}, err
-		}
-	}
-
-	if configuration.RequiresBasicThrottler() {
-		configuration.Throttler, err = s.throttlers(ctx, input.Config())
 		if err != nil {
 			return policyruntime.CallerAuthenticationPreparation{}, err
 		}

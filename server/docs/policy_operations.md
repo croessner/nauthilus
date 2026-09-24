@@ -47,7 +47,9 @@ Policy credentials are separate from management and backchannel credentials:
   `nauthilus:policy_diagnostics` and profile permission;
 - Policy-Basic uses a dedicated enabled Policy client profile over the
   protected transport boundary. It has no OAuth scope and never falls back to
-  management Basic.
+  management Basic. A wrong Policy-Basic password is answered after a fixed
+  300 ms delay; callers are never locked out, and verification uses only the
+  active generation's credentials, so a Redis outage never affects it.
 
 Use separate tokens for Policy and backchannel calls. The placeholders below
 must be supplied through the caller's secret store and must never be committed:

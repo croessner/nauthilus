@@ -227,7 +227,6 @@ func TestProductionRestartBaselineRejectsDisabledBearerDriftBeforeCandidateFacto
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			transportCalls++
 
@@ -604,7 +603,6 @@ func TestProductionCoordinatorRequiresRestartBaseline(t *testing.T) {
 		nil,
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{}, nil
 		},
@@ -1157,7 +1155,6 @@ func newRestartBaselineCoordinatorWithTransport(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		&pluginloader.State{},
 		unusedTokenFactory,
-		unusedThrottlerFactory,
 		transport,
 		localization.NewMapCatalog(nil),
 		mustStartupCatalog(t, configured, nil),

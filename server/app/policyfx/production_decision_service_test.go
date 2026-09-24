@@ -67,23 +67,6 @@ const productionNonAuthDecisionFixture = `policy:
         final_decision: {policy_sets: [mail/default]}
 `
 
-type productionBasicThrottler struct{}
-
-// BeforeAttempt admits one deterministic production-assembly test attempt.
-func (*productionBasicThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordFailure records no shared state in this production-assembly test.
-func (*productionBasicThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordSuccess records no shared state in this production-assembly test.
-func (*productionBasicThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
 // TestProductionCoordinatorEvaluatesEnabledNonAuthTargetThroughBothTransports proves the real assembly path.
 func TestProductionCoordinatorEvaluatesEnabledNonAuthTargetThroughBothTransports(t *testing.T) {
 	configured := productionNonAuthDecisionCandidate(t)
@@ -139,9 +122,6 @@ func newProductionPolicyCoordinator(
 		nil,
 		&pluginloader.State{},
 		tokens,
-		func(context.Context, config.File) (callerauth.BasicThrottler, error) {
-			return &productionBasicThrottler{}, nil
-		},
 		func(context.Context, config.File) (callerauth.TransportCapabilities, error) {
 			return callerauth.TransportCapabilities{HTTPProtected: true, GRPCProtected: true}, nil
 		},
@@ -214,4 +194,3 @@ func productionNonAuthInvocation(t *testing.T, transport string) decision.Invoca
 }
 
 var _ decisionservice.PreparedService = (*decisionservice.DecisionService)(nil)
-var _ callerauth.BasicThrottler = (*productionBasicThrottler)(nil)

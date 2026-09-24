@@ -23,7 +23,6 @@ import (
 	"reflect"
 
 	servererrors "github.com/croessner/nauthilus/v4/server/errors"
-	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
@@ -37,12 +36,6 @@ var (
 
 	// ErrConfiguration identifies an invalid immutable caller-authentication generation.
 	ErrConfiguration = errors.New("invalid policy caller authentication configuration")
-
-	// ErrBasicThrottleLimit identifies a Policy-Basic identity whose bounded failure window is full.
-	ErrBasicThrottleLimit = errors.New("policy Basic authentication is throttled")
-
-	// ErrBasicThrottleState identifies malformed Policy-Basic failure state.
-	ErrBasicThrottleState = errors.New("invalid policy Basic throttle state")
 )
 
 // AccessTokenValidator returns only issuer-validated access-token evidence.
@@ -50,38 +43,13 @@ type AccessTokenValidator interface {
 	ValidateAccessToken(context.Context, []byte) (ValidatedAccessToken, error)
 }
 
-// BasicThrottler gates and records dedicated Policy-Basic verification attempts.
-type BasicThrottler interface {
-	BeforeAttempt(context.Context, BasicThrottleKey) error
-	RecordFailure(context.Context, BasicThrottleKey) error
-	RecordSuccess(context.Context, BasicThrottleKey) error
-}
-
 // Configuration contains every caller-authentication rule captured by one runtime generation.
 type Configuration struct {
 	TokenValidator        AccessTokenValidator
-	Throttler             BasicThrottler
 	ExternalProfiles      []ExternalProfile
 	InternalCallers       []InternalCaller
 	TransportCapabilities TransportCapabilities
 	RequireGRPCMTLS       bool
-}
-
-// RequiresBasicThrottler reports whether any candidate profile declares Policy-Basic material or kind.
-func (c Configuration) RequiresBasicThrottler() bool {
-	for _, profile := range c.ExternalProfiles {
-		if profile.Basic != nil {
-			return true
-		}
-
-		for _, kind := range profile.AuthenticationKinds {
-			if kind == policy.CallerAuthenticationKindBasic {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // TransportCapabilities declares enabled Policy transports capable of satisfying protection.
@@ -123,22 +91,6 @@ type ValidatedAccessToken struct {
 	Subject   string
 	Issuer    string
 	TokenType string
-}
-
-// BasicThrottleKey is a secret-free per-username and normalized source-IP throttle identity.
-type BasicThrottleKey struct {
-	peer           string
-	identityDigest [32]byte
-}
-
-// Peer returns the normalized source IP, or an empty fail-safe bucket when unavailable.
-func (k BasicThrottleKey) Peer() string {
-	return k.peer
-}
-
-// IdentityDigest returns a non-reversible fixed-size username identity.
-func (k BasicThrottleKey) IdentityDigest() [32]byte {
-	return k.identityDigest
 }
 
 // typedNilInterface reports whether a non-nil interface contains a nil reference value.

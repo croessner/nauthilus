@@ -21,7 +21,9 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/policy"
@@ -46,8 +48,7 @@ type policyBasicAuthenticationCase struct {
 	credential    string
 	protected     bool
 	wantSuccess   bool
-	wantBefore    int
-	wantFailure   int
+	wantDelayed   int
 	wantSucceeded int
 }
 
@@ -165,14 +166,16 @@ func TestPolicyBasicAuthenticationRequiresProtectedDedicatedCredentials(t *testi
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			throttler := &policyRecordingThrottler{}
-			authenticator := policyBasicAuthenticator(t, throttler)
+			authenticator, delays := policyBasicAuthenticator(t)
 			input := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, test.credential, "http", test.protected, "")
 
 			caller, err := authenticator.Authenticate(context.Background(), input)
 
 			assertPolicyBasicAuthenticationResult(t, caller, err, test.wantSuccess)
-			assertPolicyThrottleCalls(t, throttler, test)
+
+			if got := delays.Load(); got != int32(test.wantDelayed) {
+				t.Fatalf("rejection delays = %d, want %d", got, test.wantDelayed)
+			}
 		})
 	}
 }
@@ -180,20 +183,20 @@ func TestPolicyBasicAuthenticationRequiresProtectedDedicatedCredentials(t *testi
 // policyBasicAuthenticationCases covers the transport gate and dedicated credential isolation.
 func policyBasicAuthenticationCases() []policyBasicAuthenticationCase {
 	return []policyBasicAuthenticationCase{
-		{name: "unprotected correct credential is rejected before throttling", credential: "policy-user:" + policyTestPassword},
+		{name: "unprotected correct credential is rejected before verification", credential: "policy-user:" + policyTestPassword},
 		{name: "unprotected malformed credential is rejected before parsing", credential: "not-a-basic-presentation"},
-		{name: "protected dedicated credential", credential: "policy-user:" + policyTestPassword, protected: true, wantSuccess: true, wantBefore: 1, wantSucceeded: 1},
-		{name: "wrong dedicated password", credential: "policy-user:wrong-password", protected: true, wantBefore: 1, wantFailure: 1},
-		{name: "management credential is ineligible", credential: "management-admin:management-password", protected: true, wantBefore: 1, wantFailure: 1},
+		{name: "protected dedicated credential", credential: "policy-user:" + policyTestPassword, protected: true, wantSuccess: true},
+		{name: "wrong dedicated password", credential: "policy-user:wrong-password", protected: true, wantDelayed: 1},
+		{name: "management credential is ineligible", credential: "management-admin:management-password", protected: true, wantDelayed: 1},
 	}
 }
 
-// policyBasicAuthenticator builds one dedicated Policy-Basic test authority.
-func policyBasicAuthenticator(t *testing.T, throttler BasicThrottler) *Authenticator {
+// policyBasicAuthenticator builds one dedicated Policy-Basic test authority without any Redis or other
+// external state. Its rejection delay only counts, so tests stay fast and can assert every delay.
+func policyBasicAuthenticator(t *testing.T) (*Authenticator, *atomic.Int32) {
 	t.Helper()
 
-	return mustPolicyAuthenticator(t, Configuration{
-		Throttler:             throttler,
+	authenticator := mustPolicyAuthenticator(t, Configuration{
 		TransportCapabilities: TransportCapabilities{HTTPProtected: true},
 		ExternalProfiles: []ExternalProfile{{
 			Basic:               &BasicCredential{Password: secret.New(policyTestPassword), Username: "policy-user"},
@@ -201,6 +204,66 @@ func policyBasicAuthenticator(t *testing.T, throttler BasicThrottler) *Authentic
 			Principal:           policyTestPrincipal,
 		}},
 	})
+	delays := &atomic.Int32{}
+	authenticator.delayRejection = func(context.Context) {
+		delays.Add(1)
+	}
+
+	return authenticator, delays
+}
+
+// TestPolicyBasicRepeatedRejectionsNeverBlock pins that wrong passwords from one peer and username are only
+// delayed: the correct password from the same peer always passes afterwards.
+func TestPolicyBasicRepeatedRejectionsNeverBlock(t *testing.T) {
+	t.Parallel()
+
+	const attempts = 50
+
+	authenticator, delays := policyBasicAuthenticator(t)
+
+	for range attempts {
+		input := mustPolicyBasicAuthenticationInputForPeer(t, "policy-user:wrong-password", "192.0.2.44:51001")
+		caller, err := authenticator.Authenticate(context.Background(), input)
+
+		assertPolicyAuthenticationRejected(t, caller, err)
+	}
+
+	input := mustPolicyBasicAuthenticationInputForPeer(t, "policy-user:"+policyTestPassword, "192.0.2.44:51001")
+	caller, err := authenticator.Authenticate(context.Background(), input)
+
+	assertPolicyBasicAuthenticationResult(t, caller, err, true)
+
+	if got := delays.Load(); got != attempts {
+		t.Fatalf("rejection delays = %d, want %d", got, attempts)
+	}
+}
+
+// TestPolicyBasicRejectionDelay pins the fixed production delay and that it ends with the caller's request.
+func TestPolicyBasicRejectionDelay(t *testing.T) {
+	t.Parallel()
+
+	if basicRejectionDelay != 300*time.Millisecond {
+		t.Fatalf("basicRejectionDelay = %s, want 300ms", basicRejectionDelay)
+	}
+
+	started := time.Now()
+
+	delayBasicRejection(context.Background())
+
+	if elapsed := time.Since(started); elapsed < basicRejectionDelay {
+		t.Fatalf("rejection delayed %s, want at least %s", elapsed, basicRejectionDelay)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	started = time.Now()
+
+	delayBasicRejection(ctx)
+
+	if elapsed := time.Since(started); elapsed >= basicRejectionDelay {
+		t.Fatalf("rejection of an ended request delayed %s, want an immediate return", elapsed)
+	}
 }
 
 // assertPolicyBasicAuthenticationResult verifies the dedicated Basic caller mapping.
@@ -223,112 +286,6 @@ func assertPolicyBasicAuthenticationResult(t *testing.T, caller decision.CallerC
 
 	if len(caller.Scopes()) != 0 {
 		t.Fatalf("Basic scopes = %v, want none", caller.Scopes())
-	}
-}
-
-// assertPolicyThrottleCalls verifies the precheck and outcome callback ordering.
-func assertPolicyThrottleCalls(t *testing.T, throttler *policyRecordingThrottler, test policyBasicAuthenticationCase) {
-	t.Helper()
-
-	if throttler.before != test.wantBefore || throttler.failure != test.wantFailure || throttler.success != test.wantSucceeded {
-		t.Fatalf(
-			"throttle calls = before:%d failure:%d success:%d, want %d/%d/%d",
-			throttler.before,
-			throttler.failure,
-			throttler.success,
-			test.wantBefore,
-			test.wantFailure,
-			test.wantSucceeded,
-		)
-	}
-}
-
-func TestPolicyBasicAuthenticationFailsClosedWhenThrottled(t *testing.T) {
-	t.Parallel()
-
-	throttler := &policyRecordingThrottler{beforeErr: errors.New("throttled")}
-	authenticator := mustPolicyAuthenticator(t, Configuration{
-		Throttler:             throttler,
-		TransportCapabilities: TransportCapabilities{GRPCProtected: true},
-		ExternalProfiles: []ExternalProfile{{
-			Basic:               &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)},
-			AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic},
-			Principal:           policyTestPrincipal,
-		}},
-	})
-	input := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "grpc", true, "")
-
-	caller, err := authenticator.Authenticate(context.Background(), input)
-	assertPolicyAuthenticationRejected(t, caller, err)
-
-	if throttler.before != 1 || throttler.failure != 0 || throttler.success != 0 {
-		t.Fatalf("throttle calls = before:%d failure:%d success:%d", throttler.before, throttler.failure, throttler.success)
-	}
-}
-
-func TestPolicyBasicThrottleLimitDoesNotPoisonGeneration(t *testing.T) {
-	t.Parallel()
-
-	throttler := &policyRecordingThrottler{beforeErr: ErrBasicThrottleLimit}
-	authenticator := policyBasicAuthenticator(t, throttler)
-	input := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "http", true, "")
-
-	caller, err := authenticator.Authenticate(context.Background(), input)
-	assertPolicyAuthenticationRejected(t, caller, err)
-
-	throttler.beforeErr = nil
-	input = mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "http", true, "")
-
-	caller, err = authenticator.Authenticate(context.Background(), input)
-	assertPolicyBasicAuthenticationResult(t, caller, err, true)
-
-	if throttler.before != 2 || throttler.success != 1 {
-		t.Fatalf("throttle calls after limit expiry = before:%d success:%d", throttler.before, throttler.success)
-	}
-}
-
-func TestPolicyBasicThrottleKeyUsesNormalizedPeerIP(t *testing.T) {
-	t.Parallel()
-
-	throttler := &policyRecordingThrottler{}
-	authenticator := policyBasicAuthenticator(t, throttler)
-
-	for _, peer := range []string{"192.0.2.44:51001", "192.0.2.44:51002", "malformed-peer"} {
-		input := mustPolicyBasicAuthenticationInputForPeer(t, "policy-user:wrong-password", peer)
-		caller, err := authenticator.Authenticate(context.Background(), input)
-
-		assertPolicyAuthenticationRejected(t, caller, err)
-	}
-
-	if len(throttler.keys) != 3 {
-		t.Fatalf("throttle keys = %d, want 3", len(throttler.keys))
-	}
-
-	if throttler.keys[0].Peer() != "192.0.2.44" || throttler.keys[1].Peer() != "192.0.2.44" {
-		t.Fatalf("normalized peers = %q/%q, want one IP", throttler.keys[0].Peer(), throttler.keys[1].Peer())
-	}
-
-	if throttler.keys[2].Peer() != "" {
-		t.Fatalf("malformed peer throttle key = %q, want fail-safe empty bucket", throttler.keys[2].Peer())
-	}
-}
-
-func TestPolicyBasicThrottleStateFailureClosesGeneration(t *testing.T) {
-	t.Parallel()
-
-	throttler := &policyRecordingThrottler{failureErr: errors.New("throttle state unavailable")}
-	authenticator := policyBasicAuthenticator(t, throttler)
-
-	wrong := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:wrong-password", "http", true, "")
-	caller, err := authenticator.Authenticate(context.Background(), wrong)
-	assertPolicyAuthenticationRejected(t, caller, err)
-
-	correct := mustPolicyAuthenticationInput(t, policy.CallerAuthenticationKindBasic, "policy-user:"+policyTestPassword, "http", true, "")
-	caller, err = authenticator.Authenticate(context.Background(), correct)
-	assertPolicyAuthenticationRejected(t, caller, err)
-
-	if throttler.before != 1 || throttler.failure != 1 || throttler.success != 0 {
-		t.Fatalf("throttle calls after state failure = before:%d failure:%d success:%d", throttler.before, throttler.failure, throttler.success)
 	}
 }
 
@@ -467,7 +424,6 @@ func TestPolicyCallerAuthenticatorOwnsCredentialRules(t *testing.T) {
 		TransportKinds: transports,
 	}}
 	authenticator := mustPolicyAuthenticator(t, Configuration{
-		Throttler:             &policyRecordingThrottler{},
 		TransportCapabilities: TransportCapabilities{HTTPProtected: true},
 		ExternalProfiles:      profiles,
 		InternalCallers:       internal,
@@ -506,7 +462,7 @@ func TestPolicyCallerAuthenticatorOwnsCredentialRules(t *testing.T) {
 func TestPolicyCallerAuthRejectsBasicWithoutProtectedTransportCapability(t *testing.T) {
 	t.Parallel()
 
-	_, err := New(Configuration{Throttler: &policyRecordingThrottler{}, ExternalProfiles: []ExternalProfile{{
+	_, err := New(Configuration{ExternalProfiles: []ExternalProfile{{
 		Basic:               &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)},
 		AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic},
 		Principal:           policyTestPrincipal,
@@ -523,26 +479,22 @@ func TestPolicyCallerAuthRejectsBasicWithoutProtectedTransportCapability(t *test
 func TestPolicyCallerAuthRejectsInvalidConfiguration(t *testing.T) {
 	t.Parallel()
 
-	var (
-		typedNilTokenValidator *policyNilTokenValidator
-		typedNilThrottler      *policyNilThrottler
-	)
+	var typedNilTokenValidator *policyNilTokenValidator
 
 	tests := []struct {
 		name          string
 		configuration Configuration
 	}{
 		{name: "Bearer profile without validator", configuration: Configuration{ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}}},
-		{name: "Basic kind without material", configuration: Configuration{Throttler: &policyRecordingThrottler{}, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
-		{name: "Basic material without kind", configuration: Configuration{Throttler: &policyRecordingThrottler{}, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, Basic: &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}, TokenValidator: policyStaticTokenValidator{}}},
+		{name: "Basic kind without material", configuration: Configuration{TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
+		{name: "Basic material without kind", configuration: Configuration{TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, Basic: &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}, TokenValidator: policyStaticTokenValidator{}}},
 		{name: "duplicate principals", configuration: Configuration{TokenValidator: policyStaticTokenValidator{}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}, {Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}}},
-		{name: "duplicate Basic usernames", configuration: Configuration{Throttler: &policyRecordingThrottler{}, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: "first", Basic: &BasicCredential{Username: "shared", Password: secret.New("first")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}, {Principal: "second", Basic: &BasicCredential{Username: "shared", Password: secret.New("second")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
+		{name: "duplicate Basic usernames", configuration: Configuration{TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: "first", Basic: &BasicCredential{Username: "shared", Password: secret.New("first")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}, {Principal: "second", Basic: &BasicCredential{Username: "shared", Password: secret.New("second")}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
 		{name: "global gRPC mTLS without capable transport", configuration: Configuration{RequireGRPCMTLS: true}},
 		{name: "verified client certificate without protected gRPC", configuration: Configuration{TransportCapabilities: TransportCapabilities{GRPCVerifiedClientCertificate: true}}},
 		{name: "internal caller without transport", configuration: Configuration{InternalCallers: []InternalCaller{{Principal: "internal", EvidenceKind: "internal-kind", Capability: secret.New("capability")}}}},
 		{name: "internal caller reuses external evidence kind", configuration: Configuration{InternalCallers: []InternalCaller{{Principal: "internal", EvidenceKind: policy.CallerAuthenticationKindBasic, Capability: secret.New("capability"), TransportKinds: []string{"internal"}}}}},
 		{name: "typed nil token validator", configuration: Configuration{TokenValidator: typedNilTokenValidator, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, AuthenticationKinds: []string{policy.CallerAuthenticationKindBearer}}}}},
-		{name: "typed nil Basic throttler", configuration: Configuration{Throttler: typedNilThrottler, TransportCapabilities: TransportCapabilities{HTTPProtected: true}, ExternalProfiles: []ExternalProfile{{Principal: policyTestPrincipal, Basic: &BasicCredential{Username: "policy-user", Password: secret.New(policyTestPassword)}, AuthenticationKinds: []string{policy.CallerAuthenticationKindBasic}}}}},
 	}
 
 	for _, test := range tests {
@@ -646,59 +598,11 @@ func (v policyStaticTokenValidator) ValidateAccessToken(context.Context, []byte)
 	return v.token, v.err
 }
 
-type policyRecordingThrottler struct {
-	keys       []BasicThrottleKey
-	beforeErr  error
-	failureErr error
-	failure    int
-	success    int
-	before     int
-}
-
-// BeforeAttempt records the Policy-Basic pre-verification throttle gate.
-func (t *policyRecordingThrottler) BeforeAttempt(_ context.Context, key BasicThrottleKey) error {
-	t.before++
-	t.keys = append(t.keys, key)
-
-	return t.beforeErr
-}
-
-// RecordFailure records one failed Policy-Basic verification.
-func (t *policyRecordingThrottler) RecordFailure(context.Context, BasicThrottleKey) error {
-	t.failure++
-
-	return t.failureErr
-}
-
-// RecordSuccess records one successful Policy-Basic verification.
-func (t *policyRecordingThrottler) RecordSuccess(context.Context, BasicThrottleKey) error {
-	t.success++
-
-	return nil
-}
-
 type policyNilTokenValidator struct{}
 
 // ValidateAccessToken must never run through a typed-nil generation dependency.
 func (*policyNilTokenValidator) ValidateAccessToken(context.Context, []byte) (ValidatedAccessToken, error) {
 	panic("typed-nil token validator invoked")
-}
-
-type policyNilThrottler struct{}
-
-// BeforeAttempt must never run through a typed-nil generation dependency.
-func (*policyNilThrottler) BeforeAttempt(context.Context, BasicThrottleKey) error {
-	panic("typed-nil Basic throttler invoked")
-}
-
-// RecordFailure must never run through a typed-nil generation dependency.
-func (*policyNilThrottler) RecordFailure(context.Context, BasicThrottleKey) error {
-	panic("typed-nil Basic throttler invoked")
-}
-
-// RecordSuccess must never run through a typed-nil generation dependency.
-func (*policyNilThrottler) RecordSuccess(context.Context, BasicThrottleKey) error {
-	panic("typed-nil Basic throttler invoked")
 }
 
 // policyValidatedToken builds one structured issuer-validated token result.

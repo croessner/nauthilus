@@ -9,7 +9,10 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/stats"
+
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,13 +34,13 @@ func serveBasicAuthAttempt(path string, cfg config.File, clientIP string, passwo
 	return w.Code
 }
 
-func TestBasicAuthBruteForce_Metrics(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
+// basicAuthTestConfig enables Basic auth together with the brute-force control, which must never turn into
+// a lockout of backchannel callers.
+func basicAuthTestConfig() *config.FileSettings {
 	f := &config.RuntimeModule{}
 	_ = f.Set(definitions.ControlBruteForce)
 
-	cfg := &config.FileSettings{
+	return &config.FileSettings{
 		Server: &config.ServerSection{
 			RuntimeModules: []*config.RuntimeModule{f},
 			BasicAuth: config.BasicAuth{
@@ -47,51 +50,66 @@ func TestBasicAuthBruteForce_Metrics(t *testing.T) {
 			},
 		},
 	}
-
-	// Reset global cache
-	callerLockout.reset()
-
-	clientIP := "1.2.3.4"
-
-	// Trigger 5 failures on /metrics
-	for range 5 {
-		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/metrics", cfg, clientIP, "wrong"))
-	}
-
-	// 6th attempt should NOT be throttled on /metrics, even with correct password
-	assert.Equal(t, http.StatusOK, serveBasicAuthAttempt("/metrics", cfg, clientIP, "password"))
-
-	// However, failures on another path SHOULD lead to throttling
-	// First, trigger 5 failures on another path
-	for range 5 {
-		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", cfg, clientIP, "wrong"))
-	}
-
-	// 6th attempt on /other should be throttled
-	assert.Equal(t, http.StatusTooManyRequests, serveBasicAuthAttempt("/other", cfg, clientIP, "password"))
 }
 
-// TestBasicAuthExemptValidCredentialsPassBlockedBucket pins the Basic pattern for exempt callers: wrong
-// passwords are throttled once the identity counter is blocked, the right password still passes.
-func TestBasicAuthExemptValidCredentialsPassBlockedBucket(t *testing.T) {
+// httpCallerAuthCount reads one HTTP outcome of the backchannel caller authentication counter.
+func httpCallerAuthCount(outcome string) float64 {
+	return testutil.ToFloat64(stats.GetMetrics().GetBackchannelCallerAuthTotal().WithLabelValues(CallerTransportHTTP, outcome))
+}
+
+// TestBasicAuthRepeatedRejectionsNeverBlock pins that wrong Basic credentials never block a caller address,
+// neither on backchannel routes nor on the bypass routes, and that the right password always passes.
+func TestBasicAuthRepeatedRejectionsNeverBlock(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	callerLockout.reset()
+	t.Cleanup(SetCallerRejectionDelayForTest(time.Millisecond))
 
-	f := &config.RuntimeModule{}
-	_ = f.Set(definitions.ControlBruteForce)
+	cfg := basicAuthTestConfig()
+	clientIP := "1.2.3.4"
 
-	cfg := &config.FileSettings{Server: &config.ServerSection{
-		RuntimeModules: []*config.RuntimeModule{f},
-		BasicAuth:      config.BasicAuth{Enabled: true, Username: "admin", Password: secret.New("password")},
-		BackchannelLockout: config.BackchannelLockout{
-			Threshold: 2, ExemptThreshold: 2, SleepOnFail: time.Millisecond,
-		},
-	}}
+	for _, path := range []string{"/metrics", "/other"} {
+		t.Run(path, func(t *testing.T) {
+			for range 20 {
+				assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt(path, cfg, clientIP, "wrong"))
+			}
 
-	for range 2 {
-		assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", cfg, "127.0.0.1", "wrong"))
+			assert.Equal(t, http.StatusOK, serveBasicAuthAttempt(path, cfg, clientIP, "password"))
+		})
 	}
+}
 
-	assert.Equal(t, http.StatusTooManyRequests, serveBasicAuthAttempt("/other", cfg, "127.0.0.1", "wrong"))
-	assert.Equal(t, http.StatusOK, serveBasicAuthAttempt("/other", cfg, "127.0.0.1", "password"))
+// TestBasicAuthAccountsOnlyBackchannelRoutes pins that rejections on backchannel routes are recorded while
+// the bypass routes are only delayed.
+func TestBasicAuthAccountsOnlyBackchannelRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(SetCallerRejectionDelayForTest(time.Millisecond))
+
+	cfg := basicAuthTestConfig()
+	rejectedBefore := httpCallerAuthCount(callerOutcomeRejected)
+	acceptedBefore := httpCallerAuthCount(callerOutcomeAccepted)
+
+	assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/metrics", cfg, "1.2.3.5", "wrong"))
+	assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", cfg, "1.2.3.5", "wrong"))
+	assert.Equal(t, http.StatusOK, serveBasicAuthAttempt("/other", cfg, "1.2.3.5", "password"))
+
+	assert.InDelta(t, 1, httpCallerAuthCount(callerOutcomeRejected)-rejectedBefore, 0)
+	assert.InDelta(t, 1, httpCallerAuthCount(callerOutcomeAccepted)-acceptedBefore, 0)
+}
+
+// TestBasicAuthRejectionIsDelayed pins the fixed delay of a rejected Basic credential.
+func TestBasicAuthRejectionIsDelayed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const delay = 50 * time.Millisecond
+
+	t.Cleanup(SetCallerRejectionDelayForTest(delay))
+
+	started := time.Now()
+
+	assert.Equal(t, http.StatusUnauthorized, serveBasicAuthAttempt("/other", basicAuthTestConfig(), "1.2.3.6", "wrong"))
+	assert.GreaterOrEqual(t, time.Since(started), delay)
+}
+
+// TestCallerRejectionDelayDefault pins the fixed production delay.
+func TestCallerRejectionDelayDefault(t *testing.T) {
+	assert.Equal(t, 300*time.Millisecond, callerRejectionDelay)
 }

@@ -53,9 +53,9 @@ const (
 
 // EnforceBearerScopeAuthOptions describes the exported EnforceBearerScopeAuthOptions type.
 type EnforceBearerScopeAuthOptions struct {
-	RequiredScopes         []string
-	MissingScopeMessage    string
-	ThrottleOnMissingToken bool
+	RequiredScopes      []string
+	MissingScopeMessage string
+	DelayOnMissingToken bool
 }
 
 // Middleware returns a Gin middleware that extracts a Bearer token from the
@@ -113,9 +113,9 @@ func AuthorizeAuthenticateScope(
 	logger *slog.Logger,
 ) bool {
 	_, ok := EnforceBearerScopeAuth(ctx, validator, cfg, EnforceBearerScopeAuthOptions{
-		RequiredScopes:         []string{definitions.ScopeAuthenticate},
-		MissingScopeMessage:    "missing required scope: " + definitions.ScopeAuthenticate,
-		ThrottleOnMissingToken: true,
+		RequiredScopes:      []string{definitions.ScopeAuthenticate},
+		MissingScopeMessage: "missing required scope: " + definitions.ScopeAuthenticate,
+		DelayOnMissingToken: true,
 	})
 	if !ok {
 		util.DebugModuleWithCfg(
@@ -134,23 +134,23 @@ func AuthorizeAuthenticateScope(
 }
 
 // EnforceBearerScopeAuth validates the Bearer token of the request, enforces the required scopes, and
-// feeds the outcome into the backchannel caller lockout.
+// records the outcome in the backchannel caller accounting.
 func EnforceBearerScopeAuth(
 	ctx *gin.Context,
 	validator TokenValidator,
 	cfg config.File,
 	options EnforceBearerScopeAuthOptions,
 ) (jwt.MapClaims, bool) {
-	guard := mdauth.NewHTTPCallerGuard(ctx, cfg, nil)
+	accounting := mdauth.NewHTTPCallerAccounting(ctx, cfg, nil)
 
 	tokenString, ok := ExtractBearerToken(ctx)
 	if !ok {
-		rejectMissingBearerToken(ctx, guard, options.ThrottleOnMissingToken)
+		rejectMissingBearerToken(ctx, accounting, options.DelayOnMissingToken)
 
 		return nil, false
 	}
 
-	claims := validateAndStoreClaims(ctx, validator, guard, tokenString)
+	claims := validateAndStoreClaims(ctx, validator, accounting, tokenString)
 	if claims == nil {
 		return nil, false
 	}
@@ -161,78 +161,70 @@ func EnforceBearerScopeAuth(
 			msg = "insufficient permissions"
 		}
 
-		guard.Deny()
+		accounting.Deny()
 		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{oidcBearerResponseKeyError: msg})
 
 		return nil, false
 	}
 
-	guard.Accept()
+	accounting.Accept()
 
 	return claims, true
 }
 
 // rejectMissingBearerToken answers a request without Bearer token. Only routes that require a token
-// count the attempt towards the caller lockout.
-func rejectMissingBearerToken(ctx *gin.Context, guard *mdauth.CallerGuard, throttle bool) {
-	if !throttle {
-		guard.Deny()
+// treat the attempt as a rejected credential and delay it.
+func rejectMissingBearerToken(ctx *gin.Context, accounting *mdauth.CallerAccounting, delay bool) {
+	if !delay {
+		accounting.Deny()
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerUnauthorizedMessage})
 
 		return
 	}
 
-	if mdauth.AbortIfRejectionThrottled(ctx, guard) {
-		return
-	}
-
-	guard.Reject("missing bearer token")
+	accounting.Reject("missing bearer token")
 	ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerUnauthorizedMessage})
 }
 
 // ValidateAndStoreClaims validates the given bearer token, stores the resulting
-// claims in the Gin context under definitions.CtxOIDCClaimsKey, and applies
-// throttling on failure. Returns the claims on success or nil on failure
+// claims in the Gin context under definitions.CtxOIDCClaimsKey, and delays
+// rejected tokens. Returns the claims on success or nil on failure
 // (request is aborted with 401, or 503 when validation could not decide).
 //
 // This is the shared validation core used by both Middleware (for backchannel
 // API endpoints) and HasRequiredScopes in the hook package (for custom hooks).
 func ValidateAndStoreClaims(ctx *gin.Context, validator TokenValidator, cfg config.File, tokenString string) jwt.MapClaims {
-	guard := mdauth.NewHTTPCallerGuard(ctx, cfg, nil)
+	accounting := mdauth.NewHTTPCallerAccounting(ctx, cfg, nil)
 
-	claims := validateAndStoreClaims(ctx, validator, guard, tokenString)
+	claims := validateAndStoreClaims(ctx, validator, accounting, tokenString)
 	if claims != nil {
-		guard.Accept()
+		accounting.Accept()
 	}
 
 	return claims
 }
 
-// validateAndStoreClaims validates tokenString and separates rejected tokens, which count towards the
-// caller lockout, from validations the token store could not decide, which answer 503 and never count.
-func validateAndStoreClaims(ctx *gin.Context, validator TokenValidator, guard *mdauth.CallerGuard, tokenString string) jwt.MapClaims {
+// validateAndStoreClaims validates tokenString and separates rejected tokens, which are delayed, from
+// validations the token store could not decide, which answer 503 and are never treated as rejections.
+func validateAndStoreClaims(ctx *gin.Context, validator TokenValidator, accounting *mdauth.CallerAccounting, tokenString string) jwt.MapClaims {
 	claims, err := validator.ValidateToken(ctx.Request.Context(), tokenString)
 	if err != nil {
 		if servererrors.IsTokenValidationUnavailable(err) {
-			guard.Unavailable()
+			accounting.Unavailable()
 			ctx.Header(retryAfterHeader, tokenValidationRetryAfterSeconds)
 			ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{oidcBearerResponseKeyError: "temporarily_unavailable"})
 
 			return nil
 		}
 
-		if mdauth.AbortIfRejectionThrottled(ctx, guard) {
-			return nil
-		}
-
-		guard.Reject("invalid bearer token")
+		accounting.Reject("invalid bearer token")
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerInvalidTokenMessage})
 
 		return nil
 	}
 
 	if !IsBackchannelAccessToken(claims) {
-		guard.Deny()
+		accounting.Deny()
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerInvalidTokenMessage})
 
 		return nil

@@ -45,23 +45,6 @@ type policyFactoryTestFixture struct {
 	clientCA string
 }
 
-type policyFactoryNoopThrottler struct{}
-
-// BeforeAttempt permits one test-only Policy-Basic attempt without external state.
-func (policyFactoryNoopThrottler) BeforeAttempt(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordFailure accepts one test-only Policy-Basic failure without external state.
-func (policyFactoryNoopThrottler) RecordFailure(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
-// RecordSuccess accepts one test-only Policy-Basic success without external state.
-func (policyFactoryNoopThrottler) RecordSuccess(context.Context, callerauth.BasicThrottleKey) error {
-	return nil
-}
-
 func TestProductionPolicyFactoriesBuildRealCandidateDependencies(t *testing.T) {
 	fixture := newPolicyFactoryTestFixture(t)
 	cfg := policyFactoryTestConfig(fixture)
@@ -105,13 +88,6 @@ func TestProductionPolicyFactoriesBuildRealCandidateDependencies(t *testing.T) {
 	changedRedisSecret.Server.Redis.EncryptionSecret = secret.New("changed-redis-encryption-secret")
 	if _, err = tokenFactory(t.Context(), changedRedisSecret); !errors.Is(err, pluginruntime.ErrRestartRequired) {
 		t.Fatalf("changed Redis secret error = %v, want restart required", err)
-	}
-
-	throttlerFactory := newPolicyBasicThrottlerFactory(redisClient)
-
-	throttler, err := throttlerFactory(t.Context(), cfg)
-	if err != nil || throttler == nil {
-		t.Fatalf("Basic throttler factory = %T, %v", throttler, err)
 	}
 }
 
@@ -347,9 +323,6 @@ func newPolicyFactoryTestCoordinator(
 		&pluginloader.State{},
 		func(context.Context, config.File) (callerauth.AccessTokenValidator, error) {
 			return nil, errors.New("unexpected bearer factory call")
-		},
-		func(context.Context, config.File) (callerauth.BasicThrottler, error) {
-			return policyFactoryNoopThrottler{}, nil
 		},
 		transports,
 		localization.NewMapCatalog(nil),
