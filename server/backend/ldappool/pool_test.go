@@ -28,6 +28,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	srverrors "github.com/croessner/nauthilus/v4/server/errors"
+	"github.com/croessner/nauthilus/v4/server/localcache"
 	"github.com/croessner/nauthilus/v4/server/log"
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -156,6 +157,7 @@ func TestHandleLookupRequest(t *testing.T) {
 			ctx := t.Context()
 			mockConns := newLookupMockConnections(tc)
 			pool := newLookupTestPool(ctx, tc.poolType, mockConns)
+			isolateNegativeCache(t, pool.name)
 
 			stats.GetMetrics().GetLdapPoolStatus().WithLabelValues(pool.name).Set(0)
 
@@ -227,6 +229,18 @@ func assertLookupRequestCase(t *testing.T, tc lookupRequestCase, err error, mock
 	assert.Equal(t, tc.expectedBusyConns, busyConnectionCount(mockConns))
 }
 
+// isolateNegativeCache gives poolName a private negative cache for the duration of the test.
+// Without it, getNegCache hands out the process-wide shared cache, so negative entries from an
+// earlier test (or an earlier -count iteration) turn later lookups into cache hits.
+func isolateNegativeCache(t *testing.T, poolName string) {
+	t.Helper()
+
+	negCaches.Store(poolName, localcache.NewMemoryShardedCache(1, time.Minute, 0))
+	t.Cleanup(func() {
+		negCaches.Delete(poolName)
+	})
+}
+
 // busyConnectionCount counts mock connections left in the busy state.
 func busyConnectionCount(mockConns []LDAPConnection) int {
 	busyCount := 0
@@ -267,6 +281,8 @@ func TestSemaphoreTimeout(t *testing.T) {
 	}
 	pool.tokens <- Token{}
 
+	isolateNegativeCache(t, pool.name)
+
 	// First request consumes the single token and sleeps inside Search
 	err1 := pool.HandleLookupRequest(&bktype.LDAPRequest{GUID: "r1", HTTPClientContext: ctx})
 	assert.NoError(t, err1)
@@ -278,10 +294,11 @@ func TestSemaphoreTimeout(t *testing.T) {
 }
 
 func TestNegativeCacheKeyUsesExpandedFilter(t *testing.T) {
-	log.SetupLogging(definitions.LogLevelNone, false, false, false, "")
+	setupLDAPPoolTestConfig()
 
 	ctx := t.Context()
 	pool, mockConn := newExpandedFilterNegativeCachePool(ctx)
+	isolateNegativeCache(t, pool.name)
 
 	// Request A: non-existing user. Should set a negative cache entry for the
 	// expanded filter containing "missing@example.org".
