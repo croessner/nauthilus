@@ -176,6 +176,10 @@ type BucketManager interface {
 	// ProcessPWHist processes the password history for a user and returns the associated account name.
 	ProcessPWHist() (accountName string)
 
+	// SaveBruteForceBucketCountersToRedis increments the counters of all given rules with one reputation read
+	// and one script pipeline.
+	SaveBruteForceBucketCountersToRedis(rules []config.BruteForceRule)
+
 	// SaveBruteForceBucketCounterToRedis stores the current brute force bucket counter in Redis for the given rule.
 	SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule)
 
@@ -1841,47 +1845,102 @@ func (bm *bucketManagerImpl) storePasswordHistoryIP(logger *slog.Logger, key str
 // It increments the counter and sets an expiration time for the Redis key if the conditions are met.
 // Logs errors encountered during Redis operations and updates Redis write metrics.
 func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRule) {
-	currentKey, prevKey, weight, ok := bm.prepareSlidingWindow(rule)
-	if !ok {
+	bm.SaveBruteForceBucketCountersToRedis([]config.BruteForceRule{*rule})
+}
+
+// bucketCounterWrite is one prepared sliding-window counter increment of a failed request.
+type bucketCounterWrite struct {
+	rule       *config.BruteForceRule
+	currentKey string
+	prevKey    string
+	weight     float64
+	increment  int
+	call       *rediscli.ScriptCall
+}
+
+// SaveBruteForceBucketCountersToRedis increments the sliding-window counters of all given rules.
+// It reads the adaptive reputation once and writes every counter with one EVALSHA pipeline on the write
+// handle, so a failed login needs two round trips regardless of the number of rules. Each rule keeps its
+// own debug log, write metric and error log.
+func (bm *bucketManagerImpl) SaveBruteForceBucketCountersToRedis(rules []config.BruteForceRule) {
+	writes := bm.prepareBucketCounterWrites(rules)
+	if len(writes) == 0 {
 		return
 	}
-
-	util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", currentKey)
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
-	defer cancel()
 
 	// Reputation key for the client IP and adaptive scaling configuration
 	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
-	// Only increment if not already triggered by this rule
-	increment := 0
-	if bm.bruteForceName != rule.Name {
-		increment = 1
-	}
-
-	ttl := 2 * bucketWindowSeconds(rule.Period)
-	limit := int64(rule.FailedRequests) - 1
-
 	// Every first-seen failed password is counted directly; no catch-up is needed.
 	rwpFloor := 0
 
-	// Limit is not needed for Save in terms of triggering here, but we pass it anyway
-	// to maintain script logic.
-	_, err := rediscli.ExecuteScript(dCtx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"],
-		[]string{currentKey, prevKey},
-		increment, weight, ttl, limit,
-		adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, rwpFloor)
+	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
+	defer cancel()
 
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
+	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter_save").Inc()
 
-	if err != nil {
-		level.Error(bm.logger()).Log(
-			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Failed to update brute force bucket via Lua",
-			definitions.LogKeyError, err,
-		)
+	pipeline := rediscli.NewScriptPipeline(bm.redis(), bm.redis().GetWriteHandle())
+
+	// Every call is evaluated on its own below; the first pipeline error is not authoritative.
+	_ = pipeline.Exec(dCtx, func(pipe redis.Pipeliner) {
+		for i := range writes {
+			write := &writes[i]
+			ttl := 2 * bucketWindowSeconds(write.rule.Period)
+
+			// Limit is not needed for Save in terms of triggering here, but we pass it anyway
+			// to maintain script logic.
+			limit := int64(write.rule.FailedRequests) - 1
+
+			write.call = pipeline.EvalSha(dCtx, pipe, slidingWindowCounterScriptName,
+				[]string{write.currentKey, write.prevKey},
+				write.increment, write.weight, ttl, limit,
+				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, rwpFloor)
+		}
+	})
+
+	for i := range writes {
+		stats.GetMetrics().GetRedisWriteCounter().Inc()
+
+		if err := writes[i].call.Err(); err != nil {
+			level.Error(bm.logger()).Log(
+				definitions.LogKeyGUID, bm.guid,
+				definitions.LogKeyMsg, "Failed to update brute force bucket via Lua",
+				definitions.LogKeyError, err,
+			)
+		}
 	}
+}
+
+// prepareBucketCounterWrites resolves the sliding-window keys of every rule that can be counted.
+func (bm *bucketManagerImpl) prepareBucketCounterWrites(rules []config.BruteForceRule) []bucketCounterWrite {
+	writes := make([]bucketCounterWrite, 0, len(rules))
+
+	for i := range rules {
+		rule := &rules[i]
+
+		currentKey, prevKey, weight, ok := bm.prepareSlidingWindow(rule)
+		if !ok {
+			continue
+		}
+
+		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", currentKey)
+
+		// Only increment if not already triggered by this rule
+		increment := 0
+		if bm.bruteForceName != rule.Name {
+			increment = 1
+		}
+
+		writes = append(writes, bucketCounterWrite{
+			rule:       rule,
+			currentKey: currentKey,
+			prevKey:    prevKey,
+			weight:     weight,
+			increment:  increment,
+		})
+	}
+
+	return writes
 }
 
 // SaveFailedPasswordCounterInRedis adds the failed password hash to a Redis set for brute force protection.

@@ -795,6 +795,7 @@ func (a *AuthState) logRWPAllowanceActive() {
 }
 
 // saveBruteForceBucketCounters writes counters for active rules matching the request context.
+// Rules shorter than the matched rule's period are skipped.
 func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce.BucketManager, matchedPeriod time.Duration) {
 	proto := ""
 	if a.Request.Protocol != nil {
@@ -803,8 +804,10 @@ func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce
 
 	ip := net.ParseIP(a.Request.ClientIP)
 	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+	rules := a.cfg().GetBruteForceRules()
+	selected := make([]config.BruteForceRule, 0, len(rules))
 
-	for _, rule := range a.cfg().GetBruteForceRules() {
+	for _, rule := range rules {
 		// Per-rule iteration timer
 		var stopIter func()
 		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total", resource); s != nil {
@@ -816,11 +819,14 @@ func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce
 		}
 
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
-			bm.SaveBruteForceBucketCounterToRedis(&rule)
+			selected = append(selected, rule)
 		}
 
 		if stopIter != nil {
 			stopIter()
 		}
 	}
+
+	// All selected counters share one reputation read and one script pipeline.
+	bm.SaveBruteForceBucketCountersToRedis(selected)
 }

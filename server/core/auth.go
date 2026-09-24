@@ -2750,6 +2750,12 @@ func (a *AuthState) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRu
 	bm.SaveBruteForceBucketCounterToRedis(rule)
 }
 
+// SaveBruteForceBucketCountersToRedis persists the brute force bucket counters of several rules.
+func (a *AuthState) SaveBruteForceBucketCountersToRedis(rules []config.BruteForceRule) {
+	bm := a.createBucketManager(a.Ctx())
+	bm.SaveBruteForceBucketCountersToRedis(rules)
+}
+
 // SaveFailedPasswordCounterInRedis updates the failed password counter in Redis.
 func (a *AuthState) SaveFailedPasswordCounterInRedis() {
 	bm := a.createBucketManager(a.Ctx())

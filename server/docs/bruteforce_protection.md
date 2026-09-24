@@ -99,18 +99,18 @@ flowchart TD
     U_REPEAT -- Yes --> U_SKIP[Process password history without bucket increment]
     U_REPEAT -- No or storage error --> U_UPDATE
 
-U_UPDATE[Loop: Save Bucket Counters]
+U_UPDATE[Select Bucket Counters]
 U_UPDATE --> U_RULE_LOOP
 
-subgraph Bucket_Update [Per-Rule Counter Update]
+subgraph Bucket_Update [Per-Rule Counter Selection]
 U_RULE_LOOP[For each matching rule] --> U_PERIOD{Period >= matched?}
-U_PERIOD -- Yes --> U_SAVE[SaveBruteForceBucketCounterToRedis]
+U_PERIOD -- Yes --> U_SELECT[Select rule]
 U_PERIOD -- No --> U_NEXT[Next Rule]
-U_SAVE --> U_INC[Normal +1 increment]
-U_INC --> U_NEXT
+U_SELECT --> U_NEXT
 end
 
-U_NEXT --> U_DONE
+U_NEXT --> U_SAVE[SaveBruteForceBucketCountersToRedis: one reputation HGET, one SlidingWindowCounter pipeline with a normal +1 increment per rule]
+U_SAVE --> U_DONE
 U_SKIP --> U_DONE
 ```
 
@@ -189,6 +189,10 @@ because a pipeline only reports its first error.
   the same request reuse. An L1 block decision skips the prefetch; the RWP check then runs alone as before.
   A script that is missing on a node is re-uploaded and only the failed script calls run again
   (`rediscli.ScriptPipeline`).
+* **Failed-login counters (`pipeline_eval_bucket_counter_save`):** after the RWP commit has classified a failure as
+  counted, `SaveBruteForceBucketCountersToRedis` reads the reputation once and increments every selected rule with
+  one `SlidingWindowCounter` pipeline on the write handle. A failed login therefore needs the RWP commit plus two
+  round trips, independent of the number of rules. Each rule still logs and counts its own write and failure.
 
 ## 4. Sequence Diagram
 
@@ -226,7 +230,8 @@ sequenceDiagram
     C ->> BM: UpdateBruteForceBucketsCounter()
     BM ->> R: EVAL (RWPSlidingWindowCommit)
     R -->> BM: distinct failure (enforce)
-    BM ->> R: EVAL (SlidingWindowCounter, increment=1)
+    BM ->> R: HGET (Reputation)
+    BM ->> R: EVALSHA (SlidingWindowCounter, increment=1, one per selected rule via Pipeline)
     R -->> BM: OK
 ```
 

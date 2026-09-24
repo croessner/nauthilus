@@ -32,6 +32,9 @@ import (
 )
 
 const (
+	// slidingWindowCounterScriptName is the Lua script that reads and increments bucket counters.
+	slidingWindowCounterScriptName = "SlidingWindowCounter"
+
 	// rwpCheckScriptName is the read-only RWP script that joins the pre-authentication pipeline.
 	rwpCheckScriptName = "RWPSlidingWindowCheck"
 
