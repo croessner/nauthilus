@@ -256,7 +256,7 @@ Example shape:
 plugins:
   verification_policy: when_present
   allowed_dirs:
-    - /usr/lib/nauthilus/plugins
+    - /usr/local/lib/nauthilus/plugins
   trust:
     signers:
       - id: nauthilus-plugin-build-key-2026
@@ -265,9 +265,9 @@ plugins:
   modules:
     - name: geoip
       type: go
-      path: /usr/lib/nauthilus/plugins/geoip.so
+      path: /usr/local/lib/nauthilus/plugins/geoip.so
       checksum: sha256:...
-      signature: minisign:/usr/lib/nauthilus/plugins/geoip.so.minisig
+      signature: minisign:/usr/local/lib/nauthilus/plugins/geoip.so.minisig
       signer: nauthilus-plugin-build-key-2026
       optional: false
       stop_timeout: 10s

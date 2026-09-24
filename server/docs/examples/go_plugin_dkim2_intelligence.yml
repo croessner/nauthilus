@@ -18,7 +18,7 @@ plugins:
                 max_age: 1080h
                 max_stale_age: 2160h
           name: geoip
-          path: /usr/lib/nauthilus/plugins/geoip.so
+          path: /usr/local/lib/nauthilus/plugins/geoip.so
           type: go
         - config:
             target_bindings:
@@ -66,5 +66,5 @@ plugins:
             reputation_fact: plugin.reputation.dkim2_subjects
             reputation_provider: dkim2/plugin.reputation.assessment
           name: dkim2_intelligence
-          path: /usr/lib/nauthilus/plugins/dkim2-intelligence.so
+          path: /usr/local/lib/nauthilus/plugins/dkim2-intelligence.so
           type: go

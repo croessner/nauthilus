@@ -7,7 +7,7 @@ plugins:
   modules:
     - name: geoip
       type: go
-      path: /usr/lib/nauthilus/plugins/geoip.so
+      path: /usr/local/lib/nauthilus/plugins/geoip.so
       config:
         database_path: /var/lib/GeoIP/GeoLite2-City.mmdb
         asn_database_path: /var/lib/GeoIP/GeoLite2-ASN.mmdb

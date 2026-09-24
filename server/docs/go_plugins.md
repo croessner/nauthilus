@@ -53,11 +53,11 @@ Native plugin loader configuration lives at the root-level `plugins` section:
 plugins:
   verification_policy: when_present
   allowed_dirs:
-    - /usr/lib/nauthilus/plugins
+    - /usr/local/lib/nauthilus/plugins
   modules:
     - name: geoip
       type: go
-      path: /usr/lib/nauthilus/plugins/geoip.so
+      path: /usr/local/lib/nauthilus/plugins/geoip.so
       checksum: sha256:replace-with-artifact-sha256
       optional: false
       config:
@@ -75,6 +75,10 @@ plugins:
 
 `allowed_dirs` must contain absolute directories, and every plugin `path` must be an absolute `.so` path inside one of
 those directories after symlink resolution. Module `type` is optional and defaults to `go`; other types are rejected.
+
+Examples for the bundled plugins use the image path `/usr/local/lib/nauthilus/plugins/`. Examples for custom plugins
+(`customer_*.so`) use `/usr/lib/nauthilus/plugins/`; any absolute directory works as long as it is listed in
+`allowed_dirs`.
 
 ## Verification
 
@@ -100,6 +104,8 @@ as the server binary:
 - `geoip.so`
 - `clickhouse.so`
 - `haveibeenpwnd.so`
+- `reputation.so`
+- `dkim2-intelligence.so`
 
 The "debug Docker image" wording describes the image build track. Runtime plugin debug output is controlled separately
 through `server.log.level` and `server.log.debug_modules`.
@@ -176,7 +182,7 @@ module must allow `mail` as well as any other required capability:
 plugins:
   modules:
     - name: haveibeenpwnd
-      path: /usr/lib/nauthilus/plugins/haveibeenpwnd.so
+      path: /usr/local/lib/nauthilus/plugins/haveibeenpwnd.so
       allow_capabilities:
         - credentials
         - mail

@@ -12,7 +12,7 @@ plugins:
   modules:
     - name: reputation
       type: go
-      path: /usr/lib/nauthilus/plugins/reputation.so
+      path: /usr/local/lib/nauthilus/plugins/reputation.so
       config:
         state_schema: reputation-state.v1
         model_id: baseline-test
