@@ -664,11 +664,21 @@ func trustedForwardedClientIP(ctx *gin.Context, cfg config.File, logger *slog.Lo
 		return ""
 	}
 
-	if clientIP := trustedForwardedForClientIP(ctx.GetHeader("X-Forwarded-For"), ctx, cfg, logger, guid); clientIP != "" {
-		return clientIP
+	forwardedFor := forwardedForHeader(ctx)
+	if strings.TrimSpace(forwardedFor) != "" {
+		// An X-Forwarded-For chain that does not resolve to a valid client falls back to the direct peer.
+		// X-Real-IP is not consulted then, because it may carry a client-controlled value.
+		return trustedForwardedForClientIP(forwardedFor, ctx, cfg, logger, guid)
 	}
 
 	return parseForwardedHeaderIP(ctx.GetHeader("X-Real-IP"))
+}
+
+// forwardedForHeader joins every X-Forwarded-For header line in wire order. A proxy may append its peer as
+// a separate line instead of extending the existing one; reading only the first line would then resolve a
+// client-controlled entry.
+func forwardedForHeader(ctx *gin.Context) string {
+	return strings.Join(ctx.Request.Header.Values("X-Forwarded-For"), ",")
 }
 
 // trustedForwardedForClientIP walks X-Forwarded-For from right to left and

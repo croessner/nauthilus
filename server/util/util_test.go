@@ -344,6 +344,48 @@ func TestRequestClientIPWithConfigStopsAtUntrustedForwardedHop(t *testing.T) {
 	}
 }
 
+func TestRequestClientIPWithConfigReadsEveryForwardedForLine(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// A proxy that appends its peer as a separate header line must win over the client-supplied first line.
+	ctx := newRequestClientIPTestContext(t, requestClientIPProxy+":44321", nil)
+	ctx.Request.Header.Add(requestClientIPForwardedHeader, "192.168.0.6")
+	ctx.Request.Header.Add(requestClientIPForwardedHeader, requestClientIPForwarded)
+
+	cfg := newRequestClientIPTestConfig(requestClientIPProxy)
+
+	if got := RequestClientIPWithConfig(ctx, cfg, nil); got != requestClientIPForwarded {
+		t.Fatalf("client IP mismatch: want %q got %q", requestClientIPForwarded, got)
+	}
+}
+
+func TestRequestClientIPWithConfigIgnoresRealIPForInvalidForwardedFor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := newRequestClientIPTestContext(t, requestClientIPProxy+":44321", map[string]string{
+		requestClientIPForwardedHeader: "not-an-ip",
+		"X-Real-IP":                    "192.168.0.6",
+	})
+	cfg := newRequestClientIPTestConfig(requestClientIPProxy)
+
+	if got := RequestClientIPWithConfig(ctx, cfg, nil); got != requestClientIPProxy {
+		t.Fatalf("client IP mismatch: want direct peer %q got %q", requestClientIPProxy, got)
+	}
+}
+
+func TestRequestClientIPWithConfigUsesRealIPWithoutForwardedFor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := newRequestClientIPTestContext(t, requestClientIPProxy+":44321", map[string]string{
+		"X-Real-IP": requestClientIPForwarded,
+	})
+	cfg := newRequestClientIPTestConfig(requestClientIPProxy)
+
+	if got := RequestClientIPWithConfig(ctx, cfg, nil); got != requestClientIPForwarded {
+		t.Fatalf("client IP mismatch: want %q got %q", requestClientIPForwarded, got)
+	}
+}
+
 // newRequestClientIPTestContext builds a Gin context without Gin-level proxy trust.
 func newRequestClientIPTestContext(t *testing.T, remoteAddr string, headers map[string]string) *gin.Context {
 	t.Helper()
