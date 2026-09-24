@@ -796,6 +796,10 @@ func (a *AuthState) logRWPAllowanceActive() {
 
 // saveBruteForceBucketCounters writes counters for active rules matching the request context.
 // Rules shorter than the matched rule's period are skipped.
+//
+// The bf_update_loop_total timer observes the batched counter write once per call. It used to observe
+// every rule iteration separately; since all selected counters are written in one script pipeline, one
+// observation now covers the whole write.
 func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce.BucketManager, matchedPeriod time.Duration) {
 	proto := ""
 	if a.Request.Protocol != nil {
@@ -803,17 +807,10 @@ func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce
 	}
 
 	ip := net.ParseIP(a.Request.ClientIP)
-	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
 	rules := a.cfg().GetBruteForceRules()
 	selected := make([]config.BruteForceRule, 0, len(rules))
 
 	for _, rule := range rules {
-		// Per-rule iteration timer
-		var stopIter func()
-		if s := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total", resource); s != nil {
-			stopIter = s
-		}
-
 		if !rule.MatchesContext(proto, a.Request.OIDCCID, ip) {
 			continue
 		}
@@ -821,10 +818,11 @@ func (a *AuthState) saveBruteForceBucketCounters(ctx *gin.Context, bm bruteforce
 		if matchedPeriod == 0 || rule.Period.Round(time.Second) >= matchedPeriod {
 			selected = append(selected, rule)
 		}
+	}
 
-		if stopIter != nil {
-			stopIter()
-		}
+	resource := util.RequestResource(ctx, ctx.Request, a.Request.Service)
+	if stopTimer := stats.PrometheusTimer(a.Cfg(), definitions.PromBruteForce, "bf_update_loop_total", resource); stopTimer != nil {
+		defer stopTimer()
 	}
 
 	// All selected counters share one reputation read and one script pipeline.
