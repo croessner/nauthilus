@@ -86,7 +86,7 @@ func dkim2PolicyCases() []dkim2PolicyCase {
 		}
 	}
 
-	for _, violation := range []string{"body_unavailable", "do_not_modify_violated", "do_not_explode_violated", "history_not_matched", "terminal_oob_required"} {
+	for _, violation := range []string{"body_unavailable", "do_not_modify_violated", "do_not_explode_violated", "history_not_matched"} {
 		result = append(result, dkim2PolicyCase{name: "hard " + violation, hops: []map[string]any{{"violation_classes": []string{violation}}}, wantRule: "deny_integrity_violation"})
 	}
 

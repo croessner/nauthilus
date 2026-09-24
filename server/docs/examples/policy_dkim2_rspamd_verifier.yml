@@ -208,7 +208,6 @@ policy:
                                         - do_not_explode_violated
                                         - do_not_modify_violated
                                         - history_not_matched
-                                        - terminal_oob_required
                                         - upstream_nonpermittable
                                     field: violation_classes
                           name: deny_integrity_violation
