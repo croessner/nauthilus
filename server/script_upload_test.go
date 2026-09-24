@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -284,7 +285,11 @@ func runRuntimeStartupFailureScenario(t *testing.T) {
 
 	var store *contextStore
 
-	app := newHookOnlyTestApp(ctx, cancel, prepared, fx.Populate(&store))
+	probe := &lifecycleTestPlugin{name: "lifecycle_probe"}
+	probeState := loadLifecycleTestState(t, probe)
+
+	app := newHookOnlyTestApp(ctx, cancel, prepared, fx.Populate(&store),
+		fx.Decorate(func(*pluginloader.State) *pluginloader.State { return probeState }))
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer startCancel()
@@ -300,6 +305,14 @@ func runRuntimeStartupFailureScenario(t *testing.T) {
 		t.Fatalf("start error = %v, want the failing step and its cause", err)
 	}
 
+	requireRuntimeStartupRolledBack(ctx, t, store, probe)
+}
+
+// requireRuntimeStartupRolledBack checks that a failed runtime startup cancelled the runtime, released the
+// script upload, and stopped the plugin runner that had started the probe module.
+func requireRuntimeStartupRolledBack(ctx context.Context, t *testing.T, store *contextStore, probe *lifecycleTestPlugin) {
+	t.Helper()
+
 	if ctx.Err() == nil {
 		t.Fatal("root context still live after the runtime startup failed")
 	}
@@ -311,12 +324,64 @@ func runRuntimeStartupFailureScenario(t *testing.T) {
 	if store.scriptUploads.current.Load() != nil {
 		t.Fatal("script upload still owned by the store after the runtime startup failed")
 	}
+
+	if !probe.started.Load() {
+		t.Fatal("plugin runner did not start the probe module before the later step failed")
+	}
+
+	if !probe.stopped.Load() || store.pluginRunner != nil {
+		t.Fatal("plugin runner still running after a later startup step failed")
+	}
+}
+
+// lifecycleTestOpener serves one lifecycleTestPlugin as a native plugin artifact.
+type lifecycleTestOpener struct {
+	plugin *lifecycleTestPlugin
+}
+
+// Open returns the handle of the synthetic plugin.
+func (o lifecycleTestOpener) Open(string) (pluginloader.PluginHandle, error) {
+	return o, nil
+}
+
+// Lookup returns the plugin factory for every symbol.
+func (o lifecycleTestOpener) Lookup(string) (any, error) {
+	return func() (pluginapi.Plugin, error) { return o.plugin, nil }, nil
+}
+
+// loadLifecycleTestState loads plugin through the production loader with a synthetic artifact.
+func loadLifecycleTestState(t *testing.T, plugin *lifecycleTestPlugin) *pluginloader.State {
+	t.Helper()
+
+	artifact := filepath.Join(t.TempDir(), plugin.name+".so")
+	if err := os.WriteFile(artifact, []byte("lifecycle-test-artifact"), 0o600); err != nil {
+		t.Fatalf("write plugin artifact: %v", err)
+	}
+
+	digest, err := pluginloader.DigestArtifact(artifact)
+	if err != nil {
+		t.Fatalf("digest plugin artifact: %v", err)
+	}
+
+	loader := pluginloader.NewLoader(pluginloader.WithLoaderArtifactReader(os.ReadFile), pluginloader.WithOpener(lifecycleTestOpener{plugin: plugin}))
+
+	state, err := loader.Load([]pluginloader.VerifiedModule{{
+		Module:         config.PluginModule{Name: plugin.name, Type: config.PluginModuleTypeGo, Path: artifact},
+		ArtifactPath:   artifact,
+		ArtifactDigest: digest,
+	}})
+	if err != nil {
+		t.Fatalf("load plugin state: %v", err)
+	}
+
+	return state
 }
 
 // lifecycleTestPlugin is a native runtime plugin whose Start result is fixed.
 type lifecycleTestPlugin struct {
 	name     string
 	startErr error
+	started  atomic.Bool
 	stopped  atomic.Bool
 }
 
@@ -330,8 +395,10 @@ func (p *lifecycleTestPlugin) Register(pluginapi.Registrar) error {
 	return nil
 }
 
-// Start returns the configured result.
+// Start records the start and returns the configured result.
 func (p *lifecycleTestPlugin) Start(context.Context, pluginapi.Host) error {
+	p.started.Store(true)
+
 	return p.startErr
 }
 
