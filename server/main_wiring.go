@@ -606,13 +606,16 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 // Fx does not call the OnStop hook of a hook whose OnStart failed. Its rollback only
 // stops the hooks registered before, which closes the Redis client. The runtime must
 // therefore cancel its own goroutines here, and stop the script upload before the
-// client is closed. The error is logged at ERROR so the reason for the exit stays
-// visible at every log level.
+// client is closed. The plugin runner was already stopped by startRuntimeLifecycle.
+//
+// The error is logged only at DEBUG. reportFxStartFailure logs it once at ERROR
+// with the failing step before the process exits, which also covers failures
+// outside the runtime hook.
 func abortRuntimeStartup(p *runtimeLifecycleParams, err error) {
 	logger := p.Store.logger
 
-	level.Error(logger).Log(
-		definitions.LogKeyMsg, "Runtime startup failed; stopping the process",
+	level.Debug(logger).Log(
+		definitions.LogKeyMsg, "Runtime startup failed; cancelling the runtime before the startup rollback",
 		definitions.LogKeyError, err,
 	)
 

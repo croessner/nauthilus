@@ -377,6 +377,27 @@ func loadLifecycleTestState(t *testing.T, plugin *lifecycleTestPlugin) *pluginlo
 	return state
 }
 
+// TestRuntimeStartupAbortLeavesTheErrorLineToTheFinalReport pins that a runtime startup
+// failure produces exactly one ERROR line: the final report before the process exits.
+func TestRuntimeStartupAbortLeavesTheErrorLineToTheFinalReport(t *testing.T) {
+	logger, buffer := newWarnJSONLogger()
+	ctx, cancel := context.WithCancel(t.Context())
+	startErr := errors.New("start HTTP entry points: privilege drop failed")
+
+	abortRuntimeStartup(&runtimeLifecycleParams{Store: &contextStore{logger: logger}, Cancel: cancel}, startErr)
+
+	if ctx.Err() == nil {
+		t.Fatal("abortRuntimeStartup did not cancel the runtime")
+	}
+
+	reportFxStartFailure(logger, fmt.Errorf("OnStart hook failed: %w", startErr))
+
+	output := buffer.String()
+	if count := strings.Count(output, `"level":"ERROR"`); count != 1 || !strings.Contains(output, "privilege drop failed") {
+		t.Fatalf("want exactly one ERROR line with the cause, got %d:\n%s", count, output)
+	}
+}
+
 // lifecycleTestPlugin is a native runtime plugin whose Start result is fixed.
 type lifecycleTestPlugin struct {
 	name     string
