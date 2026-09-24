@@ -161,3 +161,30 @@ func newTargetCatalogRecord(t *testing.T) (TargetCatalogRecord, []decision.FactS
 
 	return completionRuntimeAuthorizeRecord(t, record), factSources
 }
+
+// TestCompiledTargetSchemaIsSharedWithoutAllocation pins that the immutable schema is not rebuilt per call.
+// Rebuilding it on every request dominated the allocation rate of authentication under load.
+func TestCompiledTargetSchemaIsSharedWithoutAllocation(t *testing.T) {
+	record, _ := newTargetCatalogRecord(t)
+
+	catalog, err := NewTargetCatalog([]TargetCatalogRecord{record})
+	if err != nil {
+		t.Fatalf("NewTargetCatalog() error = %v", err)
+	}
+
+	compiled, ok := catalog.Lookup(record.Target)
+	if !ok {
+		t.Fatal("compiled target missing")
+	}
+
+	if allocs := testing.AllocsPerRun(100, func() { _ = compiled.Schema() }); allocs != 0 {
+		t.Fatalf("Schema() allocated %.0f times per call, want the shared immutable schema", allocs)
+	}
+
+	facts := compiled.Schema().Facts()
+	facts[0] = registry.FactSchema{}
+
+	if compiled.Schema().Facts()[0].ID() == "" {
+		t.Fatal("mutating the returned fact slice changed the shared schema")
+	}
+}

@@ -507,10 +507,6 @@ func (s CompiledSchema) ValidatePresentFacts(facts decision.FactSet) error {
 	return nil
 }
 
-// clone returns a detached compiled schema.
-func (s CompiledSchema) clone() CompiledSchema {
-	return newCompiledSchema(s.identity, s.Facts())
-}
 
 // CompiledTarget is one immutable activated target and selected exact schema.
 type CompiledTarget struct {
@@ -531,9 +527,11 @@ func (t CompiledTarget) Target() decision.Target {
 	return t.target
 }
 
-// Schema returns a detached immutable selected schema.
+// Schema returns the immutable selected schema. CompiledSchema has no mutating methods and its index is
+// never written after construction, so the value is shared instead of rebuilt on every call; rebuilding it
+// per request dominated the allocation rate of authentication under load.
 func (t CompiledTarget) Schema() CompiledSchema {
-	return t.schema.clone()
+	return t.schema
 }
 
 // DomainPlan returns the detached authoritative checkpoint topology.
@@ -667,7 +665,7 @@ func (t CompiledTarget) clone() CompiledTarget {
 
 	return CompiledTarget{
 		target:           t.target,
-		schema:           t.schema.clone(),
+		schema:           t.schema,
 		domainPlan:       t.domainPlan.clone(),
 		providers:        providers,
 		effects:          effects,
@@ -1121,7 +1119,12 @@ func (c *TargetCatalog) Lookup(target decision.Target) (CompiledTarget, bool) {
 
 // ValidateFacts resolves one activated target and validates only its selected exact schema.
 func (c *TargetCatalog) ValidateFacts(target decision.Target, facts decision.FactSet) error {
-	compiled, ok := c.Lookup(target)
+	if c == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownCompiledTarget, target.String())
+	}
+
+	// Validation only reads the immutable schema, so it uses the catalog entry without detaching a copy.
+	compiled, ok := c.targets[target.String()]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownCompiledTarget, target.String())
 	}
