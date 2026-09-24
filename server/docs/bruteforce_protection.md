@@ -166,6 +166,18 @@ through normal brute-force enforcement.
 * **Unavailable protection:** Redis failures during the pre-authentication check produce a temporary authentication
   failure and the policy error fact. An unavailable repeat check never grants an allowance.
 
+### 3.5 Redis Round Trips
+
+Brute-force protection sits on the hot authentication path, so data-independent Redis commands share one pipeline
+instead of running as sequential single-command round trips. Every pipeline increments
+`bruteforce_redis_roundtrips_total` with its own `kind` label, and each command is evaluated on its own result
+because a pipeline only reports its first error.
+
+* **Password history (`pipeline_pw_hist_load`):** `SCARD` of the account-scoped set, `SISMEMBER` of the current full
+  password hash in that set, and `SCARD` of the IP-scoped set run as one pipeline on the read handle. Account-less
+  requests skip the account reads; a password-less request skips the membership read. The pipeline never carries
+  Lua, so a cluster keeps routing it to read replicas.
+
 ## 4. Sequence Diagram
 
 This diagram shows the interaction between components during a blocked request.

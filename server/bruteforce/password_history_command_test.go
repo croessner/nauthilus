@@ -2,15 +2,20 @@ package bruteforce
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/testing/redisroundtrip"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/redis/go-redis/v9"
 )
@@ -140,6 +145,89 @@ func runPasswordHistoryCommandCase(t *testing.T, tc passwordHistoryCommandCase) 
 
 	assertPasswordHistoryCommands(t, handle.commands, tc.wantCommands)
 	assertPasswordHistoryReadState(t, bm, redisClient, tc.wantReadHandleCalls, tc.wantAccountSeen, tc.wantTotalSeen, tc.wantLoginAttempts)
+
+	if handle.pipelines != 1 {
+		t.Fatalf("password-history load used %d pipelines, want one round trip", handle.pipelines)
+	}
+}
+
+func TestLoadAllPasswordHistoriesEvaluatesEachPipelinedReadOnItsOwn(t *testing.T) {
+	accountKey := passwordHistorySetKey(passwordHistoryCommandAccount, "1.2.3.4")
+	ipKey := passwordHistorySetKey("", "1.2.3.4")
+	readErr := errors.New("read failed")
+
+	tests := []struct {
+		name              string
+		sCardErrors       map[string]error
+		memberErr         error
+		wantAccountSeen   uint
+		wantTotalSeen     uint
+		wantLoginAttempts uint
+	}{
+		{name: "account count error", sCardErrors: map[string]error{accountKey: readErr}, wantTotalSeen: 13, wantLoginAttempts: 1},
+		{name: "membership error", memberErr: readErr, wantAccountSeen: 7, wantTotalSeen: 13},
+		{name: "IP count error", sCardErrors: map[string]error{ipKey: readErr}, wantAccountSeen: 7, wantLoginAttempts: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := passwordHistoryCommandConfig(0)
+			handle := newPasswordHistoryCommandReadHandle("1.2.3.4", true)
+			handle.sCardErrors = tc.sCardErrors
+			handle.memberErr = tc.memberErr
+			redisClient := &passwordHistoryTestRedisClient{readHandle: handle}
+
+			bm := NewBucketManagerWithDeps(context.Background(), passwordHistoryCommandGUID, "1.2.3.4", BucketManagerDeps{
+				Cfg:    cfg,
+				Logger: log.GetLogger(),
+				Redis:  redisClient,
+			}).WithAccountName(passwordHistoryCommandAccount).WithPassword(secret.New("wrong-password"))
+
+			bm.LoadAllPasswordHistories()
+
+			assertPasswordHistoryReadState(t, bm, redisClient, 1, tc.wantAccountSeen, tc.wantTotalSeen, tc.wantLoginAttempts)
+
+			if handle.pipelines != 1 || len(handle.commands) != 3 {
+				t.Fatalf("pipelines = %d commands = %d, want one pipeline with three reads", handle.pipelines, len(handle.commands))
+			}
+		})
+	}
+}
+
+func TestLoadAllPasswordHistoriesUsesOneRedisRoundTrip(t *testing.T) {
+	storage := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: storage.Addr()})
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	cfg := passwordHistoryCommandConfig(0)
+	bm := NewBucketManagerWithDeps(t.Context(), passwordHistoryCommandGUID, "1.2.3.4", BucketManagerDeps{
+		Cfg: cfg, Logger: log.GetLogger(), Redis: rediscli.NewTestClient(client),
+	}).WithAccountName(passwordHistoryCommandAccount).WithPassword(secret.New("wrong-password"))
+	impl := bm.(*bucketManagerImpl)
+
+	accountKey := passwordHistorySetKey(passwordHistoryCommandAccount, "1.2.3.4")
+	if _, err := storage.SAdd(accountKey, impl.currentPasswordHash(), "other"); err != nil {
+		t.Fatalf("seed account history: %v", err)
+	}
+
+	if _, err := storage.SAdd(passwordHistorySetKey("", "1.2.3.4"), "a", "b", "c"); err != nil {
+		t.Fatalf("seed IP history: %v", err)
+	}
+
+	recorder := redisroundtrip.Attach(client)
+
+	bm.LoadAllPasswordHistories()
+
+	trips := recorder.RoundTrips()
+	if len(trips) != 1 || !slices.Equal(trips[0], []string{"scard", "sismember", "scard"}) {
+		t.Fatalf("password-history round trips = %v, want one pipeline [scard sismember scard]", trips)
+	}
+
+	if bm.GetPasswordsAccountSeen() != 2 || bm.GetPasswordsTotalSeen() != 3 || bm.GetLoginAttempts() != 1 {
+		t.Fatalf("state = account:%d total:%d attempts:%d, want 2, 3, 1",
+			bm.GetPasswordsAccountSeen(), bm.GetPasswordsTotalSeen(), bm.GetLoginAttempts())
+	}
 }
 
 func TestPasswordHistoryKeyEquivalence(t *testing.T) {
@@ -215,9 +303,7 @@ func TestPasswordHistoryLoadPlanComputesPasswordHashOnlyWhenNeeded(t *testing.T)
 	}
 
 	plan := impl.preparePasswordHistoryLoad(redisClient.GetReadHandle())
-	plan.loadPasswordHistoryCount(true)
-	plan.loadCurrentPasswordHistoryMembership()
-	plan.loadPasswordHistoryCount(false)
+	plan.load()
 
 	if plan.hashComputed {
 		t.Fatal("password hash was computed without a current password")
@@ -226,7 +312,7 @@ func TestPasswordHistoryLoadPlanComputesPasswordHashOnlyWhenNeeded(t *testing.T)
 	handle.commands = nil
 	impl.password = secret.New("wrong-password")
 	plan = impl.preparePasswordHistoryLoad(redisClient.GetReadHandle())
-	plan.loadCurrentPasswordHistoryMembership()
+	plan.load()
 
 	if !plan.hashComputed {
 		t.Fatal("password hash was not computed for membership read with a current password")
@@ -236,9 +322,7 @@ func TestPasswordHistoryLoadPlanComputesPasswordHashOnlyWhenNeeded(t *testing.T)
 		t.Fatal("password hash is empty after membership read with a current password")
 	}
 
-	assertPasswordHistoryCommands(t, handle.commands, []passwordHistoryRedisCommand{
-		{name: "SISMEMBER", key: passwordHistorySetKey(passwordHistoryCommandAccount, "1.2.3.4")},
-	})
+	assertPasswordHistoryCommands(t, handle.commands, passwordHistoryExpectedCommands(passwordHistoryCommandAccount, "1.2.3.4", true, true))
 }
 
 func BenchmarkLoadAllPasswordHistories(b *testing.B) {
@@ -390,9 +474,12 @@ type passwordHistoryCommandReadHandle struct {
 	redis.UniversalClient
 
 	sCardValues    map[string]int64
+	sCardErrors    map[string]error
 	memberValues   map[string]bool
+	memberErr      error
 	exactMembers   map[string]map[string]bool
 	commands       []passwordHistoryRedisCommand
+	pipelines      int
 	recordCommands bool
 }
 
@@ -413,11 +500,18 @@ func newPasswordHistoryCommandReadHandle(scopedIP string, memberSeen bool) *pass
 	}
 }
 
+// Pipelined counts one round trip and serves the queued reads from this fake handle.
+func (h *passwordHistoryCommandReadHandle) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	h.pipelines++
+
+	return runPasswordHistoryTestPipeline(ctx, h, fn)
+}
+
 // SCard records an SCARD read and returns deterministic password-history counts.
 func (h *passwordHistoryCommandReadHandle) SCard(_ context.Context, key string) *redis.IntCmd {
 	h.record("SCARD", key, "")
 
-	return redis.NewIntResult(h.sCardValues[key], nil)
+	return redis.NewIntResult(h.sCardValues[key], h.sCardErrors[key])
 }
 
 // Get records a GET read and returns a Redis nil miss for ignored total counters.
@@ -432,11 +526,61 @@ func (h *passwordHistoryCommandReadHandle) SIsMember(_ context.Context, key stri
 	memberValue := fmt.Sprint(member)
 	h.record("SISMEMBER", key, memberValue)
 
+	if h.memberErr != nil {
+		return redis.NewBoolResult(false, h.memberErr)
+	}
+
 	if h.exactMembers != nil {
 		return redis.NewBoolResult(h.exactMembers[key][memberValue], nil)
 	}
 
 	return redis.NewBoolResult(h.memberValues[key], nil)
+}
+
+// passwordHistoryPipelineReader serves the password-history reads queued into a fake pipeline.
+type passwordHistoryPipelineReader interface {
+	SCard(ctx context.Context, key string) *redis.IntCmd
+	SIsMember(ctx context.Context, key string, member any) *redis.BoolCmd
+}
+
+// passwordHistoryTestPipeliner queues password-history reads against a fake read handle.
+type passwordHistoryTestPipeliner struct {
+	redis.Pipeliner
+
+	reader passwordHistoryPipelineReader
+	cmds   []redis.Cmder
+}
+
+// SCard serves one queued SCARD read from the fake read handle.
+func (p *passwordHistoryTestPipeliner) SCard(ctx context.Context, key string) *redis.IntCmd {
+	cmd := p.reader.SCard(ctx, key)
+	p.cmds = append(p.cmds, cmd)
+
+	return cmd
+}
+
+// SIsMember serves one queued SISMEMBER read from the fake read handle.
+func (p *passwordHistoryTestPipeliner) SIsMember(ctx context.Context, key string, member any) *redis.BoolCmd {
+	cmd := p.reader.SIsMember(ctx, key, member)
+	p.cmds = append(p.cmds, cmd)
+
+	return cmd
+}
+
+// runPasswordHistoryTestPipeline mirrors go-redis Pipelined: it returns all commands and the first command error.
+func runPasswordHistoryTestPipeline(_ context.Context, reader passwordHistoryPipelineReader, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	pipe := &passwordHistoryTestPipeliner{reader: reader}
+	if err := fn(pipe); err != nil {
+		return nil, err
+	}
+
+	for _, cmd := range pipe.cmds {
+		if err := cmd.Err(); err != nil {
+			return pipe.cmds, err
+		}
+	}
+
+	return pipe.cmds, nil
 }
 
 // record stores the observed Redis command when command recording is enabled.

@@ -42,21 +42,21 @@ func TestPasswordHistoryReadsAndWritesOnlyFullHash(t *testing.T) {
 	handle.exactMembers = map[string]map[string]bool{
 		key: {hash[:8]: true, "unrelated-member": true},
 	}
-	plan := impl.preparePasswordHistoryLoad(handle)
-	plan.loadCurrentPasswordHistoryMembership()
+
+	impl.LoadAllPasswordHistories()
 
 	if impl.loginAttempts != 0 {
 		t.Fatalf("eight-hex short member produced %d attempts, want 0", impl.loginAttempts)
 	}
 
-	if len(handle.commands) != 1 || handle.commands[0].member != hash {
-		t.Fatalf("password-history membership reads = %#v, want one exact full-hash read", handle.commands)
+	if len(handle.commands) != 3 || handle.commands[1].name != "SISMEMBER" || handle.commands[1].member != hash {
+		t.Fatalf("password-history reads = %#v, want one exact full-hash membership read", handle.commands)
 	}
 
 	handle.commands = nil
 	handle.exactMembers[key][hash] = true
-	plan = impl.preparePasswordHistoryLoad(handle)
-	plan.loadCurrentPasswordHistoryMembership()
+
+	impl.LoadAllPasswordHistories()
 
 	if impl.loginAttempts != 1 {
 		t.Fatalf("full-hash membership produced %d attempts, want 1", impl.loginAttempts)

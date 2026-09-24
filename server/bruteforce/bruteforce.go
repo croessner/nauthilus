@@ -574,14 +574,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	readHandle := bm.redis().GetReadHandle()
 	plan := bm.preparePasswordHistoryLoad(readHandle)
 
-	// 1) Load account-scoped password history metrics
-	bm.passwordsAccountSeen = plan.loadPasswordHistoryCount(true)
-
-	// 2) Check if current password was already seen for this account
-	plan.loadCurrentPasswordHistoryMembership()
-
-	// 3) Load IP-only (overall) password history metrics
-	bm.passwordsTotalSeen = plan.loadPasswordHistoryCount(false)
+	plan.load()
 }
 
 // passwordHistoryLoadPlan carries request-local password-history keys and read dependencies.
@@ -690,28 +683,117 @@ func (p *passwordHistoryLoadPlan) setKey(isAccountScoped bool) string {
 	return p.ipSetKey
 }
 
-// loadCurrentPasswordHistoryMembership marks login attempts when the current hash was already seen.
-func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
-	key := p.setKey(true)
-	p.logSetKey(key, true)
+// passwordHistoryLoadCommands holds the pipelined reads of one password-history load.
+// A nil command means that the logical read was skipped.
+type passwordHistoryLoadCommands struct {
+	accountCount *redis.IntCmd
+	membership   *redis.BoolCmd
+	ipCount      *redis.IntCmd
+}
 
-	if key == "" || p.bm.password.IsZero() {
-		return
+// load reads the account-scoped count, the current-password membership and the IP-scoped count in one
+// pipelined round trip on the read handle. Each command is evaluated on its own, so one failed read
+// only zeroes its own result.
+func (p *passwordHistoryLoadPlan) load() {
+	accountKey := p.setKey(true)
+	p.logSetKey(accountKey, true)
+
+	passwordHash := p.membershipPasswordHash(accountKey)
+
+	ipKey := p.setKey(false)
+	p.logSetKey(ipKey, false)
+
+	cmds := p.execLoadPipeline(accountKey, passwordHash, ipKey)
+
+	p.bm.passwordsAccountSeen = passwordHistoryCount(cmds.accountCount)
+
+	if passwordHistoryMember(cmds.membership) {
+		p.bm.loginAttempts = 1
 	}
 
-	passwordHash := p.currentPasswordHash()
-	if passwordHash == "" {
-		return
+	p.bm.passwordsTotalSeen = passwordHistoryCount(cmds.ipCount)
+}
+
+// membershipPasswordHash logs the membership read and returns the hash to look up, or an empty string
+// when the read must be skipped because the account or the password is unknown.
+func (p *passwordHistoryLoadPlan) membershipPasswordHash(accountKey string) string {
+	p.logSetKey(accountKey, true)
+
+	if accountKey == "" || p.bm.password.IsZero() {
+		return ""
 	}
 
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
+	return p.currentPasswordHash()
+}
+
+// execLoadPipeline queues the required password-history reads into one read-handle pipeline.
+// The pipeline never carries Lua, so clusters keep routing it to read replicas.
+func (p *passwordHistoryLoadPlan) execLoadPipeline(accountKey string, passwordHash string, ipKey string) passwordHistoryLoadCommands {
+	var cmds passwordHistoryLoadCommands
+
+	if accountKey == "" && ipKey == "" {
+		return cmds
+	}
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(p.bm.ctx, p.bm.cfg())
 	defer cancel()
 
-	if isMember, err := p.readHandle.SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
-		p.bm.loginAttempts = 1
+	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_pw_hist_load").Inc()
+
+	// Pipelined only reports the first failed command; every command is evaluated individually below.
+	_, _ = p.readHandle.Pipelined(dCtx, func(pipe redis.Pipeliner) error {
+		if accountKey != "" {
+			cmds.accountCount = pipe.SCard(dCtx, accountKey)
+		}
+
+		if passwordHash != "" {
+			cmds.membership = pipe.SIsMember(dCtx, accountKey, passwordHash)
+		}
+
+		if ipKey != "" {
+			cmds.ipCount = pipe.SCard(dCtx, ipKey)
+		}
+
+		return nil
+	})
+
+	cmds.countReads()
+
+	return cmds
+}
+
+// countReads increments the Redis read counter once per executed logical read.
+func (c passwordHistoryLoadCommands) countReads() {
+	for _, executed := range []bool{c.accountCount != nil, c.membership != nil, c.ipCount != nil} {
+		if executed {
+			stats.GetMetrics().GetRedisReadCounter().Inc()
+		}
 	}
+}
+
+// passwordHistoryCount returns a set cardinality, or zero when the read was skipped or failed.
+func passwordHistoryCount(cmd *redis.IntCmd) uint {
+	if cmd == nil {
+		return 0
+	}
+
+	count, err := cmd.Result()
+	if err != nil {
+		return 0
+	}
+
+	return uint(count)
+}
+
+// passwordHistoryMember reports a confirmed membership; skipped or failed reads never count as a hit.
+func passwordHistoryMember(cmd *redis.BoolCmd) bool {
+	if cmd == nil {
+		return false
+	}
+
+	isMember, err := cmd.Result()
+
+	return err == nil && isMember
 }
 
 // currentPasswordHash returns the cached full password hash for this load invocation.
@@ -724,27 +806,6 @@ func (p *passwordHistoryLoadPlan) currentPasswordHash() string {
 	p.passwordHash = p.bm.currentPasswordHash()
 
 	return p.passwordHash
-}
-
-// loadPasswordHistoryCount reads the prepared password-history set cardinality.
-func (p *passwordHistoryLoadPlan) loadPasswordHistoryCount(isAccountScoped bool) uint {
-	key := p.setKey(isAccountScoped)
-	p.logSetKey(key, isAccountScoped)
-
-	if key == "" {
-		return 0
-	}
-
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(p.bm.ctx, p.bm.cfg())
-	defer cancel()
-
-	if count, err := p.readHandle.SCard(dCtx, key).Result(); err == nil {
-		return uint(count)
-	}
-
-	return 0
 }
 
 // logSetKey preserves password-history set-key debug logging for each logical read.

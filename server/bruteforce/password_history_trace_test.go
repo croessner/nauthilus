@@ -162,6 +162,11 @@ type passwordHistoryTraceReadHandle struct {
 	spanContexts []trace.SpanContext
 }
 
+// Pipelined serves the queued reads so each one records its command context.
+func (h *passwordHistoryTraceReadHandle) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	return runPasswordHistoryTestPipeline(ctx, h, fn)
+}
+
 // SCard records the command context and returns an empty set count.
 func (h *passwordHistoryTraceReadHandle) SCard(ctx context.Context, _ string) *redis.IntCmd {
 	h.record(ctx)
