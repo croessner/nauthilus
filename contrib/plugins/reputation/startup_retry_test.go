@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"strings"
@@ -42,13 +43,17 @@ type startupRedis struct {
 // Scripts returns the scripted registry.
 func (r startupRedis) Scripts() pluginapi.RedisScriptRegistry { return r.scripts }
 
-// startupScripts fails the first uploads with uploadErr and answers the activation scripts.
+// startupScripts fails the first uploads with uploadErr, the first script runs with runErr, and
+// answers the activation scripts.
 type startupScripts struct {
 	uploadErr      error
+	runErr         error
 	metadataResult []any
 	failures       int
 	failed         int
 	uploads        int
+	runFailures    int
+	runFailed      int
 }
 
 // Upload fails while failures remain and succeeds afterwards.
@@ -64,8 +69,14 @@ func (s *startupScripts) Upload(_ context.Context, name string, _ string) (strin
 	return name, nil
 }
 
-// Run answers metadata and control activation like an empty keyspace.
+// Run fails while run failures remain and then answers metadata and control activation like an empty keyspace.
 func (s *startupScripts) Run(_ context.Context, name string, _ []string, _ ...any) (any, error) {
+	if s.runFailed < s.runFailures {
+		s.runFailed++
+
+		return nil, s.runErr
+	}
+
 	if name == scriptMetadata {
 		return s.metadataResult, nil
 	}
@@ -160,6 +171,64 @@ func TestStateStartRetriesTransientRedisFailures(t *testing.T) {
 			t.Fatalf("retry warning lost the cause: %v", warning.fields[startupRetryLogError])
 		}
 	}
+}
+
+// TestStateStartRetriesTransientRedisFailuresInAllocationMaintenance pins that the allocation status
+// check of a maintenance start keeps the Redis cause, so transient failures are retried there too.
+func TestStateStartRetriesTransientRedisFailuresInAllocationMaintenance(t *testing.T) {
+	owner, scripts := newStartupOwner(t, nil, 0)
+	owner.config.raw.AllocationMaintenance = true
+	scripts.runErr = errRedisLoading
+	scripts.runFailures = 3
+	scripts.metadataResult = []any{storageActive, allocationStatusFixture(t, owner.config.raw.AllocationDrainGeneration)}
+	logger := &recordingLogger{}
+
+	requireNoError(t, testStartupRetry(logger).run(t.Context(), owner.start))
+
+	if scripts.runFailed != 3 || scripts.uploads != 4*len(reputationScripts()) {
+		t.Fatalf("expected 4 attempts with 3 failed status checks, got uploads=%d failed=%d", scripts.uploads, scripts.runFailed)
+	}
+
+	if len(logger.warnings) != 3 {
+		t.Fatalf("expected 3 retry warnings, got %d", len(logger.warnings))
+	}
+
+	for index, warning := range logger.warnings {
+		if warning.fields[startupRetryLogAttempt] != index+1 || warning.fields[startupRetryLogErrorClass] != redisErrorClassLoading {
+			t.Fatalf("unexpected retry warning %d: %v", index, warning.fields)
+		}
+
+		if !strings.Contains(warning.fields[startupRetryLogError].(string), "run script "+scriptMetadata) {
+			t.Fatalf("retry warning lost the failing step: %v", warning.fields[startupRetryLogError])
+		}
+	}
+
+	if owner.ready.Load() {
+		t.Fatal("a maintenance start must not publish writer readiness")
+	}
+}
+
+// TestRequestTimeAllocationStatusHidesRedisDetails pins that the management status path keeps the
+// closed failure class while the start path sees the Redis cause.
+func TestRequestTimeAllocationStatusHidesRedisDetails(t *testing.T) {
+	owner, _ := newStartupOwner(t, nil, 0)
+	owner.redis = failingRedis{Redis: owner.redis, scripts: &failingScripts{err: errRedisLoading}}
+
+	_, err := owner.allocationStatus(t.Context())
+	if err == nil || err.Error() != errStateUnavailable.Error() {
+		t.Fatalf("expected the bare unavailable class, got %v", err)
+	}
+}
+
+// allocationStatusFixture encodes a valid active allocation snapshot for generation.
+func allocationStatusFixture(t *testing.T, generation int) string {
+	t.Helper()
+
+	encoded, err := json.Marshal(allocationView{Mode: storageActive, Generation: generation, NextGeneration: generation + 1,
+		Retention: time.Hour.Seconds(), ObservedAt: float64(time.Now().Unix())})
+	requireNoError(t, err)
+
+	return string(encoded)
 }
 
 // TestStateStartFailsFastOnPermanentErrors pins that permanent Redis errors and state-machine outcomes

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"unicode/utf8"
 )
@@ -43,9 +44,18 @@ func (s *stateOwner) auditedMetadataRequest(operation string, audit *allocationA
 	return request
 }
 
+// scriptRunner runs one named storage script; stateOwner.run hides Redis details, stateOwner.execute keeps them.
+type scriptRunner func(ctx context.Context, name string, keys []string, request any) ([]any, error)
+
 // allocationStatus verifies current-generation metadata and every shard through the primary without exposing identities.
 func (s *stateOwner) allocationStatus(ctx context.Context) (allocationView, error) {
-	first, err := s.allocationMetadata(ctx)
+	return s.allocationStatusWith(ctx, s.run)
+}
+
+// allocationStatusWith verifies the allocation state through runner. Only the storage start passes
+// stateOwner.execute, so a transient Redis failure keeps its cause for the bounded startup retry.
+func (s *stateOwner) allocationStatusWith(ctx context.Context, runner scriptRunner) (allocationView, error) {
+	first, err := s.allocationMetadata(ctx, runner)
 	if err != nil {
 		return allocationView{}, err
 	}
@@ -53,8 +63,12 @@ func (s *stateOwner) allocationStatus(ctx context.Context) (allocationView, erro
 	fenced := 0
 
 	for shard := range manifestShardCount {
-		result, err := s.run(ctx, scriptControl, []string{s.keys.control(shard)}, controlRequest{Operation: allocationStatusOperation, Schema: manifestSchema, Identity: s.identity})
-		if err != nil || len(result) != 1 {
+		result, err := runner(ctx, scriptControl, []string{s.keys.control(shard)}, controlRequest{Operation: allocationStatusOperation, Schema: manifestSchema, Identity: s.identity})
+		if err != nil {
+			return allocationView{}, allocationScriptFailure(err)
+		}
+
+		if len(result) != 1 {
 			return allocationView{}, errStateUnavailable
 		}
 
@@ -63,8 +77,12 @@ func (s *stateOwner) allocationStatus(ctx context.Context) (allocationView, erro
 		}
 	}
 
-	last, err := s.allocationMetadata(ctx)
-	if err != nil || first.Mode != last.Mode || first.Generation != last.Generation || first.DrainedAt != last.DrainedAt {
+	last, err := s.allocationMetadata(ctx, runner)
+	if err != nil {
+		return allocationView{}, err
+	}
+
+	if first.Mode != last.Mode || first.Generation != last.Generation || first.DrainedAt != last.DrainedAt {
 		return allocationView{}, errStateUnavailable
 	}
 
@@ -77,11 +95,15 @@ func (s *stateOwner) allocationStatus(ctx context.Context) (allocationView, erro
 }
 
 // allocationMetadata validates the bounded primary snapshot for the configured key and generation.
-func (s *stateOwner) allocationMetadata(ctx context.Context) (allocationView, error) {
+func (s *stateOwner) allocationMetadata(ctx context.Context, runner scriptRunner) (allocationView, error) {
 	var view allocationView
 
-	result, err := s.run(ctx, scriptMetadata, s.keys.metadata(), s.metadataRequest(allocationStatusOperation))
-	if err != nil || len(result) != 2 {
+	result, err := runner(ctx, scriptMetadata, s.keys.metadata(), s.metadataRequest(allocationStatusOperation))
+	if err != nil {
+		return view, allocationScriptFailure(err)
+	}
+
+	if len(result) != 2 {
 		return view, errStateUnavailable
 	}
 
@@ -98,6 +120,16 @@ func (s *stateOwner) allocationMetadata(ctx context.Context) (allocationView, er
 	}
 
 	return view, nil
+}
+
+// allocationScriptFailure keeps a Redis transport failure, which only the startup runner returns, and
+// reduces every other script failure to the closed unavailable class.
+func allocationScriptFailure(err error) error {
+	if _, transport := errors.AsType[*stateTransportError](err); transport {
+		return err
+	}
+
+	return errStateUnavailable
 }
 
 // valid rejects malformed clocks, generations and audit fields before returning administrative status.

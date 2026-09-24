@@ -134,7 +134,7 @@ func (s *stateOwner) start(ctx context.Context) error {
 	}
 
 	if s.config.raw.AllocationMaintenance {
-		_, err := s.allocationStatus(ctx)
+		_, err := s.allocationStatusWith(ctx, s.execute)
 		return err
 	}
 
