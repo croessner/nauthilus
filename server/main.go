@@ -38,6 +38,8 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core"
 	_ "github.com/croessner/nauthilus/v4/server/core/auth"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/svcctx"
 	"github.com/croessner/nauthilus/v4/server/testing/luatest"
 
@@ -167,8 +169,11 @@ func newFxApplication(ctx context.Context, cancel context.CancelFunc, prepared c
 
 // runFxApplication starts the fx runtime and blocks until the root context ends.
 func runFxApplication(ctx context.Context, fApp *fx.App) {
+	logger := log.GetLogger()
+
 	if err := fApp.Start(context.Background()); err != nil {
-		stdlog.Fatalln("Unable to start fx app. Error:", err)
+		reportFxStartFailure(logger, err)
+		os.Exit(1)
 	}
 
 	<-ctx.Done()
@@ -177,8 +182,22 @@ func runFxApplication(ctx context.Context, fApp *fx.App) {
 	defer stopCancel()
 
 	if err := fApp.Stop(stopCtx); err != nil {
-		stdlog.Printf("Unable to stop fx app. Error: %v", err)
+		level.Error(logger).Log(
+			definitions.LogKeyMsg, "Unable to stop the application cleanly",
+			definitions.LogKeyError, err,
+		)
 	}
+}
+
+// reportFxStartFailure logs why the application failed to start before the process exits with code 1.
+//
+// The standard library logger is bridged to INFO, so it would hide this reason at
+// log level warn or error. The reason is therefore logged at ERROR.
+func reportFxStartFailure(logger *slog.Logger, err error) {
+	level.Error(logger).Log(
+		definitions.LogKeyMsg, "Unable to start the application; exiting with code 1",
+		definitions.LogKeyError, err,
+	)
 }
 
 func registerRemoteBackendLifecycle(lc fx.Lifecycle) {

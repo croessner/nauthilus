@@ -54,28 +54,7 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 
 	listenAddress := reserveLoopbackAddress(t)
 	configPath := writeHookOnlyConfig(t, miniRedis.Addr(), listenAddress)
-
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	t.Cleanup(func() {
-		config.SetTestFile(nil)
-
-		config.ConfigFilePath = ""
-		config.ConfigFileType = "yaml"
-
-		viper.Reset()
-	})
-
-	config.ConfigFilePath = configPath
-	config.ConfigFileType = "yaml"
-
-	viper.SetConfigFile(configPath)
-	viper.SetConfigType("yaml")
-
-	prepared, err := bootfx.PrepareConfiguration()
-	if err != nil {
-		t.Fatalf("setup configuration: %v", err)
-	}
+	prepared := prepareHookOnlyConfiguration(t, configPath)
 
 	ctx, cancel := svcctx.GetCtxWithCancel()
 	app := newHookOnlyTestApp(ctx, cancel, prepared)
@@ -101,7 +80,36 @@ func TestHookOnlyConfigurationStartsAndStopsWithoutBackends(t *testing.T) {
 	}
 }
 
-func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc, prepared config.File) *fx.App {
+// prepareHookOnlyConfiguration loads configPath through the production boot path and resets the global config state afterwards.
+func prepareHookOnlyConfiguration(t *testing.T, configPath string) config.File {
+	t.Helper()
+
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Cleanup(func() {
+		config.SetTestFile(nil)
+
+		config.ConfigFilePath = ""
+		config.ConfigFileType = "yaml"
+
+		viper.Reset()
+	})
+
+	config.ConfigFilePath = configPath
+	config.ConfigFileType = "yaml"
+
+	viper.SetConfigFile(configPath)
+	viper.SetConfigType("yaml")
+
+	prepared, err := bootfx.PrepareConfiguration()
+	if err != nil {
+		t.Fatalf("setup configuration: %v", err)
+	}
+
+	return prepared
+}
+
+func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc, prepared config.File, extra ...fx.Option) *fx.App {
 	return fx.New(
 		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
 			if logger.Enabled(context.Background(), slog.LevelDebug) {
@@ -135,6 +143,7 @@ func newHookOnlyTestApp(ctx context.Context, cancel context.CancelFunc, prepared
 		fx.Provide(newRestartOrchestrator),
 		fx.Invoke(registerRuntimeLifecycle),
 		signalsfx.Module(),
+		fx.Options(extra...),
 	)
 }
 

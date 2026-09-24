@@ -142,6 +142,13 @@ func keyWithHashTag(key string, hashTag string) string {
 	return hashTag + ":" + key
 }
 
+// IsClientShutdownError reports whether err only says that the caller stopped or the
+// Redis client was already closed by its owner. Such outcomes belong to shutdown or
+// client replacement and are not Redis connectivity or permission failures.
+func IsClientShutdownError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, redis.ErrClosed)
+}
+
 // uploadScriptToHandle loads a Lua script onto a single Redis handle and returns its SHA1 hash.
 func uploadScriptToHandle(ctx context.Context, handle redis.UniversalClient, scriptContent string) (string, error) {
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
@@ -154,13 +161,28 @@ func uploadScriptToHandle(ctx context.Context, handle redis.UniversalClient, scr
 // because the write-handle upload is the authoritative one.
 func uploadScriptToReadHandles(ctx context.Context, client Client, scriptName, scriptContent string) {
 	for _, rh := range client.GetReadHandles() {
+		if ctx.Err() != nil {
+			return
+		}
+
 		_, err := uploadScriptToHandle(ctx, rh, scriptContent)
-		if err != nil {
-			level.Warn(log.Logger).Log(
-				definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s' to read handle (non-fatal)", scriptName),
+		if err == nil {
+			continue
+		}
+
+		if IsClientShutdownError(err) {
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Skipped uploading Redis Lua script '%s' to read handle because the caller stopped or the client is closed", scriptName),
 				definitions.LogKeyError, err,
 			)
+
+			return
 		}
+
+		level.Warn(log.Logger).Log(
+			definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s' to read handle (non-fatal)", scriptName),
+			definitions.LogKeyError, err,
+		)
 	}
 }
 
@@ -194,8 +216,23 @@ func UploadScript(ctx context.Context, client Client, scriptName, scriptContent 
 	// Upload the script to the write handle (authoritative)
 	var err error
 
+	if err = ctx.Err(); err != nil {
+		return "", err
+	}
+
 	sha1, err = uploadScriptToHandle(ctx, client.GetWriteHandle(), scriptContent)
 	if err != nil {
+		if IsClientShutdownError(err) {
+			// The caller stopped or the owner closed the client (shutdown, failed
+			// startup rollback, or client replacement). This is not a Redis fault.
+			level.Info(log.Logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Skipped uploading Redis Lua script '%s' because the caller stopped or the client is closed", scriptName),
+				definitions.LogKeyError, err,
+			)
+
+			return "", err
+		}
+
 		level.Error(log.Logger).Log(
 			definitions.LogKeyMsg, fmt.Sprintf("Failed to upload Redis Lua script '%s'. This may affect Redis operations. Check Redis connectivity and permissions.", scriptName),
 			definitions.LogKeyError, err,
@@ -422,12 +459,26 @@ func retryScriptAfterCrossSlot(
 
 // UploadAllScripts uploads all Lua scripts defined in lua_scripts.go to Redis.
 // This function should be called at program startup to ensure all scripts are available.
+//
+// The upload stops as soon as ctx ends. When it stops because ctx ended or because the
+// client owner already closed the client, the returned error satisfies
+// IsClientShutdownError and no ERROR is logged: the scripts are uploaded lazily on
+// first use, so this outcome is not a Redis fault.
 func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) error {
 	level.Info(logger).Log(
 		definitions.LogKeyMsg, "Uploading all Redis Lua scripts",
 	)
 
 	for scriptName, scriptContent := range LuaScripts {
+		if err := ctx.Err(); err != nil {
+			level.Info(logger).Log(
+				definitions.LogKeyMsg, "Stopped uploading Redis Lua scripts because the caller stopped",
+				definitions.LogKeyError, err,
+			)
+
+			return err
+		}
+
 		// Use a dedicated context with timeout for each script upload to prevent one slow
 		// upload from failing the entire batch or hanging indefinitely.
 		uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -435,6 +486,15 @@ func UploadAllScripts(ctx context.Context, logger *slog.Logger, client Client) e
 		_, err := UploadScript(uploadCtx, client, scriptName, scriptContent)
 
 		cancel()
+
+		if err != nil && IsClientShutdownError(err) {
+			level.Info(logger).Log(
+				definitions.LogKeyMsg, fmt.Sprintf("Stopped uploading Redis Lua scripts at '%s' because the caller stopped or the client is closed", scriptName),
+				definitions.LogKeyError, err,
+			)
+
+			return err
+		}
 
 		if err != nil {
 			level.Error(logger).Log(

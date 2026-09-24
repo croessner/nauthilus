@@ -407,6 +407,9 @@ func (r *restartOrchestrator) rebuildRedisForRestart(ctx context.Context, cfg co
 		return fmt.Errorf("redis restart rebuilder dependency is nil")
 	}
 
+	// Stop the previous background script upload before the old client is closed.
+	stopScriptUploadForClientChange(ctx, logger, r.store)
+
 	if err := r.redisRebuilder.Rebuild(cfg, logger); err != nil {
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to rebuild Redis client via DI", definitions.LogKeyError, err)
 	}
@@ -416,14 +419,30 @@ func (r *restartOrchestrator) rebuildRedisForRestart(ctx context.Context, cfg co
 
 	*step = "setup_redis"
 
-	if err := setupRedis(redisReadyCtx, r.ctx, cfg, logger, r.store.redisClient); err != nil {
+	uploadTask, err := setupRedis(redisReadyCtx, r.ctx, cfg, logger, r.store.redisClient)
+	if err != nil {
 		// Best-effort: Redis readiness issues must not keep HTTP down indefinitely.
 		level.Warn(logger).Log(definitions.LogKeyMsg, "Unable to reinitialize Redis during restart", definitions.LogKeyError, err)
 
 		return err
 	}
 
+	r.store.scriptUploads.replace(ctx, logger, uploadTask)
+
 	return nil
+}
+
+// stopScriptUploadForClientChange stops the background script upload of store before
+// its Redis client is closed or replaced, bounded by the shutdown wait budget.
+func stopScriptUploadForClientChange(ctx context.Context, logger *slog.Logger, store *contextStore) {
+	if store == nil {
+		return
+	}
+
+	waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), definitions.FxShutdownWaitTimeout)
+	defer cancel()
+
+	store.scriptUploads.stop(waitCtx, logger)
 }
 
 // startWorkersForRestart starts backend workers after Redis setup.

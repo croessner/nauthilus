@@ -107,6 +107,9 @@ type contextStore struct {
 	// grpcAuthorityDone signals completion of the optional gRPC authority server.
 	grpcAuthorityDone <-chan struct{}
 
+	// scriptUploads owns the background Lua script upload started by setupRedis.
+	scriptUploads scriptUploadSlot
+
 	// langManager is the injected language manager.
 	langManager language.Manager
 }
@@ -258,7 +261,10 @@ func checkRedisConnections(ctx context.Context, client rediscli.Client) bool {
 //
 // readinessCtx is used for the connectivity check loop.
 // runCtx is used for background goroutines (metrics, scripts) and should be the process/root context.
-func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config.File, logger *slog.Logger, client rediscli.Client) error {
+//
+// The returned task owns the background Lua script upload. The caller must stop it
+// before the Redis client is closed or replaced.
+func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config.File, logger *slog.Logger, client rediscli.Client) (*scriptUploadTask, error) {
 	redisLogger := &util.RedisLogger{}
 	redis.SetLogger(redisLogger)
 
@@ -269,7 +275,7 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 	for retries := range maxRetries {
 		if readinessCtx != nil {
 			if err := readinessCtx.Err(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 
@@ -278,17 +284,7 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 			go rediscli.UpdateRedisServerMetrics(runCtx, cfg, logger, client)
 
 			// Upload all Lua scripts to Redis at startup
-			go func(uploadCtx context.Context) {
-				err := rediscli.UploadAllScripts(uploadCtx, logger, client)
-				if err != nil {
-					level.Warn(logger).Log(
-						definitions.LogKeyMsg, "Failed to upload all Redis Lua scripts at startup",
-						"error", err,
-					)
-				}
-			}(runCtx)
-
-			return nil
+			return startScriptUpload(runCtx, logger, client, rediscli.UploadAllScripts), nil
 		}
 
 		level.Warn(logger).Log(definitions.LogKeyMsg, fmt.Sprintf("Redis not ready yet. Retry %d/%d", retries+1, maxRetries))
@@ -302,11 +298,11 @@ func setupRedis(readinessCtx context.Context, runCtx context.Context, cfg config
 		select {
 		case <-time.After(retryInterval):
 		case <-readinessCtx.Done():
-			return readinessCtx.Err()
+			return nil, readinessCtx.Err()
 		}
 	}
 
-	return fmt.Errorf("failed to establish Redis connections after max retries")
+	return nil, fmt.Errorf("failed to establish Redis connections after max retries")
 }
 
 type grpcAuthorityStarter func(context.Context, handlerauthority.ServerDeps) (<-chan struct{}, error)

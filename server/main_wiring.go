@@ -49,6 +49,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/idp"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/lualib/redislib"
 	"github.com/croessner/nauthilus/v4/server/monitoring"
@@ -588,6 +589,9 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 			var err error
 
 			pluginRunner, err = startRuntimeLifecycle(&params)
+			if err != nil {
+				abortRuntimeStartup(&params, err)
+			}
 
 			return err
 		},
@@ -597,22 +601,49 @@ func registerRuntimeLifecycle(lc fx.Lifecycle, p runtimeLifecycleParams) {
 	})
 }
 
+// abortRuntimeStartup ends the runtime started so far after startRuntimeLifecycle failed.
+//
+// Fx does not call the OnStop hook of a hook whose OnStart failed. Its rollback only
+// stops the hooks registered before, which closes the Redis client. The runtime must
+// therefore cancel its own goroutines here, and stop the script upload before the
+// client is closed. The error is logged at ERROR so the reason for the exit stays
+// visible at every log level.
+func abortRuntimeStartup(p *runtimeLifecycleParams, err error) {
+	logger := p.Store.logger
+
+	level.Error(logger).Log(
+		definitions.LogKeyMsg, "Runtime startup failed; stopping the process",
+		definitions.LogKeyError, err,
+	)
+
+	if p.Cancel != nil {
+		p.Cancel()
+	}
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), definitions.FxShutdownWaitTimeout)
+	defer cancel()
+
+	p.Store.scriptUploads.stop(waitCtx, logger)
+}
+
 // startRuntimeLifecycle runs the legacy startup sequence inside the fx lifecycle.
+//
+// Every returned error names the startup step that failed.
 func startRuntimeLifecycle(p *runtimeLifecycleParams) (_ *pluginruntime.Runner, err error) {
 	snap := p.Store.cfgProvider.Current()
 	startRuntimeTelemetryAndConfig(p, snap.File)
 
 	if err := configureRuntimeDefaults(p, snap.File); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("configure runtime defaults: %w", err)
 	}
 
 	if err := setupRuntimeWorkersAndRedis(p, snap.File); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set up workers and Redis: %w", err)
 	}
 
 	pluginRunner, err := startRuntimePluginRunner(p, snap.File, p.PluginState)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start native plugin runtime: %w", err)
 	}
 
 	p.Store.pluginRunner = pluginRunner
@@ -640,17 +671,17 @@ func startRuntimeLifecycle(p *runtimeLifecycleParams) (_ *pluginruntime.Runner, 
 		p.PolicyStartup,
 		p.PolicyApply,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("prepare initial policy generation: %w", err)
 	}
 
 	core.LoadStatsFromRedis(p.Ctx, snap.File, p.Store.logger, p.Store.redisClient)
 
-	if err := startHTTPAndDropPrivileges(p, snap.File); err != nil {
-		return nil, err
+	if err = startHTTPAndDropPrivileges(p, snap.File); err != nil {
+		return nil, fmt.Errorf("start HTTP entry points: %w", err)
 	}
 
-	if err := startRuntimeLoopServices(p); err != nil {
-		return nil, err
+	if err = startRuntimeLoopServices(p); err != nil {
+		return nil, fmt.Errorf("start runtime loop services: %w", err)
 	}
 
 	return pluginRunner, nil
@@ -771,9 +802,12 @@ func setRuntimePackageDefaults(p *runtimeLifecycleParams, cfg config.File) {
 func setupRuntimeWorkersAndRedis(p *runtimeLifecycleParams, cfg config.File) error {
 	setupWorkers(p.Ctx, p.Store, cfg, p.Store.logger, p.Store.redisClient, p.Channel)
 
-	if err := setupRedis(p.Ctx, p.Ctx, cfg, p.Store.logger, p.Store.redisClient); err != nil {
+	uploadTask, err := setupRedis(p.Ctx, p.Ctx, cfg, p.Store.logger, p.Store.redisClient)
+	if err != nil {
 		return err
 	}
+
+	p.Store.scriptUploads.replace(p.Ctx, p.Store.logger, uploadTask)
 
 	setRuntimeRedisDefaults(p)
 
@@ -805,11 +839,27 @@ func startRuntimePluginRunner(p *runtimeLifecycleParams, cfg config.File, plugin
 		)),
 		pluginruntime.WithPluginConfig(cfg.GetPlugins()),
 	)
-	if err := pluginRunner.Start(p.Ctx); err != nil {
+	if err := startPluginRunnerOrStop(p.Ctx, pluginRunner); err != nil {
 		return nil, err
 	}
 
 	return pluginRunner, nil
+}
+
+// startPluginRunnerOrStop starts pluginRunner and stops it again when Start fails.
+//
+// A failed Start leaves the modules and init tasks started before the failure
+// running; they are stopped before the startup rollback closes the resources they use.
+func startPluginRunnerOrStop(ctx context.Context, pluginRunner *pluginruntime.Runner) error {
+	err := pluginRunner.Start(ctx)
+	if err == nil {
+		return nil
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), definitions.FxStopTimeout)
+	defer cancel()
+
+	return errors.Join(err, stopRuntimePluginRunner(stopCtx, pluginRunner))
 }
 
 // startHTTPAndDropPrivileges starts HTTP entry points before privilege drop.
@@ -854,6 +904,7 @@ func stopRuntimeLifecycle(stopCtx context.Context, p *runtimeLifecycleParams, pl
 	snap := p.Store.cfgProvider.Current()
 
 	p.Cancel()
+	stopScriptUploadForClientChange(stopCtx, p.Store.logger, p.Store)
 	stopRuntimeLoopServices(stopCtx, p)
 	waitForRuntimeShutdown(stopCtx, p)
 	ownerErr := stopGenerationOwnedRuntime(
