@@ -50,8 +50,10 @@ type preAuthPrefetch struct {
 // PrefetchPreAuthState reads the data-independent pre-authentication state in one Redis round trip.
 //
 // It queues the RWP check script, the EXISTS reads of every candidate ban key and the reputation HGET into
-// one pipeline. An L1 block decision that maps to a rule returns before any Redis I/O, so the cached-block
-// path keeps skipping the ban and reputation reads.
+// one pipeline. A cached L1 block decision does not skip the pipeline: the RWP precheck still runs, and the
+// policy-fact collection that follows an L1 hit reads the same ban keys and the same reputation counter, so
+// it consumes the prefetched values instead of issuing its own reads. All reads happen before any write of
+// the same request, so the snapshot matches what the sequential reads would return.
 func (bm *bucketManagerImpl) PrefetchPreAuthState(rules []config.BruteForceRule) {
 	tr := monittrace.New("nauthilus/bruteforce")
 
@@ -77,11 +79,7 @@ func (bm *bucketManagerImpl) PrefetchPreAuthState(rules []config.BruteForceRule)
 	prefetch.l1Decision, prefetch.l1Found = bm.lookupRepeatingL1Decision(rules)
 	bm.preAuth = prefetch
 
-	if prefetch.l1Blocks() {
-		sp.SetAttributes(attribute.Bool("micro_cache.hit", true))
-
-		return
-	}
+	sp.SetAttributes(attribute.Bool("micro_cache.hit", prefetch.l1Blocks()))
 
 	candidates := bm.gatherRepeatingCandidates(ctx, rules)
 	prefetch.candidates = &candidates

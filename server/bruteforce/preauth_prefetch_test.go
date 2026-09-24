@@ -256,33 +256,45 @@ func runPreAuthPrefetchScenario(t *testing.T, tc preAuthPrefetchScenario) {
 	assertPreAuthDecision(t, prefetched, tc.wantOutcome)
 }
 
-func TestPreAuthPrefetchSkipsRedisOnL1Block(t *testing.T) {
+func TestPreAuthPrefetchServesPolicyFactsOnL1Block(t *testing.T) {
 	fixture := newPreAuthFixture(t, "198.51.100.20")
-	bm := fixture.manager(passwordHistoryCommandAccount)
-	rules := fixture.rules()
+	fixture.seedFailures(t, 1)
 
-	l1.GetEngine().Set(t.Context(), l1.KeyBurst(bm.bfBurstKey()), l1.Decision{Blocked: true, Rule: rules[0].Name}, 0)
+	rules := fixture.rules()
+	burstKey := l1.KeyBurst(fixture.manager(passwordHistoryCommandAccount).bfBurstKey())
+
+	l1.GetEngine().Set(t.Context(), burstKey, l1.Decision{Blocked: true, Rule: rules[0].Name}, 0)
 	t.Cleanup(func() {
-		l1.GetEngine().Set(context.Background(), l1.KeyBurst(bm.bfBurstKey()), l1.Decision{}, 0)
+		l1.GetEngine().Set(context.Background(), burstKey, l1.Decision{}, 0)
 	})
 
-	bm.PrepareNetcalc(rules)
-	bm.PrefetchPreAuthState(rules)
+	fixture.recorder.Reset()
 
-	if got := fixture.recorder.Count(); got != 0 {
-		t.Fatalf("L1 block issued %d prefetch round trips, want none", got)
+	sequential := fixture.check(fixture.manager(passwordHistoryCommandAccount), false)
+
+	// Without the prefetch the RWP precheck runs alone and the policy-fact collection after the L1 hit
+	// reads bans, reputation and counters one by one.
+	wantSequential := [][]string{{"evalsha"}, {"exists"}, {"hget"}, {"evalsha"}}
+	if trips := fixture.recorder.RoundTrips(); !reflect.DeepEqual(trips, wantSequential) {
+		t.Fatalf("sequential L1 block round trips = %v, want %v", trips, wantSequential)
 	}
 
-	outcome := fixture.check(bm, false)
-	if !outcome.alreadyTriggered || outcome.message != "Brute force attack detected (L1 engine)" {
-		t.Fatalf("L1 outcome = %+v, want cached L1 block", outcome)
+	fixture.recorder.Reset()
+
+	prefetched := fixture.check(fixture.manager(passwordHistoryCommandAccount), true)
+	if !prefetched.alreadyTriggered || prefetched.message != "Brute force attack detected (L1 engine)" {
+		t.Fatalf("L1 outcome = %+v, want cached L1 block", prefetched)
 	}
 
-	// The RWP precheck runs alone; the later policy-fact collection reads bans, reputation and counters
-	// exactly like the sequential path does.
-	want := [][]string{{"evalsha"}, {"exists"}, {"hget"}, {"evalsha"}}
+	// The prefetch serves the RWP precheck, the ban states and the reputation of the policy facts; only
+	// the counter script remains.
+	want := [][]string{{"evalsha", "exists", "hget"}, {"evalsha"}}
 	if trips := fixture.recorder.RoundTrips(); !reflect.DeepEqual(trips, want) {
-		t.Fatalf("L1 block round trips = %v, want %v", trips, want)
+		t.Fatalf("prefetched L1 block round trips = %v, want %v", trips, want)
+	}
+
+	if !reflect.DeepEqual(prefetched, sequential) {
+		t.Fatalf("prefetched L1 outcome = %+v, want sequential outcome %+v", prefetched, sequential)
 	}
 }
 
