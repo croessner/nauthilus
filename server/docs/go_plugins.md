@@ -107,6 +107,9 @@ as the server binary:
 - `reputation.so`
 - `dkim2-intelligence.so`
 
+The debug image contains the server, these plugins and the fake SMTP/IMAP test servers only. The `reputation-worker`
+executable and the client tools are intentionally shipped in the stable image alone.
+
 The "debug Docker image" wording describes the image build track. Runtime plugin debug output is controlled separately
 through `server.log.level` and `server.log.debug_modules`.
 

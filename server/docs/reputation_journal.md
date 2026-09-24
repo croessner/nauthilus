@@ -147,6 +147,9 @@ updates completed. Authentication success alone is not a journal receipt.
 
 The `reputation-worker` executable is built from the same reputation package with
 `reputation_worker` enabled. Start it with `-config /etc/nauthilus/nauthilus.yml`.
+Only the stable image (`Dockerfile`) ships it as `/usr/app/reputation-worker`; the
+debug image (`Dockerfile.debug`) intentionally carries only the server, the bundled
+plugins and the fake mail servers, so run the worker from the stable image.
 It reuses sealed configuration, HMAC keys, Redis prefix and atomic update scripts.
 It exposes TLS `/healthz` and authenticated `/metrics` only. It does not start
 LDAP, authentication, OIDC or SAML routes. Its deployment must use a distinct

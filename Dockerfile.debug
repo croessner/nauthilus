@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
+# Debug image: the server, the bundled native plugins and the fake SMTP/IMAP test servers.
+# The reputation-worker executable, nauthilus-client and the OIDC/SAML test clients are intentionally
+# left out; they ship only in the stable image built from Dockerfile.
+
 FROM --platform=$TARGETPLATFORM golang:1.27.1-alpine3.24 AS builder
 
 ARG REQUIRE_PLUGIN_SIGNATURE=false

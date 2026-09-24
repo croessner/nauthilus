@@ -142,3 +142,30 @@ func assertDockerfileBuildsBundledPlugins(t *testing.T, dockerfile string, docke
 		}
 	}
 }
+
+// TestDockerfileDebugLeavesReputationWorkerToStableImage pins the intentional packaging split: the worker is
+// built and shipped only by the stable image, and the debug image keeps the documented reason in its header.
+func TestDockerfileDebugLeavesReputationWorkerToStableImage(t *testing.T) {
+	debug, err := os.ReadFile("../../Dockerfile.debug")
+	if err != nil {
+		t.Fatalf("read Dockerfile.debug: %v", err)
+	}
+
+	stable, err := os.ReadFile("../../Dockerfile")
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+
+	if strings.Contains(string(debug), "reputation_worker") || strings.Contains(string(debug), "/reputation-worker") {
+		t.Fatal("Dockerfile.debug must not build or copy the reputation-worker; it ships only in the stable image")
+	}
+
+	if !strings.Contains(string(debug), "The reputation-worker executable") {
+		t.Fatal("Dockerfile.debug must document why the reputation-worker is absent")
+	}
+
+	if !strings.Contains(string(stable), "-o /build/reputation-worker ./contrib/plugins/reputation") ||
+		!strings.Contains(string(stable), `COPY --from=builder ["/build/reputation-worker"`) {
+		t.Fatal("Dockerfile must build and ship the reputation-worker")
+	}
+}
