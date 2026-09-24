@@ -778,7 +778,9 @@ codes in keys is a hard cut without migration. The previous keys are not read. A
   now start at the floor `1000000000000` (a subject without an epoch key is at the floor, and every user-wide
   revocation increments from there). Former epochs were counters starting at `0` and stay far below the floor, and
   validation rejects every epoch below the floor as well as tokens without the `nauthilus_user_epoch` claim. This
-  applies to user tokens and to `client_credentials` service tokens alike;
+  applies to user tokens and to `client_credentials` service tokens alike. Edge nodes of a split deployment replace
+  their cached authority caller token on their own: the first `UNAUTHENTICATED` answer discards the cached token and
+  the RPC is retried once with a freshly issued one, so the edge token cache needs no manual flush;
 - running device authorization flows and unredeemed authorization codes are lost; clients start a new flow.
 
 Most retired keys expire with their original TTLs. The former revocation epochs

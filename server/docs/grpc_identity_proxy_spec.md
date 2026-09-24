@@ -445,6 +445,7 @@ The first implementation must use deterministic defaults so HA behavior and repl
 | Authority RPC timeout | `5s` | Edge gRPC client | Per call deadline unless a narrower operation timeout is configured. |
 | Authority bearer refresh skew | `30s` | Edge Redis token cache | Refresh before token expiry. |
 | Authority bearer refresh lock TTL | `10s` | Edge Redis token cache | Prevents multi-instance refresh stampedes. |
+| Rejected caller token | One retry | Edge gRPC client | An `UNAUTHENTICATED` answer to a bearer token discards the cached token with a compare-and-delete and repeats the RPC once with a replacement; static token files are never replaced. |
 | Backend reference TTL | `15m` | Authority Redis | Bounds user/flow backend selection handles. |
 | Idempotency outcome TTL | `15m` | Authority Redis | Must cover normal browser retry windows. |
 | WebAuthn public credential cache TTL | Existing positive cache TTL | Edge Redis | Cache is optimization only and never source of truth. |
@@ -1377,7 +1378,7 @@ This section names the expected code locations so implementation work can be spl
 | gRPC server registration | `server/handler/grpcauthority/server.go`, `server/handler/grpcauthority/server_test.go` | Register `AuthService` unconditionally and `IdentityBackendService` only when backend refs are explicitly enabled; keep auth, mTLS, logging, tracing, and recovery interceptors shared. |
 | Authority identity handler | `server/handler/grpcauthority/identity_backend.go` | Implement RPC methods as transport adapters over existing core/backend services; enforce scopes before domain calls; map errors to stable status codes. |
 | Authority internal IdP client | `server/config/idp.go`, `server/handler/frontend/idp/oidc_client_credentials.go`, `server/idp/nauthilus_idp.go` | Reuse existing `client_credentials` issuance; validate the split profile requires `access_token_type=opaque`, short lifetime, and non-public token endpoint exposure. |
-| Authority caller-token source | `server/grpcclient/authority/token_source.go` | Implement client-credentials token acquisition, edge Redis token cache, distributed refresh lock, expiry skew, and static token-file fallback for development. |
+| Authority caller-token source | `server/grpcclient/authority/token_source.go` | Implement client-credentials token acquisition, edge Redis token cache, distributed refresh lock, expiry skew, compare-and-delete of a token the authority rejected, and static token-file fallback for development. |
 | Authority backend-reference store | `server/handler/grpcauthority/backend_ref_store.go` | Store authority-issued backend-reference handles in authority Redis; validate handle binding, TTL, service principal, edge cluster, and allowed operation families. |
 | Edge authority client | `server/grpcclient/authority/` | Own connection pooling, TLS, caller auth metadata, deadlines, retries, idempotency metadata, tracing propagation, token source integration, and safe client shutdown. |
 | Remote backend manager | `server/backend/remote/` | Implement `core.BackendManager`; map `AuthState` to gRPC requests; convert responses to `PassDBResult`, `AccountList`, `mfa.PersistentCredential`, and MFA write outcomes. |
@@ -1732,6 +1733,8 @@ Acceptance:
 - bufconn integration test with edge remote backend and authority test backend;
 - token-source tests for Redis cache hit, refresh lock, expired token, private-key-JWT assertion, and static token-file
   fallback;
+- rejected-token tests prove that an `UNAUTHENTICATED` authority answer deletes only the rejected cached token, keeps a
+  token another replica cached in the meantime, and retries the RPC exactly once;
 - authority token validation tests prove JWT caller tokens are rejected in split-deployment strict mode;
 - missing authority or timeout returns tempfail where expected.
 

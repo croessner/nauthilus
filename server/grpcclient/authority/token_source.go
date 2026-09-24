@@ -4,6 +4,7 @@ package authority
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,35 @@ import (
 type BearerTokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
+
+// RejectedTokenReplacer is implemented by token sources that can replace a caller token the authority
+// rejected with UNAUTHENTICATED.
+type RejectedTokenReplacer interface {
+	// ReplaceRejectedToken discards rejected from the shared token cache when it is still the cached value
+	// and returns a different usable token. It returns an error when no replacement is available.
+	ReplaceRejectedToken(ctx context.Context, rejected string) (string, error)
+}
+
+// errStaticTokenNotReplaceable reports that a static caller token is never replaced after a rejection.
+var errStaticTokenNotReplaceable = errors.New("authority static caller token cannot be replaced")
+
+// compareAndDeleteTokenScript deletes the cached caller token only when its access_token still equals ARGV[1].
+// It returns 1 after the delete, 0 when no token is cached, and the cached JSON value when another replica
+// already replaced the token, so a token fetched elsewhere in the meantime is never discarded.
+var compareAndDeleteTokenScript = redis.NewScript(`
+local raw = redis.call("GET", KEYS[1])
+if not raw then
+    return 0
+end
+
+local ok, cached = pcall(cjson.decode, raw)
+if ok and type(cached) == "table" and cached["access_token"] == ARGV[1] then
+    redis.call("DEL", KEYS[1])
+    return 1
+end
+
+return raw
+`)
 
 // BearerTokenSourceOptions contains dependencies for a bearer token source.
 type BearerTokenSourceOptions struct {
@@ -104,6 +134,61 @@ func (s *bearerTokenSource) Token(ctx context.Context) (string, error) {
 	}
 
 	return s.refreshCachedToken(ctx, cached, cacheOK)
+}
+
+// ReplaceRejectedToken discards a caller token that the authority rejected and returns a different one.
+//
+// The cached token is deleted with a compare-and-delete, so a token another replica cached in the meantime
+// survives and is returned instead. Otherwise the regular refresh path fetches a new token under the
+// distributed refresh lock. Static token files are never replaced.
+func (s *bearerTokenSource) ReplaceRejectedToken(ctx context.Context, rejected string) (string, error) {
+	if err := s.validate(); err != nil {
+		return "", err
+	}
+
+	if s.cfg.GetStaticTokenFile() != "" {
+		return "", errStaticTokenNotReplaceable
+	}
+
+	replacement, err := s.discardRejectedToken(ctx, rejected)
+	if err != nil {
+		return "", err
+	}
+
+	if replacement.AccessToken == "" || replacement.AccessToken == rejected {
+		return s.refreshCachedToken(ctx, cachedBearerToken{}, false)
+	}
+
+	if s.tokenFresh(replacement) {
+		return replacement.AccessToken, nil
+	}
+
+	return s.refreshCachedToken(ctx, replacement, true)
+}
+
+// discardRejectedToken deletes the cached token when it is still rejected and returns a cached replacement.
+func (s *bearerTokenSource) discardRejectedToken(ctx context.Context, rejected string) (cachedBearerToken, error) {
+	var replacement cachedBearerToken
+
+	if s.redis == nil || s.redis.GetWriteHandle() == nil {
+		return replacement, nil
+	}
+
+	result, err := compareAndDeleteTokenScript.Run(ctx, s.redis.GetWriteHandle(), []string{s.cacheKey()}, rejected).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return replacement, fmt.Errorf("discard rejected authority token: %w", err)
+	}
+
+	raw, ok := result.(string)
+	if !ok {
+		return replacement, nil
+	}
+
+	if err = json.Unmarshal([]byte(raw), &replacement); err != nil {
+		return cachedBearerToken{}, nil
+	}
+
+	return replacement, nil
 }
 
 func (s *bearerTokenSource) validate() error {

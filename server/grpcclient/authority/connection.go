@@ -7,14 +7,19 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // Client is the edge-facing subset of authority auth RPCs used by remote backends.
@@ -44,6 +49,7 @@ type ConnectionManagerOptions struct {
 	TokenSource       BearerTokenSource
 	StaticTokenSource BearerTokenSource
 	DialOptions       []grpc.DialOption
+	Logger            *slog.Logger
 	AuthorityName     string
 }
 
@@ -53,6 +59,7 @@ type ConnectionManager struct {
 	client        Client
 	tokenSource   BearerTokenSource
 	cfg           *config.NauthilusAuthorityClientSection
+	logger        *slog.Logger
 	authorityName string
 }
 
@@ -194,6 +201,7 @@ func NewConnectionManager(opts ConnectionManagerOptions) (*ConnectionManager, er
 	manager := &ConnectionManager{
 		tokenSource:   tokenSource,
 		cfg:           opts.Config,
+		logger:        opts.Logger,
 		authorityName: opts.AuthorityName,
 	}
 
@@ -231,6 +239,11 @@ func (m *ConnectionManager) Close() error {
 	return m.conn.Close()
 }
 
+// unaryInterceptor attaches caller metadata and credentials to every authority RPC.
+//
+// When the authority answers UNAUTHENTICATED to a bearer token from a replaceable token source, the
+// interceptor discards that token and repeats the RPC exactly once with a replacement token. A second
+// rejection is returned to the caller, so a permanently rejected client never loops on the token endpoint.
 func (m *ConnectionManager) unaryInterceptor() grpc.UnaryClientInterceptor {
 	return func(
 		ctx context.Context,
@@ -248,37 +261,99 @@ func (m *ConnectionManager) unaryInterceptor() grpc.UnaryClientInterceptor {
 			defer cancel()
 		}
 
-		md := metadata.Pairs(
-			"x-nauthilus-authority", m.authorityName,
-			"x-nauthilus-edge-cluster", m.cfg.GetEdgeClusterID(),
-			"x-nauthilus-edge-instance", m.cfg.GetEdgeInstanceID(),
-		)
-
-		if m.tokenSource != nil {
-			token, err := m.tokenSource.Token(ctx)
-			if err != nil {
-				return fmt.Errorf("authority caller token: %w", err)
-			}
-
-			if token != "" {
-				md.Append("authorization", "Bearer "+token)
-			}
+		md, bearer, err := m.outgoingMetadata(ctx)
+		if err != nil {
+			return err
 		}
 
-		if basic := m.cfg.GetCallerAuth().BasicAuth; basic.IsEnabled() {
-			var password string
+		err = invoker(metadata.NewOutgoingContext(ctx, md), method, request, reply, cc, opts...)
 
-			basic.GetPassword().WithString(func(value string) {
-				password = value
-			})
-			encoded := base64.StdEncoding.EncodeToString([]byte(basic.GetUsername() + ":" + password))
-			md.Set("authorization", "Basic "+encoded)
+		replacement, ok := m.replacementForRejectedToken(ctx, method, bearer, err)
+		if !ok {
+			return err
 		}
 
-		ctx = metadata.NewOutgoingContext(ctx, md)
+		md.Set("authorization", "Bearer "+replacement)
 
-		return invoker(ctx, method, request, reply, cc, opts...)
+		return invoker(metadata.NewOutgoingContext(ctx, md), method, request, reply, cc, opts...)
 	}
+}
+
+// outgoingMetadata builds the caller metadata and returns the bearer token it carries, if any.
+// Basic auth replaces the bearer header, so the returned bearer token is empty in that case.
+func (m *ConnectionManager) outgoingMetadata(ctx context.Context) (metadata.MD, string, error) {
+	md := metadata.Pairs(
+		"x-nauthilus-authority", m.authorityName,
+		"x-nauthilus-edge-cluster", m.cfg.GetEdgeClusterID(),
+		"x-nauthilus-edge-instance", m.cfg.GetEdgeInstanceID(),
+	)
+
+	var bearer string
+
+	if m.tokenSource != nil {
+		token, err := m.tokenSource.Token(ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("authority caller token: %w", err)
+		}
+
+		if token != "" {
+			bearer = token
+			md.Append("authorization", "Bearer "+token)
+		}
+	}
+
+	if basic := m.cfg.GetCallerAuth().BasicAuth; basic.IsEnabled() {
+		var password string
+
+		basic.GetPassword().WithString(func(value string) {
+			password = value
+		})
+		encoded := base64.StdEncoding.EncodeToString([]byte(basic.GetUsername() + ":" + password))
+		md.Set("authorization", "Basic "+encoded)
+
+		bearer = ""
+	}
+
+	return md, bearer, nil
+}
+
+// replacementForRejectedToken returns a new bearer token when the authority rejected the one just sent.
+// It reports false when the RPC did not fail with UNAUTHENTICATED, no bearer token was sent, the token
+// source cannot replace tokens, or no different token is available.
+func (m *ConnectionManager) replacementForRejectedToken(ctx context.Context, method string, bearer string, rpcErr error) (string, bool) {
+	if bearer == "" || status.Code(rpcErr) != codes.Unauthenticated {
+		return "", false
+	}
+
+	replacer, ok := m.tokenSource.(RejectedTokenReplacer)
+	if !ok {
+		return "", false
+	}
+
+	replacement, err := replacer.ReplaceRejectedToken(ctx, bearer)
+	if err != nil || replacement == "" || replacement == bearer {
+		m.logRejectedToken("Authority rejected the caller token and no replacement token is available", method, err)
+
+		return "", false
+	}
+
+	m.logRejectedToken("Authority rejected the cached caller token; retrying once with a replacement token", method, nil)
+
+	return replacement, true
+}
+
+// logRejectedToken reports a caller-token rejection when the manager has a logger.
+func (m *ConnectionManager) logRejectedToken(message string, method string, err error) {
+	if m.logger == nil {
+		return
+	}
+
+	keyvals := []any{definitions.LogKeyMsg, message, "authority", m.authorityName, "method", method}
+	if err != nil {
+		keyvals = append(keyvals, definitions.LogKeyError, err)
+	}
+
+	level.Warn(m.logger).Log(keyvals...)
 }
 
 func transportCredentials(

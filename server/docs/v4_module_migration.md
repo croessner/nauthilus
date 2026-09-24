@@ -41,6 +41,14 @@ the intended first prerelease is `v4.0.0-alpha.1`.
 
 ## Changes Between v4 Prereleases
 
+- Edge nodes discard an authority caller token that the authority rejects.
+  On `UNAUTHENTICATED` the edge deletes the cached token from its Redis only
+  if the cache still holds exactly that token, fetches a replacement through
+  the regular refresh path with its distributed lock, and retries the RPC
+  once. The manual flush of the edge authority-token cache after an upgrade
+  that invalidates caller tokens (revocation-epoch floor, key rotation, client
+  revocation or audience change) is no longer needed. Static token files are
+  never replaced or retried.
 - Redis password state uses only the full 64-hex password hash. The eight-hex
   short hash of earlier prereleases is no longer read or written: password
   history sets (`pw_hist`, `pw_hist_ips`), the RWP allowance sets and the
