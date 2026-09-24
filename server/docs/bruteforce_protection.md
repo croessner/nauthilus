@@ -193,6 +193,13 @@ because a pipeline only reports its first error.
   counted, `SaveBruteForceBucketCountersToRedis` reads the reputation once and increments every selected rule with
   one `SlidingWindowCounter` pipeline on the write handle. A failed login therefore needs the RWP commit plus two
   round trips, independent of the number of rules. Each rule still logs and counts its own write and failure.
+* **Blocked requests:** the matched rule's counter is reused from the same request's bucket evaluation instead of
+  running `SlidingWindowCounter` again. The affected account is written with one `SADD` + `ZADD NX` pipeline
+  (`pipeline_affected_account`) without a membership read; `ZADD NX` keeps the first-seen timestamp of an indexed
+  account. The failed password hash is stored in the account-scoped and the IP-scoped history set with one
+  `AddToSetAndExpireLimit` pipeline (`pipeline_pw_hist_save`). The burst gate stays a separate round trip because
+  only the burst leader records the hash. The `SISMEMBER` before learning a `pw_hist_ips` entry also stays: it
+  decides whether the set TTL is refreshed.
 
 ## 4. Sequence Diagram
 

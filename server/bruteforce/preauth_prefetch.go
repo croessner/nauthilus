@@ -31,17 +31,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const (
-	// slidingWindowCounterScriptName is the Lua script that reads and increments bucket counters.
-	slidingWindowCounterScriptName = "SlidingWindowCounter"
-
-	// rwpCheckScriptName is the read-only RWP script that joins the pre-authentication pipeline.
-	rwpCheckScriptName = "RWPSlidingWindowCheck"
-
-	// reputationPositiveField is the reputation hash field that scales brute-force bucket limits.
-	reputationPositiveField = "positive"
-)
-
 // preAuthPrefetch holds the pre-authentication brute-force reads of one request.
 //
 // The RWP result is consumed once by the precheck. The L1 decision, the rule candidates, the ban-key states

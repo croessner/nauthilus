@@ -59,6 +59,20 @@ const (
 	ipFamilyUnknown = "unknown"
 )
 
+const (
+	// slidingWindowCounterScriptName is the Lua script that reads and increments bucket counters.
+	slidingWindowCounterScriptName = "SlidingWindowCounter"
+
+	// rwpCheckScriptName is the read-only RWP script that joins the pre-authentication pipeline.
+	rwpCheckScriptName = "RWPSlidingWindowCheck"
+
+	// addToSetAndExpireLimitScriptName is the Lua script that stores failed password hashes in bounded sets.
+	addToSetAndExpireLimitScriptName = "AddToSetAndExpireLimit"
+
+	// reputationPositiveField is the reputation hash field that scales brute-force bucket limits.
+	reputationPositiveField = "positive"
+)
+
 // containsString reports whether s is present in the slice.
 // Kept unexported and simple to avoid allocations and stay DRY for common membership checks.
 func containsString(ss []string, s string) bool {
@@ -1797,6 +1811,8 @@ func (bm *bucketManagerImpl) ProcessPWHist() (accountName string) {
 }
 
 // passwordHistoryIPAlreadyLearned reports whether the client IP is already in the PW_HIST set.
+// The read deliberately stays in front of the write: it decides whether the set TTL is refreshed, so an
+// unconditional SADD and EXPIRE would extend the lifetime of already learned IP sets.
 func (bm *bucketManagerImpl) passwordHistoryIPAlreadyLearned(logger *slog.Logger, key string) (bool, bool) {
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -1969,15 +1985,10 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		return
 	}
 
-	ttl := bm.cfg().GetServer().GetRedis().GetNegCacheTTL()
-	maxEntries := bm.cfg().GetServer().GetMaxPasswordHistoryEntries()
+	calls := bm.saveFailedPasswordHash(passwordHash)
 
-	for _, key := range bm.failedPasswordHistoryKeys() {
-		if key == "" {
-			continue
-		}
-
-		if ok := bm.saveFailedPasswordHashToKey(logger, key, passwordHash, ttl, maxEntries); !ok {
+	for _, call := range calls {
+		if ok := bm.evaluateFailedPasswordHashSave(logger, call); !ok {
 			return
 		}
 	}
@@ -1991,34 +2002,53 @@ func (bm *bucketManagerImpl) failedPasswordHistoryKeys() []string {
 	}
 }
 
-// saveFailedPasswordHashToKey stores one password hash in a bounded Redis set.
-func (bm *bucketManagerImpl) saveFailedPasswordHashToKey(
-	logger *slog.Logger,
-	key string,
-	passwordHash string,
-	ttl time.Duration,
-	maxEntries int32,
-) bool {
-	util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "set_key", key)
+// saveFailedPasswordHash stores the password hash in the account-scoped and IP-scoped bounded sets with
+// one script pipeline on the write handle. Both keys live in different cluster slots, so the pipeline
+// replaces two sequential script round trips.
+func (bm *bucketManagerImpl) saveFailedPasswordHash(passwordHash string) []*rediscli.ScriptCall {
+	keys := make([]string, 0, 2)
+
+	for _, key := range bm.failedPasswordHistoryKeys() {
+		if key == "" {
+			continue
+		}
+
+		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "set_key", key)
+
+		keys = append(keys, key)
+	}
+
+	if len(keys) == 0 {
+		return nil
+	}
+
+	argTTL := strconv.FormatInt(int64(bm.cfg().GetServer().GetRedis().GetNegCacheTTL().Seconds()), 10)
+	argMaxEntries := strconv.Itoa(int(bm.cfg().GetServer().GetMaxPasswordHistoryEntries()))
+	calls := make([]*rediscli.ScriptCall, 0, len(keys))
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(bm.ctx, bm.cfg())
 	defer cancel()
 
+	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_pw_hist_save").Inc()
+
+	pipeline := rediscli.NewScriptPipeline(bm.redis(), bm.redis().GetWriteHandle())
+
 	// We use a simple script to add to set and expire, but also respect maxEntries if possible.
 	// Since it's now a Set, we don't track counters per password, just existence.
-	res, err := rediscli.ExecuteScript(
-		dCtx,
-		bm.redis(),
-		"AddToSetAndExpireLimit",
-		rediscli.LuaScripts["AddToSetAndExpireLimit"],
-		[]string{key},
-		passwordHash,
-		strconv.FormatInt(int64(ttl.Seconds()), 10),
-		strconv.Itoa(int(maxEntries)),
-	)
+	_ = pipeline.Exec(dCtx, func(pipe redis.Pipeliner) {
+		for _, key := range keys {
+			calls = append(calls, pipeline.EvalSha(dCtx, pipe, addToSetAndExpireLimitScriptName, []string{key}, passwordHash, argTTL, argMaxEntries))
+		}
+	})
 
-	stats.GetMetrics().GetRedisWriteCounter().Add(1)
+	stats.GetMetrics().GetRedisWriteCounter().Add(float64(len(calls)))
 
+	return calls
+}
+
+// evaluateFailedPasswordHashSave logs the result of one bounded-set write and reports whether to continue.
+func (bm *bucketManagerImpl) evaluateFailedPasswordHashSave(logger *slog.Logger, call *rediscli.ScriptCall) bool {
+	res, err := call.Result()
 	if err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
@@ -2699,6 +2729,14 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 
 	util.DebugModuleWithCfg(ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "load_key", currentKey)
 
+	// CheckBucketOverLimit or CollectBucketPolicyFacts already ran the same read-only script with the same
+	// keys and reputation for this request; running it again would only repeat that round trip.
+	if total, ok := bm.bruteForceCounter[rule.Name]; ok {
+		sp.SetAttributes(attribute.Int64("total", int64(total)), attribute.Bool("reused", true))
+
+		return
+	}
+
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
 	defer cancel()
 
@@ -2841,8 +2879,8 @@ func (bm *bucketManagerImpl) addBanToIndex(ctx context.Context, prefix, networkS
 	}
 }
 
-// updateAffectedAccount processes a blocked account by checking its existence in Redis and adding it if not present.
-// It increments Redis read and write counters and logs errors encountered during the operations.
+// updateAffectedAccount records a blocked account in the affected-account set and index.
+// It increments the Redis write counter and logs errors encountered during the operations.
 func (bm *bucketManagerImpl) updateAffectedAccount() {
 	accountName := bm.resolveAccountNameForHistory()
 	if accountName == "" {
@@ -2872,67 +2910,44 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 		return
 	}
 
-	isMember, abort := bm.affectedAccountAlreadyMember(ctx, logger, key, accountName)
-	if abort || isMember {
-		return
-	}
-
 	bm.addAffectedAccount(ctx, logger, key, accountName)
 }
 
-// affectedAccountAlreadyMember checks whether an account is already indexed as affected.
-func (bm *bucketManagerImpl) affectedAccountAlreadyMember(
-	ctx context.Context,
-	logger *slog.Logger,
-	key string,
-	accountName string,
-) (bool, bool) {
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
-	defer cancel()
-
-	isMember, err := bm.redis().GetReadHandle().SIsMember(dCtx, key, accountName).Result()
-	if err == nil || errors2.Is(err, redis.Nil) {
-		return isMember, false
-	}
-
-	level.Error(logger).Log(
-		definitions.LogKeyGUID, bm.guid,
-		definitions.LogKeyMsg, "Error checking if account is already a member of the affected accounts set",
-		definitions.LogKeyError, err,
-	)
-
-	return false, true
-}
-
-// addAffectedAccount adds an account to the affected-account set and index.
+// addAffectedAccount adds an account to the affected-account set and the sorted index in one write pipeline.
+// No membership read is needed: SADD is idempotent and ZADD NX keeps the first-seen timestamp of an account
+// that is already indexed. Both keys live in different cluster slots, so each command is evaluated on its own.
 func (bm *bucketManagerImpl) addAffectedAccount(ctx context.Context, logger *slog.Logger, key string, accountName string) {
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
 	defer cancel()
 
-	if err := bm.redis().GetWriteHandle().SAdd(dCtx, key, accountName).Err(); err != nil {
+	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_affected_account").Inc()
+
+	indexKey := rediscli.GetAffectedAccountsIndexKey(bm.cfg().GetServer().GetRedis().GetPrefix())
+
+	var setCmd, indexCmd *redis.IntCmd
+
+	// Pipelined only reports the first failed command; both commands are evaluated individually below.
+	_, _ = bm.redis().GetWriteHandle().Pipelined(dCtx, func(pipe redis.Pipeliner) error {
+		setCmd = pipe.SAdd(dCtx, key, accountName)
+		indexCmd = pipe.ZAddNX(dCtx, indexKey, redis.Z{
+			Score:  float64(time.Now().Unix()),
+			Member: accountName,
+		})
+
+		return nil
+	})
+
+	if err := setCmd.Err(); err != nil {
 		level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Error adding account to the affected accounts set",
 			definitions.LogKeyError, err,
 		)
-
-		return
 	}
 
-	bm.addAffectedAccountIndex(dCtx, logger, accountName)
-}
-
-// addAffectedAccountIndex adds an account to the sorted affected-account index.
-func (bm *bucketManagerImpl) addAffectedAccountIndex(ctx context.Context, logger *slog.Logger, accountName string) {
-	indexKey := rediscli.GetAffectedAccountsIndexKey(bm.cfg().GetServer().GetRedis().GetPrefix())
-	if err := bm.redis().GetWriteHandle().ZAddNX(ctx, indexKey, redis.Z{
-		Score:  float64(time.Now().Unix()),
-		Member: accountName,
-	}).Err(); err != nil {
+	if err := indexCmd.Err(); err != nil {
 		_ = level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
 			definitions.LogKeyMsg, "Error adding account to the affected accounts index",

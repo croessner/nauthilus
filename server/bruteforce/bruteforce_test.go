@@ -348,7 +348,7 @@ func TestProcessPWHistIndexesNewAffectedAccount(t *testing.T) {
 	accountIndexKey := rediscli.GetAffectedAccountsIndexKey(prefix)
 	pwHistKey := bruteforce.GetPWHistIPsRedisKey(accountName, cfg)
 
-	mock.ExpectSIsMember(affectedKey, accountName).SetVal(false)
+	// SADD and ZADD NX share one write pipeline without a membership pre-read.
 	mock.ExpectSAdd(affectedKey, accountName).SetVal(1)
 	mock.CustomMatch(func(_ []any, actual []any) error {
 		if len(actual) != 5 {
