@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	internalpasswordhash "github.com/croessner/nauthilus/v4/server/internal/passwordhash"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/secret"
@@ -131,22 +130,9 @@ func runFullHashContractRequest(t *testing.T, auth *AuthState, ctx *gin.Context)
 	execution.release()
 }
 
-// emptyNonceLegacyCandidate derives the bounded Redis legacy candidate explicitly.
-func emptyNonceLegacyCandidate(auth *AuthState) string {
-	legacy := ""
-
-	auth.Request.Password.WithBytes(func(value []byte) {
-		prepared, ok := util.PreparePasswordBytesWithConfig(value, auth.Cfg())
-		if !ok {
-			return
-		}
-
-		defer clear(prepared)
-
-		legacy = internalpasswordhash.DeriveRedisCompatibilityCandidates(prepared).Legacy()
-	})
-
-	return legacy
+// emptyNonceShortHashPrefix derives the eight-hex prefix of the full prepared credential hash.
+func emptyNonceShortHashPrefix(auth *AuthState) string {
+	return util.PreparedPasswordHashWithConfig(auth.Request.Password, auth.Cfg())[:8]
 }
 
 // assertFullHashContractDimensions verifies that only the credential dimension differs.
@@ -161,14 +147,14 @@ func assertFullHashContractDimensions(t *testing.T, first *AuthState, second *Au
 	}
 }
 
-// assertLegacyCollisionContract verifies the fixed bounded Redis compatibility collision.
-func assertLegacyCollisionContract(t *testing.T, first *AuthState, second *AuthState) {
+// assertShortHashCollisionContract verifies that the fixed inputs collide on their eight-hex hash prefix.
+func assertShortHashCollisionContract(t *testing.T, first *AuthState, second *AuthState) {
 	t.Helper()
 
-	const legacyCollision = "593c55ae"
+	const shortHashCollision = "593c55ae"
 
-	if emptyNonceLegacyCandidate(first) != legacyCollision || emptyNonceLegacyCandidate(second) != legacyCollision {
-		t.Fatal("fixed inputs do not satisfy the legacy compatibility collision contract")
+	if emptyNonceShortHashPrefix(first) != shortHashCollision || emptyNonceShortHashPrefix(second) != shortHashCollision {
+		t.Fatal("fixed inputs do not satisfy the short hash collision contract")
 	}
 }
 
@@ -234,7 +220,7 @@ func TestPositiveBackendAuthenticationCacheCredentialDigestSeparatesShortHashCol
 	second.deps.BackendAuthenticationCache = cache
 
 	assertFullHashContractDimensions(t, first, second)
-	assertLegacyCollisionContract(t, first, second)
+	assertShortHashCollisionContract(t, first, second)
 
 	runFullHashContractRequest(t, first, firstCtx)
 
@@ -301,20 +287,22 @@ func TestPositiveBackendAuthenticationCacheRejectsUnsupportedNamedContainers(t *
 	}
 }
 
-func TestPositivePasswordCacheReadsLegacyShortHashAndWritesFullHash(t *testing.T) {
+func TestPositivePasswordCacheReadsAndWritesOnlyFullHash(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
 	auth, _ := newRequestOwnedContractAuth(t, cfg, "redis-cache@example.test", "credential", "redis-cache")
-	candidates := auth.cachePasswordHashCandidates()
+	fullHash := preparedCredentialDigest(auth)
 	hash := auth.CreatePositivePasswordCache().Password
 
-	if len(hash) != 64 || strings.ToLower(hash) != hash {
-		t.Fatalf("new positive password-cache hash = %q, want lowercase 64-hex", hash)
+	if len(hash) != 64 || strings.ToLower(hash) != hash || hash != fullHash {
+		t.Fatalf("new positive password-cache hash = %q, want the lowercase 64-hex request hash", hash)
 	}
 
-	for _, stored := range []string{candidates.Legacy(), candidates.Full()} {
-		if !positivePasswordCacheHashMatches(stored, candidates) {
-			t.Fatalf("valid positive password-cache value %q did not match its exact candidate", stored)
-		}
+	if !positivePasswordCacheHashMatches(fullHash, fullHash) {
+		t.Fatal("full positive password-cache value did not match the request hash")
+	}
+
+	if positivePasswordCacheHashMatches(fullHash[:8], fullHash) {
+		t.Fatal("eight-hex short positive password-cache value matched the request hash")
 	}
 
 	readCases := []struct {
@@ -323,10 +311,10 @@ func TestPositivePasswordCacheReadsLegacyShortHashAndWritesFullHash(t *testing.T
 		wantFound     bool
 		wantValidated bool
 	}{
-		{name: "legacy", stored: candidates.Legacy(), wantFound: true, wantValidated: true},
-		{name: "canonical", stored: candidates.Full(), wantFound: true, wantValidated: true},
-		{name: "malformed uppercase", stored: strings.ToUpper(candidates.Legacy())},
-		{name: "malformed length", stored: candidates.Full()[:63]},
+		{name: "short hash is a miss", stored: fullHash[:8]},
+		{name: "canonical", stored: fullHash, wantFound: true, wantValidated: true},
+		{name: "malformed uppercase", stored: strings.ToUpper(fullHash)},
+		{name: "malformed length", stored: fullHash[:63]},
 	}
 
 	for index, testCase := range readCases {
@@ -361,10 +349,10 @@ func TestPositivePasswordCacheRejectsMalformedStoredPasswordHash(t *testing.T) {
 	malformed := []string{"", "ABCDEF12", "gggggggg", "1234567", strings.Repeat("a", 63), strings.Repeat("a", 65)}
 	cfg := newCurrentBehaviorConfig(t)
 	auth, _ := newRequestOwnedContractAuth(t, cfg, "malformed@example.test", "credential", "malformed")
-	candidates := auth.cachePasswordHashCandidates()
+	fullHash := preparedCredentialDigest(auth)
 
 	for _, value := range malformed {
-		if positivePasswordCacheHashMatches(value, candidates) {
+		if positivePasswordCacheHashMatches(value, fullHash) {
 			t.Fatalf("malformed positive password-cache hash %q was accepted", value)
 		}
 	}

@@ -24,16 +24,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestRWPSlidingWindowReadsLegacyHashAndCommitsFullHash(t *testing.T) {
+func TestRWPSlidingWindowUsesOnlyFullHash(t *testing.T) {
 	checkScript := LuaScripts["RWPSlidingWindowCheck"]
 	commitScript := LuaScripts["RWPSlidingWindowCommit"]
 
-	if !strings.Contains(checkScript, "ARGV[5]") {
-		t.Fatal("RWP check script has no bounded exact legacy-hash candidate")
-	}
-
-	if !strings.Contains(commitScript, "ARGV[5]") || !strings.Contains(commitScript, "ZREM") {
-		t.Fatal("RWP commit script does not remove the exact legacy member before writing the full hash")
+	for name, script := range map[string]string{"check": checkScript, "commit": commitScript} {
+		if strings.Contains(script, "ARGV[5]") || strings.Contains(script, "legacy") {
+			t.Fatalf("RWP %s script still accepts a short hash candidate", name)
+		}
 	}
 
 	server := miniredis.RunT(t)
@@ -42,68 +40,76 @@ func TestRWPSlidingWindowReadsLegacyHashAndCommitsFullHash(t *testing.T) {
 	closeRedisTestClient(t, client)
 
 	const (
-		key      = "rwp:{contract}:account"
-		fullHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-		legacy   = "01234567"
-		now      = int64(1000)
+		key       = "rwp:{contract}:account"
+		fullHash  = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		shortHash = "01234567"
+		now       = int64(1000)
 	)
 
 	ctx := context.Background()
-	if err := client.ZAdd(ctx, key, redis.Z{Score: float64(now - 1), Member: legacy}).Err(); err != nil {
-		t.Fatalf("seed legacy RWP member: %v", err)
+	if err := client.ZAdd(ctx, key, redis.Z{Score: float64(now - 1), Member: shortHash}).Err(); err != nil {
+		t.Fatalf("seed short RWP member: %v", err)
 	}
 
-	result, err := client.Eval(ctx, checkScript, []string{key}, fullHash, now, 300, 4, legacy).Int64()
+	result, err := client.Eval(ctx, checkScript, []string{key}, fullHash, now, 300, 4).Int64()
 	if err != nil {
 		t.Fatalf("execute RWP check script: %v", err)
 	}
 
-	if result != 1 {
-		t.Fatalf("legacy RWP membership result = %d, want repeat", result)
+	if result != 0 {
+		t.Fatalf("short RWP member result = %d, want no repeat", result)
 	}
 
-	if _, err := client.Eval(ctx, commitScript, []string{key}, fullHash, now, 300, 4, legacy).Result(); err != nil {
-		t.Fatalf("execute RWP commit script: %v", err)
+	for attempt, want := range []int64{0, 1} {
+		repeated, err := client.Eval(ctx, commitScript, []string{key}, fullHash, now, 300, 4).Int64()
+		if err != nil {
+			t.Fatalf("execute RWP commit script: %v", err)
+		}
+
+		if repeated != want {
+			t.Fatalf("RWP commit %d repeated = %d, want %d", attempt, repeated, want)
+		}
 	}
 
-	members, err := client.ZRange(ctx, key, 0, -1).Result()
-	if err != nil {
-		t.Fatalf("read canonical RWP members: %v", err)
-	}
-
-	if len(members) != 1 || members[0] != fullHash {
-		t.Fatalf("canonical RWP members = %#v, want one full hash", members)
+	score, err := client.ZScore(ctx, key, fullHash).Result()
+	if err != nil || int64(score) != now {
+		t.Fatalf("full RWP member score = %v err=%v, want %d", score, err, now)
 	}
 }
 
-func TestPasswordHistoryCommitCanonicalizesLegacyWithoutCardinalityGrowth(t *testing.T) {
+func TestPasswordHistoryCommitStoresFullHashOnly(t *testing.T) {
+	script := LuaScripts["AddToSetAndExpireLimit"]
+	if strings.Contains(script, "ARGV[4]") || strings.Contains(script, "SREM") {
+		t.Fatal("password-history commit script still removes a short hash candidate")
+	}
+
 	server := miniredis.RunT(t)
 
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	closeRedisTestClient(t, client)
 
 	const (
-		key      = "password-history:{contract}:account"
-		fullHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-		legacy   = "01234567"
+		key       = "password-history:{contract}:account"
+		fullHash  = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		shortHash = "01234567"
 	)
 
 	ctx := context.Background()
-	if err := client.SAdd(ctx, key, legacy).Err(); err != nil {
-		t.Fatalf("seed legacy password-history member: %v", err)
+	if err := client.SAdd(ctx, key, shortHash).Err(); err != nil {
+		t.Fatalf("seed stray short password-history member: %v", err)
 	}
 
-	if _, err := client.Eval(ctx, LuaScripts["AddToSetAndExpireLimit"], []string{key}, fullHash, 300, 4, legacy).Result(); err != nil {
+	if _, err := client.Eval(ctx, script, []string{key}, fullHash, 300, 4).Result(); err != nil {
 		t.Fatalf("execute password-history commit script: %v", err)
 	}
 
-	members, err := client.SMembers(ctx, key).Result()
-	if err != nil {
-		t.Fatalf("read canonical password-history members: %v", err)
+	isMember, err := client.SIsMember(ctx, key, fullHash).Result()
+	if err != nil || !isMember {
+		t.Fatalf("full password-history member present = %t err=%v, want true", isMember, err)
 	}
 
-	if len(members) != 1 || members[0] != fullHash {
-		t.Fatalf("canonical password-history members = %#v, want one full hash", members)
+	if ttl := server.TTL(key); ttl <= 0 {
+		t.Fatalf("password-history TTL = %v, want positive", ttl)
 	}
 }
 

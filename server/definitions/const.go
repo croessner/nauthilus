@@ -963,11 +963,6 @@ const (
 	// RedisPwHashKey represents the key used for password history in Redis.
 	RedisPwHashKey = "pw_hist"
 
-	// RedisPwHistTotalKey represents the key used for storing total counts for password history scopes in Redis.
-	// The full key is constructed similarly to pw_hist but with this different prefix and the same suffix.
-	// Example: <prefix> + RedisPwHistTotalKey + ":<account>:<ip>" or ":<ip>"
-	RedisPwHistTotalKey = "pw_hist_total"
-
 	// RedisPWHistIPsKey represents the key used for storing password history associated with IPs in Redis.
 	RedisPWHistIPsKey = "pw_hist_ips"
 

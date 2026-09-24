@@ -47,7 +47,7 @@ type passwordHistoryCommandCase struct {
 
 var passwordHistoryCommandScenarios = []passwordHistoryCommandCase{
 	{
-		name:        "known account with password skips legacy total reads for IPv4",
+		name:        "known account with password reads account and IP history for IPv4",
 		clientIP:    "1.2.3.4",
 		scopedIP:    "1.2.3.4",
 		accountName: passwordHistoryCommandAccount,
@@ -80,7 +80,7 @@ var passwordHistoryCommandScenarios = []passwordHistoryCommandCase{
 		wantTotalSeen:       13,
 	},
 	{
-		name:     "unknown account skips account scoped reads and legacy total reads",
+		name:     "unknown account skips account scoped reads",
 		clientIP: "1.2.3.4",
 		scopedIP: "1.2.3.4",
 		password: "wrong-password",
@@ -192,9 +192,7 @@ func TestPasswordHistoryKeyEquivalence(t *testing.T) {
 			}
 
 			assertPasswordHistoryKey(t, impl.getPasswordHistoryRedisSetKey(true), passwordHistorySetKey(tc.accountName, tc.scopedIP), tc.wantAccountKey)
-			assertPasswordHistoryKey(t, impl.getPasswordHistoryTotalRedisKey(true), passwordHistoryTotalKey(tc.accountName, tc.scopedIP), tc.wantAccountKey)
 			assertPasswordHistoryKey(t, impl.getPasswordHistoryRedisSetKey(false), passwordHistorySetKey("", tc.scopedIP), true)
-			assertPasswordHistoryKey(t, impl.getPasswordHistoryTotalRedisKey(false), passwordHistoryTotalKey("", tc.scopedIP), true)
 		})
 	}
 }
@@ -216,7 +214,7 @@ func TestPasswordHistoryLoadPlanComputesPasswordHashOnlyWhenNeeded(t *testing.T)
 		t.Fatalf("unexpected bucket manager implementation: %T", bm)
 	}
 
-	plan := impl.preparePasswordHistoryLoad(redisClient.GetReadHandle(), false)
+	plan := impl.preparePasswordHistoryLoad(redisClient.GetReadHandle())
 	plan.loadPasswordHistoryCount(true)
 	plan.loadCurrentPasswordHistoryMembership()
 	plan.loadPasswordHistoryCount(false)
@@ -227,14 +225,14 @@ func TestPasswordHistoryLoadPlanComputesPasswordHashOnlyWhenNeeded(t *testing.T)
 
 	handle.commands = nil
 	impl.password = secret.New("wrong-password")
-	plan = impl.preparePasswordHistoryLoad(redisClient.GetReadHandle(), false)
+	plan = impl.preparePasswordHistoryLoad(redisClient.GetReadHandle())
 	plan.loadCurrentPasswordHistoryMembership()
 
 	if !plan.hashComputed {
 		t.Fatal("password hash was not computed for membership read with a current password")
 	}
 
-	if plan.passwordHashes.Full() == "" || plan.passwordHashes.Legacy() == "" {
+	if plan.passwordHash == "" {
 		t.Fatal("password hash is empty after membership read with a current password")
 	}
 
@@ -514,11 +512,6 @@ func passwordHistoryExpectedCommands(accountName string, scopedIP string, includ
 // passwordHistorySetKey returns the expected password-history set key for command-shape assertions.
 func passwordHistorySetKey(accountName string, scopedIP string) string {
 	return passwordHistoryCommandKey(definitions.RedisPwHashKey, accountName, scopedIP)
-}
-
-// passwordHistoryTotalKey returns the expected password-history total key for command-shape assertions.
-func passwordHistoryTotalKey(accountName string, scopedIP string) string {
-	return passwordHistoryCommandKey(definitions.RedisPwHistTotalKey, accountName, scopedIP)
 }
 
 // passwordHistoryCommandKey formats the current password-history Redis key contract.

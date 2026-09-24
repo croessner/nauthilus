@@ -56,7 +56,7 @@ func TestUndecidedRWPVerdictDoesNotCountAsBruteForce(t *testing.T) {
 	mock.Regexp().ExpectEvalSha(
 		"sha-rwp-commit",
 		[]string{".*bf:rwp:allow:.*"},
-		".*", ".*", ".*", ".*", ".*",
+		".*", ".*", ".*", ".*",
 	).SetErr(errors.New("context canceled"))
 
 	auth.UpdateBruteForceBucketsCounter(ctx)
@@ -105,7 +105,7 @@ func TestUndecidedRWPVerdictAnswersTemporaryFailure(t *testing.T) {
 	mock.Regexp().ExpectEvalSha(
 		"sha-rwp-commit",
 		[]string{".*bf:rwp:allow:.*"},
-		".*", ".*", ".*", ".*", ".*",
+		".*", ".*", ".*", ".*",
 	).SetErr(errors.New("context canceled"))
 
 	auth.applyBackendResult(ctx, &PassDBResult{Authenticated: false})
@@ -146,7 +146,7 @@ func TestDecidedAuthFailureStillDeniesNormally(t *testing.T) {
 	mock.Regexp().ExpectEvalSha(
 		"sha-rwp-commit",
 		[]string{".*bf:rwp:allow:.*"},
-		".*", ".*", ".*", ".*", ".*",
+		".*", ".*", ".*", ".*",
 	).SetVal(int64(0))
 	mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha-bucket")
 	mock.Regexp().ExpectEvalSha(

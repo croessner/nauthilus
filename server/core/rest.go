@@ -1692,12 +1692,10 @@ func addDefaultPositiveCacheKey(userKeys config.StringSet, prefix string, accoun
 	userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
 }
 
-// addPasswordHistoryKeys adds password-history hash and total keys for one identifier.
+// addPasswordHistoryKeys adds account-scoped and IP-scoped password-history set keys for one identifier.
 func addPasswordHistoryKeys(userKeys config.StringSet, prefix string, accountName string, identifier string) {
 	userKeys.Set(fmt.Sprintf("%s%s:{%s:%s}:%s:%s", prefix, definitions.RedisPwHashKey, accountName, identifier, accountName, identifier))
 	userKeys.Set(fmt.Sprintf("%s%s:{%s}:%s", prefix, definitions.RedisPwHashKey, identifier, identifier))
-	userKeys.Set(fmt.Sprintf("%s%s:{%s:%s}:%s:%s", prefix, definitions.RedisPwHistTotalKey, accountName, identifier, accountName, identifier))
-	userKeys.Set(fmt.Sprintf("%s%s:{%s}:%s", prefix, definitions.RedisPwHistTotalKey, identifier, identifier))
 }
 
 // addTolerationKeys adds raw or scoped toleration hash and ZSET keys.

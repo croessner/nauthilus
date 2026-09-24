@@ -252,24 +252,7 @@ func preparedCredentialDigest(auth *AuthState) string {
 		return ""
 	}
 
-	var digest string
-
-	auth.Request.Password.WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		prepared, ok := util.PreparePasswordBytesWithConfig(value, auth.Cfg())
-		if !ok {
-			return
-		}
-
-		defer clear(prepared)
-
-		digest = util.GetHashBytes(prepared)
-	})
-
-	return digest
+	return util.PreparedPasswordHashWithConfig(auth.Request.Password, auth.Cfg())
 }
 
 // requestPreparedCredentialDigest derives a binary digest from request configuration only.

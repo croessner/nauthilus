@@ -23,7 +23,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
-func TestPasswordHistoryReadsLegacyHashAndWritesFullHash(t *testing.T) {
+func TestPasswordHistoryReadsAndWritesOnlyFullHash(t *testing.T) {
 	cfg := passwordHistoryCommandConfig(0)
 	handle := newPasswordHistoryCommandReadHandle("1.2.3.4", false)
 	bm := NewBucketManagerWithDeps(t.Context(), passwordHistoryCommandGUID, "1.2.3.4", BucketManagerDeps{
@@ -38,19 +38,27 @@ func TestPasswordHistoryReadsLegacyHashAndWritesFullHash(t *testing.T) {
 		t.Fatalf("password-history write candidate = %q, want lowercase 64-hex", hash)
 	}
 
-	candidates := impl.currentPasswordHashCandidates()
 	key := impl.getPasswordHistoryRedisSetKey(true)
 	handle.exactMembers = map[string]map[string]bool{
-		key: {candidates.Legacy(): true, "unrelated-member": true},
+		key: {hash[:8]: true, "unrelated-member": true},
 	}
-	plan := impl.preparePasswordHistoryLoad(handle, false)
+	plan := impl.preparePasswordHistoryLoad(handle)
+	plan.loadCurrentPasswordHistoryMembership()
+
+	if impl.loginAttempts != 0 {
+		t.Fatalf("eight-hex short member produced %d attempts, want 0", impl.loginAttempts)
+	}
+
+	if len(handle.commands) != 1 || handle.commands[0].member != hash {
+		t.Fatalf("password-history membership reads = %#v, want one exact full-hash read", handle.commands)
+	}
+
+	handle.commands = nil
+	handle.exactMembers[key][hash] = true
+	plan = impl.preparePasswordHistoryLoad(handle)
 	plan.loadCurrentPasswordHistoryMembership()
 
 	if impl.loginAttempts != 1 {
-		t.Fatalf("legacy exact membership produced %d attempts, want 1", impl.loginAttempts)
-	}
-
-	if len(handle.commands) != 2 || handle.commands[0].member != candidates.Full() || handle.commands[1].member != candidates.Legacy() {
-		t.Fatalf("password-history candidates = %#v, want exact full then legacy", handle.commands)
+		t.Fatalf("full-hash membership produced %d attempts, want 1", impl.loginAttempts)
 	}
 }

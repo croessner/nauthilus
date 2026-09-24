@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v4/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/gin-gonic/gin"
 )
 
@@ -302,6 +303,25 @@ func TestPasswordHashHelpersMatchPublicImplementation(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("GetHashBytes(PreparePasswordBytesWithConfig()) = %q, want public helper %q", got, want)
+	}
+}
+
+func TestPreparedPasswordHashWithConfigReturnsFullHashOnly(t *testing.T) {
+	SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	want := password.GenerateHashString("s3cret", password.HashOptions{})
+
+	if got := PreparedPasswordHashWithConfig(secret.New("s3cret"), cfg); got != want {
+		t.Fatalf("PreparedPasswordHashWithConfig() = %q, want %q", got, want)
+	}
+
+	if got := PreparedPasswordHashWithConfig(secret.Value{}, cfg); got != "" {
+		t.Fatalf("PreparedPasswordHashWithConfig(empty) = %q, want empty", got)
+	}
+
+	if got := PreparedPasswordHashWithConfig(secret.New("s3cret"), nil); got != "" {
+		t.Fatalf("PreparedPasswordHashWithConfig(nil config) = %q, want empty", got)
 	}
 }
 

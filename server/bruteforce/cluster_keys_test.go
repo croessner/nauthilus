@@ -76,11 +76,8 @@ func TestRedisClusterHashTags(t *testing.T) {
 		t.Fatalf("unexpected bucket hash-tag for r2: %q", k2)
 	}
 
-	// PW_HIST Lua gate is executed with keys; they must share the same hash slot.
-	h := impl.getPasswordHistoryRedisSetKey(true)
-	total := impl.getPasswordHistoryTotalRedisKey(true)
-
-	if extractHashTag(t, h) != extractHashTag(t, total) {
-		t.Fatalf("PW_HIST keys must share hash-tag: %q vs %q", h, total)
+	// The account-scoped PW_HIST set is written by a single-key Lua script and is tagged by account and scope.
+	if h := impl.getPasswordHistoryRedisSetKey(true); extractHashTag(t, h) != "acc:10.0.1.2" {
+		t.Fatalf("unexpected PW_HIST hash-tag: %q", h)
 	}
 }

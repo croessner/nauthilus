@@ -245,6 +245,29 @@ func GetHashBytes(value []byte) string {
 	return pluginpassword.FullHash(value)
 }
 
+// PreparedPasswordHashWithConfig returns the full Redis hash of one request password.
+// It returns an empty string for empty passwords or when no configuration is available.
+func PreparedPasswordHashWithConfig(password secret.Value, cfg config.File) string {
+	var hash string
+
+	password.WithBytes(func(value []byte) {
+		if len(value) == 0 {
+			return
+		}
+
+		prepared, ok := PreparePasswordBytesWithConfig(value, cfg)
+		if !ok {
+			return
+		}
+
+		defer clear(prepared)
+
+		hash = GetHashBytes(prepared)
+	})
+
+	return hash
+}
+
 // ResolveIPAddress returns the hostname for a given IP address.
 func ResolveIPAddress(ctx context.Context, cfg config.File, address string) (hostname string) {
 	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(cfg.GetServer().GetDNS().GetTimeout()))

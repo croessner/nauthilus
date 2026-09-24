@@ -16,13 +16,13 @@
 package core
 
 import (
+	"crypto/sha256"
 	"slices"
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	internalpasswordhash "github.com/croessner/nauthilus/v4/server/internal/passwordhash"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -30,6 +30,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// fullPasswordHashLength is the lowercase hex length of the full SHA-256 password hash.
+const fullPasswordHashLength = 2 * sha256.Size
 
 // CachePassDB implements the redis password database backend.
 func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
@@ -125,7 +128,7 @@ func (auth *AuthState) readPositivePasswordCache(tr monittrace.Tracer, cacheName
 		return nil, false, false, nil
 	}
 
-	authenticated := auth.Request.NoAuth || positivePasswordCacheHashMatches(ppc.Password, auth.cachePasswordHashCandidates())
+	authenticated := auth.Request.NoAuth || positivePasswordCacheHashMatches(ppc.Password, preparedCredentialDigest(auth))
 	applyPositivePasswordCacheSpan(csp, authenticated)
 
 	return ppc, true, authenticated, nil
@@ -171,47 +174,14 @@ func applyPositivePasswordCacheSpan(csp trace.Span, authenticated bool) {
 	)
 }
 
-// cachePasswordHashCandidates returns bounded canonical and legacy Redis read candidates.
-func (auth *AuthState) cachePasswordHashCandidates() internalpasswordhash.RedisCompatibilityCandidates {
-	var candidates internalpasswordhash.RedisCompatibilityCandidates
-
-	auth.Request.Password.WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		prepared, ok := util.PreparePasswordBytesWithConfig(value, auth.Cfg())
-		if !ok {
-			return
-		}
-
-		defer clear(prepared)
-
-		candidates = internalpasswordhash.DeriveRedisCompatibilityCandidates(prepared)
-	})
-
-	return candidates
-}
-
 // positivePasswordCacheHashMatches validates and compares one Redis cache value exactly.
-func positivePasswordCacheHashMatches(stored string, candidates internalpasswordhash.RedisCompatibilityCandidates) bool {
-	if !isLowercaseHexHash(stored) {
-		return false
-	}
-
-	switch len(stored) {
-	case len(candidates.Legacy()):
-		return stored == candidates.Legacy()
-	case len(candidates.Full()):
-		return stored == candidates.Full()
-	default:
-		return false
-	}
+func positivePasswordCacheHashMatches(stored string, passwordHash string) bool {
+	return isLowercaseHexHash(stored) && stored == passwordHash
 }
 
-// isLowercaseHexHash accepts only the bounded Redis compatibility formats.
+// isLowercaseHexHash accepts only the full lowercase SHA-256 Redis hash format.
 func isLowercaseHexHash(value string) bool {
-	if len(value) != 8 && len(value) != 64 {
+	if len(value) != fullPasswordHashLength {
 		return false
 	}
 

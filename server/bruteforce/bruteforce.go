@@ -38,7 +38,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/errors"
-	internalpasswordhash "github.com/croessner/nauthilus/v4/server/internal/passwordhash"
 	"github.com/croessner/nauthilus/v4/server/ipscoper"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
@@ -573,7 +572,7 @@ func (bm *bucketManagerImpl) LoadAllPasswordHistories() {
 	defer func() { bm.ctx = oldCtx }()
 
 	readHandle := bm.redis().GetReadHandle()
-	plan := bm.preparePasswordHistoryLoad(readHandle, false)
+	plan := bm.preparePasswordHistoryLoad(readHandle)
 
 	// 1) Load account-scoped password history metrics
 	bm.passwordsAccountSeen = plan.loadPasswordHistoryCount(true)
@@ -590,17 +589,15 @@ type passwordHistoryLoadPlan struct {
 	bm         *bucketManagerImpl
 	readHandle redis.UniversalClient
 
-	accountSetKey   string
-	accountTotalKey string
-	ipSetKey        string
-	ipTotalKey      string
-	passwordHashes  internalpasswordhash.RedisCompatibilityCandidates
-	accountSkipMsg  string
-	hashComputed    bool
+	accountSetKey  string
+	ipSetKey       string
+	passwordHash   string
+	accountSkipMsg string
+	hashComputed   bool
 }
 
 // preparePasswordHistoryLoad builds password-history Redis keys for one load invocation.
-func (bm *bucketManagerImpl) preparePasswordHistoryLoad(readHandle redis.UniversalClient, includeLegacyTotalKeys bool) passwordHistoryLoadPlan {
+func (bm *bucketManagerImpl) preparePasswordHistoryLoad(readHandle redis.UniversalClient) passwordHistoryLoadPlan {
 	scopedIP := bm.scopedPasswordHistoryIP()
 	account := bm.passwordHistoryAccount()
 	prefix := bm.cfg().GetServer().GetRedis().GetPrefix()
@@ -613,13 +610,6 @@ func (bm *bucketManagerImpl) preparePasswordHistoryLoad(readHandle redis.Univers
 
 	if account.name != "" {
 		plan.accountSetKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHashKey, account.name, scopedIP)
-	}
-
-	if includeLegacyTotalKeys {
-		plan.ipTotalKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHistTotalKey, "", scopedIP)
-		if account.name != "" {
-			plan.accountTotalKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHistTotalKey, account.name, scopedIP)
-		}
 	}
 
 	return plan
@@ -700,15 +690,6 @@ func (p *passwordHistoryLoadPlan) setKey(isAccountScoped bool) string {
 	return p.ipSetKey
 }
 
-// totalKey returns the prepared Redis total counter key for account-scoped or IP-scoped history.
-func (p *passwordHistoryLoadPlan) totalKey(isAccountScoped bool) string {
-	if isAccountScoped {
-		return p.accountTotalKey
-	}
-
-	return p.ipTotalKey
-}
-
 // loadCurrentPasswordHistoryMembership marks login attempts when the current hash was already seen.
 func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
 	key := p.setKey(true)
@@ -718,8 +699,8 @@ func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
 		return
 	}
 
-	passwordHashes := p.currentPasswordHashes()
-	if passwordHashes.Full() == "" {
+	passwordHash := p.currentPasswordHash()
+	if passwordHash == "" {
 		return
 	}
 
@@ -728,30 +709,21 @@ func (p *passwordHistoryLoadPlan) loadCurrentPasswordHistoryMembership() {
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(p.bm.ctx, p.bm.cfg())
 	defer cancel()
 
-	for _, candidate := range []string{passwordHashes.Full(), passwordHashes.Legacy()} {
-		isMember, err := p.readHandle.SIsMember(dCtx, key, candidate).Result()
-		if err != nil {
-			return
-		}
-
-		if isMember {
-			p.bm.loginAttempts = 1
-
-			return
-		}
+	if isMember, err := p.readHandle.SIsMember(dCtx, key, passwordHash).Result(); err == nil && isMember {
+		p.bm.loginAttempts = 1
 	}
 }
 
-// currentPasswordHashes returns cached bounded hash candidates for this load invocation.
-func (p *passwordHistoryLoadPlan) currentPasswordHashes() internalpasswordhash.RedisCompatibilityCandidates {
+// currentPasswordHash returns the cached full password hash for this load invocation.
+func (p *passwordHistoryLoadPlan) currentPasswordHash() string {
 	if p.hashComputed {
-		return p.passwordHashes
+		return p.passwordHash
 	}
 
 	p.hashComputed = true
-	p.passwordHashes = p.bm.currentPasswordHashCandidates()
+	p.passwordHash = p.bm.currentPasswordHash()
 
-	return p.passwordHashes
+	return p.passwordHash
 }
 
 // loadPasswordHistoryCount reads the prepared password-history set cardinality.
@@ -789,22 +761,6 @@ func (p *passwordHistoryLoadPlan) logSetKey(key string, isAccountScoped bool) {
 		definitions.LogKeyGUID, p.bm.guid,
 		definitions.LogKeyClientIP, p.bm.clientIP,
 		"key", key,
-	)
-}
-
-// logTotalKey preserves password-history total-key debug logging for each logical read.
-func (p *passwordHistoryLoadPlan) logTotalKey(key string, isAccountScoped bool) {
-	if p.logMissingAccount(isAccountScoped, key) {
-		return
-	}
-
-	util.DebugModuleWithCfg(
-		p.bm.ctx,
-		p.bm.cfg(),
-		p.bm.logger(),
-		definitions.DbgBf,
-		definitions.LogKeyGUID, p.bm.guid,
-		"total_key", key,
 	)
 }
 
@@ -1882,8 +1838,8 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 		return
 	}
 
-	passwordHashes := bm.currentPasswordHashCandidates()
-	if passwordHashes.Full() == "" {
+	passwordHash := bm.currentPasswordHash()
+	if passwordHash == "" {
 		return
 	}
 
@@ -1895,7 +1851,7 @@ func (bm *bucketManagerImpl) SaveFailedPasswordCounterInRedis() {
 			continue
 		}
 
-		if ok := bm.saveFailedPasswordHashToKey(logger, key, passwordHashes, ttl, maxEntries); !ok {
+		if ok := bm.saveFailedPasswordHashToKey(logger, key, passwordHash, ttl, maxEntries); !ok {
 			return
 		}
 	}
@@ -1913,7 +1869,7 @@ func (bm *bucketManagerImpl) failedPasswordHistoryKeys() []string {
 func (bm *bucketManagerImpl) saveFailedPasswordHashToKey(
 	logger *slog.Logger,
 	key string,
-	passwordHashes internalpasswordhash.RedisCompatibilityCandidates,
+	passwordHash string,
 	ttl time.Duration,
 	maxEntries int32,
 ) bool {
@@ -1930,10 +1886,9 @@ func (bm *bucketManagerImpl) saveFailedPasswordHashToKey(
 		"AddToSetAndExpireLimit",
 		rediscli.LuaScripts["AddToSetAndExpireLimit"],
 		[]string{key},
-		passwordHashes.Full(),
+		passwordHash,
 		strconv.FormatInt(int64(ttl.Seconds()), 10),
 		strconv.Itoa(int(maxEntries)),
-		passwordHashes.Legacy(),
 	)
 
 	stats.GetMetrics().GetRedisWriteCounter().Add(1)
@@ -2218,7 +2173,6 @@ func (bm *bucketManagerImpl) ShouldEnforceBucketUpdate() (bool, error) {
 type rwpScriptArgs struct {
 	allowKey     string
 	passwordHash string
-	legacyHash   string
 	argThreshold string
 	argTTL       string
 	argNow       string
@@ -2227,8 +2181,8 @@ type rwpScriptArgs struct {
 // buildRWPScriptArgs computes the common arguments needed by both RWPSlidingWindowCheck and RWPSlidingWindowCommit.
 // Returns nil if the key or hash cannot be determined.
 func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
-	allowKey, passwordHashes := bm.buildRWPKeyAndHashes()
-	if allowKey == "" || passwordHashes.Full() == "" {
+	allowKey, passwordHash := bm.buildRWPKeyAndHash()
+	if allowKey == "" || passwordHash == "" {
 		return nil
 	}
 
@@ -2243,8 +2197,7 @@ func (bm *bucketManagerImpl) buildRWPScriptArgs() *rwpScriptArgs {
 
 	return &rwpScriptArgs{
 		allowKey:     allowKey,
-		passwordHash: passwordHashes.Full(),
-		legacyHash:   passwordHashes.Legacy(),
+		passwordHash: passwordHash,
 		argThreshold: strconv.FormatUint(uint64(threshold), 10),
 		argTTL:       strconv.FormatInt(max(1, int64(math.Ceil(ttl.Seconds()))), 10),
 		argNow:       strconv.FormatInt(time.Now().Unix(), 10),
@@ -2268,7 +2221,7 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() (bool, error) {
 		"RWPSlidingWindowCommit",
 		rediscli.LuaScripts["RWPSlidingWindowCommit"],
 		[]string{args.allowKey},
-		args.passwordHash, args.argNow, args.argTTL, args.argThreshold, args.legacyHash,
+		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
 	)
 
 	stats.GetMetrics().GetRWPWindowDuration().Observe(time.Since(started).Seconds())
@@ -2292,16 +2245,16 @@ func (bm *bucketManagerImpl) CommitRWPSlidingWindow() (bool, error) {
 	return bm.accountName != "" && repeated == 1, nil
 }
 
-// buildRWPKeyAndHashes computes the Redis key and bounded hash candidates used by RWP.
+// buildRWPKeyAndHash computes the Redis key and full password hash used by RWP.
 // Returns empty strings if the password or account cannot be determined.
-func (bm *bucketManagerImpl) buildRWPKeyAndHashes() (allowKey string, passwordHashes internalpasswordhash.RedisCompatibilityCandidates) {
+func (bm *bucketManagerImpl) buildRWPKeyAndHash() (allowKey string, passwordHash string) {
 	if bm.password.IsZero() {
-		return "", internalpasswordhash.RedisCompatibilityCandidates{}
+		return "", ""
 	}
 
-	passwordHashes = bm.currentPasswordHashCandidates()
-	if passwordHashes.Full() == "" {
-		return "", internalpasswordhash.RedisCompatibilityCandidates{}
+	passwordHash = bm.currentPasswordHash()
+	if passwordHash == "" {
+		return "", ""
 	}
 
 	scoped := bm.clientIP
@@ -2319,7 +2272,7 @@ func (bm *bucketManagerImpl) buildRWPKeyAndHashes() (allowKey string, passwordHa
 	}
 
 	if acct == "" {
-		return "", internalpasswordhash.RedisCompatibilityCandidates{}
+		return "", ""
 	}
 
 	cfg := bm.cfg()
@@ -2333,34 +2286,12 @@ func (bm *bucketManagerImpl) buildRWPKeyAndHashes() (allowKey string, passwordHa
 	sb.WriteByte(':')
 	sb.WriteString(acct)
 
-	return sb.String(), passwordHashes
+	return sb.String(), passwordHash
 }
 
-// currentPasswordHash returns the canonical normalized password hash used by new Redis writes.
+// currentPasswordHash returns the full normalized password hash used by every Redis read and write.
 func (bm *bucketManagerImpl) currentPasswordHash() string {
-	return bm.currentPasswordHashCandidates().Full()
-}
-
-// currentPasswordHashCandidates derives the canonical and bounded legacy candidates.
-func (bm *bucketManagerImpl) currentPasswordHashCandidates() internalpasswordhash.RedisCompatibilityCandidates {
-	var candidates internalpasswordhash.RedisCompatibilityCandidates
-
-	bm.password.WithBytes(func(value []byte) {
-		if len(value) == 0 {
-			return
-		}
-
-		prepared, ok := util.PreparePasswordBytesWithConfig(value, bm.cfg())
-		if !ok {
-			return
-		}
-
-		defer clear(prepared)
-
-		candidates = internalpasswordhash.DeriveRedisCompatibilityCandidates(prepared)
-	})
-
-	return candidates
+	return util.PreparedPasswordHashWithConfig(bm.password, bm.cfg())
 }
 
 // isRepeatingWrongPassword implements the RWP allowance logic.
@@ -2390,7 +2321,7 @@ func (bm *bucketManagerImpl) isRepeatingWrongPassword() (repeating bool, err err
 		"RWPSlidingWindowCheck",
 		rediscli.LuaScripts["RWPSlidingWindowCheck"],
 		[]string{args.allowKey},
-		args.passwordHash, args.argNow, args.argTTL, args.argThreshold, args.legacyHash,
+		args.passwordHash, args.argNow, args.argTTL, args.argThreshold,
 	)
 
 	cancel()
@@ -2626,18 +2557,9 @@ func preparedCIDRNetwork(addr netip.Addr, cidr uint) *net.IPNet {
 
 // getPasswordHistoryRedisSetKey generates the Redis set key for password history storage based on username and client IP.
 func (bm *bucketManagerImpl) getPasswordHistoryRedisSetKey(withUsername bool) (key string) {
-	plan := bm.preparePasswordHistoryLoad(nil, false)
+	plan := bm.preparePasswordHistoryLoad(nil)
 	key = plan.setKey(withUsername)
 	plan.logSetKey(key, withUsername)
-
-	return
-}
-
-// getPasswordHistoryTotalRedisKey generates the Redis key for the total counter for password history.
-func (bm *bucketManagerImpl) getPasswordHistoryTotalRedisKey(withUsername bool) (key string) {
-	plan := bm.preparePasswordHistoryLoad(nil, true)
-	key = plan.totalKey(withUsername)
-	plan.logTotalKey(key, withUsername)
 
 	return
 }

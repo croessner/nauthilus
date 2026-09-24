@@ -20,7 +20,7 @@ func TestRWPCountsDistinctFailures(t *testing.T) {
 	for i := range 12 {
 		hash := fmt.Sprintf("candidate-%02d", i)
 
-		result, err := client.Eval(ctx, LuaScripts["RWPSlidingWindowCheck"], []string{"rwp:test"}, hash, 1000, 900, 3, "legacy-"+hash).Int64()
+		result, err := client.Eval(ctx, LuaScripts["RWPSlidingWindowCheck"], []string{"rwp:test"}, hash, 1000, 900, 3).Int64()
 		if err != nil || result != 0 {
 			t.Errorf("new candidate %d precheck=%d err=%v; must count", i, result, err)
 		}
@@ -29,13 +29,13 @@ func TestRWPCountsDistinctFailures(t *testing.T) {
 	for i := range 12 {
 		hash := fmt.Sprintf("candidate-%02d", i)
 
-		result, err := client.Eval(ctx, LuaScripts["RWPSlidingWindowCommit"], []string{"rwp:test"}, hash, 1000+i, 900, 3, "legacy-"+hash).Int64()
+		result, err := client.Eval(ctx, LuaScripts["RWPSlidingWindowCommit"], []string{"rwp:test"}, hash, 1000+i, 900, 3).Int64()
 		if err != nil || result != 0 {
 			t.Errorf("new candidate %d commit=%d err=%v; must count", i, result, err)
 		}
 	}
 
-	result, err := client.Eval(ctx, LuaScripts["RWPSlidingWindowCommit"], []string{"rwp:test"}, "candidate-11", 1013, 900, 3, "legacy-candidate-11").Int64()
+	result, err := client.Eval(ctx, LuaScripts["RWPSlidingWindowCommit"], []string{"rwp:test"}, "candidate-11", 1013, 900, 3).Int64()
 	if err != nil || result != 1 {
 		t.Errorf("stored repeat=%d err=%v; want allowance", result, err)
 	}
