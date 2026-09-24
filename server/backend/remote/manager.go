@@ -5,6 +5,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
@@ -18,21 +19,34 @@ import (
 	"github.com/croessner/nauthilus/v4/server/grpcapi/authmapper"
 	"github.com/croessner/nauthilus/v4/server/grpcapi/identitymapper"
 	authorityclient "github.com/croessner/nauthilus/v4/server/grpcclient/authority"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
 	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Only Unavailable is a technical fault. Denied and Rejected are decisions and
-// must stay countable as authentication failures.
+// None of the remote errors is a statement about the user's credentials, so none of them is counted as an
+// authentication failure. A wrong password is a regular authority result, not an error.
+//
+//   - Unavailable is a technical fault and answers a temporary failure.
+//   - Denied is a decline: the remote backend is not responsible and the next backend decides.
+//   - CallerRejected is a Denied caused by the authority refusing the edge's own caller credentials.
+//   - Rejected means the authority refused a malformed or conflicting request. It answers a temporary failure,
+//     because the request could not be decided.
 var (
 	ErrRemoteAuthorityUnavailable = stderrors.New("remote authority unavailable")
 	// ErrRemoteOperationDenied means allowed_operations does not cover this
 	// operation. The backend declines rather than fails, so the remaining
 	// backends in the chain still decide the request.
-	ErrRemoteOperationDenied   = fmt.Errorf("%w: remote backend operation denied", errors.ErrBackendNotResponsible)
-	ErrRemoteAuthorityRejected = stderrors.New("remote authority rejected operation")
+	ErrRemoteOperationDenied = fmt.Errorf("%w: remote backend operation denied", errors.ErrBackendNotResponsible)
+	// ErrRemoteCallerRejected means the authority answered UNAUTHENTICATED or PERMISSION_DENIED to the edge's
+	// caller credentials. It declines like ErrRemoteOperationDenied and is logged, so an invalid edge
+	// credential stays visible when the chain falls through to another backend.
+	ErrRemoteCallerRejected = fmt.Errorf("%w: remote authority rejected the edge caller credentials", ErrRemoteOperationDenied)
+	// ErrRemoteAuthorityRejected means the authority refused the request itself (invalid argument, failed
+	// precondition, conflict). It is classified as a temporary backend failure.
+	ErrRemoteAuthorityRejected = fmt.Errorf("%w: remote authority rejected operation", errors.ErrBackendTemporaryFailure)
 )
 
 const (
@@ -45,6 +59,7 @@ const (
 type Manager struct {
 	client        authorityclient.Client
 	cfg           *config.RemoteBackendSection
+	logger        *slog.Logger
 	backendName   string
 	authorityName string
 }
@@ -86,7 +101,7 @@ func NewBackendManager(backendName string, deps core.AuthDeps) core.BackendManag
 	artifacts, _ := config.ArtifactSnapshotFor(deps.Cfg)
 	tokenSource := newAuthorityTokenSource(remoteCfg.GetAuthority(), authorityCfg, artifacts, deps)
 
-	client, err := authorityClientFor(remoteCfg.GetAuthority(), authorityCfg, artifacts, tokenSource)
+	client, err := authorityClientFor(remoteCfg.GetAuthority(), authorityCfg, artifacts, tokenSource, deps.Logger)
 	if err != nil {
 		return &Manager{cfg: remoteCfg, backendName: backendName, authorityName: remoteCfg.GetAuthority()}
 	}
@@ -94,6 +109,7 @@ func NewBackendManager(backendName string, deps core.AuthDeps) core.BackendManag
 	return &Manager{
 		client:        client,
 		cfg:           remoteCfg,
+		logger:        deps.Logger,
 		backendName:   backendName,
 		authorityName: remoteCfg.GetAuthority(),
 	}
@@ -169,7 +185,7 @@ func (m *Manager) lookupPassDB(ctx context.Context, auth *core.AuthState, dto au
 
 	response, err := m.client.LookupIdentity(ctx, authmapper.DTOToLookupIdentityRequest(dto))
 	if err != nil {
-		return nil, mapAuthorityError(err)
+		return nil, m.mapAuthorityError(err)
 	}
 
 	return m.passDBResultFromResponse(response, false)
@@ -188,7 +204,7 @@ func (m *Manager) resolveUserPassDB(ctx context.Context, auth *core.AuthState) (
 
 	response, err := m.client.ResolveUser(ctx, request)
 	if err != nil {
-		return nil, mapAuthorityError(err)
+		return nil, m.mapAuthorityError(err)
 	}
 
 	return m.passDBResultFromUserSnapshot(response)
@@ -202,7 +218,7 @@ func (m *Manager) authenticatePassDB(ctx context.Context, dto authdto.Request) (
 
 	response, err := m.client.Authenticate(ctx, authmapper.DTOToAuthRequest(dto))
 	if err != nil {
-		return nil, mapAuthorityError(err)
+		return nil, m.mapAuthorityError(err)
 	}
 
 	return m.passDBResultFromResponse(response, true)
@@ -223,7 +239,7 @@ func (m *Manager) AccountDB(auth *core.AuthState) (core.AccountList, error) {
 
 	response, err := m.client.ListAccounts(ctx, authmapper.DTOToListAccountsRequest(authDTOFromState(auth)))
 	if err != nil {
-		return nil, mapAuthorityError(err)
+		return nil, m.mapAuthorityError(err)
 	}
 
 	if response == nil {
@@ -254,7 +270,7 @@ func (m *Manager) BeginTOTPRegistration(auth *core.AuthState, idempotencyKey str
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		return core.TOTPRegistration{}, mapAuthorityError(err)
+		return core.TOTPRegistration{}, m.mapAuthorityError(err)
 	}
 
 	if err = operationStatusError(response.GetStatus()); err != nil {
@@ -297,7 +313,7 @@ func (m *Manager) FinishTOTPRegistration(
 		IdempotencyKey:        idempotencyKey,
 	})
 	if err != nil {
-		return mapAuthorityError(err)
+		return m.mapAuthorityError(err)
 	}
 
 	if response.GetStatus().GetErrorCode() == "totp_invalid" {
@@ -328,7 +344,7 @@ func (m *Manager) VerifyTOTP(auth *core.AuthState, code string) (bool, error) {
 		Code:     code,
 	})
 	if err != nil {
-		return false, mapAuthorityError(err)
+		return false, m.mapAuthorityError(err)
 	}
 
 	if err = operationStatusError(response.GetStatus()); err != nil {
@@ -365,7 +381,7 @@ func (m *Manager) GenerateRecoveryCodes(auth *core.AuthState, count uint32, idem
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		return nil, mapAuthorityError(err)
+		return nil, m.mapAuthorityError(err)
 	}
 
 	if err = operationStatusError(response.GetStatus()); err != nil {
@@ -401,7 +417,7 @@ func (m *Manager) UseRecoveryCode(auth *core.AuthState, code string, idempotency
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		return false, mapAuthorityError(err)
+		return false, m.mapAuthorityError(err)
 	}
 
 	if err = operationStatusError(response.GetStatus()); err != nil {
@@ -465,7 +481,7 @@ func (m *Manager) GetPublicMFAState(auth *core.AuthState, includeWebAuthn bool) 
 		IncludeWebauthnCredentials: includeWebAuthn,
 	})
 	if err != nil {
-		return core.PublicMFAState{}, mapAuthorityError(err)
+		return core.PublicMFAState{}, m.mapAuthorityError(err)
 	}
 
 	return publicMFAStateFromResponse(response)
@@ -495,7 +511,7 @@ func (m *Manager) GetWebAuthnCredentials(auth *core.AuthState) ([]mfa.Persistent
 		Backend:  ref,
 	})
 	if err != nil {
-		return nil, mapAuthorityError(err)
+		return nil, m.mapAuthorityError(err)
 	}
 
 	if err = operationStatusError(response.GetStatus()); err != nil {
@@ -638,7 +654,7 @@ func (m *Manager) runRemoteMFADelete(auth *core.AuthState, idempotencyKey string
 	}
 
 	if err != nil {
-		return mapAuthorityError(err)
+		return m.mapAuthorityError(err)
 	}
 
 	return operationStatusError(response.GetStatus())
@@ -648,7 +664,7 @@ func (m *Manager) finishRemoteWebAuthnMutation(auth *core.AuthState, response *i
 	if err != nil {
 		m.purgeWebAuthnCache(auth)
 
-		return mapAuthorityError(err)
+		return m.mapAuthorityError(err)
 	}
 
 	if statusErr := operationStatusError(response.GetStatus()); statusErr != nil {
@@ -955,13 +971,28 @@ func (m *Manager) failedPassDBResultFromStatus(operationStatus *commonv1.Operati
 }
 
 // unavailable marks a remote authority fault as technical so the shared pipeline
-// keeps it out of brute-force accounting. Denied and rejected stay untouched:
-// they are decisions, not faults.
+// keeps it out of brute-force accounting.
 func unavailable(err error) error {
 	return fmt.Errorf("%w: %w: %v", errors.ErrBackendTemporaryFailure, ErrRemoteAuthorityUnavailable, err)
 }
 
-func mapAuthorityError(err error) error {
+// mapAuthorityError maps an authority RPC error and logs a rejection of the edge caller credentials.
+func (m *Manager) mapAuthorityError(err error) error {
+	mapped := classifyAuthorityError(err)
+	if m.logger != nil && stderrors.Is(mapped, ErrRemoteCallerRejected) {
+		level.Warn(m.logger).Log(
+			definitions.LogKeyMsg, "Authority rejected the edge caller credentials; the remote backend declines and the next backend decides",
+			"backend", m.backendName,
+			"authority", m.authorityName,
+			definitions.LogKeyError, err,
+		)
+	}
+
+	return mapped
+}
+
+// classifyAuthorityError classifies an authority RPC error into the remote backend error classes.
+func classifyAuthorityError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -975,7 +1006,7 @@ func mapAuthorityError(err error) error {
 		case codes.DeadlineExceeded, codes.Unavailable, codes.ResourceExhausted:
 			return unavailable(err)
 		case codes.PermissionDenied, codes.Unauthenticated:
-			return fmt.Errorf("%w: %v", ErrRemoteOperationDenied, err)
+			return fmt.Errorf("%w: %v", ErrRemoteCallerRejected, err)
 		case codes.FailedPrecondition, codes.InvalidArgument, codes.AlreadyExists:
 			return fmt.Errorf("%w: %v", ErrRemoteAuthorityRejected, err)
 		default:

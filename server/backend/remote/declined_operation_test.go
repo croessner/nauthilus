@@ -19,7 +19,10 @@ import (
 	stderrors "errors"
 	"testing"
 
+	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
 	"github.com/croessner/nauthilus/v4/server/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestRemoteOperationDeniedIsADeclineNotAFailure pins how the password pipeline
@@ -42,5 +45,42 @@ func TestRemoteOperationDeniedIsADeclineNotAFailure(t *testing.T) {
 	// Existing callers match on this sentinel; wrapping must not break them.
 	if !stderrors.Is(ErrRemoteOperationDenied, ErrRemoteOperationDenied) {
 		t.Fatal("the sentinel must stay matchable for its existing callers")
+	}
+}
+
+// TestRemoteAuthorityRejectedIsAClassifiedTemporaryFailure pins that a refused request is answered as a
+// classified temporary failure: it says nothing about the credentials, so it is neither a decline nor counted.
+func TestRemoteAuthorityRejectedIsAClassifiedTemporaryFailure(t *testing.T) {
+	for _, code := range []codes.Code{codes.FailedPrecondition, codes.InvalidArgument, codes.AlreadyExists} {
+		err := classifyAuthorityError(status.Error(code, "refused"))
+
+		if !stderrors.Is(err, ErrRemoteAuthorityRejected) {
+			t.Fatalf("%s mapped to %v, want ErrRemoteAuthorityRejected", code, err)
+		}
+
+		if !errors.IsBackendTechnicalFailure(err) || errors.IsBackendNotResponsible(err) {
+			t.Fatalf("%s must be a classified temporary failure and not a decline: %v", code, err)
+		}
+	}
+
+	conflict := operationStatusError(&commonv1.OperationStatus{Result: commonv1.OperationResult_OPERATION_RESULT_CONFLICT})
+	if !stderrors.Is(conflict, ErrRemoteAuthorityRejected) || !errors.IsBackendTechnicalFailure(conflict) {
+		t.Fatalf("conflict status = %v, want a classified ErrRemoteAuthorityRejected", conflict)
+	}
+}
+
+// TestRemoteCallerRejectionStaysADecline pins that invalid edge caller credentials decline like a denied
+// operation, while the distinct sentinel keeps them visible in logs.
+func TestRemoteCallerRejectionStaysADecline(t *testing.T) {
+	for _, code := range []codes.Code{codes.Unauthenticated, codes.PermissionDenied} {
+		err := classifyAuthorityError(status.Error(code, "caller rejected"))
+
+		if !stderrors.Is(err, ErrRemoteCallerRejected) || !stderrors.Is(err, ErrRemoteOperationDenied) {
+			t.Fatalf("%s mapped to %v, want ErrRemoteCallerRejected wrapping ErrRemoteOperationDenied", code, err)
+		}
+
+		if !errors.IsBackendNotResponsible(err) || errors.IsBackendTechnicalFailure(err) {
+			t.Fatalf("%s must stay a decline: %v", code, err)
+		}
 	}
 }

@@ -1874,6 +1874,15 @@ Recommended gRPC status mapping:
 Auth decisions should usually travel as successful gRPC responses with domain decisions. Transport errors are reserved
 for transport, authorization, validation, or unavailable authority conditions.
 
+The edge remote backend classifies these transport errors without ever counting them as authentication failures:
+
+| Authority answer | Edge class | Edge behavior |
+| --- | --- | --- |
+| `Unavailable`, `DeadlineExceeded`, `ResourceExhausted`, unknown codes | Temporary backend failure | Tempfail |
+| `Unauthenticated`, `PermissionDenied` | Decline (edge caller credentials rejected) | Next backend decides; logged as a warning. A rejected cached caller token is replaced and the RPC retried once first |
+| `InvalidArgument`, `FailedPrecondition`, `AlreadyExists`, `OPERATION_RESULT_CONFLICT` | Temporary backend failure (request refused) | Tempfail; no statement about the credentials |
+| `OPERATION_RESULT_DENIED`, operation outside `allowed_operations` | Decline | Next backend decides |
+
 ## 15. Compatibility And Migration
 
 1. Existing HTTP, JSON, CBOR, and gRPC auth APIs remain available.

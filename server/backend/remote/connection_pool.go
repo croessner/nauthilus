@@ -4,6 +4,7 @@ package remote
 import (
 	"encoding/hex"
 	stderrors "errors"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ func authorityClientFor(
 	cfg *config.NauthilusAuthorityClientSection,
 	artifacts *config.ArtifactSnapshot,
 	tokenSource authorityclient.BearerTokenSource,
+	logger *slog.Logger,
 ) (authorityclient.Client, error) {
 	if client, ok := authorityClientOverrides.Load(authorityName); ok {
 		return client.(authorityclient.Client), nil
@@ -44,6 +46,7 @@ func authorityClientFor(
 		Artifacts:     artifacts,
 		Config:        cfg,
 		TokenSource:   tokenSource,
+		Logger:        logger,
 	})
 	if err != nil {
 		return nil, err
