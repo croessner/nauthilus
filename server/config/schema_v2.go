@@ -10,6 +10,19 @@ import (
 )
 
 const defaultGRPCAuthorityAddress = "127.0.0.1:9444"
+
+// gRPC listener connection lifetime defaults. The connection age forces
+// long-lived HTTP/2 clients to reconnect periodically so connection-level load
+// balancers (for example a Kubernetes ClusterIP service) can spread them across
+// all replicas again. The grace exceeds the default Lua script timeout (30s),
+// the longest single step of the authority request pipeline, so in-flight RPCs
+// finish before the old connection is closed forcibly.
+const (
+	defaultGRPCMaxConnectionAge      = 5 * time.Minute
+	defaultGRPCMaxConnectionAgeGrace = 60 * time.Second
+	defaultGRPCMinPingInterval       = 10 * time.Second
+	defaultGRPCPermitWithoutStream   = true
+)
 const defaultNauthilusAuthorityTimeout = 5 * time.Second
 const defaultAuthorityTokenRefreshBeforeExpiry = 30 * time.Second
 const defaultAuthorityTokenRefreshLockTTL = 10 * time.Second
@@ -80,6 +93,7 @@ type RuntimeGRPCAuthServerSection struct {
 	Address     string                        `mapstructure:"address" validate:"omitempty,tcp_addr"`
 	TLS         RuntimeGRPCTLSSection         `mapstructure:"tls" validate:"omitempty"`
 	BackendRefs RuntimeGRPCBackendRefsSection `mapstructure:"backend_refs" validate:"omitempty"`
+	KeepAlive   RuntimeGRPCKeepAliveSection   `mapstructure:"keep_alive" validate:"omitempty"`
 	Enabled     bool                          `mapstructure:"enabled"`
 }
 
@@ -117,6 +131,78 @@ func (s *RuntimeGRPCAuthServerSection) GetBackendRefs() *RuntimeGRPCBackendRefsS
 	}
 
 	return &s.BackendRefs
+}
+
+// GetKeepAlive returns the connection lifetime and keepalive enforcement settings.
+func (s *RuntimeGRPCAuthServerSection) GetKeepAlive() *RuntimeGRPCKeepAliveSection {
+	if s == nil {
+		return &RuntimeGRPCKeepAliveSection{}
+	}
+
+	return &s.KeepAlive
+}
+
+// RuntimeGRPCKeepAliveSection configures connection ageing and client keepalive
+// enforcement for a gRPC listener. Unset pointer fields fall back to the
+// documented defaults; an explicit zero duration disables the limit.
+type RuntimeGRPCKeepAliveSection struct {
+	MaxConnectionAge      *time.Duration `mapstructure:"max_connection_age"`
+	MaxConnectionAgeGrace *time.Duration `mapstructure:"max_connection_age_grace"`
+	PermitWithoutStream   *bool          `mapstructure:"permit_without_stream"`
+	MaxConnectionIdle     time.Duration  `mapstructure:"max_connection_idle"`
+	MinPingInterval       time.Duration  `mapstructure:"min_ping_interval"`
+}
+
+// GetMaxConnectionAge returns the maximum connection age; zero disables ageing.
+func (k *RuntimeGRPCKeepAliveSection) GetMaxConnectionAge() time.Duration {
+	if k == nil || k.MaxConnectionAge == nil {
+		return defaultGRPCMaxConnectionAge
+	}
+
+	return *k.MaxConnectionAge
+}
+
+// GetMaxConnectionAgeGrace returns the forced-close grace after the connection
+// age. Zero means no forced close; it is always zero when ageing is disabled.
+func (k *RuntimeGRPCKeepAliveSection) GetMaxConnectionAgeGrace() time.Duration {
+	if k.GetMaxConnectionAge() <= 0 {
+		return 0
+	}
+
+	if k == nil || k.MaxConnectionAgeGrace == nil {
+		return defaultGRPCMaxConnectionAgeGrace
+	}
+
+	return *k.MaxConnectionAgeGrace
+}
+
+// GetMaxConnectionIdle returns the idle connection limit; zero disables it.
+func (k *RuntimeGRPCKeepAliveSection) GetMaxConnectionIdle() time.Duration {
+	if k == nil {
+		return 0
+	}
+
+	return k.MaxConnectionIdle
+}
+
+// GetMinPingInterval returns the shortest client keepalive ping interval the
+// listener tolerates before it closes the connection for ping abuse.
+func (k *RuntimeGRPCKeepAliveSection) GetMinPingInterval() time.Duration {
+	if k == nil || k.MinPingInterval == 0 {
+		return defaultGRPCMinPingInterval
+	}
+
+	return k.MinPingInterval
+}
+
+// PermitsWithoutStream reports whether clients may send keepalive pings while
+// no RPC is active on the connection.
+func (k *RuntimeGRPCKeepAliveSection) PermitsWithoutStream() bool {
+	if k == nil || k.PermitWithoutStream == nil {
+		return defaultGRPCPermitWithoutStream
+	}
+
+	return *k.PermitWithoutStream
 }
 
 // RuntimeGRPCBackendRefsSection configures authority-issued backend references.

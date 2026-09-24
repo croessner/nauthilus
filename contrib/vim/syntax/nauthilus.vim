@@ -419,6 +419,9 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_batch_size\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_bytes\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_concurrency\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_concurrent_requests\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_connection_age\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_connection_age_grace\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_connection_idle\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_connections_per_host\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_depth\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmax_entries\ze:/
@@ -447,6 +450,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmetrics\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmfa_policy\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmiddlewares\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_length\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_ping_interval\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_records\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_tls_version\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsmin_tolerate_percent\ze:/
@@ -498,6 +502,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsper_client_requests_per_
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsper_second\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsperiod\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspermissions_policy\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspermit_without_stream\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspipeline_timeout\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsplans\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspolicies\ze:/

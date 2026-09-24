@@ -141,6 +141,8 @@ func StartServer(ctx context.Context, deps ServerDeps) (<-chan struct{}, error) 
 		definitions.LogKeyMsg, "Starting Nauthilus gRPC authority server",
 		"address", grpcAuthorityConfig.GetAddress(),
 		"tls", grpcAuthorityConfig.GetTLS().IsEnabled(),
+		"max_connection_age", grpcAuthorityConfig.GetKeepAlive().GetMaxConnectionAge(),
+		"max_connection_age_grace", grpcAuthorityConfig.GetKeepAlive().GetMaxConnectionAgeGrace(),
 	)
 
 	return done, nil
@@ -164,6 +166,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 	options := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(UnaryServerInterceptor(deps)),
 	}
+	options = append(options, newConnectionLifetimePolicy(grpcAuthorityConfig.GetKeepAlive()).serverOptions()...)
 
 	if grpcAuthorityConfig.GetTLS().IsEnabled() {
 		tlsConfig, err := buildServerTLSConfig(grpcAuthorityConfig.GetTLS(), deps.RouteArtifacts)

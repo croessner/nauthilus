@@ -331,6 +331,9 @@ runtime:
         address: "10.20.30.40:9444"
         backend_refs:
           enabled: true
+        keep_alive:
+          max_connection_age: "5m"
+          max_connection_age_grace: "60s"
         tls:
           enabled: true
           cert: "/etc/nauthilus/grpc-server.pem"
@@ -339,6 +342,37 @@ runtime:
           require_client_cert: true
           min_tls_version: "TLS1.3"
 ```
+
+#### 6.3.1 Connection Ageing And Load Distribution
+
+gRPC multiplexes all RPCs of one client channel over a long-lived HTTP/2 connection. A connection-level load balancer,
+for example a Kubernetes `ClusterIP` service, only chooses a backend when a connection is opened. Without a bounded
+connection lifetime, a client stays pinned to the replica it reached first; replicas that start later, or restart,
+receive no traffic and the load never rebalances.
+
+`runtime.servers.grpc.authority.keep_alive` therefore bounds the connection lifetime by default:
+
+| Key                        | Default | Meaning                                                                                                                                                                                                                                  |
+|----------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `max_connection_age`       | `5m`    | The listener sends HTTP/2 GOAWAY after this age. grpc-go adds a random jitter of +/-10% so clients do not reconnect in lockstep. `0` disables connection ageing.                                                                         |
+| `max_connection_age_grace` | `60s`   | In-flight RPCs may finish for this long after GOAWAY before the connection is closed forcibly. `0` means no forced close. Only valid when `max_connection_age > 0`. The default exceeds the default `runtime.timeouts.lua_script` (30s). |
+| `max_connection_idle`      | `0`     | Closes connections without active RPCs after this idle time. `0` disables the idle limit.                                                                                                                                               |
+| `min_ping_interval`        | `10s`   | Shortest client keepalive ping interval the listener tolerates. Clients that ping more often receive GOAWAY `too_many_pings`. `0` selects the default.                                                                                  |
+| `permit_without_stream`    | `true`  | Allows client keepalive pings while no RPC is active.                                                                                                                                                                                    |
+
+Rules:
+
+1. GOAWAY is graceful: the client finishes in-flight RPCs on the old connection and opens a new one for the next RPC.
+   gRPC clients also re-resolve the target name after GOAWAY.
+2. Keep `max_connection_age_grace` above the longest client RPC deadline and the longest server-side pipeline step.
+   Raising it has no cost for short RPCs because a drained connection closes as soon as its last stream completes.
+3. The ping enforcement defaults are deliberately more tolerant than grpc-go's built-in five-minute minimum, so clients
+   that send keepalive pings every 10 seconds, also without active RPCs, are not disconnected.
+4. Connection ageing alone lets a connection-level load balancer (`ClusterIP` via kube-proxy) re-pick a replica on each
+   reconnect. That spreads long-lived clients statistically over time, but a single client channel still sends all RPCs
+   to one replica at a time. For an even per-RPC distribution, clients should resolve all replicas (for example a
+   headless Kubernetes service with a `dns:///` target) and use the `round_robin` load-balancing policy. Connection
+   ageing then also bounds how long a new replica stays undiscovered, because GOAWAY triggers name re-resolution.
 
 The existing hard rule remains:
 

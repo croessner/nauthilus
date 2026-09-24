@@ -2898,7 +2898,40 @@ func ValidateGRPCAuthServerConfig(provider RuntimeGRPCAuthServerProvider) error 
 		return err
 	}
 
+	if err := validateGRPCKeepAlive(grpcAuthorityKeepAlivePath, grpcAuth.GetKeepAlive()); err != nil {
+		return err
+	}
+
 	return validateGRPCAuthTLS(grpcAuth)
+}
+
+const grpcAuthorityKeepAlivePath = "runtime.servers.grpc.authority.keep_alive"
+
+// validateGRPCKeepAlive rejects negative connection lifetime settings and a
+// grace period that cannot take effect because connection ageing is disabled.
+func validateGRPCKeepAlive(path string, keepAlive *RuntimeGRPCKeepAliveSection) error {
+	durations := []struct {
+		value *time.Duration
+		name  string
+	}{
+		{name: "max_connection_age", value: keepAlive.MaxConnectionAge},
+		{name: "max_connection_age_grace", value: keepAlive.MaxConnectionAgeGrace},
+		{name: "max_connection_idle", value: &keepAlive.MaxConnectionIdle},
+		{name: "min_ping_interval", value: &keepAlive.MinPingInterval},
+	}
+
+	for _, duration := range durations {
+		if duration.value != nil && *duration.value < 0 {
+			return fmt.Errorf("%s.%s must not be negative", path, duration.name)
+		}
+	}
+
+	grace := keepAlive.MaxConnectionAgeGrace
+	if grace != nil && *grace > 0 && keepAlive.GetMaxConnectionAge() == 0 {
+		return fmt.Errorf("%s.max_connection_age_grace requires %s.max_connection_age > 0", path, path)
+	}
+
+	return nil
 }
 
 // applyDefaultGRPCAuthAddress applies the default gRPC authority listen address.

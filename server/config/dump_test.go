@@ -43,6 +43,11 @@ func TestRenderDefaultConfigDump_IncludesKnownDefaults(t *testing.T) {
 	expectedLines := []string{
 		`runtime.servers.grpc.authority.address = "127.0.0.1:9444"`,
 		`runtime.servers.grpc.authority.backend_refs.enabled = false`,
+		`runtime.servers.grpc.authority.keep_alive.max_connection_age = "5m0s"`,
+		`runtime.servers.grpc.authority.keep_alive.max_connection_age_grace = "1m0s"`,
+		`runtime.servers.grpc.authority.keep_alive.max_connection_idle = "0s"`,
+		`runtime.servers.grpc.authority.keep_alive.min_ping_interval = "10s"`,
+		`runtime.servers.grpc.authority.keep_alive.permit_without_stream = true`,
 		`runtime.servers.grpc.authority.tls.min_tls_version = "TLS1.2"`,
 		`runtime.servers.http.middlewares.logging = true`,
 		`runtime.servers.http.tls.min_tls_version = "TLS1.2"`,
@@ -94,6 +99,10 @@ func nonDefaultConfigDumpSettings() map[string]any {
 						"backend_refs": map[string]any{
 							"enabled": true,
 						},
+						"keep_alive": map[string]any{
+							"max_connection_age":       "5m0s",
+							"max_connection_age_grace": "2m",
+						},
 						"tls": map[string]any{
 							"min_tls_version": TLSVersion13,
 						},
@@ -124,9 +133,14 @@ func assertNonDefaultConfigDumpOutput(t *testing.T, output string) {
 		t.Fatalf("RenderNonDefaultConfigDump() unexpectedly kept default developer_mode: %q", output)
 	}
 
+	if strings.Contains(output, `keep_alive.max_connection_age =`) {
+		t.Fatalf("RenderNonDefaultConfigDump() unexpectedly kept default gRPC max_connection_age: %q", output)
+	}
+
 	expectedLines := []string{
 		`runtime.servers.grpc.authority.address = "127.0.0.1:9445"`,
 		`runtime.servers.grpc.authority.backend_refs.enabled = true`,
+		`runtime.servers.grpc.authority.keep_alive.max_connection_age_grace = "2m"`,
 		`runtime.servers.grpc.authority.tls.min_tls_version = "TLS1.3"`,
 		`runtime.servers.http.middlewares.limit = false`,
 		`runtime.servers.http.tls.min_tls_version = "TLS1.3"`,

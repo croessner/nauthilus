@@ -1046,6 +1046,7 @@ func slicesSortedKeys[K ~string, V any](input map[K]V) []K {
 func configDumpDefaultProviders() map[string]configDumpValueProvider {
 	providers := make(map[string]configDumpValueProvider)
 	addConfigDumpDefaultProviders(providers, configDumpRuntimeDefaults())
+	addConfigDumpDefaultProviders(providers, configDumpGRPCKeepAliveDefaults(grpcAuthorityKeepAlivePath))
 	addConfigDumpDefaultProviders(providers, configDumpRedisDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpIdentityDefaults())
 	addConfigDumpDefaultProviders(providers, configDumpDynamicClientRegistrationDefaults())
@@ -1071,6 +1072,16 @@ func configDumpPluginDefaults() map[string]configDumpValueProvider {
 		"plugins.modules":             func() any { return []any{} },
 		"plugins.trust.signers":       func() any { return []any{} },
 		"plugins.verification_policy": func() any { return PluginVerificationPolicyDefault },
+	}
+}
+
+// configDumpGRPCKeepAliveDefaults returns the connection lifetime defaults of one gRPC listener.
+func configDumpGRPCKeepAliveDefaults(path string) map[string]configDumpValueProvider {
+	return map[string]configDumpValueProvider{
+		path + ".max_connection_age":       func() any { return defaultGRPCMaxConnectionAge },
+		path + ".max_connection_age_grace": func() any { return defaultGRPCMaxConnectionAgeGrace },
+		path + ".min_ping_interval":        func() any { return defaultGRPCMinPingInterval },
+		path + ".permit_without_stream":    func() any { return defaultGRPCPermitWithoutStream },
 	}
 }
 

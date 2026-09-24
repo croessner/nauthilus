@@ -1099,10 +1099,25 @@ func (a testAddr) String() string {
 func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationService) authv1.AuthServiceClient {
 	t.Helper()
 
+	client, _ := newCountingBufconnAuthServiceClient(t, grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}), service)
+
+	return client
+}
+
+// newCountingBufconnAuthServiceClient serves a real authority server over bufconn
+// and reports how many transport connections the client has opened.
+func newCountingBufconnAuthServiceClient(
+	t *testing.T,
+	cfg config.File,
+	service core.AuthApplicationService,
+) (authv1.AuthServiceClient, *atomic.Int32) {
+	t.Helper()
+
 	listener := bufconn.Listen(1024 * 1024)
+	dials := &atomic.Int32{}
 
 	server, err := NewServer(ServerDeps{
-		Cfg:           grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{}),
+		Cfg:           cfg,
 		Logger:        slog.Default(),
 		AuthService:   service,
 		PolicyService: effectPolicyService{},
@@ -1111,22 +1126,13 @@ func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationServi
 		t.Fatalf("NewServer() error = %v", err)
 	}
 
-	serveErr := make(chan error, 1)
-
-	go func() {
-		err := server.Serve(listener)
-		if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, net.ErrClosed) {
-			serveErr <- err
-
-			return
-		}
-
-		serveErr <- nil
-	}()
+	serveErr := serveBufconnAuthServer(server, listener)
 
 	conn, err := grpc.NewClient(
 		"passthrough:///bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			dials.Add(1)
+
 			return listener.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -1156,7 +1162,25 @@ func newBufconnAuthServiceClient(t *testing.T, service core.AuthApplicationServi
 		}
 	})
 
-	return authv1.NewAuthServiceClient(conn)
+	return authv1.NewAuthServiceClient(conn), dials
+}
+
+// serveBufconnAuthServer serves the authority server and reports unexpected serve errors.
+func serveBufconnAuthServer(server *grpc.Server, listener net.Listener) <-chan error {
+	serveErr := make(chan error, 1)
+
+	go func() {
+		err := server.Serve(listener)
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, net.ErrClosed) {
+			serveErr <- err
+
+			return
+		}
+
+		serveErr <- nil
+	}()
+
+	return serveErr
 }
 
 func outgoingBasicAuthContext(ctx context.Context) context.Context {
