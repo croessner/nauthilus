@@ -37,6 +37,19 @@ type RejectedTokenReplacer interface {
 // errStaticTokenNotReplaceable reports that a static caller token is never replaced after a rejection.
 var errStaticTokenNotReplaceable = errors.New("authority static caller token cannot be replaced")
 
+// errReplacementRecentlyRejected reports that the authority rejected a caller token that was fetched within
+// the replacement guard window. No further token is fetched until the window has passed, so an edge client
+// the authority rejects permanently costs at most one token request per window.
+var errReplacementRecentlyRejected = errors.New(
+	"authority rejected a recently fetched caller token; no replacement is fetched before the guard window has passed",
+)
+
+// errRefreshWithoutToken reports that a concurrent token refresh ended without leaving a usable token.
+var errRefreshWithoutToken = errors.New("authority token refresh already in progress and no usable cached token is available")
+
+// refreshWaitPollInterval is how often a caller that lost the refresh lock re-reads the shared token cache.
+const refreshWaitPollInterval = 50 * time.Millisecond
+
 // compareAndDeleteTokenScript deletes the cached caller token only when its access_token still equals ARGV[1].
 // It returns 1 after the delete, 0 when no token is cached, and the cached JSON value when another replica
 // already replaced the token, so a token fetched elsewhere in the meantime is never discarded.
@@ -80,9 +93,12 @@ type bearerTokenSource struct {
 	staticTokenFiles  bool
 }
 
+// cachedBearerToken is the shared token cache record. IssuedAt is the fetch time; records written before it
+// was recorded decode with a zero IssuedAt and count as old.
 type cachedBearerToken struct {
 	AccessToken string    `json:"access_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	IssuedAt    time.Time `json:"issued_at,omitzero"`
 }
 
 type tokenEndpointResponse struct {
@@ -138,9 +154,11 @@ func (s *bearerTokenSource) Token(ctx context.Context) (string, error) {
 
 // ReplaceRejectedToken discards a caller token that the authority rejected and returns a different one.
 //
-// The cached token is deleted with a compare-and-delete, so a token another replica cached in the meantime
-// survives and is returned instead. Otherwise the regular refresh path fetches a new token under the
-// distributed refresh lock. Static token files are never replaced.
+// A rejected token that is still cached and was fetched within the replacement guard window is kept and
+// errReplacementRecentlyRejected is returned, so a permanently rejected client does not fetch a token per RPC.
+// Otherwise the cached token is deleted with a compare-and-delete, so a token another replica cached in the
+// meantime survives and is returned instead. Without such a token the regular refresh path fetches a new one
+// under the distributed refresh lock. Static token files are never replaced.
 func (s *bearerTokenSource) ReplaceRejectedToken(ctx context.Context, rejected string) (string, error) {
 	if err := s.validate(); err != nil {
 		return "", err
@@ -148,6 +166,10 @@ func (s *bearerTokenSource) ReplaceRejectedToken(ctx context.Context, rejected s
 
 	if s.cfg.GetStaticTokenFile() != "" {
 		return "", errStaticTokenNotReplaceable
+	}
+
+	if s.rejectedTokenRecentlyFetched(ctx, rejected) {
+		return "", errReplacementRecentlyRejected
 	}
 
 	replacement, err := s.discardRejectedToken(ctx, rejected)
@@ -164,6 +186,23 @@ func (s *bearerTokenSource) ReplaceRejectedToken(ctx context.Context, rejected s
 	}
 
 	return s.refreshCachedToken(ctx, replacement, true)
+}
+
+// rejectedTokenRecentlyFetched reports whether rejected is still the cached token and was fetched within the
+// replacement guard window. A record without a fetch time counts as old, so it is replaced.
+func (s *bearerTokenSource) rejectedTokenRecentlyFetched(ctx context.Context, rejected string) bool {
+	cached, ok := s.readCachedToken(ctx)
+	if !ok || cached.AccessToken != rejected || cached.IssuedAt.IsZero() {
+		return false
+	}
+
+	return s.now().Sub(cached.IssuedAt) < s.replacementGuard()
+}
+
+// replacementGuard returns the window after a token fetch in which a rejection of that token does not trigger
+// another fetch. It equals the refresh lock TTL, so every replica fetches at most one token per lock period.
+func (s *bearerTokenSource) replacementGuard() time.Duration {
+	return s.cfg.GetTokenCache().GetRefreshLockTTL()
 }
 
 // discardRejectedToken deletes the cached token when it is still rejected and returns a cached replacement.
@@ -213,6 +252,9 @@ func (s *bearerTokenSource) staticTokenIfConfigured() (string, bool, error) {
 	return token, true, err
 }
 
+// refreshCachedToken fetches a new token under the distributed refresh lock. A caller that loses the lock uses
+// the still valid cached token or waits for the token of the lock holder. The lock holder re-reads the cache
+// first, so a token that another caller wrote just before the lock was released is not fetched again.
 func (s *bearerTokenSource) refreshCachedToken(ctx context.Context, cached cachedBearerToken, cacheOK bool) (string, error) {
 	locked, err := s.acquireRefreshLock(ctx)
 	if err != nil {
@@ -220,10 +262,14 @@ func (s *bearerTokenSource) refreshCachedToken(ctx context.Context, cached cache
 	}
 
 	if !locked {
-		return s.cachedTokenDuringRefresh(cached, cacheOK)
+		return s.cachedTokenDuringRefresh(ctx, cached, cacheOK)
 	}
 
 	defer s.releaseRefreshLock(ctx)
+
+	if current, ok := s.readCachedToken(ctx); ok && current.AccessToken != cached.AccessToken && s.tokenFresh(current) {
+		return current.AccessToken, nil
+	}
 
 	fresh, err := s.fetchToken(ctx)
 	if err != nil {
@@ -237,12 +283,75 @@ func (s *bearerTokenSource) refreshCachedToken(ctx context.Context, cached cache
 	return fresh.AccessToken, nil
 }
 
-func (s *bearerTokenSource) cachedTokenDuringRefresh(cached cachedBearerToken, cacheOK bool) (string, error) {
-	if cacheOK && cached.AccessToken != "" && s.now().Before(cached.ExpiresAt) {
+// cachedTokenDuringRefresh returns the still valid cached token while another caller refreshes it, or waits
+// for the token the lock holder writes.
+func (s *bearerTokenSource) cachedTokenDuringRefresh(ctx context.Context, cached cachedBearerToken, cacheOK bool) (string, error) {
+	if cacheOK && s.tokenUsable(cached) {
 		return cached.AccessToken, nil
 	}
 
-	return "", fmt.Errorf("authority token refresh already in progress and no usable cached token is available")
+	return s.awaitRefreshedToken(ctx)
+}
+
+// awaitRefreshedToken polls the shared cache until the refresh lock holder has written a usable token. The
+// wait ends with errRefreshWithoutToken when the lock is released without a token, and is bounded by the
+// refresh lock TTL and ctx.
+func (s *bearerTokenSource) awaitRefreshedToken(ctx context.Context) (string, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, s.cfg.GetTokenCache().GetRefreshLockTTL())
+	defer cancel()
+
+	ticker := time.NewTicker(refreshWaitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return "", errRefreshWithoutToken
+		case <-ticker.C:
+		}
+
+		if token, ok := s.usableCachedToken(waitCtx); ok {
+			return token, nil
+		}
+
+		if s.refreshLockHeld(waitCtx) {
+			continue
+		}
+
+		// The holder writes the token before it releases the lock, so read once more after the release.
+		if token, ok := s.usableCachedToken(waitCtx); ok {
+			return token, nil
+		}
+
+		return "", errRefreshWithoutToken
+	}
+}
+
+// usableCachedToken returns the cached token when it has not expired yet.
+func (s *bearerTokenSource) usableCachedToken(ctx context.Context) (string, bool) {
+	cached, ok := s.readCachedToken(ctx)
+	if !ok || !s.tokenUsable(cached) {
+		return "", false
+	}
+
+	return cached.AccessToken, true
+}
+
+// tokenUsable reports whether token carries an access token that has not expired yet.
+func (s *bearerTokenSource) tokenUsable(token cachedBearerToken) bool {
+	return token.AccessToken != "" && s.now().Before(token.ExpiresAt)
+}
+
+// refreshLockHeld reports whether another caller still holds the refresh lock. Errors count as released, so a
+// Redis fault ends the wait instead of prolonging it.
+func (s *bearerTokenSource) refreshLockHeld(ctx context.Context) bool {
+	if s.redis == nil || s.redis.GetWriteHandle() == nil {
+		return false
+	}
+
+	exists, err := s.redis.GetWriteHandle().Exists(ctx, s.lockKey()).Result()
+
+	return err == nil && exists > 0
 }
 
 func (s *bearerTokenSource) staticToken() (string, error) {
@@ -457,9 +566,12 @@ func (s *bearerTokenSource) cachedTokenFromResponse(tokenResponse tokenEndpointR
 		expiresIn = 60
 	}
 
+	now := s.now()
+
 	return cachedBearerToken{
 		AccessToken: tokenResponse.AccessToken,
-		ExpiresAt:   s.now().Add(time.Duration(expiresIn) * time.Second),
+		ExpiresAt:   now.Add(time.Duration(expiresIn) * time.Second),
+		IssuedAt:    now,
 	}, nil
 }
 

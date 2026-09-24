@@ -129,6 +129,7 @@ func TestBearerTokenSourceRefreshesExpiredToken(t *testing.T) {
 	})
 	mock.ExpectGet(source.cacheKey()).SetVal(cached)
 	mock.ExpectSetNX(source.lockKey(), tokenSourceAuthorityName, 10*time.Second).SetVal(true)
+	mock.ExpectGet(source.cacheKey()).SetVal(cached)
 	mock.Regexp().ExpectSet(source.cacheKey(), ".*fresh-token.*", 90*time.Second).SetVal("OK")
 	mock.ExpectDel(source.lockKey()).SetVal(1)
 
@@ -178,6 +179,7 @@ func TestBearerTokenSourceBuildsPrivateKeyJWTAssertion(t *testing.T) {
 
 	mock.ExpectGet(source.cacheKey()).RedisNil()
 	mock.ExpectSetNX(source.lockKey(), tokenSourceAuthorityName, 10*time.Second).SetVal(true)
+	mock.ExpectGet(source.cacheKey()).RedisNil()
 	mock.Regexp().ExpectSet(source.cacheKey(), ".*opaque-token.*", 90*time.Second).SetVal("OK")
 	mock.ExpectDel(source.lockKey()).SetVal(1)
 

@@ -445,7 +445,7 @@ The first implementation must use deterministic defaults so HA behavior and repl
 | Authority RPC timeout | `5s` | Edge gRPC client | Per call deadline unless a narrower operation timeout is configured. |
 | Authority bearer refresh skew | `30s` | Edge Redis token cache | Refresh before token expiry. |
 | Authority bearer refresh lock TTL | `10s` | Edge Redis token cache | Prevents multi-instance refresh stampedes. |
-| Rejected caller token | One retry | Edge gRPC client | An `UNAUTHENTICATED` answer to a bearer token discards the cached token with a compare-and-delete and repeats the RPC once with a replacement; static token files are never replaced. |
+| Rejected caller token | One retry | Edge gRPC client | An `UNAUTHENTICATED` answer to a bearer token discards the cached token with a compare-and-delete and repeats the RPC once with a replacement. A token fetched less than `refresh_lock_ttl` ago is not replaced again: the RPC returns the original `UNAUTHENTICATED`, so a permanently rejected edge client fetches at most one token per window and warns at most once per window. Callers that lose the refresh lock wait for the lock holder's token. Static token files are never replaced or retried. |
 | Backend reference TTL | `15m` | Authority Redis | Bounds user/flow backend selection handles. |
 | Idempotency outcome TTL | `15m` | Authority Redis | Must cover normal browser retry windows. |
 | WebAuthn public credential cache TTL | Existing positive cache TTL | Edge Redis | Cache is optimization only and never source of truth. |
@@ -1734,7 +1734,9 @@ Acceptance:
 - token-source tests for Redis cache hit, refresh lock, expired token, private-key-JWT assertion, and static token-file
   fallback;
 - rejected-token tests prove that an `UNAUTHENTICATED` authority answer deletes only the rejected cached token, keeps a
-  token another replica cached in the meantime, and retries the RPC exactly once;
+  token another replica cached in the meantime, and retries the RPC exactly once; a permanently rejecting authority
+  causes one token request per guard window, concurrent rejections share one replacement token, and a static token
+  file is neither retried nor replaced;
 - authority token validation tests prove JWT caller tokens are rejected in split-deployment strict mode;
 - missing authority or timeout returns tempfail where expected.
 

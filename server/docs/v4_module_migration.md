@@ -58,12 +58,22 @@ the intended first prerelease is `v4.0.0-alpha.1`.
   because the authority also answers it for user-level results.
 - Edge nodes discard an authority caller token that the authority rejects.
   On `UNAUTHENTICATED` the edge deletes the cached token from its Redis only
-  if the cache still holds exactly that token, fetches a replacement through
-  the regular refresh path with its distributed lock, and retries the RPC
-  once. The manual flush of the edge authority-token cache after an upgrade
-  that invalidates caller tokens (revocation-epoch floor, key rotation, client
-  revocation or audience change) is no longer needed. Static token files are
-  never replaced or retried.
+  if the cache still holds exactly that token (compare-and-delete), fetches a
+  replacement through the regular refresh path with its distributed lock, and
+  retries the RPC once. A second rejection is returned unchanged. Callers that
+  lose the refresh lock wait, bounded by `refresh_lock_ttl` and the RPC
+  deadline, for the token of the lock holder instead of failing. A guard
+  window keeps a permanently rejected edge client from fetching a token per
+  RPC: a rejected token that was fetched less than
+  `caller_auth.oidc_bearer.token_cache.refresh_lock_ttl` (default 10 s) ago
+  is kept, no new token is fetched, and the RPC answers the original
+  `UNAUTHENTICATED`; the edge warns about it at most once per window. Cached
+  tokens written by earlier prereleases have no fetch time and are replaced on
+  the first rejection. The manual flush of the edge authority-token cache
+  after an upgrade that invalidates caller tokens (revocation-epoch floor, key
+  rotation, client revocation or audience change) is no longer needed. Static
+  token files are never replaced or retried, and their rejection is logged at
+  debug level only.
 - Redis password state uses only the full 64-hex password hash. The eight-hex
   short hash of earlier prereleases is no longer read or written: password
   history sets (`pw_hist`, `pw_hist_ips`), the RWP allowance sets and the

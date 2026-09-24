@@ -6,8 +6,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
+	"time"
 
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
@@ -55,12 +58,32 @@ type ConnectionManagerOptions struct {
 
 // ConnectionManager owns an outbound authority gRPC connection.
 type ConnectionManager struct {
-	conn          *grpc.ClientConn
-	client        Client
-	tokenSource   BearerTokenSource
-	cfg           *config.NauthilusAuthorityClientSection
-	logger        *slog.Logger
-	authorityName string
+	conn              *grpc.ClientConn
+	client            Client
+	tokenSource       BearerTokenSource
+	cfg               *config.NauthilusAuthorityClientSection
+	logger            *slog.Logger
+	authorityName     string
+	rejectionWarnings logGate
+}
+
+// logGate lets one warning pass per interval, so a permanently rejected caller token does not warn per RPC.
+type logGate struct {
+	next atomic.Int64
+}
+
+// allow reports whether a warning may be logged at now and, if so, closes the gate for interval.
+func (g *logGate) allow(now time.Time, interval time.Duration) bool {
+	for {
+		next := g.next.Load()
+		if now.UnixNano() < next {
+			return false
+		}
+
+		if g.next.CompareAndSwap(next, now.Add(interval).UnixNano()) {
+			return true
+		}
+	}
 }
 
 type serviceClientAdapter struct {
@@ -332,18 +355,32 @@ func (m *ConnectionManager) replacementForRejectedToken(ctx context.Context, met
 
 	replacement, err := replacer.ReplaceRejectedToken(ctx, bearer)
 	if err != nil || replacement == "" || replacement == bearer {
-		m.logRejectedToken("Authority rejected the caller token and no replacement token is available", method, err)
+		m.logMissingReplacement(method, err)
 
 		return "", false
 	}
 
-	m.logRejectedToken("Authority rejected the cached caller token; retrying once with a replacement token", method, nil)
+	m.logRejectedToken(level.Warn, "Authority rejected the cached caller token; retrying once with a replacement token", method, nil)
 
 	return replacement, true
 }
 
-// logRejectedToken reports a caller-token rejection when the manager has a logger.
-func (m *ConnectionManager) logRejectedToken(message string, method string, err error) {
+// logMissingReplacement reports a rejected caller token that is not replaced. A static token is never
+// replaced, so its rejection logs at debug level. Any other cause warns at most once per replacement guard
+// window and logs at debug level otherwise.
+func (m *ConnectionManager) logMissingReplacement(method string, err error) {
+	logAt := level.Debug
+
+	guard := m.cfg.GetCallerAuth().OIDCBearer.GetTokenCache().GetRefreshLockTTL()
+	if !errors.Is(err, errStaticTokenNotReplaceable) && m.rejectionWarnings.allow(time.Now(), guard) {
+		logAt = level.Warn
+	}
+
+	m.logRejectedToken(logAt, "Authority rejected the caller token and no replacement token is available", method, err)
+}
+
+// logRejectedToken reports a caller-token rejection at the given level when the manager has a logger.
+func (m *ConnectionManager) logRejectedToken(logAt func(*slog.Logger) level.Logger, message string, method string, err error) {
 	if m.logger == nil {
 		return
 	}
@@ -353,7 +390,7 @@ func (m *ConnectionManager) logRejectedToken(message string, method string, err 
 		keyvals = append(keyvals, definitions.LogKeyError, err)
 	}
 
-	level.Warn(m.logger).Log(keyvals...)
+	logAt(m.logger).Log(keyvals...)
 }
 
 func transportCredentials(
