@@ -28,7 +28,6 @@ import (
 
 const (
 	sourceNativeGeoIP            = "native_geoip"
-	sourcePolicyFacts            = "policy_facts"
 	geoIPFieldASN                = "asn"
 	geoIPFieldASNAllocated       = "asn_allocated"
 	geoIPFieldASNCountryISO      = "asn_country_iso"
@@ -385,18 +384,15 @@ type reputationDetails struct {
 	source string
 }
 
-// reputationInfo returns standard reputation details with policy facts as fallback.
+// reputationInfo returns the standard reputation details from the GeoIP reputation exchange map.
+// The row source is the map's own source field; Policy facts are no longer a fallback.
 func reputationInfo(snapshot exchange.Snapshot) reputationDetails {
-	if values := snapshot.Map(exchange.KeyGeoIPReputation); len(values) > 0 {
-		return reputationDetails{values: values, source: stringValue(values["source"])}
-	}
-
 	values := snapshot.GeoIPReputation()
 	if len(values) == 0 {
 		return reputationDetails{}
 	}
 
-	return reputationDetails{values: values, source: sourcePolicyFacts}
+	return reputationDetails{values: values, source: stringValue(values["source"])}
 }
 
 // utcNowMillis returns the ClickHouse DateTime64(3, UTC) timestamp format used by Lua.
