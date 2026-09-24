@@ -2751,6 +2751,7 @@ func (a *AuthState) SaveBruteForceBucketCounterToRedis(rule *config.BruteForceRu
 }
 
 // SaveBruteForceBucketCountersToRedis persists the brute force bucket counters of several rules.
+// It completes the bruteforce.BucketManager facade; the request path writes through its own bucket manager.
 func (a *AuthState) SaveBruteForceBucketCountersToRedis(rules []config.BruteForceRule) {
 	bm := a.createBucketManager(a.Ctx())
 	bm.SaveBruteForceBucketCountersToRedis(rules)
@@ -2783,11 +2784,11 @@ func (a *AuthState) ShouldEnforceBucketUpdate() (bool, error) {
 	return bm.ShouldEnforceBucketUpdate()
 }
 
-// PrefetchPreAuthState reads the pre-authentication brute-force state for the given rules in one round trip.
-func (a *AuthState) PrefetchPreAuthState(rules []config.BruteForceRule) {
-	bm := a.createBucketManager(a.Ctx())
-	bm.PrefetchPreAuthState(rules)
-}
+// PrefetchPreAuthState is a no-op on the AuthState facade.
+// The facade builds a fresh bucket manager for every call, so a request-scoped prefetch could never be
+// consumed; facade readers read Redis themselves. The method only completes the bruteforce.BucketManager
+// interface that the With* setters of AuthState return.
+func (a *AuthState) PrefetchPreAuthState(_ []config.BruteForceRule) {}
 
 // PrepareNetcalc pre-calculates network CIDRs for brute force rules.
 func (a *AuthState) PrepareNetcalc(rules []config.BruteForceRule) {
