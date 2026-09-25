@@ -103,6 +103,9 @@ type ldapPoolImpl struct {
 }
 
 type ldapPoolConfigSource struct {
+	// tuning is the configured pool section whose timeouts, limits, retry, breaker, health and cache settings apply
+	// to every connection of the pool.
+	tuning          *config.LDAPConf
 	bindPW          secret.Value
 	serverURIs      []string
 	bindDN          string
@@ -380,7 +383,10 @@ func NewPool(ctx context.Context, cfg config.File, logger *slog.Logger, poolType
 // resolveLDAPPoolConfigSource resolves shared LDAP connection settings for the requested pool.
 func resolveLDAPPoolConfigSource(cfg config.File, poolMap map[string]*config.LDAPConf, poolName string) ldapPoolConfigSource {
 	if poolName == definitions.DefaultBackendName {
+		tuning, _ := cfg.GetLDAP().GetConfig().(*config.LDAPConf)
+
 		return ldapPoolConfigSource{
+			tuning:          tuning,
 			numberOfWorkers: cfg.GetLDAPConfigNumberOfWorkers(),
 			serverURIs:      cfg.GetLDAPConfigServerURIs(),
 			bindDN:          cfg.GetLDAPConfigBindDN(),
@@ -397,6 +403,7 @@ func resolveLDAPPoolConfigSource(cfg config.File, poolMap map[string]*config.LDA
 	poolConfig := optionalLDAPPoolConfig(poolMap, poolName)
 
 	return ldapPoolConfigSource{
+		tuning:          poolConfig,
 		numberOfWorkers: poolConfig.GetNumberOfWorkers(),
 		serverURIs:      poolConfig.ServerURIs,
 		bindDN:          poolConfig.BindDN,
@@ -485,7 +492,7 @@ func buildLDAPPoolConnections(layout ldapPoolLayout, source ldapPoolConfigSource
 
 // newLDAPPoolConnectionConfig copies shared pool settings into one LDAPConf instance.
 func newLDAPPoolConnectionConfig(poolName string, source ldapPoolConfigSource) *config.LDAPConf {
-	return &config.LDAPConf{
+	conf := &config.LDAPConf{
 		ServerURIs:    source.serverURIs,
 		BindDN:        source.bindDN,
 		BindPW:        source.bindPW,
@@ -497,6 +504,41 @@ func newLDAPPoolConnectionConfig(poolName string, source ldapPoolConfigSource) *
 		SASLExternal:  source.saslExternal,
 		PoolName:      poolName,
 	}
+
+	copyLDAPPoolTuning(conf, source.tuning)
+
+	return conf
+}
+
+// copyLDAPPoolTuning applies the configured operation, retry, breaker, health and cache settings of a pool to one
+// connection. Without them every configured timeout and limit was silently replaced by the built-in defaults.
+func copyLDAPPoolTuning(conf *config.LDAPConf, tuning *config.LDAPConf) {
+	if tuning == nil {
+		return
+	}
+
+	conf.ConnectAbortTimeout = tuning.ConnectAbortTimeout
+	conf.SearchTimeout = tuning.SearchTimeout
+	conf.BindTimeout = tuning.BindTimeout
+	conf.ModifyTimeout = tuning.ModifyTimeout
+	conf.SearchSizeLimit = tuning.SearchSizeLimit
+	conf.SearchTimeLimit = tuning.SearchTimeLimit
+	conf.RetryMax = tuning.RetryMax
+	conf.RetryBase = tuning.RetryBase
+	conf.RetryMaxBackoff = tuning.RetryMaxBackoff
+	conf.CBFailureThreshold = tuning.CBFailureThreshold
+	conf.CBCooldown = tuning.CBCooldown
+	conf.CBHalfOpenMax = tuning.CBHalfOpenMax
+	conf.HealthCheckInterval = tuning.HealthCheckInterval
+	conf.HealthCheckTimeout = tuning.HealthCheckTimeout
+	conf.DNCacheTTL = tuning.DNCacheTTL
+	conf.MembershipCacheTTL = tuning.MembershipCacheTTL
+	conf.NegativeCacheTTL = tuning.NegativeCacheTTL
+	conf.CacheMaxEntries = tuning.CacheMaxEntries
+	conf.CacheImpl = tuning.CacheImpl
+	conf.IncludeRawResult = tuning.IncludeRawResult
+	conf.AuthRateLimitPerSecond = tuning.AuthRateLimitPerSecond
+	conf.AuthRateLimitBurst = tuning.AuthRateLimitBurst
 }
 
 // logLDAPPoolCreated emits the existing pool-created debug event.
