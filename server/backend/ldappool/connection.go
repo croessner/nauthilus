@@ -41,6 +41,17 @@ import (
 
 const ldapSchemeLDAPS = "ldaps"
 
+var (
+	// ldapConnectTimeout bounds one complete connect loop, including retries and backoff.
+	ldapConnectTimeout = definitions.LDAPConnectTimeout * time.Second
+
+	// ldapDialTimeout bounds one TCP and TLS setup attempt.
+	ldapDialTimeout = 5 * time.Second
+
+	// ldapDefaultOperationTimeout bounds LDAP operations on pool connections without a configured timeout.
+	ldapDefaultOperationTimeout = 30 * time.Second
+)
+
 type ldapConnectSettings struct {
 	base       time.Duration
 	maxBackoff time.Duration
@@ -135,21 +146,16 @@ func (l *LDAPConnectionImpl) GetMutex() *sync.Mutex {
 // Connect establishes a connection to the LDAP server using the provided configuration and GUID.
 // It handles TLS setup, retries, connection timeouts, and supports failover across multiple server URIs.
 // Returns an error if the connection could not be established or times out.
+//
+// One deadline bounds the whole connect loop, including every dial and backoff. An earlier version signalled the
+// timeout from a ticker goroutine over unbuffered channels; when an attempt outlived the timeout and then succeeded,
+// both goroutines blocked forever while the caller held the pool slot mutex, which stalled the whole pool after an
+// LDAP server restart.
 func (l *LDAPConnectionImpl) Connect(guid string, cfg config.File, logger *slog.Logger, ldapConf *config.LDAPConf) error {
-	// Overall connect timeout stays as before using ticker
-	connectTicker := time.NewTicker(definitions.LDAPConnectTimeout * time.Second)
-	ldapConnectTimeout := make(chan bktype.Done)
-	tickerEndChan := make(chan bktype.Done)
+	ctx, cancel := context.WithTimeout(context.Background(), ldapConnectTimeout)
+	defer cancel()
 
-	go handleLDAPConnectTimeout(connectTicker, ldapConnectTimeout, tickerEndChan)
-
-	err := l.connectWithRetries(guid, cfg, logger, ldapConf, ldapConnectTimeout)
-
-	connectTicker.Stop()
-
-	tickerEndChan <- bktype.Done{}
-
-	return err
+	return l.connectWithRetries(ctx, guid, cfg, logger, ldapConf)
 }
 
 // newLDAPConnectSettings captures retry settings used during one connect loop.
@@ -164,19 +170,17 @@ func newLDAPConnectSettings(ldapConf *config.LDAPConf) ldapConnectSettings {
 
 // connectWithRetries attempts LDAP targets until success, timeout, or a non-retryable setup error.
 func (l *LDAPConnectionImpl) connectWithRetries(
+	ctx context.Context,
 	guid string,
 	cfg config.File,
 	logger *slog.Logger,
 	ldapConf *config.LDAPConf,
-	ldapConnectTimeout <-chan bktype.Done,
 ) error {
 	settings := newLDAPConnectSettings(ldapConf)
 
 	for retryCount := 0; ; retryCount++ {
-		select {
-		case <-ldapConnectTimeout:
+		if ctx.Err() != nil {
 			return errors.ErrLDAPConnectTimeout.WithDetail("Connection timeout reached")
-		default:
 		}
 
 		if retryCount > settings.maxRetries {
@@ -184,7 +188,7 @@ func (l *LDAPConnectionImpl) connectWithRetries(
 				fmt.Sprintf("Could not connect to any of the LDAP servers: %v", ldapConf.ServerURIs))
 		}
 
-		retry, err := l.tryConnectLDAPTarget(guid, cfg, logger, ldapConf, settings, retryCount)
+		retry, err := l.tryConnectLDAPTarget(ctx, guid, cfg, logger, ldapConf, settings, retryCount)
 		if err == nil {
 			util.DebugModuleWithCfg(context.Background(), cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "Connection established")
 
@@ -199,6 +203,7 @@ func (l *LDAPConnectionImpl) connectWithRetries(
 
 // tryConnectLDAPTarget attempts one selected target and reports whether failures are retryable.
 func (l *LDAPConnectionImpl) tryConnectLDAPTarget(
+	ctx context.Context,
 	guid string,
 	cfg config.File,
 	logger *slog.Logger,
@@ -213,7 +218,7 @@ func (l *LDAPConnectionImpl) tryConnectLDAPTarget(
 
 	incInflight(settings.pool, target)
 
-	err := l.dialAndStartTLS(context.Background(), cfg, logger, guid, ldapConf, idx)
+	err := l.dialAndStartTLS(ctx, cfg, logger, guid, ldapConf, idx)
 	if err == nil {
 		decInflight(settings.pool, target)
 		cbOnSuccess(settings.pool, target)
@@ -228,9 +233,25 @@ func (l *LDAPConnectionImpl) tryConnectLDAPTarget(
 	cbOnFailure(settings.pool, target, ldapConf)
 	setHealth(settings.pool, target, false)
 	stats.GetMetrics().GetLdapRetriesTotal().WithLabelValues(settings.pool, "connect").Inc()
-	time.Sleep(jitterBackoff(settings.base, retryCount, settings.maxBackoff))
+
+	if !sleepUntilDone(ctx, jitterBackoff(settings.base, retryCount, settings.maxBackoff)) {
+		return false, errors.ErrLDAPConnectTimeout.WithDetail("Connection timeout reached")
+	}
 
 	return true, err
+}
+
+// sleepUntilDone waits for delay and reports false when ctx ends first.
+func sleepUntilDone(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // Bind establishes a connection to the LDAP server using either SASL External or simple bind based on the configuration provided.
@@ -937,11 +958,20 @@ func validateLDAPPeerCertificates(certificates [][]byte, _ [][]*x509.Certificate
 // dialAndStartTLS establishes the configured LDAP transport and records StartTLS diagnostics.
 func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.File, logger *slog.Logger, guid string, ldapConf *config.LDAPConf, ldapCounter int) error {
 	connector := newLDAPTargetConnector(cfg, ldapConf)
+	operationTimeout := ldapOperationTimeout(ldapConf)
 
-	connection, startedTLS, err := connector.dial(ldapConf.ServerURIs[ldapCounter], 0)
+	connection, startedTLS, err := connector.dial(
+		ldapConf.ServerURIs[ldapCounter],
+		operationTimeout,
+		ldap.DialWithDialer(newLDAPPoolDialer(ctx)),
+	)
 	if err != nil {
 		return err
 	}
+
+	// Without a default every LDAP operation on this connection waits until TCP gives up, which takes about
+	// 15 minutes when the server vanished without a reset. Per-operation timeouts still override it.
+	connection.SetTimeout(operationTimeout)
 
 	l.conn = connection
 
@@ -966,16 +996,33 @@ func (l *LDAPConnectionImpl) logURIInfo(ctx context.Context, cfg config.File, lo
 	)
 }
 
-// handleLDAPConnectTimeout monitors the LDAP connection timeout using a ticker and signals completion through channels.
-func handleLDAPConnectTimeout(connectTicker *time.Ticker, timeout chan bktype.Done, done chan bktype.Done) {
-	for {
-		select {
-		case <-connectTicker.C:
-			timeout <- bktype.Done{}
-		case <-done:
-			return
-		}
+// newLDAPPoolDialer bounds one TCP and TLS setup by the remaining connect deadline and keeps idle connections probed,
+// so a server that vanished without a reset is detected instead of blocking borrowers.
+func newLDAPPoolDialer(ctx context.Context) *net.Dialer {
+	timeout := ldapDialTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = min(timeout, max(time.Until(deadline), time.Millisecond))
 	}
+
+	return &net.Dialer{
+		Timeout: timeout,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     15 * time.Second,
+			Interval: 5 * time.Second,
+			Count:    3,
+		},
+	}
+}
+
+// ldapOperationTimeout returns the default timeout for operations on a pool connection: the configured search
+// timeout, or a bounded fallback when none is configured.
+func ldapOperationTimeout(ldapConf *config.LDAPConf) time.Duration {
+	if timeout := ldapConf.GetSearchTimeout(); timeout > 0 {
+		return timeout
+	}
+
+	return ldapDefaultOperationTimeout
 }
 
 // externalBind performs SASL/EXTERNAL authentication using the provided GUID and logs debug information when enabled.
