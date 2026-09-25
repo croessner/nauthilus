@@ -76,6 +76,10 @@ type authnCandidateExecution struct {
 	backendReady   bool
 	backendCached  bool
 	subjectReady   bool
+
+	// projectionMu guards projections, the per-request cache of projected standard auth attributes.
+	projectionMu sync.Mutex
+	projections  map[string]authnAttributeProjection
 }
 
 // prepareAuthnCandidateExecution creates request-local host state after Decision Service admission.

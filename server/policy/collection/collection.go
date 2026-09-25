@@ -66,8 +66,12 @@ type DecisionContext struct {
 	tracer     monittrace.Tracer
 	builtins   map[string]policyregistry.AttributeDefinition
 	extensions map[string]policyregistry.AttributeDefinition
+	// revisions records, per attribute ID, the revision in which the attribute was last recorded, so consumers
+	// can reuse work derived from an unchanged attribute.
+	revisions  map[string]uint64
 	mu         sync.Mutex
 	generation uint64
+	revision   uint64
 }
 
 // NewDecisionContext creates a request-local observation context from builtin host contracts.
@@ -339,7 +343,28 @@ func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {
 		c.report.Attributes = make(map[string]report.AttributeValue)
 	}
 
+	if c.revisions == nil {
+		c.revisions = make(map[string]uint64)
+	}
+
+	c.revision++
+	c.revisions[value.ID] = c.revision
 	c.report.Attributes[value.ID] = value
+}
+
+// AttributeRevision returns the revision in which an attribute was last recorded. A changed revision means the
+// attribute value may have changed; an unchanged revision means it did not.
+func (c *DecisionContext) AttributeRevision(id string) (uint64, bool) {
+	if c == nil {
+		return 0, false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	revision, ok := c.revisions[id]
+
+	return revision, ok
 }
 
 // recordCheck stores one completed host check and its emitted observations.

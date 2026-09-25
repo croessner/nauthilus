@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/policy"
+	policycollection "github.com/croessner/nauthilus/v4/server/policy/collection"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/presentation"
 	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
@@ -59,14 +60,7 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 
 	facts := make([]decision.Fact, 0, len(attributeIDs))
 	for _, attributeID := range attributeIDs {
-		attribute := policyReport.Attributes[attributeID]
-		definition, exists := policyCtx.AttributeDefinition(attributeID)
-
-		if !exists || !authnAttributeApplies(attribute, definition, e.operation, checkpoint) {
-			continue
-		}
-
-		projected, err := authnPolicyAttributeFacts(attribute, definition)
+		projected, err := e.projectedAuthnAttribute(policyCtx, attributeID, policyReport.Attributes, checkpoint)
 		if err != nil {
 			return decision.FactSet{}, fmt.Errorf("project authn attribute %s: %w", attributeID, err)
 		}
@@ -77,10 +71,98 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 	return decision.NewFactSet(facts)
 }
 
+// authnAttributeProjection is the cached projection of one attribute for the revision it was recorded in. The
+// host scheduler asks for the standard auth facts before every provider step; rebuilding every attribute, its
+// cloned definition and its response detail facts on each call dominated the allocation of production requests.
+type authnAttributeProjection struct {
+	operations []policy.Operation
+	facts      []decision.Fact
+	revision   uint64
+	defined    bool
+	projected  bool
+}
+
+// projectedAuthnAttribute returns the facts of one attribute that apply at checkpoint, reusing the projection while
+// the attribute keeps its recorded revision. Facts are immutable, so the cached slice is shared read-only.
+func (e *authnCandidateExecution) projectedAuthnAttribute(
+	policyCtx *policycollection.DecisionContext,
+	attributeID string,
+	attributes map[string]report.AttributeValue,
+	checkpoint string,
+) ([]decision.Fact, error) {
+	// Read the revision before the value: a concurrent update then only makes the cache entry look stale.
+	revision, recorded := policyCtx.AttributeRevision(attributeID)
+	attribute := attributes[attributeID]
+
+	e.projectionMu.Lock()
+	entry, cached := e.projections[attributeID]
+	e.projectionMu.Unlock()
+
+	if !cached || !recorded || entry.revision != revision {
+		entry = authnAttributeProjection{revision: revision}
+
+		if definition, exists := policyCtx.AttributeDefinition(attributeID); exists {
+			entry.defined = true
+			entry.operations = definition.Operations
+
+			if authnAttributeApplies(attribute, entry.operations, e.operation, checkpoint) {
+				projected, err := authnPolicyAttributeFacts(attribute, definition)
+				if err != nil {
+					return nil, err
+				}
+
+				entry.facts = projected
+				entry.projected = true
+			}
+		}
+
+		e.storeAuthnProjection(attributeID, entry, recorded)
+	}
+
+	if !entry.defined || !authnAttributeApplies(attribute, entry.operations, e.operation, checkpoint) {
+		return nil, nil
+	}
+
+	if !entry.projected {
+		// The attribute applies at a later checkpoint than the one that cached it.
+		definition, exists := policyCtx.AttributeDefinition(attributeID)
+		if !exists {
+			return nil, nil
+		}
+
+		projected, err := authnPolicyAttributeFacts(attribute, definition)
+		if err != nil {
+			return nil, err
+		}
+
+		entry.facts = projected
+		entry.projected = true
+		e.storeAuthnProjection(attributeID, entry, recorded)
+	}
+
+	return entry.facts, nil
+}
+
+// storeAuthnProjection caches a projection only for attributes with a recorded revision.
+func (e *authnCandidateExecution) storeAuthnProjection(attributeID string, entry authnAttributeProjection, recorded bool) {
+	if !recorded {
+		return
+	}
+
+	e.projectionMu.Lock()
+	defer e.projectionMu.Unlock()
+
+	if e.projections == nil {
+		e.projections = make(map[string]authnAttributeProjection)
+	}
+
+	e.projections[attributeID] = entry
+}
+
 // authnAttributeApplies restricts projection to the active operation and reached semantic stages.
 func authnAttributeApplies(
 	attribute report.AttributeValue,
-	definition policyregistry.AttributeDefinition,
+	definitionOperations []policy.Operation,
 	operation policy.Operation,
 	checkpoint string,
 ) bool {
@@ -88,7 +170,7 @@ func authnAttributeApplies(
 		return false
 	}
 
-	if len(definition.Operations) > 0 && !slices.Contains(definition.Operations, operation) {
+	if len(definitionOperations) > 0 && !slices.Contains(definitionOperations, operation) {
 		return false
 	}
 
