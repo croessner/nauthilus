@@ -300,7 +300,7 @@ func validFactID(id string) bool {
 
 // validateFactOwnership binds every canonical family and provider owner to provenance.
 func validateFactOwnership(id string, provenance Provenance) error {
-	prefix := strings.SplitN(id, ".", 2)[0]
+	prefix, _, _ := strings.Cut(id, ".")
 	if prefix == string(FactSourceCaller) && provenance.source == FactSourceNauthilus {
 		return nil
 	}
@@ -327,8 +327,9 @@ func validateFactOwnership(id string, provenance Provenance) error {
 
 // validateProviderFactOwner binds lua/plugin fact identity to host-assigned authority.
 func validateProviderFactOwner(id string, authority string) error {
-	segments := strings.Split(id, ".")
-	if len(segments) < 3 || !identifier.Provider(authority) || segments[1] != authority {
+	_, rest, _ := strings.Cut(id, ".")
+	owner, _, found := strings.Cut(rest, ".")
+	if !found || !identifier.Provider(authority) || owner != authority {
 		return newContractError(
 			ErrFactSource,
 			ErrorCodeFactSource,

@@ -92,6 +92,7 @@ func TestProviderFactAuthorityMatchesCanonicalOwner(t *testing.T) {
 	}{
 		{name: "lua provider mismatch", id: "lua.geoip.country", source: decision.FactSourceLua, authority: "reputation"},
 		{name: "plugin module mismatch", id: "plugin.rns.role", source: decision.FactSourcePlugin, authority: "director"},
+		{name: "lua fact without local name", id: "lua.geoip", source: decision.FactSourceLua, authority: "geoip"},
 	}
 
 	for _, test := range tests {

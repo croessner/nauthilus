@@ -63,18 +63,7 @@ func Fact(value string) bool {
 		return false
 	}
 
-	segments := strings.Split(value, ".")
-	if len(segments) < 2 {
-		return false
-	}
-
-	for _, segmentValue := range segments {
-		if !segment(segmentValue, true) {
-			return false
-		}
-	}
-
-	return true
+	return strings.IndexByte(value, '.') >= 0 && segmented(value, '.', true, maximumFactLength)
 }
 
 // Provider reports whether value is one canonical provider-owner segment.
@@ -146,8 +135,7 @@ func segmented(value string, delimiter byte, allowHyphen bool, maximumLength int
 		return false
 	}
 
-	segments := strings.Split(value, string(delimiter))
-	for _, segmentValue := range segments {
+	for segmentValue := range strings.SplitSeq(value, string(delimiter)) {
 		if !segment(segmentValue, allowHyphen) {
 			return false
 		}
