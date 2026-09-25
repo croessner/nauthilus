@@ -513,13 +513,14 @@ func (p *nativeDecisionFactProvider) convertFacts(
 	outputs []pluginapi.DecisionFactOutput,
 ) ([]policyruntime.ProvidedFact, error) {
 	provided := make([]policyruntime.ProvidedFact, 0, len(outputs))
+	facts := input.Facts()
 	for _, output := range outputs {
 		configured, exists := p.outputs[output.Name]
 		if !exists {
 			return nil, errDecisionProviderContract
 		}
 
-		if _, collision := input.Facts().Get(configured.ID()); collision {
+		if _, collision := facts.Get(configured.ID()); collision {
 			return nil, errDecisionProviderContract
 		}
 

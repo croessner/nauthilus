@@ -72,3 +72,19 @@ func TestDecisionCheckpointOwnsFacts(t *testing.T) {
 		t.Fatalf("Checkpoint = %q/%d, want pre_auth/0", checkpoint.Name(), checkpoint.Facts().Len())
 	}
 }
+
+func TestDecisionCheckpointSharesImmutableFactsWithoutAllocation(t *testing.T) {
+	facts, err := decision.NewFactSet(nil)
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	checkpoint, err := decision.NewCheckpoint("pre_auth", facts)
+	if err != nil {
+		t.Fatalf("NewCheckpoint() error = %v", err)
+	}
+
+	if allocs := testing.AllocsPerRun(100, func() { _ = checkpoint.Facts() }); allocs != 0 {
+		t.Fatalf("Checkpoint.Facts() allocations = %.0f, want 0", allocs)
+	}
+}

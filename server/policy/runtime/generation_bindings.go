@@ -67,11 +67,6 @@ func NewFactProviderInput(
 	caller decision.CallerContext,
 	checkpoint string,
 ) (FactProviderInput, error) {
-	ownedFacts, err := decision.NewFactSet(facts.Facts())
-	if err != nil {
-		return FactProviderInput{}, fmt.Errorf("%w: facts: %v", ErrInvalidGenerationBinding, err)
-	}
-
 	ownedTarget, err := decision.NewTarget(target.Namespace(), target.Action())
 	if err != nil {
 		return FactProviderInput{}, fmt.Errorf("%w: target: %v", ErrInvalidGenerationBinding, err)
@@ -87,15 +82,14 @@ func NewFactProviderInput(
 	}
 
 	return FactProviderInput{
-		facts: ownedFacts, caller: ownedCaller, target: ownedTarget, checkpoint: checkpoint,
+		facts: facts, caller: ownedCaller, target: ownedTarget, checkpoint: checkpoint,
 	}, nil
 }
 
-// Facts returns the detached facts visible before this provider runs.
+// Facts returns the facts visible before this provider runs. A FactSet is immutable after construction, so the
+// captured set is shared instead of rebuilt on every call.
 func (i FactProviderInput) Facts() decision.FactSet {
-	facts, _ := decision.NewFactSet(i.facts.Facts())
-
-	return facts
+	return i.facts
 }
 
 // Caller returns detached redacted caller evidence for this provider call.
@@ -203,13 +197,8 @@ type EffectExecution struct {
 	ordinal    uint32
 }
 
-// NewEffectExecution validates and deeply owns one selected effect invocation.
+// NewEffectExecution validates and deeply owns one selected effect invocation. The immutable fact set is shared.
 func NewEffectExecution(input EffectExecutionInput) (EffectExecution, error) {
-	facts, err := decision.NewFactSet(input.Facts.Facts())
-	if err != nil {
-		return EffectExecution{}, fmt.Errorf("%w: effect facts: %v", ErrInvalidGenerationBinding, err)
-	}
-
 	caller, err := cloneBindingCaller(input.Caller)
 	if err != nil {
 		return EffectExecution{}, fmt.Errorf("%w: effect caller: %v", ErrInvalidGenerationBinding, err)
@@ -231,7 +220,7 @@ func NewEffectExecution(input EffectExecutionInput) (EffectExecution, error) {
 	}
 
 	return EffectExecution{
-		facts:      facts,
+		facts:      input.Facts,
 		caller:     caller,
 		parameters: parameters,
 		target:     target,
@@ -243,11 +232,9 @@ func NewEffectExecution(input EffectExecutionInput) (EffectExecution, error) {
 	}, nil
 }
 
-// Facts returns the detached evaluation facts visible when policy selected the effect.
+// Facts returns the immutable evaluation facts visible when policy selected the effect.
 func (e EffectExecution) Facts() decision.FactSet {
-	facts, _ := decision.NewFactSet(e.facts.Facts())
-
-	return facts
+	return e.facts
 }
 
 // Caller returns detached redacted caller evidence for the selected effect.

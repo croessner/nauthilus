@@ -133,3 +133,36 @@ func mustBindingTarget(t *testing.T) decision.Target {
 
 	return target
 }
+
+func TestGenericProviderBindingInputsShareImmutableFactsWithoutAllocation(t *testing.T) {
+	facts := mustBindingFacts(t)
+
+	providerInput, err := NewFactProviderInput(facts, mustBindingTarget(t), mustBindingCaller(t), "policy.facts.collect")
+	if err != nil {
+		t.Fatalf("NewFactProviderInput() error = %v", err)
+	}
+
+	effectInput, err := NewEffectExecution(EffectExecutionInput{
+		Facts: facts, Caller: mustBindingCaller(t), Parameters: mustBindingValueMap(t), Target: mustBindingTarget(t),
+		EffectID: "mail/audit", DecisionID: "decision-1", Provider: "mail/lua.risk.audit",
+		Generation: 1, Ordinal: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewEffectExecution() error = %v", err)
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		_ = providerInput.Facts()
+		_ = effectInput.Facts()
+	})
+	if allocs != 0 {
+		t.Fatalf("Facts() allocations = %.0f, want 0", allocs)
+	}
+
+	returned := providerInput.Facts().Facts()
+	returned[0] = decision.Fact{}
+
+	if fact, ok := providerInput.Facts().Get("resource.id"); !ok || fact.ID() != "resource.id" {
+		t.Fatal("provider input facts changed through a returned slice")
+	}
+}

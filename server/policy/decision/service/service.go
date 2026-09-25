@@ -476,17 +476,10 @@ func (s *DecisionService) openSession(
 		return nil, err
 	}
 
-	facts, err := decision.NewFactSet(permit.Facts().Facts())
-	if err != nil {
-		permit.Release()
-
-		return nil, fmt.Errorf("%w: admission returned invalid facts", ErrDecisionAdmission)
-	}
-
 	return &decisionSession{
 		generation:   generation,
 		request:      request,
-		facts:        facts,
+		facts:        permit.Facts(),
 		permit:       permit,
 		finalization: invocation.Finalization,
 		checkpoints:  checkpoints,

@@ -160,12 +160,7 @@ func NewCheckpoint(name string, facts FactSet) (Checkpoint, error) {
 		)
 	}
 
-	ownedFacts, err := NewFactSet(facts.Facts())
-	if err != nil {
-		return Checkpoint{}, err
-	}
-
-	return Checkpoint{name: name, facts: ownedFacts}, nil
+	return Checkpoint{name: name, facts: facts}, nil
 }
 
 // Name returns the exact checkpoint identity.
@@ -173,12 +168,7 @@ func (c Checkpoint) Name() string {
 	return c.name
 }
 
-// Facts returns a detached immutable fact set.
+// Facts returns the immutable fact set. A FactSet cannot change after construction, so it is shared.
 func (c Checkpoint) Facts() FactSet {
-	facts, err := NewFactSet(c.facts.Facts())
-	if err != nil {
-		return FactSet{}
-	}
-
-	return facts
+	return c.facts
 }
