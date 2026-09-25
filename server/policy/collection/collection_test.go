@@ -159,3 +159,34 @@ func TestDecisionContextMarksDetailsWithoutChangingSnapshots(t *testing.T) {
 		t.Fatal("marking an already selected detail changed the revision")
 	}
 }
+
+func TestDecisionContextKeepsTheRevisionOfAnUnchangedAttribute(t *testing.T) {
+	ctx := NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+	value := AttributeValue{
+		ID: policy.AttributeBruteForceTriggered, Stage: policy.StagePreAuth, Value: true,
+		Details: map[string]report.DetailValue{"message": {Value: "blocked"}},
+	}
+
+	ctx.RecordAttribute(value)
+	first := ctx.Revision()
+
+	again := value
+	again.Details = map[string]report.DetailValue{"message": {Value: "blocked"}}
+	ctx.RecordAttribute(again)
+
+	if ctx.Revision() != first {
+		t.Fatalf("re-recording an equal attribute changed the revision from %d to %d", first, ctx.Revision())
+	}
+
+	changed := value
+	changed.Value = false
+	ctx.RecordAttribute(changed)
+
+	if ctx.Revision() == first {
+		t.Fatal("recording a changed attribute kept the old revision")
+	}
+
+	if got := ctx.AttributeSnapshot().Attributes[value.ID].Value; got != false {
+		t.Fatalf("recorded value = %v, want the changed value", got)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -344,6 +345,12 @@ func (c *DecisionContext) RecordAttributes(values []AttributeValue) {
 func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {
 	if c.report.Attributes == nil {
 		c.report.Attributes = make(map[string]report.AttributeValue)
+	}
+
+	// Checks record their observations again at every checkpoint. An unchanged value keeps its revision, so work
+	// derived from it, such as the projected standard auth facts, stays valid.
+	if existing, exists := c.report.Attributes[value.ID]; exists && reflect.DeepEqual(existing, value) {
+		return
 	}
 
 	c.bumpRevisionLocked(value.ID)
