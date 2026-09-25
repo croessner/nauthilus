@@ -138,13 +138,13 @@ func (r *checkpointRuntime) nextAuthnHostProvider(
 		return AuthnHostDirective{}, input.cursor, false, fmt.Errorf("%w: admitted checkpoint is absent", ErrDecisionEvaluation)
 	}
 
-	instances, err := orderedCheckpointProviderInstances(checkpoint)
+	count, err := scheduledCheckpointProviderCount(checkpoint)
 	if err != nil {
 		return AuthnHostDirective{}, input.cursor, false, err
 	}
 
-	for index := input.cursor; index < len(instances); index++ {
-		instance := instances[index]
+	for index := input.cursor; index < count; index++ {
+		instance, _ := checkpoint.ScheduledProviderInstance(index)
 		if !target.HostPreparesProvider(instance.Use()) {
 			continue
 		}
@@ -159,7 +159,7 @@ func (r *checkpointRuntime) nextAuthnHostProvider(
 		}, index + 1, true, nil
 	}
 
-	return AuthnHostDirective{}, len(instances), false, nil
+	return AuthnHostDirective{}, count, false, nil
 }
 
 // hasAuthnHostProviders reports whether one exact checkpoint requires host execution.
@@ -178,7 +178,7 @@ func (r *checkpointRuntime) hasAuthnHostProviders(targetID decision.Target, chec
 		return false
 	}
 
-	for _, instance := range checkpoint.ProviderInstances() {
+	for instance := range checkpoint.AllProviderInstances() {
 		if target.HostPreparesProvider(instance.Use()) {
 			return true
 		}
@@ -207,52 +207,34 @@ func (r *checkpointRuntime) remainingAuthnHostProviders(
 		return nil, cursor, fmt.Errorf("%w: admitted checkpoint is absent", ErrDecisionEvaluation)
 	}
 
-	instances, err := orderedCheckpointProviderInstances(checkpoint)
+	count, err := scheduledCheckpointProviderCount(checkpoint)
 	if err != nil {
 		return nil, cursor, err
 	}
 
-	if cursor > len(instances) {
+	if cursor > count {
 		return nil, cursor, fmt.Errorf("%w: host schedule cursor is invalid", ErrDecisionEvaluation)
 	}
 
-	result := make([]string, 0, len(instances)-cursor)
-	for index := cursor; index < len(instances); index++ {
-		if target.HostPreparesProvider(instances[index].Use()) {
-			result = append(result, instances[index].Name())
+	result := make([]string, 0, count-cursor)
+	for index := cursor; index < count; index++ {
+		if instance, _ := checkpoint.ScheduledProviderInstance(index); target.HostPreparesProvider(instance.Use()) {
+			result = append(result, instance.Name())
 		}
 	}
 
-	return result, len(instances), nil
+	return result, count, nil
 }
 
-// orderedCheckpointProviderInstances resolves the exact dependency-level execution order.
-func orderedCheckpointProviderInstances(
-	checkpoint policyruntime.CompiledCheckpoint,
-) ([]policyruntime.CompiledProviderInstance, error) {
-	levels := checkpoint.ProviderLevels()
-	result := make([]policyruntime.CompiledProviderInstance, 0, len(checkpoint.ProviderInstances()))
-
-	for _, level := range levels {
-		for _, instanceName := range level {
-			instance, exists := checkpoint.LookupProviderInstance(instanceName)
-			if !exists {
-				return nil, fmt.Errorf(
-					"%w: checkpoint provider instance %s is unavailable",
-					ErrDecisionEvaluation,
-					instanceName,
-				)
-			}
-
-			result = append(result, instance)
-		}
+// scheduledCheckpointProviderCount returns the length of the compiled dependency-level execution order and rejects
+// levels that do not cover every provider binding.
+func scheduledCheckpointProviderCount(checkpoint policyruntime.CompiledCheckpoint) (int, error) {
+	count := checkpoint.ScheduledProviderInstanceCount()
+	if count != checkpoint.ProviderInstanceCount() {
+		return 0, fmt.Errorf("%w: checkpoint provider levels are incomplete", ErrDecisionEvaluation)
 	}
 
-	if len(result) != len(checkpoint.ProviderInstances()) {
-		return nil, fmt.Errorf("%w: checkpoint provider levels are incomplete", ErrDecisionEvaluation)
-	}
-
-	return result, nil
+	return count, nil
 }
 
 // providerDisposition applies the shared action, auth-state, dependency, mode, and skip-guard contract.

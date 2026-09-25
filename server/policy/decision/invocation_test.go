@@ -88,3 +88,41 @@ func TestDecisionCheckpointSharesImmutableFactsWithoutAllocation(t *testing.T) {
 		t.Fatalf("Checkpoint.Facts() allocations = %.0f, want 0", allocs)
 	}
 }
+
+func TestFactSetAllIteratesWithoutAllocation(t *testing.T) {
+	provenance, err := decision.NewProvenance(decision.FactSourceCaller, "client-a", "request")
+	if err != nil {
+		t.Fatalf("NewProvenance() error = %v", err)
+	}
+
+	text := "value"
+
+	value, err := decision.NewValue(decision.ValueInput{String: &text})
+	if err != nil {
+		t.Fatalf("NewValue() error = %v", err)
+	}
+
+	first, _ := decision.NewFact("input.first", decision.FactCategoryResource, value, provenance)
+	second, _ := decision.NewFact("input.second", decision.FactCategoryResource, value, provenance)
+
+	facts, err := decision.NewFactSet([]decision.Fact{first, second})
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	var ids []string
+	for fact := range facts.All() {
+		ids = append(ids, fact.ID())
+	}
+
+	if len(ids) != 2 || ids[0] != "input.first" || ids[1] != "input.second" {
+		t.Fatalf("FactSet.All() = %v, want ordered facts", ids)
+	}
+
+	if allocs := testing.AllocsPerRun(100, func() {
+		for range facts.All() {
+		}
+	}); allocs != 0 {
+		t.Fatalf("FactSet.All() allocations = %.0f, want 0", allocs)
+	}
+}

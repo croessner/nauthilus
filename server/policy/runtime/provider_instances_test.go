@@ -413,3 +413,95 @@ func TestTargetLookupPolicySetSharesSetAndDetachesRules(t *testing.T) {
 	again, _ := compiled.LookupPolicySet(setID)
 	assert.Equal(t, name, again.Rules()[0].Name())
 }
+
+func TestCompiledReadAPIsShareWithoutAllocation(t *testing.T) {
+	target, schema := completionRuntimeTargetAndSchema(t)
+	shared := providerInstanceDefinition(t, target, "mail/shared", nil)
+	instances := []registry.ProviderInstanceDefinition{
+		providerInstance(t, "providers[0]", "secondary", shared.ID(), []string{"primary"}),
+		providerInstance(t, "providers[1]", "primary", shared.ID(), nil),
+	}
+	report := registry.NewTargetReportSettings(true, false, true, true)
+	record := providerInstanceRecord(t, target, schema, []registry.ProviderDefinition{shared}, instances,
+		[]registry.SchedulerGuardDefinition{providerInstanceGuard(t)}, report)
+
+	catalog, err := NewTargetCatalog([]TargetCatalogRecord{record})
+	providerInstanceNoError(t, err)
+
+	compiled, _ := catalog.Lookup(target)
+	checkpoint, _ := compiled.DomainPlan().Checkpoint(decision.CheckpointFinalDecision)
+
+	authRecord, authSets := completionBuiltinAuthRuntimeRecord(t)
+	authCatalog, err := NewTargetCatalog([]TargetCatalogRecord{authRecord}, authSets)
+	providerInstanceNoError(t, err)
+
+	authTarget, _ := authCatalog.Lookup(authRecord.Target)
+	compiledSchema := authTarget.Schema()
+	firstFact := compiledSchema.Facts()[0]
+
+	assert.Equal(t, 2, checkpoint.ProviderInstanceCount())
+	assert.Equal(t, 2, checkpoint.ScheduledProviderInstanceCount())
+
+	var scheduled []string
+	for index := range checkpoint.ScheduledProviderInstanceCount() {
+		instance, ok := checkpoint.ScheduledProviderInstance(index)
+		assert.True(t, ok)
+		scheduled = append(scheduled, instance.Name())
+	}
+
+	assert.Equal(t, []string{"primary", "secondary"}, scheduled, "scheduled order must follow the dependency levels")
+
+	_, ok := checkpoint.ScheduledProviderInstance(2)
+	assert.False(t, ok)
+
+	var declared []string
+	for instance := range checkpoint.AllProviderInstances() {
+		declared = append(declared, instance.Name())
+	}
+
+	assert.Equal(t, []string{"secondary", "primary"}, declared, "AllProviderInstances must keep declaration order")
+
+	var ordered []string
+	for definition := range compiledSchema.AllFacts() {
+		ordered = append(ordered, definition.ID())
+	}
+
+	assert.Len(t, ordered, compiledSchema.FactCount())
+	assert.Equal(t, firstFact.ID(), ordered[0])
+
+	lookup, found := compiledSchema.LookupFact(firstFact.ID())
+	assert.True(t, found)
+	assert.Equal(t, firstFact.ID(), lookup.ID())
+
+	allocs := testing.AllocsPerRun(100, func() {
+		_ = checkpoint.ProviderInstanceCount()
+		_, _ = checkpoint.ScheduledProviderInstance(1)
+		for range checkpoint.AllProviderInstances() {
+		}
+
+		_, _ = compiledSchema.LookupFact(firstFact.ID())
+		for range compiledSchema.AllFacts() {
+		}
+	})
+	assert.Zero(t, allocs, "read APIs must not allocate")
+}
+
+func TestPolicySetAllRulesYieldsRulesWithoutAllocation(t *testing.T) {
+	rule := newCompiledRule(CompiledRuleRecord{Name: "first"}, []string{"provider/required"})
+	set := CompiledPolicySet{rules: []CompiledRule{rule}}
+
+	var names []string
+	for current := range set.AllRules() {
+		names = append(names, current.Name())
+		current.RequiredProviders()[0] = "provider/mutated"
+	}
+
+	assert.Equal(t, []string{"first"}, names)
+	assert.Equal(t, []string{"provider/required"}, set.Rules()[0].RequiredProviders())
+
+	allocs := testing.AllocsPerRun(100, func() {
+		for range set.AllRules() {
+		}
+	})
+	assert.Zero(t, allocs, "AllRules must not allocate")
+}

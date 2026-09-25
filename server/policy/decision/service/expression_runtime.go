@@ -105,7 +105,7 @@ func (r *checkpointRuntime) selectRuleFromPolicySets(
 			continue
 		}
 
-		for _, rule := range set.Rules() {
+		for rule := range set.AllRules() {
 			if rule.Checkpoint() != checkpoint || !requiredProvidersCompleted(rule, providers) {
 				continue
 			}

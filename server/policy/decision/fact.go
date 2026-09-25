@@ -16,6 +16,8 @@
 package decision
 
 import (
+	"iter"
+	"slices"
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
@@ -286,6 +288,11 @@ func (s FactSet) Get(id string) (Fact, bool) {
 	}
 
 	return s.facts[index], true
+}
+
+// All iterates the immutable facts in order without copying them.
+func (s FactSet) All() iter.Seq[Fact] {
+	return slices.Values(s.facts)
 }
 
 // Facts returns a detached ordered fact slice.

@@ -215,8 +215,8 @@ func (r *checkpointRuntime) Checkpoints(target decision.Target) ([]CheckpointPla
 
 	result := make([]CheckpointPlan, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
-		instances := make([]CheckpointProviderInstance, 0, len(checkpoint.ProviderInstances()))
-		for _, instance := range checkpoint.ProviderInstances() {
+		instances := make([]CheckpointProviderInstance, 0, checkpoint.ProviderInstanceCount())
+		for instance := range checkpoint.AllProviderInstances() {
 			instances = append(instances, checkpointProviderInstance(instance))
 		}
 
@@ -378,7 +378,7 @@ func validateAdmittedFacts(
 
 	produced := make(map[string]struct{})
 
-	for _, instance := range checkpoint.ProviderInstances() {
+	for instance := range checkpoint.AllProviderInstances() {
 		provider, exists := target.LookupProvider(instance.Use())
 		if !exists {
 			return fmt.Errorf("scheduled provider instance %s has no host provider %s", instance.Name(), instance.Use())
@@ -389,7 +389,7 @@ func validateAdmittedFacts(
 		}
 	}
 
-	for _, definition := range schema.Facts() {
+	for definition := range schema.AllFacts() {
 		if !definition.Required() {
 			continue
 		}
@@ -470,7 +470,7 @@ func retainedCheckpointProviderFacts(
 ) decision.FactSet {
 	refreshed := make(map[string]struct{})
 
-	for _, instance := range checkpoint.ProviderInstances() {
+	for instance := range checkpoint.AllProviderInstances() {
 		provider, exists := target.LookupProvider(instance.Use())
 		if !exists {
 			continue
@@ -482,7 +482,7 @@ func retainedCheckpointProviderFacts(
 	}
 
 	facts := make([]decision.Fact, 0, previous.Len())
-	for _, fact := range previous.Facts() {
+	for fact := range previous.All() {
 		if _, expires := refreshed[fact.ID()]; !expires {
 			facts = append(facts, fact)
 		}

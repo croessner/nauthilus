@@ -18,6 +18,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"slices"
 	"sort"
 	"strings"
@@ -187,6 +188,7 @@ type CompiledCheckpoint struct {
 	policySetIDs            []string
 	providerIDs             []string
 	providerInstances       []CompiledProviderInstance
+	scheduledInstances      []CompiledProviderInstance
 	providerLevels          [][]string
 	productionPolicySetIDs  []string
 	comparisonPolicySetIDs  []string
@@ -212,6 +214,32 @@ func (c CompiledCheckpoint) ProviderIDs() []string {
 // immutable and every accessor returns detached slices, so only the outer slice is copied.
 func (c CompiledCheckpoint) ProviderInstances() []CompiledProviderInstance {
 	return append([]CompiledProviderInstance(nil), c.providerInstances...)
+}
+
+// ProviderInstanceCount returns the number of checkpoint-local provider bindings without copying them.
+func (c CompiledCheckpoint) ProviderInstanceCount() int {
+	return len(c.providerInstances)
+}
+
+// AllProviderInstances iterates the immutable provider bindings in declaration order without copying them.
+func (c CompiledCheckpoint) AllProviderInstances() iter.Seq[CompiledProviderInstance] {
+	return slices.Values(c.providerInstances)
+}
+
+// ScheduledProviderInstanceCount returns the number of bindings in dependency-level execution order. It differs
+// from ProviderInstanceCount only when the levels do not cover every binding.
+func (c CompiledCheckpoint) ScheduledProviderInstanceCount() int {
+	return len(c.scheduledInstances)
+}
+
+// ScheduledProviderInstance returns one binding by its position in dependency-level execution order. The order is
+// resolved once at compile time, so schedulers can walk it per request without rebuilding it.
+func (c CompiledCheckpoint) ScheduledProviderInstance(index int) (CompiledProviderInstance, bool) {
+	if index < 0 || index >= len(c.scheduledInstances) {
+		return CompiledProviderInstance{}, false
+	}
+
+	return c.scheduledInstances[index], true
 }
 
 // LookupProviderInstance resolves one exact checkpoint-local instance identity.
@@ -434,6 +462,12 @@ func (s CompiledPolicySet) DiagnosticID() string {
 	return s.definition.DiagnosticID()
 }
 
+// AllRules iterates the immutable instantiated rules without copying them. Every rule accessor returns detached
+// slices, so callers cannot change the set through the yielded values.
+func (s CompiledPolicySet) AllRules() iter.Seq[CompiledRule] {
+	return slices.Values(s.rules)
+}
+
 // Rules returns detached exact target/checkpoint-instantiated rules.
 func (s CompiledPolicySet) Rules() []CompiledRule {
 	result := append([]CompiledRule(nil), s.rules...)
@@ -466,6 +500,29 @@ func (s CompiledSchema) Facts() []registry.FactSchema {
 	return result
 }
 
+// FactCount returns the number of declared facts without copying them.
+func (s CompiledSchema) FactCount() int {
+	return len(s.ordered)
+}
+
+// LookupFact resolves one declared fact definition by canonical identity.
+func (s CompiledSchema) LookupFact(id string) (registry.FactSchema, bool) {
+	definition, ok := s.facts[id]
+
+	return definition, ok
+}
+
+// AllFacts iterates the declared fact definitions in declaration order without copying them.
+func (s CompiledSchema) AllFacts() iter.Seq[registry.FactSchema] {
+	return func(yield func(registry.FactSchema) bool) {
+		for _, id := range s.ordered {
+			if !yield(s.facts[id]) {
+				return
+			}
+		}
+	}
+}
+
 // ValidateFacts verifies one immutable fact set against this exact schema version.
 func (s CompiledSchema) ValidateFacts(facts decision.FactSet) error {
 	if err := s.ValidatePresentFacts(facts); err != nil {
@@ -488,7 +545,7 @@ func (s CompiledSchema) ValidateFacts(facts decision.FactSet) error {
 
 // ValidatePresentFacts verifies supplied facts without requiring provider-produced values yet.
 func (s CompiledSchema) ValidatePresentFacts(facts decision.FactSet) error {
-	for _, fact := range facts.Facts() {
+	for fact := range facts.All() {
 		definition, ok := s.facts[fact.ID()]
 		if !ok {
 			return schemaFactError(s.identity, fact.ID(), "fact is not declared by the selected exact schema")
@@ -1179,13 +1236,16 @@ func newCompiledDomainPlan(
 			setIDs = append(setIDs, setID.String())
 		}
 
+		levels := compileProviderLevels(compiledInstances)
+
 		checkpoint := CompiledCheckpoint{
 			name:                    record.Name,
 			policySetIDs:            setIDs,
 			providerIDs:             providerInstanceUses(instances),
 			providerInstances:       compiledInstances,
 			providerInstancesByName: instancesByName,
-			providerLevels:          compileProviderLevels(compiledInstances),
+			providerLevels:          levels,
+			scheduledInstances:      scheduledProviderInstances(levels, instancesByName),
 		}
 		checkpoint.productionPolicySetIDs, checkpoint.comparisonPolicySetIDs = checkpointAuthority(
 			target,
@@ -1198,6 +1258,24 @@ func newCompiledDomainPlan(
 	}
 
 	return CompiledDomainPlan{checkpoints: checkpoints, byName: byName}, nil
+}
+
+// scheduledProviderInstances flattens the dependency levels into one execution order. A level name without a
+// binding is left out, which the schedulers report as incomplete levels.
+func scheduledProviderInstances(
+	levels [][]string,
+	instancesByName map[string]CompiledProviderInstance,
+) []CompiledProviderInstance {
+	result := make([]CompiledProviderInstance, 0, len(instancesByName))
+	for _, level := range levels {
+		for _, name := range level {
+			if instance, exists := instancesByName[name]; exists {
+				result = append(result, instance)
+			}
+		}
+	}
+
+	return result
 }
 
 // checkpointAuthority separates configured authn comparison from production ownership.
@@ -2322,6 +2400,13 @@ func cloneCompiledCheckpoint(checkpoint CompiledCheckpoint) CompiledCheckpoint {
 	}
 
 	checkpoint.providerLevels = checkpoint.ProviderLevels()
+
+	scheduled := make([]CompiledProviderInstance, 0, len(checkpoint.scheduledInstances))
+	for _, instance := range checkpoint.scheduledInstances {
+		scheduled = append(scheduled, instance.clone())
+	}
+
+	checkpoint.scheduledInstances = scheduled
 	checkpoint.productionPolicySetIDs = checkpoint.ProductionPolicySetIDs()
 	checkpoint.comparisonPolicySetIDs = checkpoint.ComparisonPolicySetIDs()
 

@@ -45,14 +45,12 @@ func buildAdmittedFacts(
 	fields compiledFieldLists,
 	schema policyruntime.CompiledSchema,
 ) (decision.FactSet, error) {
-	definitions := schemaDefinitions(schema)
-
 	provenance, err := decision.NewProvenance(decision.FactSourceCaller, caller.Principal(), "request")
 	if err != nil {
 		return decision.FactSet{}, admissionError(ErrInvalidRequest, "caller assertion provenance is invalid")
 	}
 
-	facts := make([]decision.Fact, 0, submittedFactCount(request)+len(definitions))
+	facts := make([]decision.Fact, 0, submittedFactCount(request)+schema.FactCount())
 	inputs := []submittedFactInput{
 		{values: request.Subject().Attributes(), allowed: fields.subject, prefix: subjectFactPrefix, category: decision.FactCategorySubject},
 		{values: request.Resource().Attributes(), allowed: fields.resource, prefix: resourceFactPrefix, category: decision.FactCategoryResource},
@@ -61,12 +59,12 @@ func buildAdmittedFacts(
 	}
 
 	for _, input := range inputs {
-		if err := appendSubmittedFacts(&facts, input, definitions, schema, provenance); err != nil {
+		if err := appendSubmittedFacts(&facts, input, schema, provenance); err != nil {
 			return decision.FactSet{}, err
 		}
 	}
 
-	if err := appendTrustedFacts(&facts, caller, definitions); err != nil {
+	if err := appendTrustedFacts(&facts, caller, schema); err != nil {
 		return decision.FactSet{}, err
 	}
 
@@ -82,21 +80,10 @@ func buildAdmittedFacts(
 	return result, nil
 }
 
-// schemaDefinitions indexes one detached compiled schema by canonical fact identity.
-func schemaDefinitions(schema policyruntime.CompiledSchema) map[string]registry.FactSchema {
-	definitions := make(map[string]registry.FactSchema)
-	for _, definition := range schema.Facts() {
-		definitions[definition.ID()] = definition
-	}
-
-	return definitions
-}
-
 // appendSubmittedFacts validates one request category against both profile and exact schema authority.
 func appendSubmittedFacts(
 	facts *[]decision.Fact,
 	input submittedFactInput,
-	definitions map[string]registry.FactSchema,
 	schema policyruntime.CompiledSchema,
 	provenance decision.Provenance,
 ) error {
@@ -114,7 +101,7 @@ func appendSubmittedFacts(
 
 		id := input.prefix + "." + key
 
-		definition, exists := definitions[id]
+		definition, exists := schema.LookupFact(id)
 		if !exists || (!input.schemaCategory && definition.Category() != input.category) ||
 			!sourceAllowed(definition, decision.FactSourceCaller) {
 			return admissionError(ErrInvalidRequest, "submitted field is not caller-owned by the selected exact schema")
@@ -145,7 +132,7 @@ func appendSubmittedFacts(
 func appendTrustedFacts(
 	facts *[]decision.Fact,
 	caller decision.CallerContext,
-	definitions map[string]registry.FactSchema,
+	schema policyruntime.CompiledSchema,
 ) error {
 	inputs, err := trustedFactInputs(caller)
 	if err != nil {
@@ -159,7 +146,7 @@ func appendTrustedFacts(
 			continue
 		}
 
-		definition, declared := definitions[input.id]
+		definition, declared := schema.LookupFact(input.id)
 		if !declared {
 			continue
 		}
