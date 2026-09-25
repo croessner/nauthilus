@@ -330,3 +330,86 @@ func providerInstanceRecord(
 		NoMatch: registry.NoMatchDeny, AuthorityMode: registry.AuthorityModeEnforce,
 	}
 }
+
+func TestTargetCatalogLookupSharesImmutableTarget(t *testing.T) {
+	target, schema := completionRuntimeTargetAndSchema(t)
+	shared := providerInstanceDefinition(t, target, "mail/shared", nil)
+	instances := []registry.ProviderInstanceDefinition{
+		providerInstance(t, "providers[0]", "primary", shared.ID(), nil),
+		providerInstance(t, "providers[1]", "secondary", shared.ID(), []string{"primary"}),
+	}
+	report := registry.NewTargetReportSettings(true, false, true, true)
+	record := providerInstanceRecord(t, target, schema, []registry.ProviderDefinition{shared}, instances,
+		[]registry.SchedulerGuardDefinition{providerInstanceGuard(t)}, report)
+
+	catalog, err := NewTargetCatalog([]TargetCatalogRecord{record})
+	providerInstanceNoError(t, err)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		compiled, _ := catalog.Lookup(target)
+		plan := compiled.DomainPlan()
+		checkpoint, _ := plan.Checkpoint(decision.CheckpointFinalDecision)
+		_, _ = checkpoint.LookupProviderInstance("secondary")
+	})
+	assert.Zero(t, allocs, "Lookup, DomainPlan, Checkpoint and LookupProviderInstance must not allocate")
+
+	compiled, ok := catalog.Lookup(target)
+	assert.True(t, ok)
+
+	checkpoints := compiled.DomainPlan().Checkpoints()
+	checkpoints[0] = CompiledCheckpoint{}
+
+	checkpoint, ok := compiled.DomainPlan().Checkpoint(decision.CheckpointFinalDecision)
+	assert.True(t, ok)
+
+	returnedInstances := checkpoint.ProviderInstances()
+	returnedInstances[0] = CompiledProviderInstance{}
+	checkpoint.ProviderInstances()[1].Dependencies()[0] = "mutated"
+	checkpoint.ProviderLevels()[0][0] = "mutated"
+	checkpoint.ProviderIDs()[0] = "mutated"
+
+	second, ok := catalog.Lookup(target)
+	assert.True(t, ok)
+	assert.Equal(t, decision.CheckpointFinalDecision, second.DomainPlan().Checkpoints()[0].Name())
+	assertCompiledProviderTarget(t, second, shared.ID())
+}
+
+func TestTargetLookupPolicySetSharesSetAndDetachesRules(t *testing.T) {
+	record, policySets := completionBuiltinAuthRuntimeRecord(t)
+
+	catalog, err := NewTargetCatalog([]TargetCatalogRecord{record}, policySets)
+	providerInstanceNoError(t, err)
+
+	compiled, ok := catalog.Lookup(record.Target)
+	assert.True(t, ok)
+
+	var setID registry.PolicySetID
+	for _, checkpoint := range compiled.DomainPlan().Checkpoints() {
+		for _, id := range checkpoint.PolicySetIDs() {
+			parsed, err := registry.ParsePolicySetID("policy_set_ids", id)
+			providerInstanceNoError(t, err)
+
+			set, found := compiled.LookupPolicySet(parsed)
+			if found && len(set.Rules()) > 0 {
+				setID = set.ID()
+			}
+		}
+	}
+
+	if setID.String() == "" {
+		t.Fatal("builtin auth record has no policy set with rules")
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		_, _ = compiled.LookupPolicySet(setID)
+	})
+	assert.Zero(t, allocs, "LookupPolicySet must not allocate")
+
+	set, _ := compiled.LookupPolicySet(setID)
+	rules := set.Rules()
+	name := rules[0].Name()
+	rules[0] = CompiledRule{}
+
+	again, _ := compiled.LookupPolicySet(setID)
+	assert.Equal(t, name, again.Rules()[0].Name())
+}

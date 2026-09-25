@@ -208,21 +208,17 @@ func (c CompiledCheckpoint) ProviderIDs() []string {
 	return append([]string(nil), c.providerIDs...)
 }
 
-// ProviderInstances returns detached ordered checkpoint-local provider bindings.
+// ProviderInstances returns an ordered copy of the checkpoint-local provider bindings. The bindings themselves are
+// immutable and every accessor returns detached slices, so only the outer slice is copied.
 func (c CompiledCheckpoint) ProviderInstances() []CompiledProviderInstance {
-	result := make([]CompiledProviderInstance, 0, len(c.providerInstances))
-	for _, instance := range c.providerInstances {
-		result = append(result, instance.clone())
-	}
-
-	return result
+	return append([]CompiledProviderInstance(nil), c.providerInstances...)
 }
 
 // LookupProviderInstance resolves one exact checkpoint-local instance identity.
 func (c CompiledCheckpoint) LookupProviderInstance(name string) (CompiledProviderInstance, bool) {
 	instance, ok := c.providerInstancesByName[name]
 
-	return instance.clone(), ok
+	return instance, ok
 }
 
 // ProviderLevels returns deterministic dependency levels for concurrent execution.
@@ -258,21 +254,17 @@ type CompiledDomainPlan struct {
 	schedulerGuards       []registry.SchedulerGuardDefinition
 }
 
-// Checkpoints returns detached ordered checkpoint descriptors.
+// Checkpoints returns an ordered copy of the checkpoint descriptors. A CompiledCheckpoint is immutable and its
+// accessors return detached slices, so only the outer slice is copied.
 func (p CompiledDomainPlan) Checkpoints() []CompiledCheckpoint {
-	result := make([]CompiledCheckpoint, 0, len(p.checkpoints))
-	for _, checkpoint := range p.checkpoints {
-		result = append(result, cloneCompiledCheckpoint(checkpoint))
-	}
-
-	return result
+	return append([]CompiledCheckpoint(nil), p.checkpoints...)
 }
 
 // Checkpoint resolves one exact checkpoint identity.
 func (p CompiledDomainPlan) Checkpoint(name string) (CompiledCheckpoint, bool) {
 	checkpoint, ok := p.byName[name]
 
-	return cloneCompiledCheckpoint(checkpoint), ok
+	return checkpoint, ok
 }
 
 // SchedulerGuards returns detached ordered plan-local scheduling predicates.
@@ -289,11 +281,14 @@ func (p CompiledDomainPlan) SchedulerGuard(name string) (registry.SchedulerGuard
 
 // clone returns one deeply detached plan.
 func (p CompiledDomainPlan) clone() CompiledDomainPlan {
-	checkpoints := p.Checkpoints()
+	checkpoints := make([]CompiledCheckpoint, 0, len(p.checkpoints))
+	for _, checkpoint := range p.checkpoints {
+		checkpoints = append(checkpoints, cloneCompiledCheckpoint(checkpoint))
+	}
 
 	byName := make(map[string]CompiledCheckpoint, len(checkpoints))
 	for _, checkpoint := range checkpoints {
-		byName[checkpoint.Name()] = cloneCompiledCheckpoint(checkpoint)
+		byName[checkpoint.Name()] = checkpoint
 	}
 
 	guards := p.SchedulerGuards()
@@ -507,7 +502,6 @@ func (s CompiledSchema) ValidatePresentFacts(facts decision.FactSet) error {
 	return nil
 }
 
-
 // CompiledTarget is one immutable activated target and selected exact schema.
 type CompiledTarget struct {
 	target           decision.Target
@@ -534,9 +528,10 @@ func (t CompiledTarget) Schema() CompiledSchema {
 	return t.schema
 }
 
-// DomainPlan returns the detached authoritative checkpoint topology.
+// DomainPlan returns the immutable authoritative checkpoint topology. The plan is never written after construction
+// and its accessors return detached slices, so it is shared instead of cloned on every call.
 func (t CompiledTarget) DomainPlan() CompiledDomainPlan {
-	return t.domainPlan.clone()
+	return t.domainPlan
 }
 
 // DefaultPolicySet returns the target-specific qualified fallback set.
@@ -566,8 +561,7 @@ func (t CompiledTarget) LookupPolicySet(id registry.PolicySetID) (CompiledPolicy
 		return CompiledPolicySet{}, false
 	}
 
-	set.rules = set.Rules()
-
+	// Rules already returns detached rules, so the set is shared as it is.
 	return set, true
 }
 
@@ -1103,7 +1097,9 @@ func (c *TargetCatalog) Targets() []CompiledTarget {
 	return result
 }
 
-// Lookup returns a detached compiled target by exact identity.
+// Lookup returns a compiled target by exact identity. A CompiledTarget is never written after construction and
+// all of its accessors return detached slices or immutable values, so the catalog entry is shared; cloning it here
+// ran several times per request and was a large share of the authentication allocation rate.
 func (c *TargetCatalog) Lookup(target decision.Target) (CompiledTarget, bool) {
 	if c == nil {
 		return CompiledTarget{}, false
@@ -1114,7 +1110,7 @@ func (c *TargetCatalog) Lookup(target decision.Target) (CompiledTarget, bool) {
 		return CompiledTarget{}, false
 	}
 
-	return compiled.clone(), true
+	return compiled, true
 }
 
 // ValidateFacts resolves one activated target and validates only its selected exact schema.
