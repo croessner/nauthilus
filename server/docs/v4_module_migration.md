@@ -183,5 +183,9 @@ the intended first prerelease is `v4.0.0-alpha.1`.
   connect idle slots before each request, and maintenance skips slots that are
   in use instead of waiting for them.
 - `/healthz` has a new `ldap_queue` check that makes the instance unready when
-  an LDAP pool holds queued requests without any worker progress for 30 s. See
-  [Health Endpoints](health_endpoints.md).
+  an LDAP pool with a running worker holds queued requests without any worker
+  progress for the longer of 30 s and `connect_abort_timeout` plus 30 s (40 s
+  by default). See [Health Endpoints](health_endpoints.md).
+- An auth request rejected by `auth_rate_limit_per_second` now returns a
+  temporary backend failure. The option takes effect with this release, see
+  the pool tuning note above.

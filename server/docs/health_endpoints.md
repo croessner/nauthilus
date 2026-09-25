@@ -27,8 +27,9 @@ storage checks fail; failed Redis or LDAP checks are reported in `checks` withou
 load than a probe timeout of a few seconds allows.
 
 The `ldap_queue` check is the exception that does decide readiness. It turns `down` (HTTP `503`) when an LDAP
-lookup or auth pool holds queued requests and no worker has taken one for 30 seconds, and lists the pools as
-`lookup:<pool>` or `auth:<pool>` in `meta.pools`. Workers that take requests at any rate, including requests that
+lookup or auth pool with a running worker holds queued requests and no worker has taken one for the longer of 30
+seconds and `connect_abort_timeout` plus the 30 second connect deadline (40 seconds with the default abort timeout),
+and lists the pools as `lookup:<pool>` or `auth:<pool>` in `meta.pools`. Workers that take requests at any rate, including requests that
 expired in the queue, count as progress, so a slow but working directory never trips it. The check takes a pod
 whose LDAP workers stopped out of routing even while a cached test login still succeeds; liveness is not affected.
 
