@@ -163,3 +163,25 @@ the intended first prerelease is `v4.0.0-alpha.1`.
   loop of the host (up to 10 attempts 5 s apart) plus this retry before
   `/healthz` can answer. The `startupProbe` example in
   [Health Endpoints](health_endpoints.md) allows 150 s.
+- LDAP pool connections now carry the settings of their pool section. Before,
+  every pool connection ran with built-in defaults, so `search_timeout`,
+  `bind_timeout`, `modify_timeout`, `search_size_limit`, `search_time_limit`,
+  `retry_*`, `cb_*`, `health_check_*`, the cache settings, `include_raw_result`
+  and `auth_rate_limit_*` were silently ignored for the operations themselves.
+  Review these values before upgrading: they take effect now, for example a
+  `search_size_limit` on the default section limits every search of that
+  section, while a named pool such as a list-account pool keeps its own values.
+- Every LDAP pool connection has a default operation timeout: the configured
+  `search_timeout`, or 30 s when none is set. Connection setup dials with a 5 s
+  timeout and TCP keepalive, and one 30 s deadline bounds the whole connect
+  loop including its backoff. Operations on a connection whose server vanished
+  without a reset no longer wait for TCP to give up.
+- A connect that outlived the 30 s connect timeout and then succeeded could
+  deadlock and block the whole LDAP pool until the process was restarted, for
+  example after an LDAP server restart under load. The connect loop now uses
+  one deadline, and pool maintenance runs in the background: workers no longer
+  connect idle slots before each request, and maintenance skips slots that are
+  in use instead of waiting for them.
+- `/healthz` has a new `ldap_queue` check that makes the instance unready when
+  an LDAP pool holds queued requests without any worker progress for 30 s. See
+  [Health Endpoints](health_endpoints.md).

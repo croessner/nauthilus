@@ -26,6 +26,12 @@ readiness answer, including the `healthcheck` binary shipped in the container im
 storage checks fail; failed Redis or LDAP checks are reported in `checks` without making the instance unready. Because the checks do real work, the answer can take noticeably longer under
 load than a probe timeout of a few seconds allows.
 
+The `ldap_queue` check is the exception that does decide readiness. It turns `down` (HTTP `503`) when an LDAP
+lookup or auth pool holds queued requests and no worker has taken one for 30 seconds, and lists the pools as
+`lookup:<pool>` or `auth:<pool>` in `meta.pools`. Workers that take requests at any rate, including requests that
+expired in the queue, count as progress, so a slow but working directory never trips it. The check takes a pod
+whose LDAP workers stopped out of routing even while a cached test login still succeeds; liveness is not affected.
+
 ## Container healthcheck binary
 
 The image contains `/usr/app/healthcheck`. It requests one URL, expects HTTP `200`, and decodes the JSON `status`
