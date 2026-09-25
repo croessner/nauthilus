@@ -10,80 +10,111 @@ package runtime
 import (
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
-// NormalizeValue validates one fact value and returns a schema-ordered detached snapshot.
+// NormalizeValue validates one fact value and returns a schema-ordered immutable snapshot.
 func (s CompiledSchema) NormalizeValue(factID string, value decision.Value) (decision.Value, error) {
+	normalized, _, err := s.normalizeValue(factID, value)
+
+	return normalized, err
+}
+
+// normalizeValue validates one fact value and reports whether normalization had to rebuild it. Values are immutable,
+// so an already normalized value is returned unchanged.
+func (s CompiledSchema) normalizeValue(factID string, value decision.Value) (decision.Value, bool, error) {
 	definition, exists := s.facts[factID]
 	if !exists {
-		return decision.Value{}, schemaFactError(s.identity, factID, "fact is not declared by the selected exact schema")
+		return decision.Value{}, false, schemaFactError(
+			s.identity, factID, "fact is not declared by the selected exact schema",
+		)
 	}
 
 	if value.Kind() != definition.Kind() {
-		return decision.Value{}, schemaFactError(s.identity, factID, "value kind does not match the selected exact schema")
+		return decision.Value{}, false, schemaFactError(
+			s.identity, factID, "value kind does not match the selected exact schema",
+		)
 	}
 
 	if definition.Kind() != decision.ValueKindRecords {
 		if err := validateCompiledFactBounds(definition, value); err != nil {
-			return decision.Value{}, schemaFactError(s.identity, factID, err.Error())
+			return decision.Value{}, false, schemaFactError(s.identity, factID, err.Error())
 		}
 
-		return value, nil
+		return value, false, nil
 	}
 
 	recordSchema, exists := definition.RecordSchema()
 	if !exists {
-		return decision.Value{}, schemaFactError(s.identity, factID, "records fact has no closed record schema")
+		return decision.Value{}, false, schemaFactError(s.identity, factID, "records fact has no closed record schema")
 	}
 
-	normalized, err := normalizeRecordValue(recordSchema, value)
+	normalized, changed, err := normalizeRecordValue(recordSchema, value)
 	if err != nil {
-		return decision.Value{}, schemaFactError(s.identity, factID, err.Error())
+		return decision.Value{}, false, schemaFactError(s.identity, factID, err.Error())
 	}
 
-	return normalized, nil
+	return normalized, changed, nil
 }
 
-// NormalizeFacts returns one detached schema-normalized fact snapshot without changing provenance.
+// NormalizeFacts returns one schema-normalized fact snapshot without changing provenance. Facts are immutable, so the
+// input set itself is returned when every fact is already normalized, and unchanged facts are reused.
 func (s CompiledSchema) NormalizeFacts(facts decision.FactSet) (decision.FactSet, error) {
-	result := make([]decision.Fact, 0, facts.Len())
-	for _, fact := range facts.Facts() {
+	var result []decision.Fact
+
+	index := 0
+
+	for fact := range facts.All() {
 		definition, exists := s.facts[fact.ID()]
 		if !exists {
 			return decision.FactSet{}, schemaFactError(s.identity, fact.ID(), "fact is not declared by the selected exact schema")
 		}
 
-		if fact.Category() != definition.Category() || !slices.Contains(definition.AllowedSources(), fact.Provenance().Source()) {
+		if fact.Category() != definition.Category() || !definition.AllowsSource(fact.Provenance().Source()) {
 			return decision.FactSet{}, schemaFactError(s.identity, fact.ID(), "category or source does not match the selected exact schema")
 		}
 
-		value, err := s.NormalizeValue(fact.ID(), fact.Value())
+		value, changed, err := s.normalizeValue(fact.ID(), fact.Value())
 		if err != nil {
 			return decision.FactSet{}, err
 		}
 
-		owned, err := decision.NewFact(fact.ID(), fact.Category(), value, fact.Provenance())
-		if err != nil {
-			return decision.FactSet{}, err
+		if changed {
+			if result == nil {
+				result = facts.Facts()[:index]
+			}
+
+			fact, err = decision.NewFact(fact.ID(), fact.Category(), value, fact.Provenance())
+			if err != nil {
+				return decision.FactSet{}, err
+			}
 		}
 
-		result = append(result, owned)
+		if result != nil {
+			result = append(result, fact)
+		}
+
+		index++
+	}
+
+	if result == nil {
+		return facts, nil
 	}
 
 	return decision.NewFactSet(result)
 }
 
 // FactsForProvider returns the facts with record fields filtered by exact provider visibility. Facts are immutable,
-// so the input set itself is returned when it holds no records fact, and facts without records are reused.
+// so the input set itself is returned when the provider sees every record field, and unchanged facts are reused.
 func (s CompiledSchema) FactsForProvider(
 	facts decision.FactSet,
 	providerID string,
 ) (decision.FactSet, error) {
-	hasRecords := false
+	var filtered []decision.Fact
+
+	index := 0
 
 	for fact := range facts.All() {
 		definition, exists := s.facts[fact.ID()]
@@ -91,98 +122,155 @@ func (s CompiledSchema) FactsForProvider(
 			return decision.FactSet{}, schemaFactError(s.identity, fact.ID(), "fact is not declared by the selected exact schema")
 		}
 
+		keep, changed := true, false
+
 		if definition.Kind() == decision.ValueKindRecords {
-			hasRecords = true
+			var value decision.Value
+
+			value, changed, keep = filterRecordValueForProvider(definition, fact.Value(), providerID)
+			if keep && changed {
+				owned, err := decision.NewFact(fact.ID(), fact.Category(), value, fact.Provenance())
+				if err != nil {
+					return decision.FactSet{}, err
+				}
+
+				fact = owned
+			}
 		}
-	}
 
-	if !hasRecords {
-		return facts, nil
-	}
+		if (changed || !keep) && filtered == nil {
+			filtered = facts.Facts()[:index]
+		}
 
-	filtered := make([]decision.Fact, 0, facts.Len())
-
-	for fact := range facts.All() {
-		definition := s.facts[fact.ID()]
-		if definition.Kind() != decision.ValueKindRecords {
+		if filtered != nil && keep {
 			filtered = append(filtered, fact)
-
-			continue
 		}
 
-		value, visible := filterRecordValueForProvider(definition, fact.Value(), providerID)
-		if !visible {
-			continue
-		}
+		index++
+	}
 
-		owned, err := decision.NewFact(fact.ID(), fact.Category(), value, fact.Provenance())
-		if err != nil {
-			return decision.FactSet{}, err
-		}
-
-		filtered = append(filtered, owned)
+	if filtered == nil {
+		return facts, nil
 	}
 
 	return decision.NewFactSet(filtered)
 }
 
-// normalizeRecordValue rejects unknown, missing, wrongly typed, oversized, or ambiguous fields.
-func normalizeRecordValue(schema registry.RecordSchema, value decision.Value) (decision.Value, error) {
+// normalizeRecordValue rejects unknown, missing, wrongly typed, oversized, or ambiguous fields. It reports whether a
+// record had to be reordered; otherwise the immutable input value is returned unchanged.
+func normalizeRecordValue(schema registry.RecordSchema, value decision.Value) (decision.Value, bool, error) {
 	recordList, ok := value.Records()
 	if !ok {
-		return decision.Value{}, fmt.Errorf("value is not a constructed record list")
+		return decision.Value{}, false, fmt.Errorf("value is not a constructed record list")
 	}
 
-	records := recordList.Records()
-	if len(records) < schema.MinRecords() || len(records) > schema.MaxRecords() {
-		return decision.Value{}, fmt.Errorf("record count is outside %d..%d", schema.MinRecords(), schema.MaxRecords())
+	count := recordList.Len()
+	if count < schema.MinRecords() || count > schema.MaxRecords() {
+		return decision.Value{}, false, fmt.Errorf(
+			"record count is outside %d..%d", schema.MinRecords(), schema.MaxRecords(),
+		)
 	}
 
-	normalizer := recordNormalizer{schema: schema}
-	normalized := make([]decision.Record, 0, len(records))
+	normalizer := recordNormalizer{schema: schema, fields: schema.Fields()}
 
-	for recordIndex, record := range records {
-		owned, err := normalizer.normalize(recordIndex, record)
+	var normalized []decision.Record
+
+	for recordIndex, record := range recordList.All() {
+		owned, changed, err := normalizer.normalize(recordIndex, record)
 		if err != nil {
-			return decision.Value{}, err
+			return decision.Value{}, false, err
 		}
 
-		normalized = append(normalized, owned)
+		if changed && normalized == nil {
+			normalized = recordList.Records()[:recordIndex]
+		}
+
+		if normalized != nil {
+			normalized = append(normalized, owned)
+		}
+	}
+
+	if normalized == nil {
+		return value, false, nil
 	}
 
 	owned, err := decision.NewRecordList(normalized)
 	if err != nil {
-		return decision.Value{}, err
+		return decision.Value{}, false, err
 	}
 
-	return decision.NewValue(decision.ValueInput{Records: &owned})
+	result, err := decision.NewValue(decision.ValueInput{Records: &owned})
+
+	return result, err == nil, err
 }
 
 // recordNormalizer owns per-collection aggregate state during canonical normalization.
 type recordNormalizer struct {
 	schema    registry.RecordSchema
+	fields    []registry.RecordFieldSchema
 	aggregate int
 }
 
-// normalize validates and canonicalizes one record within the collection budget.
-func (n *recordNormalizer) normalize(index int, record decision.Record) (decision.Record, error) {
-	fields := record.Fields()
-
-	if len(fields) == 0 || len(fields) > n.schema.MaxFields() {
-		return decision.Record{}, fmt.Errorf("record %d field count is outside the admitted bound", index)
+// normalize validates and canonicalizes one record within the collection budget. A record whose fields already
+// follow the schema order is validated in place and reported as unchanged.
+func (n *recordNormalizer) normalize(index int, record decision.Record) (decision.Record, bool, error) {
+	if record.Len() == 0 || record.Len() > n.schema.MaxFields() {
+		return decision.Record{}, false, fmt.Errorf("record %d field count is outside the admitted bound", index)
 	}
 
-	byName, err := n.normalizeFields(index, fields)
+	if n.inSchemaOrder(record) {
+		for _, field := range record.All() {
+			if _, err := n.normalizeField(index, field); err != nil {
+				return decision.Record{}, false, err
+			}
+		}
+
+		return record, false, nil
+	}
+
+	byName, err := n.normalizeFields(index, record.Fields())
 	if err != nil {
-		return decision.Record{}, err
+		return decision.Record{}, false, err
 	}
 
 	ordered, err := n.orderFields(index, byName)
 	if err != nil {
-		return decision.Record{}, err
+		return decision.Record{}, false, err
 	}
 
-	return decision.NewRecord(ordered)
+	owned, err := decision.NewRecord(ordered)
+
+	return owned, err == nil, err
+}
+
+// inSchemaOrder reports whether every field is declared, the fields follow the schema order, and no required field
+// is missing. Such a record is exactly what orderFields would emit.
+func (n *recordNormalizer) inSchemaOrder(record decision.Record) bool {
+	next := 0
+
+	for _, field := range record.All() {
+		for next < len(n.fields) && n.fields[next].Name() != field.Name() {
+			if n.fields[next].Required() {
+				return false
+			}
+
+			next++
+		}
+
+		if next == len(n.fields) {
+			return false
+		}
+
+		next++
+	}
+
+	for ; next < len(n.fields); next++ {
+		if n.fields[next].Required() {
+			return false
+		}
+	}
+
+	return true
 }
 
 // normalizeFields validates leaf declarations and accounts their decoded bytes.
@@ -242,7 +330,7 @@ func (n *recordNormalizer) orderFields(
 ) ([]decision.RecordField, error) {
 	ordered := make([]decision.RecordField, 0, len(byName))
 
-	for _, definition := range n.schema.Fields() {
+	for _, definition := range n.fields {
 		value, exists := byName[definition.Name()]
 		if !exists {
 			if definition.Required() {
@@ -323,50 +411,87 @@ func recordFieldDecodedBytes(value decision.RecordFieldValue) int {
 	}
 }
 
-// filterRecordValueForProvider preserves record order while removing fields outside exact visibility.
+// filterRecordValueForProvider preserves record order while removing fields outside exact visibility. It reports
+// whether a field was removed and whether the value stays visible; a fully visible value is returned unchanged.
 func filterRecordValueForProvider(
 	definition registry.FactSchema,
 	value decision.Value,
 	providerID string,
-) (decision.Value, bool) {
+) (decision.Value, bool, bool) {
 	schema, exists := definition.RecordSchema()
 	if !exists {
-		return decision.Value{}, false
+		return decision.Value{}, false, false
 	}
 
 	recordList, exists := value.Records()
 	if !exists {
-		return decision.Value{}, false
+		return decision.Value{}, false, false
 	}
 
-	filteredRecords := make([]decision.Record, 0, len(recordList.Records()))
-	for _, record := range recordList.Records() {
-		fields := make([]decision.RecordField, 0, len(record.Fields()))
-		for _, field := range record.Fields() {
-			fieldSchema, declared := schema.LookupField(field.Name())
-			if declared && fieldSchema.VisibleToProvider(providerID) {
-				fields = append(fields, field)
-			}
+	var filteredRecords []decision.Record
+
+	for index, record := range recordList.All() {
+		owned, changed, visible := filterRecordForProvider(schema, record, providerID)
+		if !visible {
+			return decision.Value{}, false, false
 		}
 
-		if len(fields) == 0 {
-			return decision.Value{}, false
+		if changed && filteredRecords == nil {
+			filteredRecords = recordList.Records()[:index]
 		}
 
-		owned, err := decision.NewRecord(fields)
-		if err != nil {
-			return decision.Value{}, false
+		if filteredRecords != nil {
+			filteredRecords = append(filteredRecords, owned)
 		}
+	}
 
-		filteredRecords = append(filteredRecords, owned)
+	if filteredRecords == nil {
+		return value, false, true
 	}
 
 	owned, err := decision.NewRecordList(filteredRecords)
 	if err != nil {
-		return decision.Value{}, false
+		return decision.Value{}, false, false
 	}
 
 	filtered, err := decision.NewValue(decision.ValueInput{Records: &owned})
 
-	return filtered, err == nil
+	return filtered, true, err == nil
+}
+
+// filterRecordForProvider removes the fields of one record outside exact visibility. It reports whether a field was
+// removed and whether any field stays visible; a fully visible record is returned unchanged.
+func filterRecordForProvider(
+	schema registry.RecordSchema,
+	record decision.Record,
+	providerID string,
+) (decision.Record, bool, bool) {
+	var fields []decision.RecordField
+
+	for index, field := range record.All() {
+		fieldSchema, declared := schema.LookupField(field.Name())
+		if declared && fieldSchema.VisibleToProvider(providerID) {
+			if fields != nil {
+				fields = append(fields, field)
+			}
+
+			continue
+		}
+
+		if fields == nil {
+			fields = record.Fields()[:index]
+		}
+	}
+
+	if fields == nil {
+		return record, false, true
+	}
+
+	if len(fields) == 0 {
+		return decision.Record{}, true, false
+	}
+
+	owned, err := decision.NewRecord(fields)
+
+	return owned, true, err == nil
 }

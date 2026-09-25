@@ -338,3 +338,140 @@ func TestFactsForProviderReusesSetsWithoutRecords(t *testing.T) {
 		t.Fatal("FactsForProvider() accepted an undeclared fact")
 	}
 }
+
+func TestRecordSchemaReusesNormalizedFactsAndVisibleProviderViews(t *testing.T) {
+	schema, facts := recordProviderSchemaAndFacts(t)
+
+	normalized, err := schema.NormalizeFacts(facts)
+	if err != nil {
+		t.Fatalf("NormalizeFacts() error = %v", err)
+	}
+
+	unordered := testing.AllocsPerRun(20, func() { _, _ = schema.NormalizeFacts(facts) })
+	reused := testing.AllocsPerRun(20, func() {
+		again, normalizeErr := schema.NormalizeFacts(normalized)
+		if normalizeErr != nil || again.Len() != 1 {
+			t.Fatalf("NormalizeFacts(normalized) = %d facts, error %v", again.Len(), normalizeErr)
+		}
+	})
+
+	// The remaining allocations are the schema field list and the detached byte copies of the leaf checks.
+	if reused > 3 || reused >= unordered {
+		t.Fatalf("NormalizeFacts(normalized) allocations = %.0f, unordered = %.0f; normalized facts must be reused",
+			reused, unordered)
+	}
+
+	visible := testing.AllocsPerRun(20, func() {
+		view, viewErr := schema.FactsForProvider(normalized, "mail/plugin.reputation.assessor")
+		if viewErr != nil || view.Len() != 1 {
+			t.Fatalf("FactsForProvider(assessor) = %d facts, error %v", view.Len(), viewErr)
+		}
+	})
+	if visible != 0 {
+		t.Fatalf("FactsForProvider(assessor) allocations = %.0f, want 0 when every field is visible", visible)
+	}
+
+	payload, err := providerPayloadBytes(normalized)
+	if err != nil || string(payload) != "secret" {
+		t.Fatalf("normalized payload = %q, error %v", payload, err)
+	}
+}
+
+func TestRecordSchemaReordersOnlyRecordsOutsideSchemaOrder(t *testing.T) {
+	schema := recordCompiledSchema(t, 3, 2, 32)
+	value := recordValue(t,
+		[]recordTestField{{"sequence", int64(1)}, {"result", "pass"}},
+		[]recordTestField{{"result", "fail"}, {"sequence", int64(2)}},
+		[]recordTestField{{"sequence", int64(3)}},
+	)
+
+	normalized, err := schema.NormalizeValue("resource.chain", value)
+	if err != nil {
+		t.Fatalf("NormalizeValue() error = %v", err)
+	}
+
+	records, _ := normalized.Records()
+	want := [][]string{{"sequence", "result"}, {"sequence", "result"}, {"sequence"}}
+
+	for index, record := range records.All() {
+		names := make([]string, 0, record.Len())
+		for _, field := range record.All() {
+			names = append(names, field.Name())
+		}
+
+		if fmt.Sprint(names) != fmt.Sprint(want[index]) {
+			t.Fatalf("record %d fields = %v, want %v", index, names, want[index])
+		}
+	}
+
+	second := records.Records()[1].Fields()
+	if result, _ := second[1].Value().StringValue(); result != "fail" {
+		t.Fatalf("reordered record lost its value: result = %q", result)
+	}
+
+	missingRequired := recordValue(t, []recordTestField{{"result", "pass"}})
+	if _, err := schema.NormalizeValue("resource.chain", missingRequired); err == nil {
+		t.Fatal("NormalizeValue() accepted a record without its required field")
+	}
+}
+
+func TestFactsForProviderKeepsUnchangedFactsAroundFilteredRecords(t *testing.T) {
+	recordSchema, recordFacts := recordProviderSchemaAndFacts(t)
+	chainSchema := recordSchema.facts["resource.chain"]
+
+	idSchema, _ := registry.NewFactSchema(registry.FactSchemaInput{
+		ID: "resource.id", Category: decision.FactCategoryResource, Kind: decision.ValueKindString, MaxLength: 64,
+		AllowedSources: []decision.FactSource{decision.FactSourceCaller},
+	})
+	hiddenSchema, _ := registry.NewFactSchema(registry.FactSchemaInput{
+		ID: "resource.hidden", Category: decision.FactCategoryResource, Kind: decision.ValueKindRecords,
+		AllowedSources: []decision.FactSource{decision.FactSourceCaller}, RecordSchema: chainRecordSchema(t, chainSchema),
+	})
+	identity, _ := registry.NewSchemaIdentity("mail", "submit", "v1")
+	schema := newCompiledSchema(identity, []registry.FactSchema{idSchema, chainSchema, hiddenSchema})
+
+	provenance, _ := decision.NewProvenance(decision.FactSourceCaller, "client", "request")
+	text := "message-1"
+	idValue, _ := decision.NewValue(decision.ValueInput{String: &text})
+	idFact, _ := decision.NewFact("resource.id", decision.FactCategoryResource, idValue, provenance)
+	chainFact, _ := recordFacts.Get("resource.chain")
+	hiddenValue := recordValue(t, []recordTestField{{"payload", []byte("secret")}})
+	hiddenFact, _ := decision.NewFact("resource.hidden", decision.FactCategoryResource, hiddenValue, provenance)
+	facts, _ := decision.NewFactSet([]decision.Fact{idFact, chainFact, hiddenFact})
+
+	view, err := schema.FactsForProvider(facts, "mail/plugin.other.reader")
+	if err != nil {
+		t.Fatalf("FactsForProvider() error = %v", err)
+	}
+
+	if view.Len() != 2 {
+		t.Fatalf("FactsForProvider() = %d facts, want the id and the filtered chain", view.Len())
+	}
+
+	if id, _ := view.Get("resource.id"); id.ID() != "resource.id" {
+		t.Fatal("unchanged fact before the filtered records was lost")
+	}
+
+	chain, _ := view.Get("resource.chain")
+	records, _ := chain.Value().Records()
+
+	if fields := records.Records()[0].Fields(); len(fields) != 1 || fields[0].Name() != "sequence" {
+		t.Fatalf("filtered chain fields = %#v", fields)
+	}
+
+	if _, exists := view.Get("resource.hidden"); exists {
+		t.Fatal("a records fact without any visible field reached the provider")
+	}
+}
+
+// chainRecordSchema returns the record schema of one records fact schema.
+func chainRecordSchema(t *testing.T, factSchema registry.FactSchema) *registry.RecordSchema {
+	t.Helper()
+
+	recordSchema, exists := factSchema.RecordSchema()
+	if !exists {
+		t.Fatal("records fact schema has no record schema")
+	}
+
+	return &recordSchema
+}

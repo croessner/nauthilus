@@ -2527,7 +2527,7 @@ func validateCompiledFact(definition registry.FactSchema, fact decision.Fact) er
 		return fmt.Errorf("value kind %q does not match %q", fact.Value().Kind(), definition.Kind())
 	}
 
-	if !slices.Contains(definition.AllowedSources(), fact.Provenance().Source()) {
+	if !definition.AllowsSource(fact.Provenance().Source()) {
 		return fmt.Errorf("source %q is not allowed", fact.Provenance().Source())
 	}
 
@@ -2564,7 +2564,7 @@ func validateCompiledFactBounds(definition registry.FactSchema, value decision.V
 			return fmt.Errorf("records fact has no closed record schema")
 		}
 
-		if _, err := normalizeRecordValue(recordSchema, value); err != nil {
+		if _, _, err := normalizeRecordValue(recordSchema, value); err != nil {
 			return err
 		}
 	}
