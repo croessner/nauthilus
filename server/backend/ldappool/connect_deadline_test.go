@@ -81,7 +81,7 @@ func TestConnectEstablishesAConnectionWithinTheDeadline(t *testing.T) {
 		t.Fatalf("net.Listen() error = %v", err)
 	}
 
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	accepted := make(chan net.Conn, 1)
 

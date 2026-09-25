@@ -59,6 +59,7 @@ func TestRequestIdleConnectionsNeverWaitsForALockedSlot(t *testing.T) {
 	defer mocks[0].mutex.Unlock()
 
 	start := time.Now()
+
 	pool.RequestIdleConnections(false)
 
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {

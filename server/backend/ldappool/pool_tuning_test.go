@@ -43,14 +43,7 @@ func TestPoolConnectionsCarryTheConfiguredTuning(t *testing.T) {
 	conf, _ := buildLDAPPoolConnections(ldapPoolLayout{name: "list-account-lookup", poolSize: 2}, source)
 
 	for index, connection := range conf {
-		if connection.GetSearchTimeout() != 60*time.Second || connection.GetBindTimeout() != 2*time.Second ||
-			connection.GetModifyTimeout() != 3*time.Second || connection.GetSearchSizeLimit() != 200 ||
-			connection.GetSearchTimeLimit() != 2*time.Second || connection.GetRetryMax() != 4 ||
-			connection.GetRetryBase() != 300*time.Millisecond || connection.GetCBFailureThreshold() != 7 ||
-			connection.GetHealthCheckInterval() != 20*time.Second || connection.GetNegativeCacheTTL() != 45*time.Second ||
-			!connection.GetIncludeRawResult() {
-			t.Fatalf("connection %d lost the pool tuning: %+v", index, connection)
-		}
+		assertPoolConnectionTuning(t, index, connection)
 
 		if connection.PoolName != "list-account-lookup" || connection.ServerURIs[0] != poolConfig.ServerURIs[0] {
 			t.Fatalf("connection %d has identity %q/%v", index, connection.PoolName, connection.ServerURIs)
@@ -63,5 +56,29 @@ func TestPoolConnectionsCarryTheConfiguredTuning(t *testing.T) {
 
 	if ldapOperationTimeout(&config.LDAPConf{}) != ldapDefaultOperationTimeout {
 		t.Fatal("ldapOperationTimeout() must fall back to the bounded default")
+	}
+}
+
+// assertPoolConnectionTuning checks that one pool connection kept every tuned value of the pool section.
+func assertPoolConnectionTuning(t *testing.T, index int, connection *config.LDAPConf) {
+	t.Helper()
+
+	got := []any{
+		connection.GetSearchTimeout(), connection.GetBindTimeout(), connection.GetModifyTimeout(),
+		connection.GetSearchSizeLimit(), connection.GetSearchTimeLimit(), connection.GetRetryMax(),
+		connection.GetRetryBase(), connection.GetCBFailureThreshold(), connection.GetHealthCheckInterval(),
+		connection.GetNegativeCacheTTL(), connection.GetIncludeRawResult(),
+	}
+	want := []any{
+		60 * time.Second, 2 * time.Second, 3 * time.Second,
+		200, 2 * time.Second, 4,
+		300 * time.Millisecond, 7, 20 * time.Second,
+		45 * time.Second, true,
+	}
+
+	for position := range want {
+		if got[position] != want[position] {
+			t.Fatalf("connection %d value %d = %v, want %v", index, position, got[position], want[position])
+		}
 	}
 }
