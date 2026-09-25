@@ -262,11 +262,9 @@ func runLDAPWorkerLoop(ctx context.Context, ldapPool ldappool.LDAPPool, poolName
 					)
 					defer span.End()
 
-					if err := ldapPool.SetIdleConnections(cb.idleExpand); err != nil {
-						replyChan <- &bktype.LDAPReply{Err: err}
-
-						return
-					}
+					// Refilling idle connections runs in the background; a request that finds no open slot
+					// connects one itself while borrowing, with a bounded connect.
+					ldapPool.RequestIdleConnections(cb.idleExpand)
 
 					if err := handle(); err != nil {
 						replyChan <- &bktype.LDAPReply{Err: err}

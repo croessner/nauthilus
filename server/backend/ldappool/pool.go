@@ -53,7 +53,11 @@ type LDAPPool interface {
 	GetNumberOfWorkers() int
 
 	// SetIdleConnections configures and manages idle connections in the pool based on the provided bind parameter.
+	// It connects synchronously and is meant for startup.
 	SetIdleConnections(bind bool) error
+
+	// RequestIdleConnections asks a background refill to restore the idle connections without blocking the caller.
+	RequestIdleConnections(bind bool)
 
 	// HandleLookupRequest handles an LDAP lookup request asynchronously.
 	HandleLookupRequest(ldapRequest *bktype.LDAPRequest) error
@@ -96,6 +100,12 @@ type ldapPoolImpl struct {
 
 	// tokens is a counting semaphore limiting concurrent usage to poolSize.
 	tokens chan Token
+
+	// refill carries requests for the background idle-connection refill; it holds at most one pending request.
+	refill chan bool
+
+	// refillStart starts the background refill once.
+	refillStart sync.Once
 
 	cfg config.File
 
@@ -186,6 +196,48 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 	}
 
 	return
+}
+
+// RequestIdleConnections asks the background refill to restore idle connections and returns at once. Workers call it
+// before every request; connecting there used to run every worker through all pool slots under blocking slot locks,
+// so one slot that hung in a connect stalled the whole pool.
+func (l *ldapPoolImpl) RequestIdleConnections(bind bool) {
+	if l.determineOpenConnections() >= l.idlePoolSize {
+		return
+	}
+
+	l.refillStart.Do(func() {
+		l.refill = make(chan bool, 1)
+
+		go l.runIdleRefill()
+	})
+
+	select {
+	case l.refill <- bind:
+	default:
+	}
+}
+
+// runIdleRefill restores idle connections one request at a time until the pool context ends.
+func (l *ldapPoolImpl) runIdleRefill() {
+	for {
+		select {
+		case <-l.ctx.Done():
+			return
+		case bind := <-l.refill:
+			if l.determineOpenConnections() >= l.idlePoolSize {
+				continue
+			}
+
+			if err := l.initializeConnections(bind); err != nil {
+				util.DebugModuleWithCfg(l.ctx, l.cfg, l.logger, definitions.DbgLDAPPool,
+					definitions.LogKeyLDAPPoolName, l.name,
+					definitions.LogKeyMsg, "Idle connection refill incomplete",
+					definitions.LogKeyError, err,
+				)
+			}
+		}
+	}
 }
 
 // HandleLookupRequest processes an LDAP lookup request using a connection pool and manages asynchronous execution.
@@ -626,12 +678,23 @@ func (l *ldapPoolImpl) updateConnectionsStatus() (openConnections int) {
 }
 
 // updateSingleConnectionStatus updates the status of a specific LDAP connection and returns 1 if the connection is usable.
+// A slot that another goroutine holds, or that is borrowed, counts as open and is left alone: the borrower owns
+// its state, and marking it closed made the next borrower reconnect a connection that was still in use.
 func (l *ldapPoolImpl) updateSingleConnectionStatus(index int) int {
-	l.conn[index].GetMutex().Lock()
+	if !l.conn[index].GetMutex().TryLock() {
+		return 1
+	}
 
 	defer l.conn[index].GetMutex().Unlock()
 
-	if l.conn[index].GetState() != definitions.LDAPStateFree || l.conn[index].GetConn() == nil || l.conn[index].GetConn().IsClosing() {
+	switch l.conn[index].GetState() {
+	case definitions.LDAPStateBusy:
+		return 1
+	case definitions.LDAPStateClosed:
+		return 0
+	}
+
+	if l.conn[index].GetConn() == nil || l.conn[index].GetConn().IsClosing() {
 		l.conn[index].SetState(definitions.LDAPStateClosed)
 
 		util.DebugModuleWithCfg(
@@ -700,7 +763,9 @@ func (l *ldapPoolImpl) closeIdleConnections(openConnections int) {
 
 // closeSingleIdleConnection closes a single idle connection at the specified index if it is not in use, returning true if successful.
 func (l *ldapPoolImpl) closeSingleIdleConnection(index int) bool {
-	l.conn[index].GetMutex().Lock()
+	if !l.conn[index].GetMutex().TryLock() {
+		return false
+	}
 
 	defer l.conn[index].GetMutex().Unlock()
 
@@ -775,12 +840,16 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 // It locks the connection, checks its state, tries to connect if closed, and optionally binds based on the provided flag.
 // Returns an error if connection or binding fails.
 func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error {
-	sp := l.startConnectionOpenSpan(index)
-	defer sp.End()
-
-	l.conn[index].GetMutex().Lock()
+	// A contended slot is being borrowed or connected by someone else; skip it instead of waiting behind a
+	// possibly slow connect.
+	if !l.conn[index].GetMutex().TryLock() {
+		return errors.ErrLDAPConnect.WithDetail("slot is in use")
+	}
 
 	defer l.conn[index].GetMutex().Unlock()
+
+	sp := l.startConnectionOpenSpan(index)
+	defer sp.End()
 
 	err := l.openConnectionIfClosed(guid, bind, index, sp)
 	if err != nil {
