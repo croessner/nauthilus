@@ -1,0 +1,96 @@
+// Copyright (C) 2026 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+package collection
+
+import (
+	"sync"
+	"testing"
+
+	"github.com/croessner/nauthilus/v4/server/policy"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
+)
+
+func TestDecisionContextSharesBuiltinsAndIsolatesExtensions(t *testing.T) {
+	first := NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+	second := NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+
+	extension := capturedPolicyAttribute("policy.contract.captured_marker")
+	if err := first.AddAuthnPolicyAttributes(map[string]policyregistry.AttributeDefinition{extension.ID: extension}); err != nil {
+		t.Fatalf("AddAuthnPolicyAttributes() error = %v", err)
+	}
+
+	if _, found := first.AttributeDefinition(extension.ID); !found {
+		t.Fatal("captured extension was not installed")
+	}
+
+	if _, found := second.AttributeDefinition(extension.ID); found {
+		t.Fatal("captured extension leaked into another request context")
+	}
+
+	builtin := capturedPolicyAttribute(policy.AttributeBruteForceTriggered)
+	if err := first.AddAuthnPolicyAttributes(map[string]policyregistry.AttributeDefinition{builtin.ID: builtin}); err == nil {
+		t.Fatal("extension shadowing a builtin definition was accepted")
+	}
+
+	definition, found := first.AttributeDefinition(policy.AttributeBruteForceTriggered)
+	if !found || len(definition.Operations) == 0 || len(definition.Details) == 0 {
+		t.Fatalf("builtin definition = %#v, found %v", definition, found)
+	}
+
+	definition.Operations[0] = "mutated"
+	for key := range definition.Details {
+		delete(definition.Details, key)
+	}
+
+	again, _ := second.AttributeDefinition(policy.AttributeBruteForceTriggered)
+	if again.Operations[0] == "mutated" || len(again.Details) == 0 {
+		t.Fatal("builtin definition changed through a returned copy")
+	}
+}
+
+func TestNewDecisionContextDoesNotRebuildBuiltins(t *testing.T) {
+	_ = NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+
+	allocs := testing.AllocsPerRun(50, func() {
+		_ = NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+	})
+	if allocs > 20 {
+		t.Fatalf("NewDecisionContext() allocations = %.0f, want at most 20", allocs)
+	}
+}
+
+func TestDecisionContextReadsExtensionsWhileTheyAreAdded(t *testing.T) {
+	ctx := NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 200 {
+			_, _ = ctx.AttributeDefinition("policy.contract.concurrent_marker")
+			_, _ = ctx.AttributeDefinition(policy.AttributeBruteForceTriggered)
+		}
+	})
+
+	extension := capturedPolicyAttribute("policy.contract.concurrent_marker")
+	if err := ctx.AddAuthnPolicyAttributes(map[string]policyregistry.AttributeDefinition{extension.ID: extension}); err != nil {
+		t.Fatalf("AddAuthnPolicyAttributes() error = %v", err)
+	}
+
+	wg.Wait()
+}
+
+// capturedPolicyAttribute builds one generation-owned extension definition.
+func capturedPolicyAttribute(id string) policyregistry.AttributeDefinition {
+	return policyregistry.AttributeDefinition{
+		ID:         id,
+		Stage:      policy.StagePreAuth,
+		Operations: []policy.Operation{policy.OperationAuthenticate},
+		Category:   policyregistry.AttributeCategoryEnvironment,
+		Type:       policyregistry.AttributeTypeBool,
+		Source:     policyregistry.SourceLua,
+	}
+}

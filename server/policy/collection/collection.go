@@ -61,12 +61,13 @@ type CheckSelector struct {
 
 // DecisionContext stores request-local facts collected by authentication host adapters.
 type DecisionContext struct {
-	recorder    observability.Recorder
-	report      *report.DecisionReport
-	tracer      monittrace.Tracer
-	definitions map[string]policyregistry.AttributeDefinition
-	mu          sync.Mutex
-	generation  uint64
+	recorder   observability.Recorder
+	report     *report.DecisionReport
+	tracer     monittrace.Tracer
+	builtins   map[string]policyregistry.AttributeDefinition
+	extensions map[string]policyregistry.AttributeDefinition
+	mu         sync.Mutex
+	generation uint64
 }
 
 // NewDecisionContext creates a request-local observation context from builtin host contracts.
@@ -79,23 +80,24 @@ func NewDecisionContext(
 	policyReport.Operation = operation
 
 	return &DecisionContext{
-		recorder:    observability.SafeRecorder(recorder),
-		report:      policyReport,
-		tracer:      observability.NewTracer(),
-		definitions: builtinDefinitions(),
-		generation:  generation,
+		recorder:   observability.SafeRecorder(recorder),
+		report:     policyReport,
+		tracer:     observability.NewTracer(),
+		builtins:   builtinDefinitions(),
+		generation: generation,
 	}
 }
 
-// builtinDefinitions returns the immutable Go-owned host fact contract.
-func builtinDefinitions() map[string]policyregistry.AttributeDefinition {
+// builtinDefinitions returns the immutable Go-owned host fact contract. It is built once per process and shared
+// by every request context; nothing writes to the returned map, and readers receive detached clones.
+var builtinDefinitions = sync.OnceValue(func() map[string]policyregistry.AttributeDefinition {
 	registry, err := policyregistry.NewBuiltinAttributeRegistry()
 	if err != nil {
 		panic(fmt.Sprintf("build builtin policy attribute registry: %v", err))
 	}
 
 	return registry.Snapshot()
-}
+})
 
 // Report returns the mutable request report owned by this context.
 func (c *DecisionContext) Report() *report.DecisionReport {
@@ -115,18 +117,47 @@ func (c *DecisionContext) GenerationID() uint64 {
 	return c.generation
 }
 
-// AttributeDefinition returns one detached builtin host definition.
+// AttributeDefinition returns one detached builtin or captured extension definition.
 func (c *DecisionContext) AttributeDefinition(id string) (policyregistry.AttributeDefinition, bool) {
 	if c == nil {
 		return policyregistry.AttributeDefinition{}, false
 	}
 
-	definition, ok := c.definitions[id]
+	if definition, ok := c.builtins[id]; ok {
+		return policyregistry.CloneDefinition(definition), true
+	}
+
+	c.mu.Lock()
+	definition, ok := c.extensions[id]
+	c.mu.Unlock()
+
 	if !ok {
 		return policyregistry.AttributeDefinition{}, false
 	}
 
 	return policyregistry.CloneDefinition(definition), true
+}
+
+// registeredLocked reports whether id is already a builtin or captured extension definition. The caller holds mu.
+func (c *DecisionContext) registeredLocked(id string) bool {
+	if _, exists := c.builtins[id]; exists {
+		return true
+	}
+
+	_, exists := c.extensions[id]
+
+	return exists
+}
+
+// installExtensionsLocked adds already detached definitions to the request-local extensions. The caller holds mu.
+func (c *DecisionContext) installExtensionsLocked(definitions map[string]policyregistry.AttributeDefinition) {
+	if c.extensions == nil {
+		c.extensions = make(map[string]policyregistry.AttributeDefinition, len(definitions))
+	}
+
+	for id, definition := range definitions {
+		c.extensions[id] = definition
+	}
 }
 
 // AddAuthnPolicyAttributes installs exact generation-owned extension definitions before host execution.
@@ -150,14 +181,12 @@ func (c *DecisionContext) AddAuthnPolicyAttributes(
 	defer c.mu.Unlock()
 
 	for id := range detached {
-		if _, exists := c.definitions[id]; exists {
+		if c.registeredLocked(id) {
 			return fmt.Errorf("captured authn Policy attribute %q is already registered", id)
 		}
 	}
 
-	for id, definition := range detached {
-		c.definitions[id] = definition
-	}
+	c.installExtensionsLocked(detached)
 
 	return nil
 }
@@ -181,21 +210,19 @@ func (c *DecisionContext) AddAuthnLuaFactDeclarations(
 			return fmt.Errorf("duplicate captured authn Lua fact declaration %q", definition.ID)
 		}
 
-		definitions[definition.ID] = definition
+		definitions[definition.ID] = policyregistry.CloneDefinition(definition)
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for id := range definitions {
-		if _, exists := c.definitions[id]; exists {
+		if c.registeredLocked(id) {
 			return fmt.Errorf("captured authn Lua fact declaration %q is already registered", id)
 		}
 	}
 
-	for id, definition := range definitions {
-		c.definitions[id] = policyregistry.CloneDefinition(definition)
-	}
+	c.installExtensionsLocked(definitions)
 
 	return nil
 }
