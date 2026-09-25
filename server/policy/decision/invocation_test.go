@@ -16,6 +16,7 @@
 package decision_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
@@ -124,5 +125,62 @@ func TestFactSetAllIteratesWithoutAllocation(t *testing.T) {
 		}
 	}); allocs != 0 {
 		t.Fatalf("FactSet.All() allocations = %.0f, want 0", allocs)
+	}
+}
+
+func TestFactSetWithAndMergeKeepOrderAndRejectCollisions(t *testing.T) {
+	provenance, err := decision.NewProvenance(decision.FactSourceCaller, "client-a", "request")
+	if err != nil {
+		t.Fatalf("NewProvenance() error = %v", err)
+	}
+
+	text := "value"
+
+	value, err := decision.NewValue(decision.ValueInput{String: &text})
+	if err != nil {
+		t.Fatalf("NewValue() error = %v", err)
+	}
+
+	first, _ := decision.NewFact("input.first", decision.FactCategoryResource, value, provenance)
+	second, _ := decision.NewFact("input.second", decision.FactCategoryResource, value, provenance)
+
+	base, err := decision.NewFactSet([]decision.Fact{first})
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	extra, err := decision.NewFactSet([]decision.Fact{second})
+	if err != nil {
+		t.Fatalf("NewFactSet() error = %v", err)
+	}
+
+	merged, err := decision.MergeFactSets(base, extra)
+	if err != nil {
+		t.Fatalf("MergeFactSets() error = %v", err)
+	}
+
+	if ids := merged.Facts(); len(ids) != 2 || ids[0].ID() != "input.first" || ids[1].ID() != "input.second" {
+		t.Fatalf("MergeFactSets() = %v, want base then extra", ids)
+	}
+
+	if base.Len() != 1 {
+		t.Fatal("MergeFactSets() changed the base set")
+	}
+
+	if _, err := merged.With(first); !errors.Is(err, decision.ErrFactCollision) {
+		t.Fatalf("With() collision error = %v, want ErrFactCollision", err)
+	}
+
+	if _, err := base.With(decision.Fact{}); !errors.Is(err, decision.ErrInvalidFact) {
+		t.Fatalf("With() unconstructed fact error = %v, want ErrInvalidFact", err)
+	}
+
+	empty, _ := decision.NewFactSet(nil)
+	if allocs := testing.AllocsPerRun(100, func() {
+		_, _ = base.With()
+		_, _ = decision.MergeFactSets(base, empty)
+		_, _ = decision.MergeFactSets(empty, base)
+	}); allocs != 0 {
+		t.Fatalf("empty merge allocations = %.0f, want 0", allocs)
 	}
 }

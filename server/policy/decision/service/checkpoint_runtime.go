@@ -443,16 +443,14 @@ func (r *checkpointRuntime) runProviders(
 			return facts, false
 		}
 
-		combined := append(facts.Facts(), levelFacts...)
-
-		owned, err := decision.NewFactSet(combined)
+		owned, err := facts.With(levelFacts...)
 		if err != nil {
 			return facts, false
 		}
 
 		facts = owned
 
-		report.providerFacts, err = decision.NewFactSet(append(report.providerFacts.Facts(), levelFacts...))
+		report.providerFacts, err = report.providerFacts.With(levelFacts...)
 		if err != nil {
 			return facts, false
 		}
@@ -1044,9 +1042,7 @@ func policyMetadata(
 
 // mergeAdmittedFacts adds checkpoint-local host facts without rebuilding caller authority.
 func mergeAdmittedFacts(admitted decision.FactSet, checkpoint decision.FactSet) (decision.FactSet, error) {
-	facts := append(admitted.Facts(), checkpoint.Facts()...)
-
-	return decision.NewFactSet(facts)
+	return decision.MergeFactSets(admitted, checkpoint)
 }
 
 // stringSet indexes exact immutable identities.

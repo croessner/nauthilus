@@ -102,9 +102,7 @@ func collectAuthnSourceFacts(
 		return decision.FactSet{}, fmt.Errorf("collect request-local authn facts: %w", err)
 	}
 
-	facts := append(base.Facts(), additional.Facts()...)
-
-	merged, err := decision.NewFactSet(facts)
+	merged, err := decision.MergeFactSets(base, additional)
 	if err != nil {
 		return decision.FactSet{}, fmt.Errorf("merge request-local authn facts: %w", err)
 	}

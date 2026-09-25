@@ -17,6 +17,7 @@ package decision
 
 import (
 	"iter"
+	"maps"
 	"slices"
 	"strings"
 
@@ -249,9 +250,50 @@ func NewFactSet(input []Fact) (FactSet, error) {
 		facts: make([]Fact, 0, len(input)),
 	}
 
+	if err := result.add(input); err != nil {
+		return FactSet{}, err
+	}
+
+	return result, nil
+}
+
+// MergeFactSets returns the facts of base followed by the facts of extra. It returns one of the inputs unchanged
+// when the other is empty and otherwise validates only the added facts; collisions fail like NewFactSet.
+func MergeFactSets(base FactSet, extra FactSet) (FactSet, error) {
+	if base.Len() == 0 {
+		return extra, nil
+	}
+
+	return base.With(extra.facts...)
+}
+
+// With returns a set holding the facts of s followed by extra. Only the added facts are validated, and s itself is
+// returned when nothing is added; collisions and unconstructed facts fail like NewFactSet.
+func (s FactSet) With(extra ...Fact) (FactSet, error) {
+	if len(extra) == 0 {
+		return s, nil
+	}
+
+	result := FactSet{
+		index: make(map[string]int, len(s.facts)+len(extra)),
+		facts: make([]Fact, 0, len(s.facts)+len(extra)),
+	}
+
+	result.facts = append(result.facts, s.facts...)
+	maps.Copy(result.index, s.index)
+
+	if err := result.add(extra); err != nil {
+		return FactSet{}, err
+	}
+
+	return result, nil
+}
+
+// add validates and appends facts to a set under construction.
+func (s *FactSet) add(input []Fact) error {
 	for _, fact := range input {
 		if !fact.valid() {
-			return FactSet{}, newContractError(
+			return newContractError(
 				ErrInvalidFact,
 				ErrorCodeInvalidFact,
 				"facts",
@@ -259,8 +301,8 @@ func NewFactSet(input []Fact) (FactSet, error) {
 			)
 		}
 
-		if _, exists := result.index[fact.id]; exists {
-			return FactSet{}, newContractError(
+		if _, exists := s.index[fact.id]; exists {
+			return newContractError(
 				ErrFactCollision,
 				ErrorCodeFactCollision,
 				fact.id,
@@ -268,11 +310,11 @@ func NewFactSet(input []Fact) (FactSet, error) {
 			)
 		}
 
-		result.index[fact.id] = len(result.facts)
-		result.facts = append(result.facts, fact)
+		s.index[fact.id] = len(s.facts)
+		s.facts = append(s.facts, fact)
 	}
 
-	return result, nil
+	return nil
 }
 
 // Len returns the number of facts.
