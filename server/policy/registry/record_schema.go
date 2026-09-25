@@ -132,13 +132,6 @@ func (f RecordFieldSchema) VisibleToProvider(providerID string) bool {
 	return len(f.providerVisibility) == 0 || slices.Contains(f.providerVisibility, providerID)
 }
 
-// clone returns a detached field schema.
-func (f RecordFieldSchema) clone() RecordFieldSchema {
-	f.providerVisibility = append([]string(nil), f.providerVisibility...)
-
-	return f
-}
-
 // valid reports whether the field schema satisfies its constructor invariant.
 func (f RecordFieldSchema) valid() bool {
 	_, err := NewRecordFieldSchema(RecordFieldSchemaInput{
@@ -243,7 +236,7 @@ func ownRecordSchemaFields(input []RecordFieldSchema) ([]RecordFieldSchema, int,
 		}
 
 		seen[field.Name()] = struct{}{}
-		fields = append(fields, field.clone())
+		fields = append(fields, field)
 	}
 
 	return fields, required, nil
@@ -259,21 +252,16 @@ func (s RecordSchema) Version() string {
 	return s.version.String()
 }
 
-// Fields returns detached fields in canonical schema order.
+// Fields returns the immutable fields in canonical schema order in a slice owned by the caller.
 func (s RecordSchema) Fields() []RecordFieldSchema {
-	result := make([]RecordFieldSchema, 0, len(s.fields))
-	for _, field := range s.fields {
-		result = append(result, field.clone())
-	}
-
-	return result
+	return slices.Clone(s.fields)
 }
 
 // LookupField resolves one exact local field.
 func (s RecordSchema) LookupField(name string) (RecordFieldSchema, bool) {
 	for _, field := range s.fields {
 		if field.Name() == name {
-			return field.clone(), true
+			return field, true
 		}
 	}
 
@@ -355,13 +343,6 @@ func ValidateRecordSchemaIdentities(definitions []SchemaDefinition) error {
 	}
 
 	return nil
-}
-
-// clone returns a deeply detached record schema.
-func (s RecordSchema) clone() RecordSchema {
-	s.fields = s.Fields()
-
-	return s
 }
 
 // valid reports whether the record schema satisfies its constructor invariant.

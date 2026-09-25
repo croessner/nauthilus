@@ -8,6 +8,8 @@
 package decision
 
 import (
+	"iter"
+	"slices"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
@@ -25,6 +27,7 @@ type RecordFieldValueInput struct {
 }
 
 // RecordFieldValue owns one closed scalar, string-list, bytes, or timestamp value.
+// It is immutable after construction; its slices leave only through copying accessors.
 type RecordFieldValue struct {
 	value Value
 }
@@ -48,7 +51,7 @@ func NewRecordFieldValueFromValue(value Value) (RecordFieldValue, error) {
 		return RecordFieldValue{}, invalidValue("record.field.value", "must use a non-recursive record-field kind")
 	}
 
-	return RecordFieldValue{value: cloneValue(value)}, nil
+	return RecordFieldValue{value: value}, nil
 }
 
 // Kind returns the active field-value kind.
@@ -56,9 +59,9 @@ func (v RecordFieldValue) Kind() ValueKind {
 	return v.value.Kind()
 }
 
-// Value returns a detached strict scalar value.
+// Value returns the immutable strict scalar value.
 func (v RecordFieldValue) Value() Value {
-	return cloneValue(v.value)
+	return v.value
 }
 
 // StringValue returns the active string member.
@@ -106,11 +109,6 @@ func (v RecordFieldValue) valid() bool {
 	return v.value.valid() && v.value.Kind() != ValueKindRecords
 }
 
-// clone returns a detached field value.
-func (v RecordFieldValue) clone() RecordFieldValue {
-	return RecordFieldValue{value: cloneValue(v.value)}
-}
-
 // RecordField is one named field in a schema-bound record.
 type RecordField struct {
 	name  string
@@ -127,7 +125,7 @@ func NewRecordField(name string, value RecordFieldValue) (RecordField, error) {
 		return RecordField{}, invalidValue("record.field.value", "must be a constructed record-field value")
 	}
 
-	return RecordField{name: name, value: value.clone()}, nil
+	return RecordField{name: name, value: value}, nil
 }
 
 // Name returns the exact field name.
@@ -135,9 +133,9 @@ func (f RecordField) Name() string {
 	return f.name
 }
 
-// Value returns a detached field value.
+// Value returns the immutable field value.
 func (f RecordField) Value() RecordFieldValue {
-	return f.value.clone()
+	return f.value
 }
 
 // valid reports whether the field satisfies its constructor invariant.
@@ -145,17 +143,13 @@ func (f RecordField) valid() bool {
 	return identifier.Action(f.name) && f.value.valid()
 }
 
-// clone returns a detached field.
-func (f RecordField) clone() RecordField {
-	return RecordField{name: f.name, value: f.value.clone()}
-}
-
 // Record is one non-empty ordered collection of uniquely named fields.
+// It is immutable after construction, so copies share the field storage.
 type Record struct {
 	fields []RecordField
 }
 
-// NewRecord constructs and deeply owns one record without changing field order.
+// NewRecord constructs and owns one record without changing field order.
 func NewRecord(fields []RecordField) (Record, error) {
 	if len(fields) == 0 {
 		return Record{}, invalidValue("record.fields", "must contain at least one field")
@@ -174,71 +168,68 @@ func NewRecord(fields []RecordField) (Record, error) {
 		}
 
 		seen[field.Name()] = struct{}{}
-		owned = append(owned, field.clone())
+		owned = append(owned, field)
 	}
 
 	return Record{fields: owned}, nil
 }
 
-// Fields returns detached fields in logical order.
+// Fields returns the fields in logical order in a slice owned by the caller.
 func (r Record) Fields() []RecordField {
-	return cloneRecordFields(r.fields)
+	return slices.Clone(r.fields)
 }
 
-// valid reports whether the record satisfies its constructor invariant.
+// Len returns the number of fields.
+func (r Record) Len() int {
+	return len(r.fields)
+}
+
+// All yields the immutable fields in logical order without copying them.
+func (r Record) All() iter.Seq2[int, RecordField] {
+	return slices.All(r.fields)
+}
+
+// valid reports whether the record was built by NewRecord, the only constructor that sets fields.
 func (r Record) valid() bool {
-	if len(r.fields) == 0 {
-		return false
-	}
-
-	seen := make(map[string]struct{}, len(r.fields))
-	for _, field := range r.fields {
-		if !field.valid() {
-			return false
-		}
-
-		if _, exists := seen[field.Name()]; exists {
-			return false
-		}
-
-		seen[field.Name()] = struct{}{}
-	}
-
-	return true
-}
-
-// clone returns a deeply detached record.
-func (r Record) clone() Record {
-	return Record{fields: cloneRecordFields(r.fields)}
+	return len(r.fields) > 0
 }
 
 // RecordList is one ordered, possibly empty correlated resource collection.
+// It is immutable after construction, so copies share the record storage.
 type RecordList struct {
 	records []Record
 }
 
-// NewRecordList constructs and deeply owns one ordered record list.
+// NewRecordList constructs and owns one ordered record list.
 func NewRecordList(records []Record) (RecordList, error) {
-	owned := make([]Record, 0, len(records))
 	for _, record := range records {
 		if !record.valid() {
 			return RecordList{}, invalidValue("records", "must contain constructed non-empty records")
 		}
-
-		owned = append(owned, record.clone())
 	}
+
+	owned := make([]Record, len(records))
+	copy(owned, records)
 
 	return RecordList{records: owned}, nil
 }
 
-// Records returns detached records in logical order.
+// Records returns the records in logical order in a slice owned by the caller.
 func (l RecordList) Records() []Record {
-	result := make([]Record, 0, len(l.records))
-	for _, record := range l.records {
-		result = append(result, record.clone())
-	}
+	result := make([]Record, len(l.records))
+	copy(result, l.records)
 
 	return result
+}
+
+// Len returns the number of records.
+func (l RecordList) Len() int {
+	return len(l.records)
+}
+
+// All yields the immutable records in logical order without copying them.
+func (l RecordList) All() iter.Seq2[int, Record] {
+	return slices.All(l.records)
 }
 
 // valid reports whether every record satisfies its constructor invariant.
@@ -254,21 +245,4 @@ func (l RecordList) valid() bool {
 	}
 
 	return true
-}
-
-// clone returns a deeply detached record list.
-func (l RecordList) clone() RecordList {
-	records, _ := NewRecordList(l.records)
-
-	return records
-}
-
-// cloneRecordFields deeply copies ordered record fields.
-func cloneRecordFields(fields []RecordField) []RecordField {
-	result := make([]RecordField, 0, len(fields))
-	for _, field := range fields {
-		result = append(result, field.clone())
-	}
-
-	return result
 }

@@ -102,7 +102,7 @@ func NewFactSchema(input FactSchemaInput) (FactSchema, error) {
 	var recordSchema *RecordSchema
 
 	if input.RecordSchema != nil {
-		owned := input.RecordSchema.clone()
+		owned := *input.RecordSchema
 		recordSchema = &owned
 	}
 
@@ -127,6 +127,11 @@ func (f FactSchema) ID() string {
 // AllowedSources returns a detached source allowlist.
 func (f FactSchema) AllowedSources() []decision.FactSource {
 	return append([]decision.FactSource(nil), f.allowedSources...)
+}
+
+// AllowsSource reports whether the source is in the allowlist without copying it.
+func (f FactSchema) AllowsSource(source decision.FactSource) bool {
+	return slices.Contains(f.allowedSources, source)
 }
 
 // Category returns the required fact category.
@@ -165,16 +170,12 @@ func (f FactSchema) RecordSchema() (RecordSchema, bool) {
 		return RecordSchema{}, false
 	}
 
-	return f.recordSchema.clone(), true
+	return *f.recordSchema, true
 }
 
 // clone returns a detached immutable fact schema value.
 func (f FactSchema) clone() FactSchema {
 	f.allowedSources = append([]decision.FactSource(nil), f.allowedSources...)
-	if f.recordSchema != nil {
-		owned := f.recordSchema.clone()
-		f.recordSchema = &owned
-	}
 
 	return f
 }

@@ -89,13 +89,13 @@ func (o ProviderFactOutput) RecordSchema() *RecordSchema {
 	return cloneOptionalRecordSchema(o.recordSchema)
 }
 
-// cloneOptionalRecordSchema preserves absent metadata and deeply owns a supplied schema.
+// cloneOptionalRecordSchema preserves absent metadata and copies the immutable schema value.
 func cloneOptionalRecordSchema(schema *RecordSchema) *RecordSchema {
 	if schema == nil {
 		return nil
 	}
 
-	owned := schema.clone()
+	owned := *schema
 
 	return &owned
 }

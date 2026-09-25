@@ -71,6 +71,63 @@ func TestRecordValueDeepCopiesEveryMutableMember(t *testing.T) {
 	}
 }
 
+func TestRecordSlicesStayOwnedWhileRecordsShareStorage(t *testing.T) {
+	first := mustTextRecord(t, "name", "first")
+	second := mustTextRecord(t, "name", "second")
+	input := []Record{first}
+
+	records, err := NewRecordList(input)
+	if err != nil {
+		t.Fatalf("NewRecordList() error = %v", err)
+	}
+
+	input[0] = second
+
+	returned := records.Records()
+	returned[0] = second
+
+	fields := records.Records()[0].Fields()
+	fields[0] = second.Fields()[0]
+
+	got, _ := records.Records()[0].Fields()[0].Value().StringValue()
+	if got != "first" {
+		t.Fatalf("record list value = %q after mutating caller slices, want first", got)
+	}
+
+	value, err := NewValue(ValueInput{Records: &records})
+	if err != nil {
+		t.Fatalf("NewValue(records) error = %v", err)
+	}
+
+	if allocs := testing.AllocsPerRun(20, func() { _, _ = value.Records() }); allocs != 0 {
+		t.Fatalf("Value.Records() allocations = %.0f, want 0 for an immutable list", allocs)
+	}
+
+	if allocs := testing.AllocsPerRun(20, func() { recordSliceSink = records.Records() }); allocs != 1 {
+		t.Fatalf("RecordList.Records() allocations = %.0f, want only the returned slice", allocs)
+	}
+}
+
+// recordSliceSink keeps returned slices on the heap for allocation checks.
+var recordSliceSink []Record
+
+// mustTextRecord builds one single-field text record.
+func mustTextRecord(t *testing.T, name, text string) Record {
+	t.Helper()
+
+	value, err := NewRecordFieldValue(RecordFieldValueInput{String: &text})
+	if err != nil {
+		t.Fatalf("NewRecordFieldValue() error = %v", err)
+	}
+
+	record, err := NewRecord([]RecordField{mustRecordField(t, name, value)})
+	if err != nil {
+		t.Fatalf("NewRecord() error = %v", err)
+	}
+
+	return record
+}
+
 func TestRecordRejectsDuplicateFieldsAndRecursion(t *testing.T) {
 	text := "value"
 

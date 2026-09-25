@@ -94,6 +94,7 @@ type ValueInput struct {
 }
 
 // Value is a deeply owned strict one-of policy value.
+// It is immutable after construction; its slices leave only through copying accessors.
 type Value struct {
 	stringValue string
 	strings     []string
@@ -132,7 +133,7 @@ func NewValue(input ValueInput) (Value, error) {
 			return Value{}, invalidValue("value.records", "must be a constructed record list")
 		}
 
-		return Value{kind: ValueKindRecords, records: input.Records.clone()}, nil
+		return Value{kind: ValueKindRecords, records: *input.Records}, nil
 	default:
 		return Value{}, invalidValue("value", "must contain exactly one active kind")
 	}
@@ -196,13 +197,13 @@ func (v Value) Timestamp() (time.Time, bool) {
 	return v.timestamp, v.kind == ValueKindTimestamp
 }
 
-// Records returns a deeply detached record list when active.
+// Records returns the immutable record list when active.
 func (v Value) Records() (RecordList, bool) {
 	if v.kind != ValueKindRecords {
 		return RecordList{}, false
 	}
 
-	return v.records.clone(), true
+	return v.records, true
 }
 
 // Any returns a detached member in the closed policy-value vocabulary.
@@ -223,7 +224,7 @@ func (v Value) Any() (any, bool) {
 	case ValueKindTimestamp:
 		return v.timestamp, true
 	case ValueKindRecords:
-		return v.records.clone(), true
+		return v.records, true
 	default:
 		return nil, false
 	}
@@ -323,20 +324,6 @@ func activeValueMembers(input ValueInput) int {
 	}
 
 	return count
-}
-
-// cloneValue deeply copies every mutable strict-value branch.
-func cloneValue(input Value) Value {
-	switch input.kind {
-	case ValueKindStrings:
-		input.strings = append([]string(nil), input.strings...)
-	case ValueKindBytes:
-		input.bytes = append([]byte{}, input.bytes...)
-	case ValueKindRecords:
-		input.records = input.records.clone()
-	}
-
-	return input
 }
 
 // newStringValue validates UTF-8 text before construction.
