@@ -16,6 +16,7 @@
 package health
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,7 +24,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -162,4 +166,47 @@ func assertHealthzCheckStatus(t *testing.T, result HealthzResult, name string, w
 	if check.Status != want {
 		t.Fatalf("expected %s status %q, got %q", name, want, check.Status)
 	}
+}
+
+func TestReadinessCheckFailsWhileLDAPWorkersStopTakingRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core.InitPassDBResultPool()
+	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
+
+	previous := ldapQueueStallThreshold
+	ldapQueueStallThreshold = 0
+
+	t.Cleanup(func() { ldapQueueStallThreshold = previous })
+
+	const pool = "healthz-stall-test"
+
+	priorityqueue.LDAPQueue.AddPoolName(pool)
+	priorityqueue.LDAPQueue.Push(&bktype.LDAPRequest{
+		PoolName: pool, LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: context.Background(),
+	}, 1)
+
+	t.Cleanup(func() { _ = priorityqueue.LDAPQueue.Pop(pool) })
+
+	time.Sleep(time.Millisecond)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+
+	ReadinessCheck(ctx, HealthzDeps{
+		Cfg:         readinessInformationalConfig(t),
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		BackendName: "healthz-test",
+	})
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503 for a stalled LDAP queue, got %d", recorder.Code)
+	}
+
+	var result HealthzResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	assertHealthzCheckStatus(t, result, "ldap_queue", healthzStatusDown)
 }

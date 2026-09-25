@@ -196,3 +196,37 @@ func TestLuaQueuePopWithContextReturnsNilOnCancel(t *testing.T) {
 		t.Fatalf("expected nil request, got %#v", got)
 	}
 }
+
+func TestStalledPoolsReportsOnlyQueuesWithoutWorkerProgress(t *testing.T) {
+	queue := NewLDAPRequestQueue(slog.Default())
+	queue.AddPoolName("busy")
+	queue.AddPoolName("idle")
+
+	queue.Push(newLDAPRoutingRequest("busy"), 1)
+	queue.Push(newLDAPRoutingRequest("busy"), 1)
+
+	now := time.Now()
+	if stalled := queue.core.stalledPools(30*time.Second, now); len(stalled) != 0 {
+		t.Fatalf("stalledPools() = %v right after the push, want none", stalled)
+	}
+
+	if stalled := queue.core.stalledPools(30*time.Second, now.Add(31*time.Second)); len(stalled) != 1 || stalled[0] != "busy" {
+		t.Fatalf("stalledPools() = %v after 31 s without a pop, want [busy]", stalled)
+	}
+
+	if queue.Pop("busy") == nil {
+		t.Fatal("Pop() returned no request")
+	}
+
+	if stalled := queue.core.stalledPools(30*time.Second, time.Now().Add(29*time.Second)); len(stalled) != 0 {
+		t.Fatalf("stalledPools() = %v after a pop, want none", stalled)
+	}
+
+	if queue.Pop("busy") == nil {
+		t.Fatal("Pop() returned no request")
+	}
+
+	if stalled := queue.core.stalledPools(30*time.Second, time.Now().Add(time.Hour)); len(stalled) != 0 {
+		t.Fatalf("stalledPools() = %v for empty queues, want none", stalled)
+	}
+}

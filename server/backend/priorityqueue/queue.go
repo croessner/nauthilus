@@ -20,6 +20,7 @@ import (
 	"container/heap"
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -254,6 +255,9 @@ type ldapRequestPool[T any] struct {
 	queue    ldapPriorityQueueHeap[T]
 	notEmpty *sync.Cond
 	notify   chan struct{}
+
+	// lastProgress is the last time a worker took a request from this pool, or the time the pool became non-empty.
+	lastProgress time.Time
 }
 
 type ldapPriorityQueueCore[T any] struct {
@@ -581,6 +585,10 @@ func (q *ldapPriorityQueueCore[T]) push(poolName string, request *T, priority in
 		InsertTime: time.Now(),
 	}
 
+	if p.queue.Len() == 0 {
+		p.lastProgress = item.InsertTime
+	}
+
 	heap.Push(&p.queue, item)
 	q.updateDepth(poolName, p)
 	p.notEmpty.Signal()
@@ -658,6 +666,8 @@ func (q *ldapPriorityQueueCore[T]) ensurePoolLocked(poolName string) *ldapReques
 // popAvailableLocked pops one ready request while the core mutex is held.
 func (q *ldapPriorityQueueCore[T]) popAvailableLocked(poolName string, p *ldapRequestPool[T]) (*T, bool) {
 	item := heap.Pop(&p.queue).(*ldapPriorityQueueItem[T])
+	p.lastProgress = time.Now()
+
 	if q.requestCanceled(item.Request) {
 		q.dropRequest(poolName, item.Request)
 		q.updateDepth(poolName, p)
@@ -893,6 +903,36 @@ func (q *LuaRequestQueue) PopWithContext(ctx context.Context, backendName string
 
 		return item.Request
 	}
+}
+
+// StalledPools returns the lookup pools that hold requests although no worker took one for longer than threshold.
+func (q *LDAPRequestQueue) StalledPools(threshold time.Duration) []string {
+	return q.core.stalledPools(threshold, time.Now())
+}
+
+// StalledPools returns the auth pools that hold requests although no worker took one for longer than threshold.
+func (q *LDAPAuthRequestQueue) StalledPools(threshold time.Duration) []string {
+	return q.core.stalledPools(threshold, time.Now())
+}
+
+// stalledPools lists pools with queued requests and no worker progress within threshold, in name order. Workers
+// that take requests at any rate, including requests that expired in the queue, count as progress; only a pool whose
+// workers stopped taking requests is reported.
+func (q *ldapPriorityQueueCore[T]) stalledPools(threshold time.Duration, now time.Time) []string {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	var stalled []string
+
+	for name, p := range q.pools {
+		if p.queue.Len() > 0 && now.Sub(p.lastProgress) > threshold {
+			stalled = append(stalled, name)
+		}
+	}
+
+	slices.Sort(stalled)
+
+	return stalled
 }
 
 // Global queue instances

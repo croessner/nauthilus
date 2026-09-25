@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/backend/priorityqueue"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -48,6 +49,10 @@ const (
 	healthzLDAPConfigNone = "ldap config not available"
 	healthzRedisClientNil = "redis client not configured"
 )
+
+// ldapQueueStallThreshold is how long queued LDAP requests may wait without any worker taking one before the pod
+// reports not ready.
+var ldapQueueStallThreshold = 30 * time.Second
 
 // HealthzDeps describes the exported HealthzDeps type.
 type HealthzDeps struct {
@@ -96,6 +101,7 @@ func ReadinessCheck(ctx *gin.Context, deps HealthzDeps) {
 	checkTestBackend(deps, result)
 	checkRedis(deps, result)
 	checkLDAP(deps, result)
+	checkLDAPQueueProgress(deps, result)
 
 	statusCode := http.StatusOK
 	if result.Status == healthzStatusDown {
@@ -331,6 +337,38 @@ func checkLDAP(deps HealthzDeps, result *HealthzResult) {
 	}
 
 	checkLDAPTarget(ldapConf, targets[0], result)
+}
+
+// checkLDAPQueueProgress marks the pod not ready while an LDAP pool holds queued requests that no worker takes.
+// Unlike the informational LDAP probe this check decides readiness: a pod whose LDAP workers stopped cannot answer
+// any authentication, even when its cached test login still succeeds.
+func checkLDAPQueueProgress(deps HealthzDeps, result *HealthzResult) {
+	if deps.Cfg == nil || !deps.Cfg.HaveLDAPBackend() {
+		return
+	}
+
+	stalled := make([]string, 0)
+
+	for _, pool := range priorityqueue.LDAPQueue.StalledPools(ldapQueueStallThreshold) {
+		stalled = append(stalled, "lookup:"+pool)
+	}
+
+	for _, pool := range priorityqueue.LDAPAuthQueue.StalledPools(ldapQueueStallThreshold) {
+		stalled = append(stalled, "auth:"+pool)
+	}
+
+	if len(stalled) == 0 {
+		result.Checks["ldap_queue"] = &HealthzCheck{Status: healthzStatusUp}
+
+		return
+	}
+
+	result.Checks["ldap_queue"] = &HealthzCheck{
+		Status: healthzStatusDown,
+		Error:  "LDAP workers stopped taking queued requests",
+		Meta:   map[string]any{"pools": stalled},
+	}
+	result.Status = healthzStatusDown
 }
 
 // healthzLDAPConfig returns the active LDAP config when LDAP health checks apply.
