@@ -129,3 +129,36 @@ func TestStandardAuthFactsProjectsAttributesThatApplyAtALaterCheckpoint(t *testi
 		t.Fatal("the attribute cached as not applying at pre_auth was not projected at auth_decision")
 	}
 }
+
+func TestStandardAuthFactsReusesTheSetWhileNothingChanges(t *testing.T) {
+	execution, policyCtx, target := newStandardAuthFactsExecution(t)
+
+	policyCtx.RecordAttribute(policycollection.AttributeValue{
+		ID: policy.AttributeBruteForceTriggered, Stage: policy.StagePreAuth, Value: true,
+	})
+
+	first, err := execution.StandardAuthFacts(t.Context(), target, string(policy.StagePreAuth))
+	if err != nil {
+		t.Fatalf("StandardAuthFacts() error = %v", err)
+	}
+
+	allocs := testing.AllocsPerRun(20, func() {
+		_, _ = execution.StandardAuthFacts(t.Context(), target, string(policy.StagePreAuth))
+	})
+	if allocs != 0 {
+		t.Fatalf("unchanged StandardAuthFacts() allocations = %.0f, want 0", allocs)
+	}
+
+	policyCtx.RecordAttribute(policycollection.AttributeValue{
+		ID: policy.AttributeTLSSecure, Stage: policy.StagePreAuth, Value: true,
+	})
+
+	second, err := execution.StandardAuthFacts(t.Context(), target, string(policy.StagePreAuth))
+	if err != nil {
+		t.Fatalf("StandardAuthFacts() error = %v", err)
+	}
+
+	if second.Len() <= first.Len() {
+		t.Fatalf("StandardAuthFacts() after a new attribute = %d facts, want more than %d", second.Len(), first.Len())
+	}
+}

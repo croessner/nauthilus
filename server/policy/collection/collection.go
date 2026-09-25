@@ -66,8 +66,9 @@ type DecisionContext struct {
 	tracer     monittrace.Tracer
 	builtins   map[string]policyregistry.AttributeDefinition
 	extensions map[string]policyregistry.AttributeDefinition
-	// revisions records, per attribute ID, the revision in which the attribute was last recorded, so consumers
-	// can reuse work derived from an unchanged attribute.
+	// revisions records, per attribute ID, the revision in which the attribute was last recorded or its
+	// definition installed, so consumers can reuse work derived from an unchanged attribute. revision is the
+	// latest of them and changes whenever any attribute or definition does.
 	revisions  map[string]uint64
 	mu         sync.Mutex
 	generation uint64
@@ -161,6 +162,7 @@ func (c *DecisionContext) installExtensionsLocked(definitions map[string]policyr
 
 	for id, definition := range definitions {
 		c.extensions[id] = definition
+		c.bumpRevisionLocked(id)
 	}
 }
 
@@ -343,17 +345,35 @@ func (c *DecisionContext) recordAttributeLocked(value AttributeValue) {
 		c.report.Attributes = make(map[string]report.AttributeValue)
 	}
 
+	c.bumpRevisionLocked(value.ID)
+	c.report.Attributes[value.ID] = value
+}
+
+// bumpRevisionLocked marks one attribute as changed. The caller holds mu.
+func (c *DecisionContext) bumpRevisionLocked(id string) {
 	if c.revisions == nil {
 		c.revisions = make(map[string]uint64)
 	}
 
 	c.revision++
-	c.revisions[value.ID] = c.revision
-	c.report.Attributes[value.ID] = value
+	c.revisions[id] = c.revision
 }
 
-// AttributeRevision returns the revision in which an attribute was last recorded. A changed revision means the
-// attribute value may have changed; an unchanged revision means it did not.
+// Revision returns the latest attribute or definition revision. An unchanged revision means no attribute value
+// and no definition changed in between.
+func (c *DecisionContext) Revision() uint64 {
+	if c == nil {
+		return 0
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.revision
+}
+
+// AttributeRevision returns the revision in which an attribute was last recorded or its definition installed. A
+// changed revision means the attribute value or definition may have changed; an unchanged revision means it did not.
 func (c *DecisionContext) AttributeRevision(id string) (uint64, bool) {
 	if c == nil {
 		return 0, false

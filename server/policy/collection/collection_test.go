@@ -94,3 +94,33 @@ func capturedPolicyAttribute(id string) policyregistry.AttributeDefinition {
 		Source:     policyregistry.SourceLua,
 	}
 }
+
+func TestDecisionContextRevisionTracksAttributesAndDefinitions(t *testing.T) {
+	ctx := NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+	id := "policy.contract.late_marker"
+
+	ctx.RecordAttribute(AttributeValue{ID: id, Stage: policy.StagePreAuth, Value: true})
+
+	recorded, ok := ctx.AttributeRevision(id)
+	if !ok || recorded == 0 || ctx.Revision() != recorded {
+		t.Fatalf("revision after recording = %d/%d (%v)", recorded, ctx.Revision(), ok)
+	}
+
+	// A definition installed after the value was recorded must invalidate work derived without it.
+	extension := capturedPolicyAttribute(id)
+	if err := ctx.AddAuthnPolicyAttributes(map[string]policyregistry.AttributeDefinition{extension.ID: extension}); err != nil {
+		t.Fatalf("AddAuthnPolicyAttributes() error = %v", err)
+	}
+
+	installed, _ := ctx.AttributeRevision(id)
+	if installed <= recorded || ctx.Revision() != installed {
+		t.Fatalf("revision after installing the definition = %d/%d, want above %d", installed, ctx.Revision(), recorded)
+	}
+
+	ctx.RecordAttribute(AttributeValue{ID: policy.AttributeBruteForceTriggered, Stage: policy.StagePreAuth, Value: true})
+
+	if unchanged, _ := ctx.AttributeRevision(id); unchanged != installed || ctx.Revision() <= installed {
+		t.Fatalf("another attribute changed revision %d to %d or left the context revision at %d",
+			installed, unchanged, ctx.Revision())
+	}
+}

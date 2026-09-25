@@ -49,6 +49,12 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 		return decision.NewFactSet(nil)
 	}
 
+	// Read the revision before the attributes: a concurrent update then only makes the cached set look stale.
+	revision := policyCtx.Revision()
+	if cached, ok := e.cachedStandardAuthFacts(checkpoint, revision); ok {
+		return cached, nil
+	}
+
 	policyReport := policyCtx.Report()
 
 	attributeIDs := make([]string, 0, len(policyReport.Attributes))
@@ -68,7 +74,46 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 		facts = append(facts, projected...)
 	}
 
-	return decision.NewFactSet(facts)
+	result, err := decision.NewFactSet(facts)
+	if err != nil {
+		return decision.FactSet{}, err
+	}
+
+	e.storeStandardAuthFacts(checkpoint, revision, result)
+
+	return result, nil
+}
+
+// authnStandardFacts is the complete standard auth fact set of one checkpoint for the context revision it was
+// built in.
+type authnStandardFacts struct {
+	facts    decision.FactSet
+	revision uint64
+}
+
+// cachedStandardAuthFacts returns the immutable set built for checkpoint while no attribute or definition changed.
+func (e *authnCandidateExecution) cachedStandardAuthFacts(checkpoint string, revision uint64) (decision.FactSet, bool) {
+	e.projectionMu.Lock()
+	defer e.projectionMu.Unlock()
+
+	cached, ok := e.standardFacts[checkpoint]
+	if !ok || cached.revision != revision {
+		return decision.FactSet{}, false
+	}
+
+	return cached.facts, true
+}
+
+// storeStandardAuthFacts keeps the set built for checkpoint at revision.
+func (e *authnCandidateExecution) storeStandardAuthFacts(checkpoint string, revision uint64, facts decision.FactSet) {
+	e.projectionMu.Lock()
+	defer e.projectionMu.Unlock()
+
+	if e.standardFacts == nil {
+		e.standardFacts = make(map[string]authnStandardFacts, 2)
+	}
+
+	e.standardFacts[checkpoint] = authnStandardFacts{facts: facts, revision: revision}
 }
 
 // authnAttributeProjection is the cached projection of one attribute for the revision it was recorded in. The
