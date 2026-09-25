@@ -280,10 +280,8 @@ func authnNativeEffectFacts(execution policyruntime.EffectExecution) []pluginapi
 
 // authnNativePublicFacts shares only detached Lua/native evidence with public plugins.
 func authnNativePublicFacts(input decision.FactSet) []pluginapi.PolicyFact {
-	facts := input.Facts()
-
-	result := make([]pluginapi.PolicyFact, 0, len(facts))
-	for _, fact := range facts {
+	result := make([]pluginapi.PolicyFact, 0, input.Len())
+	for fact := range input.All() {
 		source := fact.Provenance().Source()
 		if source != decision.FactSourceLua && source != decision.FactSourcePlugin {
 			continue
