@@ -283,14 +283,9 @@ func (r *checkpointRuntime) Evaluate(ctx context.Context, input checkpointEvalua
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
 
-	facts, err := mergeAdmittedFacts(input.facts, checkpointFacts)
-	if err != nil {
-		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
-	}
-
 	retained := retainedCheckpointProviderFacts(input.providerFacts, target, checkpoint)
 
-	facts, err = mergeAdmittedFacts(facts, retained)
+	facts, err := mergeAdmittedFacts(input.facts, checkpointFacts, retained)
 	if err != nil {
 		return r.indeterminate(input, target, decisionID, requestID, decision.StatusCodeEvaluationFailed, runtimeReport{}), nil
 	}
@@ -461,6 +456,7 @@ func (r *checkpointRuntime) runProviders(
 
 // retainedCheckpointProviderFacts expires outputs whose owner is scheduled again.
 // Fresh execution (including skips and failures) must never inherit stale evidence.
+// The immutable previous set is returned unchanged when nothing expires.
 func retainedCheckpointProviderFacts(
 	previous decision.FactSet,
 	target policyruntime.CompiledTarget,
@@ -479,7 +475,19 @@ func retainedCheckpointProviderFacts(
 		}
 	}
 
-	facts := make([]decision.Fact, 0, previous.Len())
+	expiring := 0
+
+	for fact := range previous.All() {
+		if _, expires := refreshed[fact.ID()]; expires {
+			expiring++
+		}
+	}
+
+	if expiring == 0 {
+		return previous
+	}
+
+	facts := make([]decision.Fact, 0, previous.Len()-expiring)
 	for fact := range previous.All() {
 		if _, expires := refreshed[fact.ID()]; !expires {
 			facts = append(facts, fact)
@@ -1041,8 +1049,8 @@ func policyMetadata(
 }
 
 // mergeAdmittedFacts adds checkpoint-local host facts without rebuilding caller authority.
-func mergeAdmittedFacts(admitted decision.FactSet, checkpoint decision.FactSet) (decision.FactSet, error) {
-	return decision.MergeFactSets(admitted, checkpoint)
+func mergeAdmittedFacts(admitted decision.FactSet, checkpoint ...decision.FactSet) (decision.FactSet, error) {
+	return decision.MergeFactSets(admitted, checkpoint...)
 }
 
 // stringSet indexes exact immutable identities.

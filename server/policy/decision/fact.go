@@ -257,14 +257,44 @@ func NewFactSet(input []Fact) (FactSet, error) {
 	return result, nil
 }
 
-// MergeFactSets returns the facts of base followed by the facts of extra. It returns one of the inputs unchanged
-// when the other is empty and otherwise validates only the added facts; collisions fail like NewFactSet.
-func MergeFactSets(base FactSet, extra FactSet) (FactSet, error) {
-	if base.Len() == 0 {
-		return extra, nil
+// MergeFactSets returns the facts of base followed by the facts of every extra set in order. It returns an input
+// unchanged when it is the only non-empty one and otherwise builds the result once, validating only the added
+// facts; collisions fail like NewFactSet.
+func MergeFactSets(base FactSet, extras ...FactSet) (FactSet, error) {
+	added := 0
+	nonEmpty := 0
+	only := base
+
+	for _, extra := range extras {
+		if extra.Len() > 0 {
+			added += extra.Len()
+			nonEmpty++
+			only = extra
+		}
 	}
 
-	return base.With(extra.facts...)
+	switch {
+	case added == 0:
+		return base, nil
+	case base.Len() == 0 && nonEmpty == 1:
+		return only, nil
+	}
+
+	result := FactSet{
+		index: make(map[string]int, len(base.facts)+added),
+		facts: make([]Fact, 0, len(base.facts)+added),
+	}
+
+	result.facts = append(result.facts, base.facts...)
+	maps.Copy(result.index, base.index)
+
+	for _, extra := range extras {
+		if err := result.add(extra.facts); err != nil {
+			return FactSet{}, err
+		}
+	}
+
+	return result, nil
 }
 
 // With returns a set holding the facts of s followed by extra. Only the added facts are validated, and s itself is

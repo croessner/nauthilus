@@ -173,6 +173,44 @@ func TestFactSetWithAndMergeKeepOrderAndRejectCollisions(t *testing.T) {
 	}
 
 	assertEmptyMergeDoesNotAllocate(t, base)
+	assertMultiMergeKeepsOrderAndCollisions(t, base, extra, value, provenance)
+}
+
+// assertMultiMergeKeepsOrderAndCollisions checks the variadic merge against sequential merges.
+func assertMultiMergeKeepsOrderAndCollisions(
+	t *testing.T,
+	base decision.FactSet,
+	extra decision.FactSet,
+	value decision.Value,
+	provenance decision.Provenance,
+) {
+	t.Helper()
+
+	third, _ := decision.NewFact("input.third", decision.FactCategoryResource, value, provenance)
+	last, _ := decision.NewFactSet([]decision.Fact{third})
+	empty, _ := decision.NewFactSet(nil)
+
+	merged, err := decision.MergeFactSets(base, empty, extra, last)
+	if err != nil {
+		t.Fatalf("MergeFactSets(three sets) error = %v", err)
+	}
+
+	var ids []string
+	for fact := range merged.All() {
+		ids = append(ids, fact.ID())
+	}
+
+	if len(ids) != 3 || ids[0] != "input.first" || ids[1] != "input.second" || ids[2] != "input.third" {
+		t.Fatalf("MergeFactSets(three sets) = %v, want base then extras in order", ids)
+	}
+
+	if only, _ := decision.MergeFactSets(empty, empty, last); only.Len() != 1 {
+		t.Fatalf("MergeFactSets(single non-empty extra) = %d facts, want 1", only.Len())
+	}
+
+	if _, err := decision.MergeFactSets(base, extra, extra); !errors.Is(err, decision.ErrFactCollision) {
+		t.Fatalf("MergeFactSets(collision between extras) error = %v, want ErrFactCollision", err)
+	}
 }
 
 // assertEmptyMergeDoesNotAllocate checks that merging with nothing returns an input unchanged.
