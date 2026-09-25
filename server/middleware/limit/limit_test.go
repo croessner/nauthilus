@@ -18,6 +18,8 @@ package limit
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -79,4 +81,48 @@ func TestIPRateLimiterBypassesProbeRoutes(t *testing.T) {
 	}
 
 	assert.Equal(t, http.StatusTooManyRequests, codes["/other"])
+}
+
+func TestLimitCounterNeverAdmitsMoreThanTheMaximum(t *testing.T) {
+	const (
+		maximum = 8
+		callers = 64
+	)
+
+	counter := NewLimitCounter(maximum)
+
+	var (
+		wait     sync.WaitGroup
+		peak     atomic.Int32
+		admitted atomic.Int32
+	)
+
+	for range callers {
+		wait.Go(func() {
+			for range 200 {
+				current, ok := counter.TryAcquire()
+				if !ok {
+					continue
+				}
+
+				admitted.Add(1)
+
+				for {
+					seen := peak.Load()
+					if current <= seen || peak.CompareAndSwap(seen, current) {
+						break
+					}
+				}
+
+				counter.Release()
+			}
+		})
+	}
+
+	wait.Wait()
+
+	if peak.Load() > maximum || admitted.Load() == 0 || counter.CurrentConnections != 0 {
+		t.Fatalf("peak = %d, admitted = %d, left = %d; want peak <= %d and a drained counter",
+			peak.Load(), admitted.Load(), counter.CurrentConnections, maximum)
+	}
 }

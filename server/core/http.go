@@ -61,6 +61,8 @@ type HTTPDeps struct {
 	Redis          rediscli.Client
 	AccountCache   *accountcache.Manager
 	RouteArtifacts *RouteArtifacts
+	// RequestLimit is the concurrency budget shared with the gRPC authority; nil creates an HTTP-only one.
+	RequestLimit *mdlimit.Counter
 }
 
 // DefaultBootstrap wires the existing bootstrapping functions.
@@ -105,13 +107,14 @@ type DefaultRouterComposer struct {
 	redis          rediscli.Client
 	accountCache   *accountcache.Manager
 	routeArtifacts *RouteArtifacts
+	requestLimit   *mdlimit.Counter
 }
 
 // NewDefaultRouterComposer provides the exported NewDefaultRouterComposer function.
 func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
 	return DefaultRouterComposer{
 		cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis,
-		accountCache: deps.AccountCache, routeArtifacts: deps.RouteArtifacts,
+		accountCache: deps.AccountCache, routeArtifacts: deps.RouteArtifacts, requestLimit: deps.RequestLimit,
 	}
 }
 
@@ -139,7 +142,10 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	mw := c.cfg.GetServer().GetMiddlewares()
 
 	if mw.IsLimitEnabled() {
-		limitCounter := mdlimit.NewLimitCounter(c.cfg.GetServer().GetMaxConcurrentRequests())
+		limitCounter := c.requestLimit
+		if limitCounter == nil {
+			limitCounter = mdlimit.NewLimitCounter(c.cfg.GetServer().GetMaxConcurrentRequests())
+		}
 
 		r.Use(limitCounter.MiddlewareWithLogger(c.logger))
 	}

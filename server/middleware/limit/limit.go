@@ -76,12 +76,14 @@ func (lc *Counter) MiddlewareWithLogger(logger *slog.Logger) gin.HandlerFunc {
 			return
 		}
 
-		currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
-		if lc.rejectOverLimit(ctx, currentConnections) {
+		currentConnections, acquired := lc.TryAcquire()
+		if !acquired {
+			lc.rejectOverLimit(ctx, currentConnections)
+
 			return
 		}
 
-		lc.trackRequestStart(ctx)
+		lc.trackRequestStart(ctx, currentConnections)
 		defer lc.finishRequest(ctx, logger)
 
 		ctx.Next()
@@ -99,12 +101,30 @@ func isLimitBypassPath(path string) bool {
 	}
 }
 
-// rejectOverLimit writes the concurrency-limit response when the counter is full.
-func (lc *Counter) rejectOverLimit(ctx *gin.Context, currentConnections int32) bool {
-	if currentConnections < lc.MaxConnections {
-		return false
+// TryAcquire reserves one request slot and returns the number of active requests. It reserves nothing and
+// reports false when the counter is full. The counter may be shared by several transports, so the HTTP API and
+// the gRPC authority draw on one budget for the memory of the same process.
+func (lc *Counter) TryAcquire() (int32, bool) {
+	current := atomic.AddInt32(&lc.CurrentConnections, 1)
+	if current > lc.MaxConnections {
+		atomic.AddInt32(&lc.CurrentConnections, -1)
+
+		return current - 1, false
 	}
 
+	stats.GetMetrics().GetCurrentRequests().Set(float64(current))
+
+	return current, true
+}
+
+// Release frees one slot reserved by TryAcquire.
+func (lc *Counter) Release() {
+	current := atomic.AddInt32(&lc.CurrentConnections, -1)
+	stats.GetMetrics().GetCurrentRequests().Set(float64(current))
+}
+
+// rejectOverLimit writes the concurrency-limit response for a request that found the counter full.
+func (lc *Counter) rejectOverLimit(ctx *gin.Context, currentConnections int32) {
 	ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeConcurrency)
 	ctx.JSON(http.StatusTooManyRequests, gin.H{
 		definitions.LogKeyMsg: "Too many requests",
@@ -113,25 +133,18 @@ func (lc *Counter) rejectOverLimit(ctx *gin.Context, currentConnections int32) b
 		"max":                 lc.MaxConnections,
 	})
 	ctx.Abort()
-
-	return true
 }
 
-// trackRequestStart records request metadata and increments active connection metrics.
-func (lc *Counter) trackRequestStart(ctx *gin.Context) {
+// trackRequestStart records the metadata of a request that holds a slot.
+func (lc *Counter) trackRequestStart(ctx *gin.Context, currentConnections int32) {
 	ctx.Set(definitions.CtxRequestStartTimeKey, time.Now())
-
-	atomic.AddInt32(&lc.CurrentConnections, 1)
-	currentConnections := atomic.LoadInt32(&lc.CurrentConnections)
-
-	stats.GetMetrics().GetCurrentRequests().Set(float64(currentConnections))
 	ctx.Set(definitions.CtxCurrentConnectionsKey, currentConnections)
 	ctx.Set(definitions.CtxMaxConnectionsKey, lc.MaxConnections)
 }
 
 // finishRequest records completion details and decrements active connections.
 func (lc *Counter) finishRequest(ctx *gin.Context, logger *slog.Logger) {
-	atomic.AddInt32(&lc.CurrentConnections, -1)
+	lc.Release()
 
 	canceled := errors.Is(ctx.Request.Context().Err(), context.Canceled)
 	if canceled {

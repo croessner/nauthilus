@@ -45,6 +45,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
+	mdlimit "github.com/croessner/nauthilus/v4/server/middleware/limit"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
@@ -94,6 +95,8 @@ type ServerDeps struct {
 	OIDCValidator        oidcbearer.TokenValidator
 	Listener             net.Listener
 	RouteArtifacts       *core.RouteArtifacts
+	// RequestLimit is the concurrency budget shared with the HTTP API; nil leaves the authority unlimited.
+	RequestLimit *mdlimit.Counter
 }
 
 type grpcAuthorityServerConfigProvider interface {
@@ -223,11 +226,31 @@ func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInte
 		postActionResponseCompletionInterceptor(),
 		requestMetrics,
 		recoveryInterceptor(deps),
+		requestLimitInterceptor(deps.RequestLimit),
 		traceContextInterceptor(),
 		loggingTracingInterceptor(deps),
 		mtlsInterceptor(deps),
 		backchannelAuthInterceptor(deps),
 	)
+}
+
+// requestLimitInterceptor rejects calls with ResourceExhausted while the shared concurrency budget is exhausted.
+// Without it the gRPC authority accepted any number of concurrent calls, and a saturated director drove the
+// process out of memory although the HTTP API was limited. Rejections cost almost nothing, so callers fail fast
+// and can retry instead of queueing inside the server.
+func requestLimitInterceptor(limit *mdlimit.Counter) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if limit == nil {
+			return handler(ctx, req)
+		}
+
+		if _, acquired := limit.TryAcquire(); !acquired {
+			return nil, status.Error(codes.ResourceExhausted, "Too many concurrent requests")
+		}
+		defer limit.Release()
+
+		return handler(ctx, req)
+	}
 }
 
 // postActionResponseCompletionInterceptor opens the gate when the unary chain returns.

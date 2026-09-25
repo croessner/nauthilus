@@ -44,6 +44,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib/redislib"
+	mdlimit "github.com/croessner/nauthilus/v4/server/middleware/limit"
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
@@ -334,6 +335,8 @@ type httpServerRuntime struct {
 	authApplication core.AuthApplicationService
 	signals         core.ServerSignals
 	routeArtifacts  *core.RouteArtifacts
+	// requestLimit is the one concurrency budget of the HTTP API and the gRPC authority; nil when disabled.
+	requestLimit *mdlimit.Counter
 }
 
 type httpSetupCallbacks struct {
@@ -357,6 +360,7 @@ func startHTTPServerWithOptions(ctx context.Context, store *contextStore, option
 		Redis:          runtime.store.redisClient,
 		AccountCache:   runtime.store.accountCache,
 		RouteArtifacts: runtime.routeArtifacts,
+		RequestLimit:   runtime.requestLimit,
 	})
 
 	if err := startGRPCAuthorityForHTTP(runtime.store.server.ctx, runtime, options); err != nil {
@@ -408,7 +412,18 @@ func prepareHTTPServerRuntime(ctx context.Context, store *contextStore) (httpSer
 		authApplication: authApplication,
 		signals:         store.signals,
 		routeArtifacts:  store.routeArtifacts,
+		requestLimit:    newSharedRequestLimit(cfg),
 	}, nil
+}
+
+// newSharedRequestLimit creates the concurrency budget that the HTTP API and the gRPC authority share, because both
+// transports allocate from the memory of the same process. It returns nil when the limit middleware is disabled.
+func newSharedRequestLimit(cfg config.File) *mdlimit.Counter {
+	if !cfg.GetServer().GetMiddlewares().IsLimitEnabled() {
+		return nil
+	}
+
+	return mdlimit.NewLimitCounter(cfg.GetServer().GetMaxConcurrentRequests())
 }
 
 func validateHTTPServerStartStore(store *contextStore) (config.File, config.Environment, *slog.Logger, error) {
@@ -657,6 +672,7 @@ func startGRPCAuthorityForHTTP(
 		RouteArtifacts:       runtime.routeArtifacts,
 		LDAPQueue:            priorityqueue.LDAPQueue,
 		LDAPAuthQueue:        priorityqueue.LDAPAuthQueue,
+		RequestLimit:         runtime.requestLimit,
 	})
 	if err != nil {
 		runtime.store.grpcAuthorityDone = nil
