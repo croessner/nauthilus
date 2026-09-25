@@ -49,16 +49,16 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 		return decision.NewFactSet(nil)
 	}
 
-	// Read the revision before the attributes: a concurrent update then only makes the cached set look stale.
-	revision := policyCtx.Revision()
-	if cached, ok := e.cachedStandardAuthFacts(checkpoint, revision); ok {
+	if cached, ok := e.cachedStandardAuthFacts(policyCtx, checkpoint, policyCtx.Revision()); ok {
 		return cached, nil
 	}
 
-	policyReport := policyCtx.Report()
+	// The snapshot binds every attribute value to the revision it was read in, so a concurrent update can only make
+	// the cached results look stale, never pair a new revision with an old value.
+	snapshot := policyCtx.AttributeSnapshot()
 
-	attributeIDs := make([]string, 0, len(policyReport.Attributes))
-	for attributeID := range policyReport.Attributes {
+	attributeIDs := make([]string, 0, len(snapshot.Attributes))
+	for attributeID := range snapshot.Attributes {
 		attributeIDs = append(attributeIDs, attributeID)
 	}
 
@@ -66,7 +66,7 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 
 	facts := make([]decision.Fact, 0, len(attributeIDs))
 	for _, attributeID := range attributeIDs {
-		projected, err := e.projectedAuthnAttribute(policyCtx, attributeID, policyReport.Attributes, checkpoint)
+		projected, err := e.projectedAuthnAttribute(policyCtx, attributeID, snapshot, checkpoint)
 		if err != nil {
 			return decision.FactSet{}, fmt.Errorf("project authn attribute %s: %w", attributeID, err)
 		}
@@ -79,7 +79,7 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 		return decision.FactSet{}, err
 	}
 
-	e.storeStandardAuthFacts(checkpoint, revision, result)
+	e.storeStandardAuthFacts(checkpoint, snapshot.Revision, result)
 
 	return result, nil
 }
@@ -92,9 +92,23 @@ type authnStandardFacts struct {
 }
 
 // cachedStandardAuthFacts returns the immutable set built for checkpoint while no attribute or definition changed.
-func (e *authnCandidateExecution) cachedStandardAuthFacts(checkpoint string, revision uint64) (decision.FactSet, bool) {
+// It also binds the caches to policyCtx: a replaced decision context restarts its revisions, so every cached
+// projection of the previous context is dropped.
+func (e *authnCandidateExecution) cachedStandardAuthFacts(
+	policyCtx *policycollection.DecisionContext,
+	checkpoint string,
+	revision uint64,
+) (decision.FactSet, bool) {
 	e.projectionMu.Lock()
 	defer e.projectionMu.Unlock()
+
+	if e.projectionContext != policyCtx {
+		e.projectionContext = policyCtx
+		clear(e.projections)
+		clear(e.standardFacts)
+
+		return decision.FactSet{}, false
+	}
 
 	cached, ok := e.standardFacts[checkpoint]
 	if !ok || cached.revision != revision {
@@ -132,12 +146,11 @@ type authnAttributeProjection struct {
 func (e *authnCandidateExecution) projectedAuthnAttribute(
 	policyCtx *policycollection.DecisionContext,
 	attributeID string,
-	attributes map[string]report.AttributeValue,
+	snapshot policycollection.AttributeSnapshot,
 	checkpoint string,
 ) ([]decision.Fact, error) {
-	// Read the revision before the value: a concurrent update then only makes the cache entry look stale.
-	revision, recorded := policyCtx.AttributeRevision(attributeID)
-	attribute := attributes[attributeID]
+	revision, recorded := snapshot.Revisions[attributeID]
+	attribute := snapshot.Attributes[attributeID]
 
 	e.projectionMu.Lock()
 	entry, cached := e.projections[attributeID]

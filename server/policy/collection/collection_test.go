@@ -13,6 +13,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/policy"
 	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/policy/report"
 )
 
 func TestDecisionContextSharesBuiltinsAndIsolatesExtensions(t *testing.T) {
@@ -122,5 +123,39 @@ func TestDecisionContextRevisionTracksAttributesAndDefinitions(t *testing.T) {
 	if unchanged, _ := ctx.AttributeRevision(id); unchanged != installed || ctx.Revision() <= installed {
 		t.Fatalf("another attribute changed revision %d to %d or left the context revision at %d",
 			installed, unchanged, ctx.Revision())
+	}
+}
+
+func TestDecisionContextMarksDetailsWithoutChangingSnapshots(t *testing.T) {
+	ctx := NewDecisionContext(policy.OperationAuthenticate, nil, 1)
+	id := policy.AttributeBruteForceTriggered
+
+	ctx.RecordAttribute(AttributeValue{
+		ID: id, Stage: policy.StagePreAuth, Value: true,
+		Details: map[string]report.DetailValue{"message": {Value: "blocked"}},
+	})
+
+	before := ctx.AttributeSnapshot()
+
+	ctx.MarkAttributeDetailSelected(id, "message")
+
+	after := ctx.AttributeSnapshot()
+
+	if before.Attributes[id].Details["message"].Selected {
+		t.Fatal("marking a detail changed a value taken in an earlier snapshot")
+	}
+
+	if !after.Attributes[id].Details["message"].Selected {
+		t.Fatal("the selected detail was not recorded")
+	}
+
+	if after.Revisions[id] <= before.Revisions[id] || after.Revision != after.Revisions[id] {
+		t.Fatalf("revision after marking = %d/%d, want above %d", after.Revisions[id], after.Revision, before.Revisions[id])
+	}
+
+	ctx.MarkAttributeDetailSelected(id, "message")
+
+	if again := ctx.AttributeSnapshot(); again.Revision != after.Revision {
+		t.Fatal("marking an already selected detail changed the revision")
 	}
 }

@@ -19,6 +19,7 @@ package collection
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -370,6 +371,59 @@ func (c *DecisionContext) Revision() uint64 {
 	defer c.mu.Unlock()
 
 	return c.revision
+}
+
+// AttributeSnapshot is a consistent view of the recorded attributes: the context revision, the attribute values
+// and the revision of every attribute, all taken under one lock. The context never changes a recorded value's
+// Details map in place, so readers may use the values without holding the lock.
+type AttributeSnapshot struct {
+	Attributes map[string]report.AttributeValue
+	Revisions  map[string]uint64
+	Revision   uint64
+}
+
+// AttributeSnapshot returns a consistent copy of the recorded attributes and their revisions.
+func (c *DecisionContext) AttributeSnapshot() AttributeSnapshot {
+	if c == nil {
+		return AttributeSnapshot{}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	snapshot := AttributeSnapshot{Revision: c.revision, Revisions: maps.Clone(c.revisions)}
+	if c.report != nil {
+		snapshot.Attributes = maps.Clone(c.report.Attributes)
+	}
+
+	return snapshot
+}
+
+// MarkAttributeDetailSelected records that a public response detail was selected. The Details map is replaced
+// rather than changed in place, and the attribute gets a new revision like any other recorded change.
+func (c *DecisionContext) MarkAttributeDetailSelected(attributeID string, detailName string) {
+	if c == nil || c.report == nil || attributeID == "" || detailName == "" {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	attribute, exists := c.report.Attributes[attributeID]
+	if !exists || attribute.Details == nil {
+		return
+	}
+
+	detail, exists := attribute.Details[detailName]
+	if !exists || detail.Selected {
+		return
+	}
+
+	detail.Selected = true
+	attribute.Details = maps.Clone(attribute.Details)
+	attribute.Details[detailName] = detail
+
+	c.recordAttributeLocked(attribute)
 }
 
 // AttributeRevision returns the revision in which an attribute was last recorded or its definition installed. A

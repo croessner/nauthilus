@@ -162,3 +162,35 @@ func TestStandardAuthFactsReusesTheSetWhileNothingChanges(t *testing.T) {
 		t.Fatalf("StandardAuthFacts() after a new attribute = %d facts, want more than %d", second.Len(), first.Len())
 	}
 }
+
+func TestStandardAuthFactsDropsCachesWhenTheDecisionContextIsReplaced(t *testing.T) {
+	execution, policyCtx, target := newStandardAuthFactsExecution(t)
+
+	policyCtx.RecordAttribute(policycollection.AttributeValue{
+		ID: policy.AttributeBruteForceTriggered, Stage: policy.StagePreAuth, Value: true,
+	})
+
+	if _, err := execution.StandardAuthFacts(t.Context(), target, string(policy.StagePreAuth)); err != nil {
+		t.Fatalf("StandardAuthFacts() error = %v", err)
+	}
+
+	// A replacement context restarts its revisions and reaches the same revision with a different value.
+	replacement := policycollection.NewDecisionContext(policy.OperationAuthenticate, nil, 0)
+	replacement.RecordAttribute(policycollection.AttributeValue{
+		ID: policy.AttributeBruteForceTriggered, Stage: policy.StagePreAuth, Value: false,
+	})
+	execution.ginCtx.Set(policyCollectionContextKey, replacement)
+
+	if replacement.Revision() != policyCtx.Revision() {
+		t.Fatalf("fixture revisions differ: %d and %d", replacement.Revision(), policyCtx.Revision())
+	}
+
+	facts, err := execution.StandardAuthFacts(t.Context(), target, string(policy.StagePreAuth))
+	if err != nil {
+		t.Fatalf("StandardAuthFacts() error = %v", err)
+	}
+
+	if factBool(t, facts, policy.AuthnFactBruteForceTriggered) {
+		t.Fatal("facts of the replaced decision context were reused")
+	}
+}

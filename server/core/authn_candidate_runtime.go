@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v4/server/policy"
+	policycollection "github.com/croessner/nauthilus/v4/server/policy/collection"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
@@ -79,9 +80,10 @@ type authnCandidateExecution struct {
 
 	// projectionMu guards projections, the per-request cache of projected standard auth attributes, and
 	// standardFacts, the complete standard auth fact set per checkpoint.
-	projectionMu  sync.Mutex
-	projections   map[string]authnAttributeProjection
-	standardFacts map[string]authnStandardFacts
+	projectionMu      sync.Mutex
+	projectionContext *policycollection.DecisionContext
+	projections       map[string]authnAttributeProjection
+	standardFacts     map[string]authnStandardFacts
 }
 
 // prepareAuthnCandidateExecution creates request-local host state after Decision Service admission.
@@ -832,8 +834,8 @@ func (e *authnCandidateExecution) captureAuthnPolicyReport(
 		return
 	}
 
-	policyReport := e.auth.policyReport(e.ginCtx)
-	if policyReport == nil {
+	policyCtx := existingPolicyContext(e.ginCtx)
+	if policyCtx == nil {
 		return
 	}
 
@@ -842,10 +844,10 @@ func (e *authnCandidateExecution) captureAuthnPolicyReport(
 	}
 
 	if checkpoint == string(policy.StageAuthDecision) && final.Stage != policy.StagePreAuth {
-		e.appendDeferredAuthnPreAuthPass(policyReport)
+		e.appendDeferredAuthnPreAuthPass(policyCtx)
 	}
 
-	appendAuthnPolicyReportDecision(policyReport, final)
+	appendAuthnPolicyReportDecision(policyCtx, final)
 }
 
 // deferAuthnPreAuthPassReport waits until authenticate has completed its semantic pre-auth providers.
@@ -859,8 +861,8 @@ func (e *authnCandidateExecution) deferAuthnPreAuthPassReport(
 }
 
 // appendDeferredAuthnPreAuthPass restores the legacy report order before a final auth decision.
-func (e *authnCandidateExecution) appendDeferredAuthnPreAuthPass(policyReport *report.DecisionReport) {
-	for _, selected := range policyReport.Policies {
+func (e *authnCandidateExecution) appendDeferredAuthnPreAuthPass(policyCtx *policycollection.DecisionContext) {
+	for _, selected := range policyCtx.Report().Policies {
 		if selected.Stage == policy.StagePreAuth {
 			return
 		}
@@ -868,21 +870,22 @@ func (e *authnCandidateExecution) appendDeferredAuthnPreAuthPass(policyReport *r
 
 	preAuth := e.selected[string(policy.StagePreAuth)]
 	if preAuth != nil {
-		appendAuthnPolicyReportDecision(policyReport, preAuth)
+		appendAuthnPolicyReportDecision(policyCtx, preAuth)
 	}
 }
 
 // appendAuthnPolicyReportDecision appends one detached catalog selection to the legacy report shape.
 func appendAuthnPolicyReportDecision(
-	policyReport *report.DecisionReport,
+	policyCtx *policycollection.DecisionContext,
 	final *report.FinalDecision,
 ) {
-	if policyReport == nil || final == nil {
+	if policyCtx == nil || final == nil {
 		return
 	}
 
+	policyReport := policyCtx.Report()
 	cloned := report.CloneFinalDecision(final)
-	markAuthnPolicyResponseDetail(policyReport, cloned.ResponseMessage)
+	markAuthnPolicyResponseDetail(policyCtx, cloned.ResponseMessage)
 	policyReport.Policies = append(policyReport.Policies, report.PolicyDecision{
 		Name: cloned.PolicyName, Reason: cloned.Reason, OutcomeMarker: cloned.OutcomeMarker,
 		ResponseMarker: cloned.ResponseMarker, FSMEventMarker: cloned.FSMEventMarker,
@@ -897,29 +900,17 @@ func appendAuthnPolicyReportDecision(
 	}
 }
 
-// markAuthnPolicyResponseDetail preserves legacy evidence that a public detail was selected.
+// markAuthnPolicyResponseDetail preserves legacy evidence that a public detail was selected. The decision context
+// owns the attribute map, so the mark goes through it and advances the attribute revision.
 func markAuthnPolicyResponseDetail(
-	policyReport *report.DecisionReport,
+	policyCtx *policycollection.DecisionContext,
 	selection *report.ResponseMessageSelection,
 ) {
-	if policyReport == nil || selection == nil || selection.Source != policy.ResponseSourceAttributeDetail ||
-		selection.FallbackUsed || selection.AttributeID == "" || selection.Detail == "" {
+	if selection == nil || selection.Source != policy.ResponseSourceAttributeDetail || selection.FallbackUsed {
 		return
 	}
 
-	attribute, exists := policyReport.Attributes[selection.AttributeID]
-	if !exists || attribute.Details == nil {
-		return
-	}
-
-	detail, exists := attribute.Details[selection.Detail]
-	if !exists {
-		return
-	}
-
-	detail.Selected = true
-	attribute.Details[selection.Detail] = detail
-	policyReport.Attributes[selection.AttributeID] = attribute
+	policyCtx.MarkAttributeDetailSelected(selection.AttributeID, selection.Detail)
 }
 
 // selectedDecision returns a detached checkpoint-local selection.
