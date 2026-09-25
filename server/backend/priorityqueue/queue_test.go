@@ -230,3 +230,14 @@ func TestStalledPoolsReportsOnlyQueuesWithoutWorkerProgress(t *testing.T) {
 		t.Fatalf("stalledPools() = %v for empty queues, want none", stalled)
 	}
 }
+
+func TestStalledPoolsSkipsPoolsWithoutWorker(t *testing.T) {
+	queue := NewLDAPRequestQueue(slog.Default())
+
+	// A request for a pool name no worker serves, for example from a mistyped Lua pool_name.
+	queue.Push(newLDAPRoutingRequest("unknown-pool"), 1)
+
+	if stalled := queue.core.stalledPools(30*time.Second, time.Now().Add(time.Hour)); len(stalled) != 0 {
+		t.Fatalf("stalledPools() = %v, want pools without a worker skipped", stalled)
+	}
+}

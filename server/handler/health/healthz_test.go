@@ -173,10 +173,10 @@ func TestReadinessCheckFailsWhileLDAPWorkersStopTakingRequests(t *testing.T) {
 	core.InitPassDBResultPool()
 	util.SetDefaultEnvironment(config.NewTestEnvironmentConfig())
 
-	previous := ldapQueueStallThreshold
-	ldapQueueStallThreshold = 0
+	previous := ldapQueueStallLimit
+	ldapQueueStallLimit = func(config.File) time.Duration { return 0 }
 
-	t.Cleanup(func() { ldapQueueStallThreshold = previous })
+	t.Cleanup(func() { ldapQueueStallLimit = previous })
 
 	const pool = "healthz-stall-test"
 

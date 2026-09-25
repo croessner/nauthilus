@@ -917,7 +917,8 @@ func (q *LDAPAuthRequestQueue) StalledPools(threshold time.Duration) []string {
 
 // stalledPools lists pools with queued requests and no worker progress within threshold, in name order. Workers
 // that take requests at any rate, including requests that expired in the queue, count as progress; only a pool whose
-// workers stopped taking requests is reported.
+// workers stopped taking requests is reported. Pools without a registered worker are skipped: a request routed to an
+// unknown pool name never drains and would otherwise keep the pod unready forever.
 func (q *ldapPriorityQueueCore[T]) stalledPools(threshold time.Duration, now time.Time) []string {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
@@ -925,6 +926,10 @@ func (q *ldapPriorityQueueCore[T]) stalledPools(threshold time.Duration, now tim
 	var stalled []string
 
 	for name, p := range q.pools {
+		if !q.workerPools[name] {
+			continue
+		}
+
 		if p.queue.Len() > 0 && now.Sub(p.lastProgress) > threshold {
 			stalled = append(stalled, name)
 		}

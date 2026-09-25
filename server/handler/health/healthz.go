@@ -50,9 +50,23 @@ const (
 	healthzRedisClientNil = "redis client not configured"
 )
 
-// ldapQueueStallThreshold is how long queued LDAP requests may wait without any worker taking one before the pod
-// reports not ready.
-var ldapQueueStallThreshold = 30 * time.Second
+// ldapQueueStallThreshold is the minimum time queued LDAP requests may wait without any worker taking one before the
+// pod reports not ready.
+const ldapQueueStallThreshold = 30 * time.Second
+
+// ldapQueueStallLimit returns how long an LDAP pool may hold requests without worker progress. A worker can
+// legitimately wait for a free connection up to connect_abort_timeout and then connect for up to the connect
+// deadline, so the limit never drops below that sum.
+var ldapQueueStallLimit = func(cfg config.File) time.Duration {
+	abort := cfg.GetLDAPConfigConnectAbortTimeout()
+	if abort == 0 {
+		abort = 10 * time.Second // the pool's default when connect_abort_timeout is unset
+	}
+
+	busyWorker := abort + definitions.LDAPConnectTimeout*time.Second
+
+	return max(ldapQueueStallThreshold, busyWorker)
+}
 
 // HealthzDeps describes the exported HealthzDeps type.
 type HealthzDeps struct {
@@ -347,13 +361,15 @@ func checkLDAPQueueProgress(deps HealthzDeps, result *HealthzResult) {
 		return
 	}
 
-	stalled := make([]string, 0)
+	var stalled []string
 
-	for _, pool := range priorityqueue.LDAPQueue.StalledPools(ldapQueueStallThreshold) {
+	limit := ldapQueueStallLimit(deps.Cfg)
+
+	for _, pool := range priorityqueue.LDAPQueue.StalledPools(limit) {
 		stalled = append(stalled, "lookup:"+pool)
 	}
 
-	for _, pool := range priorityqueue.LDAPAuthQueue.StalledPools(ldapQueueStallThreshold) {
+	for _, pool := range priorityqueue.LDAPAuthQueue.StalledPools(limit) {
 		stalled = append(stalled, "auth:"+pool)
 	}
 
