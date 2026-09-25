@@ -1265,13 +1265,14 @@ func (l *ldapPoolImpl) logConnectionFailed(guid string, err error) {
 // checkConnection ensures that the LDAP connection at the given index is valid and operational.
 // If the connection is nil or closing, it attempts to reconnect and rebind based on the pool type.
 // Returns an error if the connection restoration or binding fails.
+//
+// The caller borrows the slot, so it reconnects as the owner: the slot stays busy throughout, and on failure the
+// release marks it closed. Marking it closed here first let another borrower take the slot in between.
 func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
-	if l.conn[index].GetConn() == nil || l.conn[index].IsClosing() {
+	if l.conn[index].GetConn() == nil || l.conn[index].NeedsReconnect() {
 		l.conn[index].GetMutex().Lock()
 
 		defer l.conn[index].GetMutex().Unlock()
-
-		l.conn[index].SetState(definitions.LDAPStateClosed)
 
 		level.Warn(l.logger).Log(
 			definitions.LogKeyLDAPPoolName, l.name,
@@ -1305,9 +1306,20 @@ func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
 // It first frees the connection and releases the capacity token to avoid blocking resource release
 // on a potentially unresponsive receiver. The reply is then delivered with a short timeout fallback.
 func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl, index int, request T, ldapReply *bktype.LDAPReply) {
-	// 1) Free resources immediately
+	// 1) Free resources immediately. A connection that broke during the request goes back as closed, so the next
+	// borrower or the idle refill reconnects it instead of borrowing a dead connection.
 	ldapPool.conn[index].GetMutex().Lock()
-	ldapPool.conn[index].SetState(definitions.LDAPStateFree)
+
+	if ldapPool.conn[index].NeedsReconnect() {
+		if connection := ldapPool.conn[index].GetConn(); connection != nil {
+			_ = connection.Close()
+		}
+
+		ldapPool.conn[index].SetState(definitions.LDAPStateClosed)
+	} else {
+		ldapPool.conn[index].SetState(definitions.LDAPStateFree)
+	}
+
 	ldapPool.conn[index].GetMutex().Unlock()
 
 	// Release capacity token back to the pool
@@ -1511,6 +1523,15 @@ func (l *ldapPoolImpl) searchWithRetries(index int, ldapRequest *bktype.LDAPRequ
 	)
 
 	for attempt := 0; attempt <= conf.GetRetryMax(); attempt++ {
+		// A retry after a transport error reconnects the borrowed slot as its owner first.
+		if attempt > 0 {
+			if reconnectErr := l.checkConnection(ldapRequest.GUID, index); reconnectErr != nil {
+				err = reconnectErr
+
+				break
+			}
+		}
+
 		result, rawResult, err = l.conn[index].Search(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest)
 		if err == nil || !isTransientNetworkError(err) {
 			break

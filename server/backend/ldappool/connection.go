@@ -95,6 +95,10 @@ type LDAPConnection interface {
 	// IsClosing checks whether the LDAP connection is in the process of closing and returns true if it is.
 	IsClosing() bool
 
+	// NeedsReconnect reports whether the connection is missing, closing, or was closed after a transport error, so
+	// its owner must reconnect it before use or release the slot as closed.
+	NeedsReconnect() bool
+
 	// Search executes an LDAP search request based on the specified LDAPRequest and returns the results, raw entries, or an error.
 	Search(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
 
@@ -117,6 +121,9 @@ type LDAPConnectionImpl struct {
 
 	// conf keeps a reference to the last used LDAPConf for this connection (used for guardrails/settings).
 	conf *config.LDAPConf
+
+	// broken marks a connection that was closed after a transport error until the next successful connect.
+	broken atomic.Bool
 }
 
 // SetState updates the current state of the LDAPConnectionImpl to the provided LDAPState value.
@@ -273,7 +280,12 @@ func (l *LDAPConnectionImpl) Unbind() (err error) {
 
 // IsClosing checks if the underlying LDAP connection is in the process of closing. Returns true if closing, false otherwise.
 func (l *LDAPConnectionImpl) IsClosing() bool {
-	return l.conn.IsClosing()
+	return l.conn == nil || l.conn.IsClosing()
+}
+
+// NeedsReconnect reports whether the connection must be reconnected before use.
+func (l *LDAPConnectionImpl) NeedsReconnect() bool {
+	return l.broken.Load() || l.IsClosing()
 }
 
 // Search performs an LDAP search based on the provided LDAPRequest and returns the corresponding results or an error.
@@ -428,14 +440,20 @@ func newModifyRequest(distinguishedName string, ldapRequest *bktype.LDAPRequest)
 	return modifyRequest
 }
 
-// closeOnTransportError marks the LDAP connection closed when the error is transport-related.
+// closeOnTransportError closes the LDAP connection when the error is transport-related and marks it for reconnect.
+// It leaves the slot state alone: the caller still borrows the slot and owns it until it releases it. Setting the
+// state to closed here let another borrower or the idle refill reconnect and take the slot while the first borrower
+// was still using it, and the first borrower then released it as free under the second one.
 func (l *LDAPConnectionImpl) closeOnTransportError(err error) {
 	if err == nil || !isTransportError(err) {
 		return
 	}
 
-	_ = l.conn.Close()
-	l.SetState(definitions.LDAPStateClosed)
+	l.broken.Store(true)
+
+	if l.conn != nil {
+		_ = l.conn.Close()
+	}
 }
 
 var _ LDAPConnection = (*LDAPConnectionImpl)(nil)
@@ -1002,6 +1020,7 @@ func (l *LDAPConnectionImpl) dialAndStartTLS(ctx context.Context, cfg config.Fil
 	connection.SetTimeout(operationTimeout)
 
 	l.conn = connection
+	l.broken.Store(false)
 
 	if startedTLS {
 		util.DebugModuleWithCfg(ctx, cfg, logger, definitions.DbgLDAP, definitions.LogKeyGUID, guid, definitions.LogKeyMsg, "STARTTLS")
