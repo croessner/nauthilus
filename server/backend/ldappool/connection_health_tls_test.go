@@ -23,11 +23,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -460,4 +462,54 @@ func newStartTLSResponse(request *ber.Packet) *ber.Packet {
 	response.AppendChild(extendedResponse)
 
 	return response
+}
+
+func TestStartTLSGivesUpWhenThePeerNeverCompletesTheHandshake(t *testing.T) {
+	pki := newHealthProbePKI(t)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for StartTLS: %v", err)
+	}
+
+	defer func() { _ = listener.Close() }()
+
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+
+		defer func() { _ = connection.Close() }()
+
+		request, readErr := ber.ReadPacket(connection)
+		if readErr != nil {
+			return
+		}
+
+		// Accept the StartTLS request, then never answer the TLS handshake.
+		_, _ = connection.Write(newStartTLSResponse(request).Bytes())
+		_, _ = io.Copy(io.Discard, connection)
+	}()
+
+	conf := newHealthProbeConf("ldap://localhost:"+strconv.Itoa(listener.Addr().(*net.TCPAddr).Port), pki.caFile)
+	conf.StartTLS = true
+
+	configured := &config.FileSettings{Server: &config.ServerSection{}, LDAP: &config.LDAPSection{Config: conf}}
+	if _, err = config.EnsureArtifactSnapshot(configured); err != nil {
+		t.Fatalf("EnsureArtifactSnapshot() error = %v", err)
+	}
+
+	start := time.Now()
+
+	_, _, err = newLDAPTargetConnector(configured, conf).dial(conf.ServerURIs[0], 300*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil || !strings.Contains(err.Error(), "StartTLS did not complete") {
+		t.Fatalf("dial() error = %v, want the StartTLS deadline", err)
+	}
+
+	if elapsed < 250*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("dial() returned after %s; the StartTLS handshake must end at the request timeout", elapsed)
+	}
 }

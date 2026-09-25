@@ -192,7 +192,7 @@ func (l *ldapPoolImpl) SetIdleConnections(bind bool) (err error) {
 	openConnections := l.determineOpenConnections()
 
 	if openConnections < l.idlePoolSize {
-		err = l.initializeConnections(bind)
+		err = l.initializeConnections(bind, true)
 	}
 
 	return
@@ -229,7 +229,7 @@ func (l *ldapPoolImpl) runIdleRefill() {
 				continue
 			}
 
-			if err := l.initializeConnections(bind); err != nil {
+			if err := l.initializeConnections(bind, false); err != nil {
 				util.DebugModuleWithCfg(l.ctx, l.cfg, l.logger, definitions.DbgLDAPPool,
 					definitions.LogKeyLDAPPoolName, l.name,
 					definitions.LogKeyMsg, "Idle connection refill incomplete",
@@ -262,7 +262,8 @@ func (l *ldapPoolImpl) HandleAuthRequest(ldapAuthRequest *bktype.LDAPAuthRequest
 				// increment rate-limit metric
 				stats.GetMetrics().GetLdapAuthRateLimitedTotal().WithLabelValues(l.name, "pool").Inc()
 
-				return fmt.Errorf("auth rate limited for pool %s", l.name)
+				// A rate-limited request never reached the directory, so it says nothing about the credentials.
+				return errors.ErrBackendTemporaryFailure.WithDetail(fmt.Sprintf("auth rate limited for pool %s", l.name))
 			}
 		}
 	}
@@ -815,15 +816,21 @@ func (l *ldapPoolImpl) determineOpenConnections() (openConnections int) {
 
 // initializeConnections establishes and initializes LDAP connections for the pool, binding them if required.
 // Returns an error if unable to connect to the LDAP servers.
-func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
+// wait selects blocking slot locks for the startup warm-up; the background refill passes false and skips slots that
+// are in use.
+func (l *ldapPoolImpl) initializeConnections(bind bool, wait bool) (err error) {
 	idlePoolSize := l.idlePoolSize
 
 	for index := 0; index < l.poolSize; index++ {
+		if l.ctx != nil && l.ctx.Err() != nil {
+			return l.ctx.Err()
+		}
+
 		guidStr := fmt.Sprintf("pool-#%d", index+1)
 
 		l.logConnectionInfo(context.Background(), guidStr, index)
 
-		err = l.setupConnection(guidStr, bind, index)
+		err = l.setupConnection(guidStr, bind, index, wait)
 		if err == nil {
 			idlePoolSize--
 		}
@@ -839,10 +846,12 @@ func (l *ldapPoolImpl) initializeConnections(bind bool) (err error) {
 // setupConnection initializes and manages the state of an LDAP connection for a specified index in the pool.
 // It locks the connection, checks its state, tries to connect if closed, and optionally binds based on the provided flag.
 // Returns an error if connection or binding fails.
-func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int) error {
-	// A contended slot is being borrowed or connected by someone else; skip it instead of waiting behind a
-	// possibly slow connect.
-	if !l.conn[index].GetMutex().TryLock() {
+func (l *ldapPoolImpl) setupConnection(guid string, bind bool, index int, wait bool) error {
+	// Outside the startup warm-up a contended slot is being borrowed or connected by someone else; skip it instead
+	// of waiting behind a possibly slow connect. The warm-up waits, because a skipped slot there could fail startup.
+	if wait {
+		l.conn[index].GetMutex().Lock()
+	} else if !l.conn[index].GetMutex().TryLock() {
 		return errors.ErrLDAPConnect.WithDetail("slot is in use")
 	}
 
@@ -1432,9 +1441,25 @@ func ldapSearchTimeoutMilliseconds(conf *config.LDAPConf) int {
 
 // applySearchTimeout applies the per-operation LDAP search timeout to the active connection.
 func (l *ldapPoolImpl) applySearchTimeout(index int, conf *config.LDAPConf) {
-	if to := conf.GetSearchTimeout(); to > 0 {
-		l.conn[index].GetConn().SetTimeout(to)
+	l.setOperationTimeout(index, conf.GetSearchTimeout())
+}
+
+// setOperationTimeout bounds the next operation on a slot by its configured timeout or the pool default.
+func (l *ldapPoolImpl) setOperationTimeout(index int, configured time.Duration) {
+	if connection := l.conn[index].GetConn(); connection != nil {
+		connection.SetTimeout(operationTimeoutOrDefault(configured))
 	}
+}
+
+// operationTimeoutOrDefault returns a configured per-operation timeout or the pool default. The connection keeps the
+// last timeout it was given, so every operation sets its own; otherwise a search after a modify ran with the modify
+// timeout, or without any bound when only the other operation had one.
+func operationTimeoutOrDefault(configured time.Duration) time.Duration {
+	if configured > 0 {
+		return configured
+	}
+
+	return ldapDefaultOperationTimeout
 }
 
 // negativeLDAPCacheKey builds the negative-cache key after filter macro expansion.
@@ -1648,10 +1673,7 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 
 	defer msp.End()
 
-	// Set per-op timeout if configured
-	if to := l.conf[index].GetModifyTimeout(); to > 0 {
-		l.conn[index].GetConn().SetTimeout(to)
-	}
+	l.setOperationTimeout(index, l.conf[index].GetModifyTimeout())
 
 	if err := l.conn[index].Modify(ldapRequest.HTTPClientContext, l.cfg, l.logger, ldapRequest); err != nil {
 		ldapReply.Err = err
@@ -1730,10 +1752,7 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 
 	defer bsp.End()
 
-	// Apply per-op bind timeout if configured
-	if to := l.conf[index].GetBindTimeout(); to > 0 {
-		l.conn[index].GetConn().SetTimeout(to)
-	}
+	l.setOperationTimeout(index, l.conf[index].GetBindTimeout())
 
 	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {

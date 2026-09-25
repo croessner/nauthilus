@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
@@ -120,12 +121,12 @@ type LDAPConnectionImpl struct {
 
 // SetState updates the current state of the LDAPConnectionImpl to the provided LDAPState value.
 func (l *LDAPConnectionImpl) SetState(state definitions.LDAPState) {
-	l.state = state
+	l.state.Store(uint32(state))
 }
 
 // GetState returns the current state of the LDAP connection as a value of type definitions.LDAPState.
 func (l *LDAPConnectionImpl) GetState() definitions.LDAPState {
-	return l.state
+	return definitions.LDAPState(l.state.Load())
 }
 
 // SetConn sets the internal LDAP connection instance to the provided *ldap.Conn.
@@ -780,13 +781,40 @@ func (c *ldapTargetConnector) dial(
 		connection.SetTimeout(requestTimeout)
 	}
 
-	if err = connection.StartTLS(tlsConfig); err != nil {
+	if err = startTLSWithin(connection, tlsConfig, requestTimeout); err != nil {
 		_ = connection.Close()
 
 		return nil, false, err
 	}
 
 	return connection, true, nil
+}
+
+// startTLSWithin runs StartTLS and closes the connection when it does not finish within timeout. go-ldap bounds
+// only the extended operation; the TLS handshake that follows has no deadline, so a peer that accepts TCP but never
+// completes TLS would otherwise hold the caller, and with it a pool slot, until TCP gives up.
+func startTLSWithin(connection *ldap.Conn, tlsConfig *tls.Config, timeout time.Duration) error {
+	if timeout <= 0 {
+		return connection.StartTLS(tlsConfig)
+	}
+
+	done := make(chan error, 1)
+
+	go func() { done <- connection.StartTLS(tlsConfig) }()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		_ = connection.Close()
+
+		<-done
+
+		return fmt.Errorf("LDAP StartTLS did not complete within %s", timeout)
+	}
 }
 
 // tlsConfig returns the shared TLS policy for LDAPS and StartTLS targets.
@@ -829,9 +857,9 @@ func jitterBackoff(base time.Duration, attempt int, maxDelay time.Duration) time
 // ldapConnectionState is a struct that helps manage LDAP connections,
 // by keeping track of the connection's current state.
 type ldapConnectionState struct {
-	// state indicates the current LDAP connection state.
-	// The value is a constant from the definitions.LDAPState set.
-	state definitions.LDAPState
+	// state indicates the current LDAP connection state, a constant from the definitions.LDAPState set. It is
+	// atomic because workers and the idle refill read it without the slot mutex to count open connections.
+	state atomic.Uint32
 }
 
 // newLDAPTLSConfig loads certificate material and creates the shared LDAP TLS policy.
