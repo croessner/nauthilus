@@ -8,8 +8,10 @@
 package configinput
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -143,9 +145,11 @@ func assertPreparedAuthnLuaSourceOwner(
 		t.Fatalf("prepared provider %q source = %q/%p", id, name, prototype)
 	}
 
+	// The prototype is compiled once per generation and shared by every request VM; gopher-lua never writes it
+	// after compiling, and the sealed-module test executes the same prototype in several states.
 	_, secondPrototype, err := compiled.OpenCompiledLuaSource()
-	if err != nil || secondPrototype == nil || secondPrototype == prototype {
-		t.Fatalf("prepared provider %q returned mutable/shared prototype", id)
+	if err != nil || secondPrototype != prototype {
+		t.Fatalf("prepared provider %q recompiled its prototype per open", id)
 	}
 
 	assertPreparedAuthnLuaSourceRetirement(t, provider, compiled.LuaPoolKey(), compiled.LuaPoolManager())
@@ -256,28 +260,46 @@ func assertPreparedAuthnLuaSourcesCapturedModules(
 			t.Fatalf("open provider %q: %v", id, openErr)
 		}
 
-		for index := 0; index < 2; index++ {
-			state, stateErr := newAuthnLuaSourceValidationState(
-				compiled.SealedLuaModules(),
-				luaseal.PolicyProfileSubject,
-			)
-			if stateErr != nil {
-				t.Fatalf("validation state %q: %v", id, stateErr)
-			}
+		// Several request VMs execute the one shared prototype concurrently; the race detector covers the sharing.
+		const states = 4
 
-			if stateErr = lualib.DoCompiledFile(state, prototype); stateErr != nil {
-				state.Close()
-				t.Fatalf("execute provider %q state %d: %v", id, index, stateErr)
-			}
+		failures := make(chan error, states)
+		wait := sync.WaitGroup{}
 
-			if got := state.GetGlobal("captured_module_value").String(); got != "captured" {
-				state.Close()
-				t.Fatalf("provider %q state %d module = %q, want captured", id, index, got)
-			}
+		for index := range states {
+			wait.Go(func() {
+				failures <- runCapturedModulePrototype(compiled.SealedLuaModules(), prototype, index)
+			})
+		}
 
-			state.Close()
+		wait.Wait()
+		close(failures)
+
+		for failure := range failures {
+			if failure != nil {
+				t.Fatalf("provider %q: %v", id, failure)
+			}
 		}
 	}
+}
+
+// runCapturedModulePrototype executes one shared prototype in its own validation state.
+func runCapturedModulePrototype(modules *luaseal.Modules, prototype *lua.FunctionProto, index int) error {
+	state, err := newAuthnLuaSourceValidationState(modules, luaseal.PolicyProfileSubject)
+	if err != nil {
+		return fmt.Errorf("validation state %d: %w", index, err)
+	}
+	defer state.Close()
+
+	if err = lualib.DoCompiledFile(state, prototype); err != nil {
+		return fmt.Errorf("execute state %d: %w", index, err)
+	}
+
+	if got := state.GetGlobal("captured_module_value").String(); got != "captured" {
+		return fmt.Errorf("state %d module = %q, want captured", index, got)
+	}
+
+	return nil
 }
 
 func TestPrepareConfiguredAuthnLuaSourcesRejectsDeferredMutableCapability(t *testing.T) {

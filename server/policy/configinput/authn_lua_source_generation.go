@@ -33,14 +33,13 @@ const (
 )
 
 type preparedAuthnLuaSource struct {
-	pools   *vmpool.Manager
-	modules *luaseal.Modules
-	source  []byte
-	id      string
-	kind    string
-	name    string
-	path    string
-	poolKey string
+	pools     *vmpool.Manager
+	modules   *luaseal.Modules
+	prototype *lua.FunctionProto
+	id        string
+	kind      string
+	name      string
+	poolKey   string
 }
 
 // PrepareConfiguredAuthnLuaSources compiles only activated exact authn source owners off-side.
@@ -217,13 +216,14 @@ func prepareAuthnLuaSource(
 	}
 
 	return &preparedAuthnLuaSource{
-		pools: pools, modules: modules, source: append([]byte(nil), source...),
-		id: id, kind: configured.Kind, name: name, path: configured.ScriptPath,
+		pools: pools, modules: modules, prototype: prototype,
+		id: id, kind: configured.Kind, name: name,
 		poolKey: fmt.Sprintf("policy-authn:%d:%s:%s", generation, configured.Kind, id),
 	}, nil
 }
 
-// compileCapturedAuthnLuaSource returns one fresh prototype from candidate-owned immutable bytes.
+// compileCapturedAuthnLuaSource compiles candidate-owned bytes once. gopher-lua writes a prototype only while
+// compiling it, so the result is shared by every request VM like a policyprovider.Script prototype.
 func compileCapturedAuthnLuaSource(name string, source []byte) (*lua.FunctionProto, error) {
 	chunk, err := parse.Parse(bytes.NewReader(source), name)
 	if err != nil {
@@ -332,15 +332,13 @@ func (s *preparedAuthnLuaSource) Kind() string {
 	return s.kind
 }
 
-// OpenCompiledLuaSource returns a fresh prototype compiled from candidate-owned immutable bytes.
+// OpenCompiledLuaSource returns the immutable prototype compiled once during generation preparation.
 func (s *preparedAuthnLuaSource) OpenCompiledLuaSource() (string, *lua.FunctionProto, error) {
-	if s == nil {
+	if s == nil || s.prototype == nil {
 		return "", nil, fmt.Errorf("authn Lua source is unavailable")
 	}
 
-	prototype, err := compileCapturedAuthnLuaSource(s.path, s.source)
-
-	return s.name, prototype, err
+	return s.name, s.prototype, nil
 }
 
 // LuaPoolKey returns the generation-and-provider-specific VM pool identity.

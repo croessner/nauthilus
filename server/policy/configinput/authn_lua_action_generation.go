@@ -42,10 +42,9 @@ type ConfiguredAuthnLuaActionInput struct {
 type preparedAuthnLuaAction struct {
 	pools      *vmpool.Manager
 	modules    *luaseal.Modules
-	source     []byte
+	prototype  *lua.FunctionProto
 	id         string
 	name       string
-	path       string
 	poolKey    string
 	generation uint64
 }
@@ -206,8 +205,8 @@ func prepareConfiguredAuthnLuaAction(
 	id := policy.AuthnNamespace + "/" + name
 
 	return &preparedAuthnLuaAction{
-		pools: pools, modules: modules, source: append([]byte(nil), source...),
-		id: id, name: name, path: configured.ScriptPath,
+		pools: pools, modules: modules, prototype: prototype,
+		id: id, name: name,
 		poolKey:    fmt.Sprintf("policy-authn:%d:lua_action:%s", generation, id),
 		generation: generation,
 	}, nil
@@ -270,15 +269,13 @@ func (a *preparedAuthnLuaAction) ID() string {
 	return a.id
 }
 
-// OpenCompiledLuaAction returns one fresh prototype from candidate-owned bytes.
+// OpenCompiledLuaAction returns the immutable prototype compiled once during generation preparation.
 func (a *preparedAuthnLuaAction) OpenCompiledLuaAction() (string, *lua.FunctionProto, error) {
-	if a == nil {
+	if a == nil || a.prototype == nil {
 		return "", nil, fmt.Errorf("configured authn Lua action is unavailable")
 	}
 
-	prototype, err := compileCapturedAuthnLuaSource(a.path, a.source)
-
-	return a.name, prototype, err
+	return a.name, a.prototype, nil
 }
 
 // LuaPoolKey returns the exact generation-specific action VM pool identity.
