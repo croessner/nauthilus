@@ -303,3 +303,38 @@ func recordValue(t *testing.T, inputs ...[]recordTestField) decision.Value {
 
 	return value
 }
+
+func TestFactsForProviderReusesSetsWithoutRecords(t *testing.T) {
+	factSchema, err := registry.NewFactSchema(registry.FactSchemaInput{
+		ID: "resource.id", Category: decision.FactCategoryResource, Kind: decision.ValueKindString, MaxLength: 64,
+		AllowedSources: []decision.FactSource{decision.FactSourceCaller},
+	})
+	if err != nil {
+		t.Fatalf("NewFactSchema() error = %v", err)
+	}
+
+	identity, _ := registry.NewSchemaIdentity("mail", "submit", "v1")
+	schema := newCompiledSchema(identity, []registry.FactSchema{factSchema})
+	provenance, _ := decision.NewProvenance(decision.FactSourceCaller, "client", "request")
+	text := "message-1"
+	value, _ := decision.NewValue(decision.ValueInput{String: &text})
+	fact, _ := decision.NewFact("resource.id", decision.FactCategoryResource, value, provenance)
+	facts, _ := decision.NewFactSet([]decision.Fact{fact})
+
+	allocs := testing.AllocsPerRun(100, func() {
+		view, err := schema.FactsForProvider(facts, "mail/plugin.reputation.assessor")
+		if err != nil || view.Len() != 1 {
+			t.Fatalf("FactsForProvider() = %d facts, error %v", view.Len(), err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FactsForProvider() allocations = %.0f, want 0 without records", allocs)
+	}
+
+	undeclared, _ := decision.NewFact("resource.other", decision.FactCategoryResource, value, provenance)
+	withUndeclared, _ := decision.NewFactSet([]decision.Fact{fact, undeclared})
+
+	if _, err := schema.FactsForProvider(withUndeclared, "mail/plugin.reputation.assessor"); err == nil {
+		t.Fatal("FactsForProvider() accepted an undeclared fact")
+	}
+}

@@ -77,28 +77,42 @@ func (s CompiledSchema) NormalizeFacts(facts decision.FactSet) (decision.FactSet
 	return decision.NewFactSet(result)
 }
 
-// FactsForProvider returns a fresh snapshot with record fields filtered by exact provider visibility.
+// FactsForProvider returns the facts with record fields filtered by exact provider visibility. Facts are immutable,
+// so the input set itself is returned when it holds no records fact, and facts without records are reused.
 func (s CompiledSchema) FactsForProvider(
 	facts decision.FactSet,
 	providerID string,
 ) (decision.FactSet, error) {
-	filtered := make([]decision.Fact, 0, facts.Len())
+	hasRecords := false
 
-	for _, fact := range facts.Facts() {
+	for fact := range facts.All() {
 		definition, exists := s.facts[fact.ID()]
 		if !exists {
 			return decision.FactSet{}, schemaFactError(s.identity, fact.ID(), "fact is not declared by the selected exact schema")
 		}
 
-		value := fact.Value()
-
 		if definition.Kind() == decision.ValueKindRecords {
-			var visible bool
+			hasRecords = true
+		}
+	}
 
-			value, visible = filterRecordValueForProvider(definition, value, providerID)
-			if !visible {
-				continue
-			}
+	if !hasRecords {
+		return facts, nil
+	}
+
+	filtered := make([]decision.Fact, 0, facts.Len())
+
+	for fact := range facts.All() {
+		definition := s.facts[fact.ID()]
+		if definition.Kind() != decision.ValueKindRecords {
+			filtered = append(filtered, fact)
+
+			continue
+		}
+
+		value, visible := filterRecordValueForProvider(definition, fact.Value(), providerID)
+		if !visible {
+			continue
 		}
 
 		owned, err := decision.NewFact(fact.ID(), fact.Category(), value, fact.Provenance())
