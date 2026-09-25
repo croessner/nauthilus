@@ -378,6 +378,7 @@ func validateFactOwnership(id string, provenance Provenance) error {
 func validateProviderFactOwner(id string, authority string) error {
 	_, rest, _ := strings.Cut(id, ".")
 	owner, _, found := strings.Cut(rest, ".")
+
 	if !found || !identifier.Provider(authority) || owner != authority {
 		return newContractError(
 			ErrFactSource,

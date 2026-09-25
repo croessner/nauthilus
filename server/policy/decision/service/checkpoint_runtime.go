@@ -435,7 +435,7 @@ func (r *checkpointRuntime) runProviders(
 ) (decision.FactSet, bool) {
 	states := cloneProviderStates(hostStates)
 
-	for _, level := range checkpoint.ProviderLevels() {
+	for level := range checkpoint.AllProviderLevels() {
 		levelFacts, reliable := r.runProviderLevel(
 			ctx, target, checkpoint, level, facts, caller, states, hostReasons, authenticated, report,
 		)

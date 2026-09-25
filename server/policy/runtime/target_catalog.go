@@ -249,6 +249,18 @@ func (c CompiledCheckpoint) LookupProviderInstance(name string) (CompiledProvide
 	return instance, ok
 }
 
+// AllProviderLevels iterates the dependency levels without copying the outer slice. Each yielded level is a
+// detached copy, so callers cannot change the compiled order.
+func (c CompiledCheckpoint) AllProviderLevels() iter.Seq[[]string] {
+	return func(yield func([]string) bool) {
+		for _, level := range c.providerLevels {
+			if !yield(append([]string(nil), level...)) {
+				return
+			}
+		}
+	}
+}
+
 // ProviderLevels returns deterministic dependency levels for concurrent execution.
 func (c CompiledCheckpoint) ProviderLevels() [][]string {
 	result := make([][]string, 0, len(c.providerLevels))
@@ -355,6 +367,11 @@ func (r CompiledRule) Name() string {
 // Checkpoint returns the exact instantiated checkpoint.
 func (r CompiledRule) Checkpoint() string {
 	return r.record.Checkpoint
+}
+
+// AllRequiredProviders iterates the exact provider dependencies without copying them.
+func (r CompiledRule) AllRequiredProviders() iter.Seq[string] {
+	return slices.Values(r.record.RequiredProviders)
 }
 
 // RequiredProviders returns exact provider dependencies in the same checkpoint.
@@ -1267,6 +1284,7 @@ func scheduledProviderInstances(
 	instancesByName map[string]CompiledProviderInstance,
 ) []CompiledProviderInstance {
 	result := make([]CompiledProviderInstance, 0, len(instancesByName))
+
 	for _, level := range levels {
 		for _, name := range level {
 			if instance, exists := instancesByName[name]; exists {
@@ -2392,7 +2410,13 @@ func compileTargetPolicySets(
 func cloneCompiledCheckpoint(checkpoint CompiledCheckpoint) CompiledCheckpoint {
 	checkpoint.policySetIDs = checkpoint.PolicySetIDs()
 	checkpoint.providerIDs = checkpoint.ProviderIDs()
-	checkpoint.providerInstances = checkpoint.ProviderInstances()
+
+	instances := make([]CompiledProviderInstance, 0, len(checkpoint.providerInstances))
+	for _, instance := range checkpoint.providerInstances {
+		instances = append(instances, instance.clone())
+	}
+
+	checkpoint.providerInstances = instances
 
 	checkpoint.providerInstancesByName = make(map[string]CompiledProviderInstance, len(checkpoint.providerInstances))
 	for _, instance := range checkpoint.providerInstances {

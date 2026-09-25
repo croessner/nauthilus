@@ -384,6 +384,7 @@ func TestTargetLookupPolicySetSharesSetAndDetachesRules(t *testing.T) {
 	assert.True(t, ok)
 
 	var setID registry.PolicySetID
+
 	for _, checkpoint := range compiled.DomainPlan().Checkpoints() {
 		for _, id := range checkpoint.PolicySetIDs() {
 			parsed, err := registry.ParsePolicySetID("policy_set_ids", id)
@@ -440,12 +441,13 @@ func TestCompiledReadAPIsShareWithoutAllocation(t *testing.T) {
 	firstFact := compiledSchema.Facts()[0]
 
 	assert.Equal(t, 2, checkpoint.ProviderInstanceCount())
-	assert.Equal(t, 2, checkpoint.ScheduledProviderInstanceCount())
 
 	var scheduled []string
+
 	for index := range checkpoint.ScheduledProviderInstanceCount() {
 		instance, ok := checkpoint.ScheduledProviderInstance(index)
 		assert.True(t, ok)
+
 		scheduled = append(scheduled, instance.Name())
 	}
 
@@ -473,15 +475,28 @@ func TestCompiledReadAPIsShareWithoutAllocation(t *testing.T) {
 	assert.True(t, found)
 	assert.Equal(t, firstFact.ID(), lookup.ID())
 
+	assertCompiledReadAPIsDoNotAllocate(t, checkpoint, compiledSchema, firstFact.ID())
+}
+
+// assertCompiledReadAPIsDoNotAllocate walks every non-copying accessor and requires zero allocations.
+func assertCompiledReadAPIsDoNotAllocate(t *testing.T, checkpoint CompiledCheckpoint, schema CompiledSchema, factID string) {
+	t.Helper()
+
 	allocs := testing.AllocsPerRun(100, func() {
-		_ = checkpoint.ProviderInstanceCount()
+		count := checkpoint.ProviderInstanceCount()
 		_, _ = checkpoint.ScheduledProviderInstance(1)
+
 		for range checkpoint.AllProviderInstances() {
+			count++
 		}
 
-		_, _ = compiledSchema.LookupFact(firstFact.ID())
-		for range compiledSchema.AllFacts() {
+		_, _ = schema.LookupFact(factID)
+
+		for range schema.AllFacts() {
+			count++
 		}
+
+		_ = count
 	})
 	assert.Zero(t, allocs, "read APIs must not allocate")
 }
@@ -500,8 +515,63 @@ func TestPolicySetAllRulesYieldsRulesWithoutAllocation(t *testing.T) {
 	assert.Equal(t, []string{"provider/required"}, set.Rules()[0].RequiredProviders())
 
 	allocs := testing.AllocsPerRun(100, func() {
-		for range set.AllRules() {
+		for current := range set.AllRules() {
+			_ = current
 		}
 	})
 	assert.Zero(t, allocs, "AllRules must not allocate")
+}
+
+func TestTargetCatalogCloneDetachesProviderInstanceDependencies(t *testing.T) {
+	target, schema := completionRuntimeTargetAndSchema(t)
+	shared := providerInstanceDefinition(t, target, "mail/shared", nil)
+	instances := []registry.ProviderInstanceDefinition{
+		providerInstance(t, "providers[0]", "primary", shared.ID(), nil),
+		providerInstance(t, "providers[1]", "secondary", shared.ID(), []string{"primary"}),
+	}
+	report := registry.NewTargetReportSettings(true, false, true, true)
+	record := providerInstanceRecord(t, target, schema, []registry.ProviderDefinition{shared}, instances,
+		[]registry.SchedulerGuardDefinition{providerInstanceGuard(t)}, report)
+
+	catalog, err := NewTargetCatalog([]TargetCatalogRecord{record})
+	providerInstanceNoError(t, err)
+
+	clone := catalog.Clone()
+	original := catalog.targets[target.String()].domainPlan.checkpoints[0]
+	cloned := clone.targets[target.String()].domainPlan.checkpoints[0]
+
+	cloned.providerInstances[1].dependencies[0] = "mutated"
+	cloned.scheduledInstances[1].dependencies[0] = "mutated"
+
+	assert.Equal(t, []string{"primary"}, original.providerInstances[1].Dependencies())
+	assert.Equal(t, []string{"primary"}, original.scheduledInstances[1].Dependencies())
+}
+
+func TestCompiledIteratorsYieldDetachedValues(t *testing.T) {
+	rule := newCompiledRule(CompiledRuleRecord{Name: "first"}, []string{"provider/a", "provider/b"})
+
+	var required []string
+	for id := range rule.AllRequiredProviders() {
+		required = append(required, id)
+	}
+
+	assert.Equal(t, []string{"provider/a", "provider/b"}, required)
+
+	checkpoint := CompiledCheckpoint{providerLevels: [][]string{{"primary"}, {"secondary"}}}
+
+	var levels [][]string
+	for level := range checkpoint.AllProviderLevels() {
+		levels = append(levels, level)
+		level[0] = "mutated"
+	}
+
+	assert.Equal(t, [][]string{{"mutated"}, {"mutated"}}, levels)
+	assert.Equal(t, [][]string{{"primary"}, {"secondary"}}, checkpoint.ProviderLevels())
+
+	allocs := testing.AllocsPerRun(100, func() {
+		for id := range rule.AllRequiredProviders() {
+			_ = id
+		}
+	})
+	assert.Zero(t, allocs, "AllRequiredProviders must not allocate")
 }

@@ -154,7 +154,7 @@ func recordComparisonSelection(report *runtimeReport, selected selectedRule) {
 
 // requiredProvidersCompleted applies compiler-approved provider-dependent rule skipping.
 func requiredProvidersCompleted(rule policyruntime.CompiledRule, providers []providerRecord) bool {
-	for _, providerID := range rule.RequiredProviders() {
+	for providerID := range rule.AllRequiredProviders() {
 		if !selectedProviderCompleted(providers, providerID) {
 			return false
 		}

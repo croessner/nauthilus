@@ -120,10 +120,7 @@ func TestFactSetAllIteratesWithoutAllocation(t *testing.T) {
 		t.Fatalf("FactSet.All() = %v, want ordered facts", ids)
 	}
 
-	if allocs := testing.AllocsPerRun(100, func() {
-		for range facts.All() {
-		}
-	}); allocs != 0 {
+	if allocs := testing.AllocsPerRun(100, func() { countFacts(facts) }); allocs != 0 {
 		t.Fatalf("FactSet.All() allocations = %.0f, want 0", allocs)
 	}
 }
@@ -175,12 +172,32 @@ func TestFactSetWithAndMergeKeepOrderAndRejectCollisions(t *testing.T) {
 		t.Fatalf("With() unconstructed fact error = %v, want ErrInvalidFact", err)
 	}
 
+	assertEmptyMergeDoesNotAllocate(t, base)
+}
+
+// assertEmptyMergeDoesNotAllocate checks that merging with nothing returns an input unchanged.
+func assertEmptyMergeDoesNotAllocate(t *testing.T, base decision.FactSet) {
+	t.Helper()
+
 	empty, _ := decision.NewFactSet(nil)
-	if allocs := testing.AllocsPerRun(100, func() {
+
+	allocs := testing.AllocsPerRun(100, func() {
 		_, _ = base.With()
 		_, _ = decision.MergeFactSets(base, empty)
 		_, _ = decision.MergeFactSets(empty, base)
-	}); allocs != 0 {
+	})
+	if allocs != 0 {
 		t.Fatalf("empty merge allocations = %.0f, want 0", allocs)
 	}
+}
+
+// countFacts walks a fact set through its non-copying iterator.
+func countFacts(facts decision.FactSet) int {
+	count := 0
+
+	for range facts.All() {
+		count++
+	}
+
+	return count
 }
