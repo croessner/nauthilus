@@ -17,6 +17,7 @@ package ldappool
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"testing"
@@ -74,7 +75,7 @@ func TestTransportErrorKeepsTheBorrowedSlotWithItsOwner(t *testing.T) {
 	<-pool.tokens // request A holds the capacity token
 
 	// Request A's operation fails on the transport.
-	owned.closeOnTransportError(ldap.NewError(ldap.ErrorNetwork, net.ErrClosed))
+	owned.CloseOnTransportError(ldap.NewError(ldap.ErrorNetwork, net.ErrClosed))
 
 	// Request B scans the pool while A still owns the slot; it must not reconnect and take it.
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -98,5 +99,47 @@ func TestTransportErrorKeepsTheBorrowedSlotWithItsOwner(t *testing.T) {
 
 	if len(pool.tokens) != 1 {
 		t.Fatal("the release did not return the capacity token")
+	}
+}
+
+func TestTimedOutAuthBindReturnsTheSlotClosed(t *testing.T) {
+	setupLDAPPoolTestConfig()
+	config.SetTestEnvironmentConfig(&config.EnvironmentSettings{})
+
+	client, server := net.Pipe()
+
+	t.Cleanup(func() { _ = server.Close() })
+
+	// The directory reads the bind request and never answers.
+	go func() { _, _ = io.Copy(io.Discard, server) }()
+
+	conn := ldap.NewConn(client, false)
+	conn.Start()
+
+	owned := &LDAPConnectionImpl{}
+	owned.SetConn(conn)
+	owned.SetState(definitions.LDAPStateBusy)
+
+	pool := newLookupTestPool(t.Context(), definitions.LDAPPoolAuth, []LDAPConnection{owned})
+	pool.conf = []*config.LDAPConf{{BindTimeout: 100 * time.Millisecond, PoolName: "auth-bind-timeout"}}
+	pool.logger = slog.Default()
+	<-pool.tokens
+
+	request := &bktype.LDAPAuthRequest{
+		BindDN: "uid=someone,ou=people,dc=example,dc=test", BindPW: "secret",
+		LDAPReplyChan: make(chan *bktype.LDAPReply, 1), HTTPClientContext: t.Context(),
+	}
+	reply := &bktype.LDAPReply{}
+
+	pool.processAuthBindRequest(0, request, reply)
+
+	if reply.Err == nil {
+		t.Fatal("processAuthBindRequest() succeeded against a directory that never answers")
+	}
+
+	sendLDAPReplyAndUnlockState(pool, 0, request, reply)
+
+	if owned.GetState() != definitions.LDAPStateClosed {
+		t.Fatalf("slot state after a timed-out bind = %v, want closed so no borrower reuses the connection", owned.GetState())
 	}
 }

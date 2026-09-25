@@ -730,6 +730,7 @@ func (l *ldapPoolImpl) updateSingleConnectionStatus(index int) int {
 			definitions.LogKeyLDAPPoolName, l.name,
 			definitions.LogKeyMsg, fmt.Sprintf("LDAP free/busy state #%d has broken connection", index+1))
 
+		_ = l.conn[index].GetConn().Close()
 		l.conn[index].SetConn(nil)
 		l.conn[index].SetState(definitions.LDAPStateClosed)
 
@@ -911,6 +912,7 @@ func (l *ldapPoolImpl) bindOpenedConnection(guid string, index int, sp trace.Spa
 	if err := l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index]); err != nil {
 		l.logConnectionError(guid, err)
 		sp.RecordError(err)
+		closeLDAPConnection(l.conn[index])
 
 		return err
 	}
@@ -1246,10 +1248,20 @@ func (l *ldapPoolImpl) logConnectionUsage(ctx context.Context, guid string, inde
 func (l *ldapPoolImpl) connectAndBindIfNeeded(guid string, index int) error {
 	err := l.conn[index].Connect(guid, l.cfg, l.logger, l.conf[index])
 	if err == nil && (l.poolType == definitions.LDAPPoolLookup || l.poolType == definitions.LDAPPoolUnknown) {
-		err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index])
+		if err = l.conn[index].Bind(context.Background(), guid, l.cfg, l.logger, l.conf[index]); err != nil {
+			// The slot stays closed; without closing here the next connect replaced a live connection and leaked it.
+			closeLDAPConnection(l.conn[index])
+		}
 	}
 
 	return err
+}
+
+// closeLDAPConnection closes the underlying connection of a slot if it has one.
+func closeLDAPConnection(connection LDAPConnection) {
+	if underlying := connection.GetConn(); underlying != nil {
+		_ = underlying.Close()
+	}
 }
 
 // logConnectionFailed logs a failed LDAP connection attempt with the pool name, session GUID, and error message.
@@ -1263,7 +1275,7 @@ func (l *ldapPoolImpl) logConnectionFailed(guid string, err error) {
 }
 
 // checkConnection ensures that the LDAP connection at the given index is valid and operational.
-// If the connection is nil or closing, it attempts to reconnect and rebind based on the pool type.
+// If the connection is missing, closing or broken, it attempts to reconnect and rebind based on the pool type.
 // Returns an error if the connection restoration or binding fails.
 //
 // The caller borrows the slot, so it reconnects as the owner: the slot stays busy throughout, and on failure the
@@ -1295,8 +1307,6 @@ func (l *ldapPoolImpl) checkConnection(guid string, index int) (err error) {
 				return
 			}
 		}
-
-		l.conn[index].SetState(definitions.LDAPStateBusy)
 	}
 
 	return
@@ -1777,6 +1787,10 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 
 	// Try to authenticate a user (no retries on auth failures).
 	if err := l.conn[index].GetConn().Bind(ldapAuthRequest.BindDN, ldapAuthRequest.BindPW); err != nil {
+		// A bind that timed out or lost its transport leaves the connection unusable; go-ldap does not close it
+		// after a request timeout, so the release must not hand it out as free.
+		l.conn[index].CloseOnTransportError(err)
+
 		ldapReply.Err = classifyBindError(err)
 
 		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()

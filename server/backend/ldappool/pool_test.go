@@ -64,6 +64,8 @@ func (m *mockLDAPConnection) IsClosing() bool { return false }
 
 func (m *mockLDAPConnection) NeedsReconnect() bool { return false }
 
+func (m *mockLDAPConnection) CloseOnTransportError(_ error) {}
+
 func (m *mockLDAPConnection) Search(_ context.Context, _ config.File, _ *slog.Logger, req *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error) {
 	// Count calls for tests that need to assert cache hits/misses.
 	atomic.AddInt32(&m.searchCalls, 1)

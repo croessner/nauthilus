@@ -99,6 +99,9 @@ type LDAPConnection interface {
 	// its owner must reconnect it before use or release the slot as closed.
 	NeedsReconnect() bool
 
+	// CloseOnTransportError closes the connection and marks it for reconnect when err is transport-related.
+	CloseOnTransportError(err error)
+
 	// Search executes an LDAP search request based on the specified LDAPRequest and returns the results, raw entries, or an error.
 	Search(ctx context.Context, cfg config.File, logger *slog.Logger, ldapRequest *bktype.LDAPRequest) (bktype.AttributeMapping, []*ldap.Entry, error)
 
@@ -294,7 +297,7 @@ func (l *LDAPConnectionImpl) Search(ctx context.Context, cfg config.File, logger
 
 	searchResult, err := l.conn.Search(searchRequest)
 	if err != nil {
-		l.closeOnTransportError(err)
+		l.CloseOnTransportError(err)
 
 		return nil, nil, err
 	}
@@ -392,7 +395,7 @@ func (l *LDAPConnectionImpl) Modify(ctx context.Context, cfg config.File, logger
 	}
 
 	err = l.conn.Modify(modifyRequest)
-	l.closeOnTransportError(err)
+	l.CloseOnTransportError(err)
 
 	return err
 }
@@ -440,11 +443,11 @@ func newModifyRequest(distinguishedName string, ldapRequest *bktype.LDAPRequest)
 	return modifyRequest
 }
 
-// closeOnTransportError closes the LDAP connection when the error is transport-related and marks it for reconnect.
+// CloseOnTransportError closes the LDAP connection when the error is transport-related and marks it for reconnect.
 // It leaves the slot state alone: the caller still borrows the slot and owns it until it releases it. Setting the
 // state to closed here let another borrower or the idle refill reconnect and take the slot while the first borrower
 // was still using it, and the first borrower then released it as free under the second one.
-func (l *LDAPConnectionImpl) closeOnTransportError(err error) {
+func (l *LDAPConnectionImpl) CloseOnTransportError(err error) {
 	if err == nil || !isTransportError(err) {
 		return
 	}
