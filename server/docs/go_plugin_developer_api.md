@@ -1273,6 +1273,47 @@ func (denylistObligation) Execute(ctx context.Context, request pluginapi.Obligat
 }
 ```
 
+`ObligationRequest.Credentials` exposes the submitted request password under the same `credentials` capability that
+gates environment sources, subject sources, backends, and post-actions. The host projects it only when the module
+called `registrar.RequireCapability(pluginapi.CapabilityCredentials)` during registration and the operator listed
+`credentials` in the module's `allow_capabilities`; there is no separate obligation-specific capability. The field is
+always a non-nil provider on host-built requests. Without the grant, `Password(ctx)` returns `nil, false`. With the grant, the password is request-scoped: it becomes unavailable once the
+request context ends, so obligations must read it synchronously inside `Execute` and never retain the `Secret`. Other
+modules never see a grant that was issued to a different module.
+
+A typical use is a pre-auth obligation that runs on a brute-force or RBL deny and checks whether the submitted password
+is the account's known-good password before choosing a response:
+
+```go
+func (c *checkPassword) Execute(ctx context.Context, request pluginapi.ObligationRequest) (pluginapi.ObligationResult, error) {
+    if request.Credentials == nil {
+        return pluginapi.ObligationResult{Temporary: true}, nil
+    }
+
+    secret, ok := request.Credentials.Password(ctx)
+    if !ok || secret.IsZero() {
+        // Not granted, no password submitted, or the request already ended.
+        return pluginapi.ObligationResult{Temporary: true}, nil
+    }
+
+    matched, err := password.CompareHash(c.storedHash(ctx, request.Snapshot.Username), secret)
+    if err != nil {
+        return pluginapi.ObligationResult{Temporary: true}, nil
+    }
+
+    return pluginapi.ObligationResult{
+        Applied: true,
+        Facts:   []pluginapi.PolicyFact{{Attribute: "plugin.resource.example.password_matched", Value: matched}},
+    }, nil
+}
+```
+
+`RequestSnapshot.Account` is best effort in `pre_auth`. It is populated only when the host already resolved the account,
+for example from the cached user-to-account mapping when the built-in brute-force runtime module is disabled. With
+brute-force protection enabled, the brute-force check resolves the account for its own buckets without publishing it on
+the request, so pre-auth obligations commonly see an empty `Account`. Pre-auth obligations must therefore key lookups by
+`RequestSnapshot.Username` and treat `Account` only as an optional hint.
+
 Obligation result facts are validated against the active `auth_decision` registry before they are recorded. Unknown,
 wrong-stage, or wrong-operation facts fail safely. A status message returned by a request-time obligation can update the
 current client-visible status path; a log field is the explicit way to materialize public custom log values.
@@ -1547,7 +1588,8 @@ material.
 
 - Treat plugins as privileged in-process code, not sandboxed extensions.
 - Keep secret access request-scoped and closure-scoped.
-- Require `credentials` only when a component genuinely needs request passwords.
+- Require `credentials` only when a component genuinely needs request passwords. The grant applies to every
+  credential-bearing request type of that module, including obligations.
 - Bound all network, file, and database calls with context-aware timeouts.
 - Return secret-safe errors. The host maps backend failures, but plugin logs and status text remain your responsibility.
 - Keep metric labels and span attributes low-cardinality.

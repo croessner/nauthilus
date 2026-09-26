@@ -98,10 +98,11 @@ type nativeAuthnSubjectProvider struct {
 }
 
 type nativeAuthnObligationProvider struct {
-	admission *callbackAdmission
-	target    pluginapi.ObligationTarget
-	call      nativeAuthnComponentCall
-	id        string
+	admission    *callbackAdmission
+	target       pluginapi.ObligationTarget
+	capabilities []pluginapi.Capability
+	call         nativeAuthnComponentCall
+	id           string
 }
 
 type nativeAuthnPostActionProvider struct {
@@ -680,7 +681,7 @@ func (b *AuthenticationBindings) bindAuthenticationEffectOwner(
 
 		b.syncEffects[identity] = &nativeAuthnObligationProvider{
 			admission: newCallbackAdmission(component.CallbackAdmissionLimits),
-			target:    target, id: identity,
+			target:    target, capabilities: slices.Clone(module.capabilities), id: identity,
 			call: newNativeAuthnComponentCall(
 				input.Observer, module.moduleName, component.LocalName, authnNativeObligationExtension, "Execute",
 			),
@@ -902,6 +903,11 @@ func (p *nativeAuthnSubjectProvider) EvaluateSubject(
 
 // ID returns the exact canonical effect and provider identity.
 func (p *nativeAuthnObligationProvider) ID() string { return p.id }
+
+// Capabilities returns the detached module grant used for request-scoped credential projection.
+func (p *nativeAuthnObligationProvider) Capabilities() []pluginapi.Capability {
+	return slices.Clone(p.capabilities)
+}
 
 // ExecuteObligation calls the unchanged public target through the shared observation boundary.
 func (p *nativeAuthnObligationProvider) ExecuteObligation(

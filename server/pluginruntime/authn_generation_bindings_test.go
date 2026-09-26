@@ -12,11 +12,13 @@ import (
 	"testing"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
 	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
+	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
 // TestPrepareAuthenticationBindingsCapturesExactAuthSources proves auth-shaped native sources become generation owners.
@@ -336,6 +338,29 @@ func assertSelectedSyncAuthenticationEffect(t *testing.T, prepared *Authenticati
 	if _, err := program.ExecuteObligation(t.Context(), forgedObligationRequest(t), authenticationEffectTestTarget(t)); err != nil {
 		t.Fatalf("ExecuteObligation() error = %v", err)
 	}
+
+	assertDetachedCredentialsGrant(t, "obligation", syncOwner)
+}
+
+// assertDetachedCredentialsGrant verifies an effect owner exposes a detached copy of the module credentials grant.
+func assertDetachedCredentialsGrant(t *testing.T, kind string, owner any) {
+	t.Helper()
+
+	program, ok := owner.(interface{ Capabilities() []pluginapi.Capability })
+	if !ok {
+		t.Fatalf("%s owner = %T, want capability-bearing program", kind, owner)
+	}
+
+	capabilities := program.Capabilities()
+	if len(capabilities) != 1 || capabilities[0] != pluginapi.CapabilityCredentials {
+		t.Fatalf("%s capabilities = %v, want detached credentials grant", kind, capabilities)
+	}
+
+	capabilities[0] = pluginapi.CapabilityMail
+
+	if got := program.Capabilities(); len(got) != 1 || got[0] != pluginapi.CapabilityCredentials {
+		t.Fatalf("%s capabilities after caller mutation = %v", kind, got)
+	}
 }
 
 // assertSelectedPostAuthenticationEffect verifies the canonical post-action owner and detached grants.
@@ -349,7 +374,6 @@ func assertSelectedPostAuthenticationEffect(t *testing.T, prepared *Authenticati
 
 	postProgram, ok := postOwner.(interface {
 		EnqueuePostAction(context.Context, pluginapi.PostActionRequest, decision.Target) (pluginapi.PostActionEnqueueResult, error)
-		Capabilities() []pluginapi.Capability
 	})
 	if !ok {
 		t.Fatalf("post owner = %T, want public post-action program", postOwner)
@@ -359,15 +383,61 @@ func assertSelectedPostAuthenticationEffect(t *testing.T, prepared *Authenticati
 		t.Fatalf("EnqueuePostAction() error = %v", err)
 	}
 
-	capabilities := postProgram.Capabilities()
-	if len(capabilities) != 1 || capabilities[0] != pluginapi.CapabilityCredentials {
-		t.Fatalf("post-action capabilities = %v, want detached credentials grant", capabilities)
+	assertDetachedCredentialsGrant(t, "post-action", postOwner)
+}
+
+// TestAuthenticationObligationCredentialsStayModuleScoped proves one module's grant never reaches another module.
+func TestAuthenticationObligationCredentialsStayModuleScoped(t *testing.T) {
+	granted := &recordingAuthnObligationTarget{name: "checkpw"}
+	plain := &recordingAuthnObligationTarget{name: "notify"}
+	bindings := &GenerationBindings{modules: []GenerationModuleBinding{
+		obligationModuleFixture("granted", granted, pluginapi.CapabilityCredentials),
+		obligationModuleFixture("plain", plain),
+	}}
+
+	prepared, err := bindings.PrepareAuthenticationBindings(t.Context(), AuthenticationBindingInput{})
+	if err != nil {
+		t.Fatalf("PrepareAuthenticationBindings() error = %v", err)
 	}
 
-	capabilities[0] = pluginapi.CapabilityMail
+	auth := &core.AuthState{}
+	auth.Request.Password = secret.New("module-scoped-obligation-password")
 
-	if got := postProgram.Capabilities(); len(got) != 1 || got[0] != pluginapi.CapabilityCredentials {
-		t.Fatalf("post-action capabilities after caller mutation = %v", got)
+	for id, want := range map[string]bool{
+		"authn/plugin.granted.checkpw": true,
+		"authn/plugin.plain.notify":    false,
+	} {
+		owner, ok := prepared.SyncEffects()[id].(interface{ Capabilities() []pluginapi.Capability })
+		if !ok {
+			t.Fatalf("sync effect %s = %T, want capability-bearing obligation", id, prepared.SyncEffects()[id])
+		}
+
+		capture, err := NewAuthnRequestRuntime().Capture(t.Context(), core.AuthnNativeCaptureInput{
+			Auth: auth, Capabilities: owner.Capabilities(),
+		})
+		if err != nil {
+			t.Fatalf("Capture(%s) error = %v", id, err)
+		}
+
+		if _, available := capture.Credentials.Password(t.Context()); available != want {
+			t.Errorf("%s credential access = %t, want %t", id, available, want)
+		}
+	}
+}
+
+// obligationModuleFixture builds one native module with a single obligation target and an explicit grant.
+func obligationModuleFixture(
+	module string,
+	target *recordingAuthnObligationTarget,
+	capabilities ...pluginapi.Capability,
+) GenerationModuleBinding {
+	return GenerationModuleBinding{
+		moduleName: module, capabilities: capabilities,
+		components: []pluginregistry.Component{{
+			Value: target, QualifiedName: module + "." + target.name, ModuleName: module,
+			LocalName: target.name, Kind: pluginregistry.ComponentKindObligationTarget,
+			Origin: pluginregistry.ComponentOriginNative,
+		}},
 	}
 }
 

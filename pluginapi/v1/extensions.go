@@ -110,11 +110,17 @@ type SubjectSource interface {
 }
 
 // ObligationRequest is passed to synchronous policy obligation targets.
+//
+// Credentials is request-scoped and capability-gated: Password returns the
+// submitted request password only when the module required
+// CapabilityCredentials and the operator allowed it. Otherwise it reports the
+// password as unavailable.
 type ObligationRequest struct {
 	executionIdentity ExecutionIdentityView
 	BackendOutcome    BackendOutcomeView
 	Snapshot          RequestSnapshot
 	Runtime           RuntimeContext
+	Credentials       CredentialProvider
 	Args              ArgsView
 	Facts             []PolicyFact
 }

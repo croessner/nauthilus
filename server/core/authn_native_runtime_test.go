@@ -9,6 +9,7 @@ package core
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -45,6 +46,46 @@ func TestAuthnNativeObligationExecutesExactSelectedProgramOnce(t *testing.T) {
 
 	if program.calls.Load() != 1 || runtime.captures.Load() != 1 {
 		t.Fatalf("native obligation calls/captures = %d/%d, want 1/1", program.calls.Load(), runtime.captures.Load())
+	}
+}
+
+// TestAuthnNativeObligationCredentialsFollowModuleGrant proves obligations see request credentials only when granted.
+func TestAuthnNativeObligationCredentialsFollowModuleGrant(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		capabilities []pluginapi.Capability
+		want         bool
+	}{
+		{name: "without credentials grant"},
+		{name: "with unrelated grant", capabilities: []pluginapi.Capability{pluginapi.CapabilityPasswordHash}},
+		{name: "with credentials grant", capabilities: []pluginapi.Capability{pluginapi.CapabilityCredentials}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			auth, ginCtx, _ := newCurrentBehaviorAuthState(t, newCurrentBehaviorConfig(t))
+			runtime := &authnNativeTestRuntime{}
+			auth.deps.NativeRuntime = runtime
+			program := &authnNativeObligationTestProgram{id: authnNativeObligationTestID, capabilities: test.capabilities}
+			host := &authnCandidateExecution{auth: auth, ginCtx: ginCtx, operation: policy.OperationAuthenticate}
+
+			result := host.ExecuteAuthnNativeObligation(
+				t.Context(), program, newAuthnNativeTestExecution(t, authnNativeObligationTestID),
+			)
+			if result.State() != effectsupervisor.StateSucceeded {
+				t.Fatalf("ExecuteAuthnNativeObligation() = %s/%q, want succeeded", result.State(), result.ErrorClass())
+			}
+
+			if runtime.detached.Load() {
+				t.Fatal("native obligation capture was detached, want request-scoped credentials")
+			}
+
+			if program.request.Credentials == nil {
+				t.Fatal("native obligation request has no credential provider")
+			}
+
+			if _, ok := program.request.Credentials.Password(t.Context()); ok != test.want {
+				t.Fatalf("native obligation credential access = %t, want %t", ok, test.want)
+			}
+		})
 	}
 }
 
@@ -100,6 +141,15 @@ type authnNativeTestRuntime struct {
 	detached   atomic.Bool
 }
 
+type authnNativeTestCredentials struct {
+	authorized bool
+}
+
+// Password mirrors the host capability gate without holding real secret material.
+func (c authnNativeTestCredentials) Password(context.Context) (pluginapi.Secret, bool) {
+	return nil, c.authorized
+}
+
 // Capture records projection options and returns immutable public test values.
 func (r *authnNativeTestRuntime) Capture(
 	_ context.Context,
@@ -113,7 +163,10 @@ func (r *authnNativeTestRuntime) Capture(
 	}
 
 	return AuthnNativeCapture{
-		Runtime:      authnNativeTestRuntimeContext{},
+		Runtime: authnNativeTestRuntimeContext{},
+		Credentials: authnNativeTestCredentials{
+			authorized: slices.Contains(input.Capabilities, pluginapi.CapabilityCredentials),
+		},
 		Snapshot:     pluginapi.RequestSnapshot{Username: input.Auth.GetUsername()},
 		PasswordHash: "captured-password-hash",
 	}, nil
@@ -144,13 +197,19 @@ func (c authnNativeTestRuntimeContext) Snapshot() map[string]any {
 }
 
 type authnNativeObligationTestProgram struct {
-	request pluginapi.ObligationRequest
-	id      string
-	calls   atomic.Int32
+	request      pluginapi.ObligationRequest
+	id           string
+	capabilities []pluginapi.Capability
+	calls        atomic.Int32
 }
 
 // ID returns the exact selected obligation identity.
 func (p *authnNativeObligationTestProgram) ID() string { return p.id }
+
+// Capabilities returns the generation-captured module grant used for credential projection.
+func (p *authnNativeObligationTestProgram) Capabilities() []pluginapi.Capability {
+	return slices.Clone(p.capabilities)
+}
 
 // ExecuteObligation records the exact public request invocation.
 func (p *authnNativeObligationTestProgram) ExecuteObligation(

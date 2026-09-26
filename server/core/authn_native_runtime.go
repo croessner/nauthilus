@@ -52,6 +52,7 @@ type AuthnNativeRuntime interface {
 
 type authnNativeObligationProgram interface {
 	decisionservice.AuthnNativeEffectProgram
+	Capabilities() []pluginapi.Capability
 	ExecuteObligation(context.Context, pluginapi.ObligationRequest, decision.Target) (pluginapi.ObligationResult, error)
 }
 
@@ -69,6 +70,7 @@ type authnNativePostActionWork struct {
 }
 
 // ExecuteAuthnNativeObligation applies one exact selected generation-owned public obligation.
+// The capture stays request-scoped, so granted credentials expire with the live request.
 func (e *authnCandidateExecution) ExecuteAuthnNativeObligation(
 	ctx context.Context,
 	program decisionservice.AuthnNativeEffectProgram,
@@ -84,7 +86,7 @@ func (e *authnCandidateExecution) ExecuteAuthnNativeObligation(
 		return effectsupervisor.Failed("authn_native_obligation_binding")
 	}
 
-	capture, err := e.captureAuthnNativeRequest(nil, false)
+	capture, err := e.captureAuthnNativeRequest(owner.Capabilities(), false)
 	if err != nil {
 		return effectsupervisor.Failed("authn_native_obligation_capture")
 	}
@@ -223,7 +225,7 @@ func (w *authnNativePostActionWork) Cleanup() {
 	w.request = pluginapi.PostActionRequest{}
 }
 
-// authnNativeObligationRequest maps immutable selected parameters and facts.
+// authnNativeObligationRequest maps immutable selected parameters, facts, and the capability-gated credentials.
 func authnNativeObligationRequest(
 	capture AuthnNativeCapture,
 	execution policyruntime.EffectExecution,
@@ -234,8 +236,8 @@ func authnNativeObligationRequest(
 	}
 
 	return pluginapi.ObligationRequest{
-		Snapshot: capture.Snapshot, Runtime: capture.Runtime, Args: pluginregistry.NewArgsView(args),
-		Facts: authnNativeEffectFacts(execution),
+		Snapshot: capture.Snapshot, Runtime: capture.Runtime, Credentials: capture.Credentials,
+		Args: pluginregistry.NewArgsView(args), Facts: authnNativeEffectFacts(execution),
 	}, nil
 }
 

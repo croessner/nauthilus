@@ -172,7 +172,9 @@ plugins:
         - credentials
 ```
 
-Request passwords are available only through the request-scoped `CredentialProvider`. Long-lived plugin credentials, such
+Request passwords are available only through the request-scoped `CredentialProvider`. One `credentials` grant covers every
+credential-bearing request of that module: backends, environment and subject sources, synchronous obligations, and
+post-actions. Modules without the grant receive a provider that reports the password as unavailable. Long-lived plugin credentials, such
 as SQL DSNs, should be referenced through files or another plugin-owned secret source rather than inline config values.
 Top-level Policy provider/effect `secrets` maps are therefore not passed to a Go
 plugin; a non-empty map is rejected during candidate validation until a typed,
