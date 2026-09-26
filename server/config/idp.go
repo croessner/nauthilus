@@ -971,6 +971,10 @@ type OIDCClient struct {
 	RevokeRefreshToken                  *bool         `mapstructure:"revoke_refresh_token"`
 	FrontChannelLogoutSessionRequired   bool          `mapstructure:"frontchannel_logout_session_required"`
 	Dynamic                             bool          `mapstructure:"-" validate:"-"`
+	// TokenIntrospection lets a confidential resource server introspect user tokens issued to other clients.
+	TokenIntrospection OIDCTokenIntrospection `mapstructure:"token_introspection"`
+	// DynamicProfile names the registration profile of a materialized dynamic client.
+	DynamicProfile string `mapstructure:"-" validate:"-"`
 }
 
 // GetEffectiveCustomScopes returns the merged custom scopes for a client.
@@ -1048,7 +1052,16 @@ func (c *OIDCClient) RequiresPKCE() bool {
 
 // AllowsBackchannelIntrospection reports explicit resource inspection authority for a static confidential client.
 func (c *OIDCClient) AllowsBackchannelIntrospection() bool {
-	if c == nil || !c.AllowBackchannelIntrospection || c.Dynamic {
+	if c == nil || !c.AllowBackchannelIntrospection {
+		return false
+	}
+
+	return c.hasConfidentialStaticAuth()
+}
+
+// hasConfidentialStaticAuth reports whether a static client authenticates with a secret or a registered key.
+func (c *OIDCClient) hasConfidentialStaticAuth() bool {
+	if c == nil || c.Dynamic {
 		return false
 	}
 

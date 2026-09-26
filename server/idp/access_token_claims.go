@@ -31,9 +31,16 @@ func copyCustomAccessTokenClaims(dst jwt.MapClaims, src map[string]any) {
 	}
 }
 
-// copyServiceTokenClaims adds issuer-owned client identity only to service tokens.
-func copyServiceTokenClaims(dst jwt.MapClaims, session *OIDCSession) {
-	if session == nil || !session.ServiceToken {
+// copyClientIdentityClaims adds the issuer-owned client identity: service tokens carry client_id and
+// their issuer, user tokens name the client they were issued to in azp.
+func copyClientIdentityClaims(dst jwt.MapClaims, session *OIDCSession) {
+	if session == nil {
+		return
+	}
+
+	if !session.ServiceToken {
+		dst[definitions.ClaimAuthorizedParty] = session.ClientID
+
 		return
 	}
 
@@ -52,8 +59,10 @@ func copyCustomIDTokenClaims(dst jwt.MapClaims, src map[string]any) {
 	}
 }
 
-// accessTokenAudience returns the resource audience for an access-token session.
-func accessTokenAudience(session *OIDCSession) string {
+// accessTokenAudience returns the resource audience for an access-token session. Service tokens keep
+// their dedicated resource. A user token is bound to its client and, when resources were granted, to
+// those resources as well; without resources the audience stays the plain client id.
+func accessTokenAudience(session *OIDCSession) any {
 	if session == nil {
 		return ""
 	}
@@ -62,5 +71,9 @@ func accessTokenAudience(session *OIDCSession) string {
 		return session.AccessTokenAudience
 	}
 
-	return session.ClientID
+	if len(session.AccessTokenResources) == 0 {
+		return session.ClientID
+	}
+
+	return uniqueResources(append([]string{session.ClientID}, session.AccessTokenResources...))
 }

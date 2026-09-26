@@ -150,6 +150,7 @@ type ClientAssertionReplayStore interface {
 // OIDCSession represents the data stored in Redis for an OIDC authorization flow.
 type OIDCSession struct {
 	Scopes               []string `json:"scopes"`
+	AccessTokenResources []string `json:"access_token_resources,omitempty"`
 	ClientID             string   `json:"client_id"`
 	UserID               string   `json:"user_id"`
 	Username             string   `json:"username"`

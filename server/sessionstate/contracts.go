@@ -190,6 +190,7 @@ type OIDCFlow struct {
 	DeviceCode           string
 	DeviceUserCodeDigest string
 	Scopes               []string
+	Resources            []string
 	State                string
 	Nonce                string
 	Prompt               string

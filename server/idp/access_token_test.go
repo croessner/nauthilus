@@ -107,6 +107,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 		AccessTokenClaims: map[string]any{
 			"active":                        false,
 			"aud":                           "evil-client",
+			"azp":                           "evil-client",
 			"custom_access":                 "allowed",
 			"exp":                           int64(1),
 			"iat":                           int64(1),
@@ -125,6 +126,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 	assert.Equal(t, "https://issuer.local", signer.claims["iss"])
 	assert.Equal(t, "user1", signer.claims["sub"])
 	assert.Equal(t, "client1", signer.claims["aud"])
+	assert.Equal(t, "client1", signer.claims[definitions.ClaimAuthorizedParty])
 	assert.Equal(t, "openid profile", signer.claims["scope"])
 	assert.Nil(t, signer.claims["active"])
 	assert.Nil(t, signer.claims["client_id"])
@@ -139,6 +141,7 @@ func TestAccessTokenReservedClaimsRemainCanonical(t *testing.T) {
 
 	assert.Equal(t, "user1", claims["sub"])
 	assert.Equal(t, "client1", claims["aud"])
+	assert.Equal(t, "client1", claims[definitions.ClaimAuthorizedParty])
 	assert.Equal(t, "openid profile", claims["scope"])
 	assert.Nil(t, claims["active"])
 	assert.Nil(t, claims["client_id"])
@@ -177,6 +180,7 @@ func TestClientCredentialsAccessTokenClaimsIdentifyIssuerAndClient(t *testing.T)
 	assert.Equal(t, definitions.AudiencePolicyAPI, signer.claims["aud"])
 	assert.Equal(t, clientID, signer.claims["client_id"])
 	assert.Equal(t, issuer, signer.claims["iss"])
+	assert.Nil(t, signer.claims[definitions.ClaimAuthorizedParty])
 
 	opaqueToken := NewOpaqueAccessToken(session, nil, nil, time.Hour)
 	claims := opaqueToken.ClaimsFromSession(session)
@@ -184,6 +188,36 @@ func TestClientCredentialsAccessTokenClaimsIdentifyIssuerAndClient(t *testing.T)
 	assert.Equal(t, definitions.AudiencePolicyAPI, claims["aud"])
 	assert.Equal(t, clientID, claims["client_id"])
 	assert.Equal(t, issuer, claims["iss"])
+	assert.Nil(t, claims[definitions.ClaimAuthorizedParty])
+}
+
+func TestUserAccessTokenAudienceCarriesGrantedResources(t *testing.T) {
+	cases := []struct {
+		name      string
+		resources []string
+		want      any
+	}{
+		{name: "plain token keeps string audience", want: "client1"},
+		{name: "resources extend the audience", resources: []string{"https://mail.example.org/jmap"}, want: []string{"client1", "https://mail.example.org/jmap"}},
+		{name: "duplicates collapse in stable order", resources: []string{"urn:b", "urn:a", "urn:b", "client1"}, want: []string{"client1", "urn:b", "urn:a"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &OIDCSession{ClientID: "client1", UserID: "user1", AccessTokenResources: tc.resources}
+			signer := &captureAccessTokenSigner{}
+
+			_, _, err := NewJWTAccessToken("https://issuer.local", signer, session, time.Hour).Issue(t.Context())
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, signer.claims["aud"])
+			assert.Equal(t, "client1", signer.claims[definitions.ClaimAuthorizedParty])
+
+			claims := NewOpaqueAccessToken(session, nil, nil, time.Hour).ClaimsFromSession(session)
+			assert.Equal(t, tc.want, claims["aud"])
+			assert.Equal(t, "client1", claims[definitions.ClaimAuthorizedParty])
+			assert.Nil(t, claims[definitions.ClaimClientID])
+		})
+	}
 }
 
 type captureAccessTokenSigner struct {

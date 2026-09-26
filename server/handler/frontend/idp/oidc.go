@@ -87,6 +87,7 @@ const (
 	oidcParamPrompt                  = "prompt"
 	oidcParamCodeChallenge           = "code_challenge"
 	oidcParamCodeChallengeMethod     = "code_challenge_method"
+	oidcParamResource                = "resource"
 	oidcEndpointPathToken            = "/oidc/token"
 	oidcEndpointPathIntrospect       = "/oidc/introspect"
 	oidcEndpointPathDevice           = "/oidc/device"
@@ -105,6 +106,7 @@ const (
 	oidcErrorSlowDown                = "slow_down"
 	oidcErrorAuthorizationPending    = "authorization_pending"
 	oidcErrorAccessDenied            = "access_denied"
+	oidcErrorInvalidTarget           = "invalid_target"
 )
 
 var oidcTokenSingleValueParameters = []string{
@@ -1075,8 +1077,15 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 	)
 }
 
-// logTokenError logs a token issuance failure and responds with a server error.
+// logTokenError answers a failed token issuance: an RFC 8707 target error is the client's fault
+// (invalid_target), every other failure is logged and reported as server_error.
 func (h *OIDCHandler) logTokenError(ctx *gin.Context, grantType, clientID string, err error) {
+	if errors.Is(err, idp.ErrInvalidTarget) {
+		writeOIDCInvalidTargetResponse(ctx)
+
+		return
+	}
+
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
 		h.deps.Cfg,
@@ -1308,7 +1317,7 @@ func (h *OIDCHandler) Introspect(ctx *gin.Context) {
 
 	// Verify that the token was issued to the client making the request,
 	// or that the client is otherwise authorized to introspect this token.
-	if !canIntrospectAccessToken(client, claims) {
+	if !h.introspectionPolicy().allows(ctx.Request.Context(), client, claims) {
 		ctx.JSON(http.StatusOK, gin.H{oidcJSONFieldActive: false})
 
 		return

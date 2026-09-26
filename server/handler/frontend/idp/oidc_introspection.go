@@ -16,20 +16,93 @@
 package idp
 
 import (
+	"context"
+
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// canIntrospectAccessToken binds validated tokens to their recipient or an explicitly authorized backchannel inspector.
-func canIntrospectAccessToken(client *config.OIDCClient, claims jwt.MapClaims) bool {
-	if client == nil || client.Dynamic {
+// oidcClientResolver resolves a static or dynamic client by its id.
+type oidcClientResolver func(ctx context.Context, clientID string) (*config.OIDCClient, error)
+
+// accessTokenIntrospectionPolicy decides whether an authenticated client may see a validated access token.
+type accessTokenIntrospectionPolicy struct {
+	resources     *idp.ResourceRegistry
+	resolveClient oidcClientResolver
+}
+
+// introspectionPolicy binds the introspection decision to the current resource registry and client lookup.
+func (h *OIDCHandler) introspectionPolicy() accessTokenIntrospectionPolicy {
+	return accessTokenIntrospectionPolicy{resources: h.idp.ResourceRegistry(), resolveClient: h.idp.ResolveClient}
+}
+
+// allows binds tokens to their recipient, an explicitly authorized backchannel inspector, or a resource
+// server with delegated user-token introspection authority.
+func (p accessTokenIntrospectionPolicy) allows(ctx context.Context, caller *config.OIDCClient, claims jwt.MapClaims) bool {
+	if caller == nil || caller.Dynamic {
 		return false
 	}
 
-	if oidcbearer.HasAudience(claims, client.ClientID) {
+	if oidcbearer.HasAudience(claims, caller.ClientID) {
 		return true
 	}
 
-	return client.AllowsBackchannelIntrospection() && oidcbearer.IsBackchannelAccessToken(claims)
+	if caller.AllowsBackchannelIntrospection() && oidcbearer.IsBackchannelAccessToken(claims) {
+		return true
+	}
+
+	return p.allowsDelegatedUserToken(ctx, caller, claims)
+}
+
+// allowsDelegatedUserToken applies token_introspection to user access tokens of other clients. A token
+// bound to resources is visible only to the owner of one of them; a plain token only when its issuing
+// client is allowlisted. An issuing client that cannot be resolved denies the request.
+func (p accessTokenIntrospectionPolicy) allowsDelegatedUserToken(ctx context.Context, caller *config.OIDCClient, claims jwt.MapClaims) bool {
+	if !caller.AllowsTokenIntrospection() || !isUserAccessToken(claims) {
+		return false
+	}
+
+	issuingClientID, ok := idp.AccessTokenIssuingClient(claims)
+	if !ok {
+		return false
+	}
+
+	resources, ok := idp.AccessTokenResourceAudiences(claims, issuingClientID)
+	if !ok {
+		return false
+	}
+
+	token := idp.IntrospectedUserToken{Resources: resources}
+
+	if len(resources) == 0 {
+		if p.resolveClient == nil {
+			return false
+		}
+
+		issuing, err := p.resolveClient(ctx, issuingClientID)
+		if err != nil || issuing == nil {
+			return false
+		}
+
+		token.IssuingClient = issuing
+	}
+
+	return p.resources.MayIntrospect(caller, token)
+}
+
+// isUserAccessToken accepts access tokens that carry no service-token discriminator and no Nauthilus API audience.
+func isUserAccessToken(claims jwt.MapClaims) bool {
+	if !oidcbearer.HasTokenType(claims, definitions.TokenTypeAccessToken) {
+		return false
+	}
+
+	if _, service := claims[definitions.ClaimClientID]; service {
+		return false
+	}
+
+	return !oidcbearer.HasAudience(claims, definitions.AudienceBackchannelAPI) &&
+		!oidcbearer.HasAudience(claims, definitions.AudiencePolicyAPI)
 }

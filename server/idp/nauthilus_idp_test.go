@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http/httptest"
 	"reflect"
 	"regexp"
@@ -1087,6 +1088,13 @@ func expectStaticRefreshTokenStore(mock redismock.ClientMock, refreshToken strin
 	).SetVal(int64(1))
 }
 
+// expectStaticRefreshTokenLoad expects the authoritative load of a static refresh token.
+func expectStaticRefreshTokenLoad(mock redismock.ClientMock, refreshToken string, sessionData string) {
+	reference := testStaticRefreshTokenReference(refreshToken)
+	mock.ExpectGet(testTokenLocatorKey(reference)).SetVal(testSubjectSlot(testUserID))
+	mock.ExpectMGet(testStaticRefreshTokenKey(testUserID, refreshToken), testUserTokenEpochKey(testUserID)).SetVal([]any{sessionData, nil})
+}
+
 // expectStaticRefreshTokenConsume expects an authoritative load followed by one atomic claim.
 func expectStaticRefreshTokenConsume(mock redismock.ClientMock, refreshToken string, sessionData string) {
 	reference := testStaticRefreshTokenReference(refreshToken)
@@ -1095,8 +1103,7 @@ func expectStaticRefreshTokenConsume(mock redismock.ClientMock, refreshToken str
 		testStaticUserRefreshTokensKey(testUserID),
 		testUserTokenEpochKey(testUserID),
 	}
-	mock.ExpectGet(testTokenLocatorKey(reference)).SetVal(testSubjectSlot(testUserID))
-	mock.ExpectMGet(testStaticRefreshTokenKey(testUserID, refreshToken), testUserTokenEpochKey(testUserID)).SetVal([]any{sessionData, nil})
+	expectStaticRefreshTokenLoad(mock, refreshToken, sessionData)
 	mock.ExpectEval(staticRefreshConsumeScript, keys, reference, testSubjectEpochFloor, sessionData).SetVal([]any{int64(1), sessionData})
 	mock.ExpectDel(testTokenLocatorKey(reference)).SetVal(1)
 }
@@ -1469,6 +1476,20 @@ func TestValidateTokenJWTRevalidatesDynamicClientAuthoritatively(t *testing.T) {
 func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, mfaLevel int, expect func(*testing.T, redismock.ClientMock), wantErr string) {
 	t.Helper()
 
+	assertDynamicJWTValidationWithIdentity(t, jwt.MapClaims{claimAudience: clientID}, scope, mfaLevel, expect, wantErr)
+}
+
+// assertDynamicJWTValidationWithIdentity validates one signed JWT whose client identity claims are given explicitly.
+func assertDynamicJWTValidationWithIdentity(
+	t *testing.T,
+	identity jwt.MapClaims,
+	scope string,
+	mfaLevel int,
+	expect func(*testing.T, redismock.ClientMock),
+	wantErr string,
+) {
+	t.Helper()
+
 	idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
 		Issuer: testIssuer,
 		DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
@@ -1482,16 +1503,17 @@ func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, mfa
 
 	kid := "dynamic-jwt-key"
 	pemData := generateTestKey()
-	tokenString := signedTestTokenWithClaims(t, kid, pemData, jwt.MapClaims{
+	claims := jwt.MapClaims{
 		claimIssuer:                     testIssuer,
 		claimSubject:                    testUserID,
-		claimAudience:                   clientID,
 		claimIssuedAt:                   time.Now().Add(-time.Minute).Unix(),
 		claimExpires:                    time.Now().Add(4 * time.Minute).Unix(),
 		claimScope:                      scope,
 		definitions.ClaimTokenType:      definitions.TokenTypeAccessToken,
 		definitions.ClaimUserTokenEpoch: testSubjectEpochFloor,
-	})
+	}
+	maps.Copy(claims, identity)
+	tokenString := signedTestTokenWithClaims(t, kid, pemData, claims)
 
 	mock.ExpectHGet(testOIDCKeysHashKey(), kid).SetVal(redisKeyMetadataJSON(t, kid, pemData))
 	expectUserTokenEpoch(mock, testUserID)
@@ -1510,6 +1532,56 @@ func assertDynamicJWTValidation(t *testing.T, clientID string, scope string, mfa
 	}
 
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestValidateTokenJWTResolvesDynamicIssuerFromAuthorizedParty pins that a resource-bound JWT with an
+// array audience still gets the dynamic-client checks instead of skipping them.
+func TestValidateTokenJWTResolvesDynamicIssuerFromAuthorizedParty(t *testing.T) {
+	const (
+		clientID = dcr.ClientIDPrefix + "resource-client"
+		resource = "https://mail.example.org/jmap"
+	)
+
+	tests := []struct {
+		identity jwt.MapClaims
+		expect   func(*testing.T, redismock.ClientMock)
+		name     string
+		wantErr  string
+	}{
+		{
+			name:     "revoked client behind array audience",
+			identity: jwt.MapClaims{claimAudience: []string{clientID, resource}, definitions.ClaimAuthorizedParty: clientID},
+			wantErr:  "dynamic client is not active",
+			expect: func(_ *testing.T, mock redismock.ClientMock) {
+				mock.ExpectGet(testDynamicClientKey(clientID)).RedisNil()
+			},
+		},
+		{
+			name:     "active client behind array audience",
+			identity: jwt.MapClaims{claimAudience: []string{clientID, resource}, definitions.ClaimAuthorizedParty: clientID},
+			expect: func(t *testing.T, mock redismock.ClientMock) {
+				expectDynamicClientRecord(t, mock, clientID, "openid profile")
+			},
+		},
+		{
+			name:     "array audience without authorized party",
+			identity: jwt.MapClaims{claimAudience: []string{clientID, resource}},
+			wantErr:  "no resolvable issuing client",
+			expect:   func(*testing.T, redismock.ClientMock) {},
+		},
+		{
+			name:     "malformed authorized party",
+			identity: jwt.MapClaims{claimAudience: clientID, definitions.ClaimAuthorizedParty: 42},
+			wantErr:  "no resolvable issuing client",
+			expect:   func(*testing.T, redismock.ClientMock) {},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertDynamicJWTValidationWithIdentity(t, test.identity, "openid profile", 0, test.expect, test.wantErr)
+		})
+	}
 }
 
 func TestInvalidateOldAccessTokenDeniesDynamicJWTWithResolvedLifetime(t *testing.T) {

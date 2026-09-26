@@ -41,6 +41,13 @@ func (h *OIDCHandler) handleClientCredentialsTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
+	// Service tokens have fixed Nauthilus resources; RFC 8707 resource indicators are not supported here.
+	if len(oidcRequestedResources(ctx)) > 0 {
+		writeOIDCInvalidTargetResponse(ctx)
+
+		return
+	}
+
 	requestedScopes := strings.Fields(formValue(ctx, "scope"))
 
 	if !validateClientCredentialsTokenScopes(ctx, requestedScopes) {

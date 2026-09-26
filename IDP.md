@@ -109,6 +109,14 @@ Imagine an application receives a key (access token) from Nauthilus. The applica
 Endpoint** (`/oidc/introspect`): "Is this key still valid and is it allowed to access my resources?".
 This is particularly useful for APIs or backend services that want to ensure a token has not expired or been revoked.
 
+A client normally sees only tokens issued to itself. A protected resource such as a mail server can be granted more
+through a `token_introspection` block on its confidential static client: `clients` and `dynamic_client_profiles`
+allowlist issuers whose user tokens it may introspect, and `resources` registers RFC 8707 resource indicators it owns.
+Clients on the allowlist may then request a token for such a resource with the `resource` parameter; the token carries
+the resource in `aud` and only its owner may introspect it. User access tokens name the client they were issued to in
+`azp`. See [docs/oidc-introspection.md](docs/oidc-introspection.md) and section 3.1.7 of
+[server/docs/idp.md](server/docs/idp.md).
+
 #### JWKS (JSON Web Key Set)
 
 Nauthilus publishes its public keys at `/oidc/jwks`. Many modern applications automatically download this list. Using

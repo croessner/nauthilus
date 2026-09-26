@@ -215,5 +215,6 @@ func (r *DynamicClientRecord) OIDCClient() *config.OIDCClient {
 		RequirePKCE:             true,
 		RevokeRefreshToken:      &revokeRefreshToken,
 		Dynamic:                 true,
+		DynamicProfile:          r.Profile,
 	}
 }

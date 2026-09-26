@@ -204,13 +204,21 @@ paths:
           required: false
           schema:
             type: string
+        - $ref: "#/components/parameters/Resource"
       responses:
         "200":
           $ref: "#/components/responses/HTMLPage"
         "302":
           $ref: "#/components/responses/Redirect"
         "400":
-          $ref: "#/components/responses/Error"
+          description: >-
+            Invalid authorization request. A resource indicator that is malformed, unregistered, or not
+            requestable by the client is rejected with invalid_target; dynamic clients receive it as a
+            redirect to their validated redirect URI, static clients as a plain error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /oidc/token:
     post:
       tags:
@@ -316,6 +324,12 @@ paths:
                   type: string
                 scope:
                   type: string
+                resource:
+                  $ref: "#/components/schemas/ResourceIndicators"
+            encoding:
+              resource:
+                style: form
+                explode: true
       responses:
         "200":
           description: Device authorization response.
@@ -694,6 +708,18 @@ components:
       name: nauthilus_secure_data
       description: Encrypted browser session cookie.
   parameters:
+    Resource:
+      name: resource
+      in: query
+      required: false
+      description: >-
+        RFC 8707 resource indicator. The parameter may repeat; every value must be an absolute URI
+        without fragment that a resource server registered through token_introspection.resources and
+        whose allowlist names the requesting client. Otherwise the request fails with invalid_target.
+      style: form
+      explode: true
+      schema:
+        $ref: "#/components/schemas/ResourceIndicators"
     ClientID:
       name: client_id
       in: query
@@ -787,6 +813,18 @@ components:
       properties:
         active:
           type: boolean
+        aud:
+          description: >-
+            Token audience. A user access token without resource indicators carries the client id as a
+            string; with resource indicators it carries an array of the client id and the resources.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        azp:
+          type: string
+          description: Client a user access token was issued to. Service tokens carry client_id instead.
       additionalProperties: true
     JWKS:
       type: object
@@ -813,6 +851,9 @@ components:
       properties:
         error:
           type: string
+          description: >-
+            OAuth error code such as invalid_request, invalid_client, invalid_grant, invalid_scope, or
+            invalid_target (RFC 8707) for a rejected resource parameter.
         error_description:
           type: string
     OIDCDiscovery:
@@ -1022,6 +1063,17 @@ components:
         client_assertion:
           type: string
           description: JWT client assertion for private_key_jwt token endpoint authentication.
+        resource:
+          $ref: "#/components/schemas/ResourceIndicators"
+    ResourceIndicators:
+      type: array
+      description: >-
+        RFC 8707 resource indicators (absolute URIs without fragment). At the token endpoint they may only
+        narrow the access token to a subset of the granted resources; client_credentials rejects them with
+        invalid_target.
+      items:
+        type: string
+        format: uri
     TokenResponse:
       type: object
       properties:

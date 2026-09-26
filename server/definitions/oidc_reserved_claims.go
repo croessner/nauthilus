@@ -21,6 +21,9 @@ const (
 	// ClaimClientID identifies the issuer-owned OAuth client identity.
 	ClaimClientID = "client_id"
 
+	// ClaimAuthorizedParty identifies the client a user access token was issued to.
+	ClaimAuthorizedParty = "azp"
+
 	// ClaimTokenType identifies the issuer-owned access-token purpose claim.
 	ClaimTokenType = "token_type"
 
@@ -51,6 +54,7 @@ const (
 var reservedAccessTokenClaims = map[string]struct{}{
 	"active":               {},
 	reservedClaimAudience:  {},
+	ClaimAuthorizedParty:   {},
 	ClaimClientID:          {},
 	reservedClaimExpiresAt: {},
 	reservedClaimIssuedAt:  {},
@@ -69,7 +73,7 @@ var reservedIDTokenClaims = map[string]struct{}{
 	"at_hash":              {},
 	reservedClaimAudience:  {},
 	"auth_time":            {},
-	"azp":                  {},
+	ClaimAuthorizedParty:   {},
 	"c_hash":               {},
 	reservedClaimExpiresAt: {},
 	reservedClaimIssuedAt:  {},

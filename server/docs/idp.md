@@ -584,6 +584,63 @@ runtime:
 Policies are evaluated in order. The first active policy with a matching `path_prefixes` entry is used.
 Use explicit origin lists in production.
 
+### 3.1.7 Resource Indicators (RFC 8707) and Delegated User-Token Introspection
+
+A protected resource such as a mail server authenticates as its own confidential static client and introspects
+the user access tokens that other clients present to it. Two explicitly configured ways allow this; both live in
+the `token_introspection` block of the resource server's client entry (see
+[Resource servers introspecting user tokens](#resource-servers-introspecting-user-tokens)):
+
+- **Allowlist.** `clients` names static clients and `dynamic_client_profiles` names dynamic client registration
+  profiles (currently `mail-client-v1`). Plain user tokens of these issuers, obtained without a resource indicator,
+  are visible to the resource server.
+- **Resource indicators.** `resources` lists the RFC 8707 resource indicators the resource server owns. A resource
+  has exactly one owner across all clients. The same allowlist decides which clients may request the resource.
+
+**Token content.** Every user access token (JWT and opaque) carries the issuer-owned claim `azp` with the client
+id it was issued to; custom claim mappings cannot set `azp`. Service tokens keep `client_id` and receive no `azp`.
+Without resources the audience stays the plain client id string. With resources the audience becomes an array of
+the client id followed by the resources, for example `["roundcube-app", "https://mail.example.org/jmap"]`. ID
+tokens are unchanged.
+
+**Authorization request.** `GET /oidc/authorize` accepts the multi-valued `resource` parameter. Every value must be
+an absolute URI without fragment, registered by a resource server, and requestable by the client; duplicates are
+removed. Any other value rejects the request with `invalid_target` (a redirect to the validated redirect URI for
+dynamic clients, a plain `400` for static clients). The validated resources travel through the typed flow state
+(`resource` metadata), survive login, MFA, and consent resumes, are bound to the consent record, and end up in the
+authorization-code session.
+
+**Token endpoint.**
+
+| Grant                | `resource` parameter                                                                                    |
+|----------------------|---------------------------------------------------------------------------------------------------------|
+| `authorization_code` | Optional subset of the granted resources; narrows only the issued access token.                         |
+| `refresh_token`      | Optional subset of the stored grant; narrows only the new access token, the stored grant never changes. |
+| `device_code`        | Optional subset of the resources of the device authorization request.                                   |
+| `client_credentials` | Not supported; any value returns `invalid_target`.                                                      |
+
+A value outside the grant returns `invalid_target`. Issuance also re-checks every resource the access token will
+carry against the current configuration: after an operator removes the client from the owner's allowlist, code
+and refresh exchanges for that resource fail with `invalid_target` and the client has to authorize again.
+
+**Introspection decision.** `POST /oidc/introspect` keeps its existing rules: a token whose audience contains the
+caller's client id is active, and a caller with `allow_backchannel_introspection` may see `nauthilus:backchannel`
+service tokens. For a caller with a valid `token_introspection` block, a user access token (token type
+`access_token`, no `client_id` service discriminator, no `nauthilus:` audience) is additionally active when:
+
+1. The issuing client is taken from `azp`; a legacy token without `azp` falls back to a single-string audience.
+2. The resource audiences are the audience entries other than the issuing client.
+3. With resource audiences, the caller must own at least one of them. The allowlist does not apply, so a resource
+   token for another resource server stays inactive even if its issuer is allowlisted.
+4. Without resource audiences, the issuing static client must be listed in `clients`, or the issuing dynamic client
+   (resolved authoritatively) must have a profile listed in `dynamic_client_profiles`. An issuing client that
+   cannot be resolved denies the request.
+
+Everything else answers `{"active": false}`. The response is unchanged apart from the new claims (`azp`, array `aud`).
+JWT access tokens of dynamic clients are revalidated against their client through `azp`, so an array audience
+never bypasses the dynamic-client checks; a user token without resolvable issuing client that could belong to a
+dynamic client is rejected.
+
 ## 4. MFA Interfaces
 
 Browser MFA enrollment and management use the canonical `/mfa/*` HTML flows.
@@ -1711,6 +1768,33 @@ The default is `false`; this permission grants neither API access nor token issu
 See the [configuration reference and 60-identity.yml example](../../docs/oidc-introspection.md)
 for authentication requirements, response claims, and opaque-token migration details.
 
+#### Resource servers introspecting user tokens
+
+A static confidential client (the same authentication requirements as for `allow_backchannel_introspection`) can
+declare a `token_introspection` block. It lets the client introspect user access tokens issued to other clients and
+registers the RFC 8707 resource indicators it owns (see
+[section 3.1.7](#317-resource-indicators-rfc-8707-and-delegated-user-token-introspection)):
+
+```yaml
+identity:
+  oidc:
+    clients:
+      - name: shardpost-introspection
+        client_id: shardpost-introspection
+        client_secret: "${SHARDPOST_INTROSPECTION_SECRET}"
+        token_endpoint_auth_method: client_secret_basic
+        token_introspection:
+          resources: ["https://mail.example.org/jmap"]
+          clients: ["roundcube-app"]
+          dynamic_client_profiles: ["mail-client-v1"]
+```
+
+Configuration validation rejects the block for public, dynamic, or incompletely authenticated clients; resources
+that are not absolute URIs, contain a fragment or whitespace, use the reserved `nauthilus:` scheme, equal a
+configured `client_id`, or are already owned by another client; `clients` entries that are unknown or name the
+client itself; `dynamic_client_profiles` entries other than the configured registration profile or while dynamic
+client registration is disabled; and `resources` without any `clients` or `dynamic_client_profiles` entry.
+
 #### Client with client_secret authentication for client_credentials
 
 ```yaml
@@ -1770,14 +1854,18 @@ oidc:
 
 #### Configuration fields reference
 
-| Field                         | Type       | Default                | Description                                                               |
-|-------------------------------|------------|------------------------|---------------------------------------------------------------------------|
-| `grant_types`                 | `[]string` | `[authorization_code]` | Allowed grant types for this client                                       |
-| `token_endpoint_auth_method`  | `string`   | (any secret method)    | `client_secret_basic`, `client_secret_post`, `private_key_jwt`, or `none` |
-| `require_pkce`                | `bool`     | `false`                | Require PKCE with `S256`; always required for public clients              |
-| `client_public_key`           | `string`   | —                      | PEM-encoded public key (inline) for `private_key_jwt`                     |
-| `client_public_key_file`      | `string`   | —                      | Path to PEM file containing the public key                                |
-| `client_public_key_algorithm` | `string`   | `RS256`                | Algorithm for the client's public key (`RS256` or `EdDSA`)                |
+| Field                                         | Type       | Default                | Description                                                                                  |
+|-----------------------------------------------|------------|------------------------|----------------------------------------------------------------------------------------------|
+| `grant_types`                                 | `[]string` | `[authorization_code]` | Allowed grant types for this client                                                          |
+| `token_endpoint_auth_method`                  | `string`   | (any secret method)    | `client_secret_basic`, `client_secret_post`, `private_key_jwt`, or `none`                    |
+| `require_pkce`                                | `bool`     | `false`                | Require PKCE with `S256`; always required for public clients                                 |
+| `client_public_key`                           | `string`   | —                      | PEM-encoded public key (inline) for `private_key_jwt`                                        |
+| `client_public_key_file`                      | `string`   | —                      | Path to PEM file containing the public key                                                   |
+| `client_public_key_algorithm`                 | `string`   | `RS256`                | Algorithm for the client's public key (`RS256` or `EdDSA`)                                   |
+| `allow_backchannel_introspection`             | `bool`     | `false`                | Let this confidential static client introspect `nauthilus:backchannel` service tokens        |
+| `token_introspection.resources`               | `[]string` | `[]`                   | RFC 8707 resource indicators this client owns; each has exactly one owner                    |
+| `token_introspection.clients`                 | `[]string` | `[]`                   | Static clients whose plain user tokens it may introspect and which may request its resources |
+| `token_introspection.dynamic_client_profiles` | `[]string` | `[]`                   | Dynamic client registration profiles treated like `clients` (`mail-client-v1`)               |
 
 ### 8.5 Token Response
 
@@ -1884,10 +1972,11 @@ The device initiates the flow by requesting a device code and user code.
 
 **Request parameters:**
 
-| Parameter   | Required | Description                    |
-|-------------|----------|--------------------------------|
-| `client_id` | Yes      | The registered client ID       |
-| `scope`     | No       | Space-separated list of scopes |
+| Parameter   | Required | Description                                                                                            |
+|-------------|----------|--------------------------------------------------------------------------------------------------------|
+| `client_id` | Yes      | The registered client ID                                                                               |
+| `scope`     | No       | Space-separated list of scopes                                                                         |
+| `resource`  | No       | RFC 8707 resource indicator; may repeat. Stored with the device request and bound to the issued tokens |
 
 **Response (200 OK):**
 
@@ -1903,11 +1992,12 @@ The device initiates the flow by requesting a device code and user code.
 
 **Error responses:**
 
-| HTTP Status | Error Code            | Condition                                     |
-|-------------|-----------------------|-----------------------------------------------|
-| 400         | `invalid_request`     | Missing `client_id`                           |
-| 401         | `invalid_client`      | Unknown client                                |
-| 400         | `unauthorized_client` | Client does not have `device_code` grant type |
+| HTTP Status | Error Code            | Condition                                                                       |
+|-------------|-----------------------|---------------------------------------------------------------------------------|
+| 400         | `invalid_request`     | Missing `client_id`                                                             |
+| 401         | `invalid_client`      | Unknown client                                                                  |
+| 400         | `unauthorized_client` | Client does not have `device_code` grant type                                   |
+| 400         | `invalid_target`      | A `resource` value is malformed, unregistered, or not requestable by the client |
 
 #### 9.3.2 Device Verification Endpoint
 
@@ -1979,11 +2069,12 @@ The device polls this endpoint until the user completes authorization.
 
 **Request parameters:**
 
-| Parameter     | Required | Description                                            |
-|---------------|----------|--------------------------------------------------------|
-| `grant_type`  | Yes      | Must be `urn:ietf:params:oauth:grant-type:device_code` |
-| `device_code` | Yes      | The device code from the authorization response        |
-| `client_id`   | Yes      | The registered client ID                               |
+| Parameter     | Required | Description                                                                                        |
+|---------------|----------|----------------------------------------------------------------------------------------------------|
+| `grant_type`  | Yes      | Must be `urn:ietf:params:oauth:grant-type:device_code`                                             |
+| `device_code` | Yes      | The device code from the authorization response                                                    |
+| `client_id`   | Yes      | The registered client ID                                                                           |
+| `resource`    | No       | Subset of the device request's resources that narrows the access token; otherwise `invalid_target` |
 
 **Polling responses (per RFC 8628 §3.5):**
 

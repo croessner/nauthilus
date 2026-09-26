@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -227,11 +228,18 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	clientID = client.ClientID
 	sp.SetAttributes(attribute.String(oidcParamClientID, clientID))
 
+	resources, err := h.validateRequestedResources(client, oidcRequestedResources(ctx))
+	if err != nil {
+		writeOIDCInvalidTargetResponse(ctx)
+
+		return
+	}
+
 	oidcCfg := h.deps.Cfg.GetIDP().OIDC
 	requestedScopes := strings.Fields(ctx.PostForm("scope"))
-	filteredScopes := h.idp.FilterScopes(client, requestedScopes)
+	grant := deviceCodeGrant{scopes: h.idp.FilterScopes(client, requestedScopes), resources: resources}
 
-	userCode, deviceCode, deviceRequest, err := h.createDeviceCodeRequest(ctx, client, &oidcCfg, filteredScopes)
+	userCode, deviceCode, deviceRequest, err := h.createDeviceCodeRequest(ctx, client, &oidcCfg, grant)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{frontChannelLogoutTaskStatusError: oidcErrorServerError})
 
@@ -245,12 +253,18 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 // deviceUserCodeAttempts bounds user-code regeneration after a collision with a live user code.
 const deviceUserCodeAttempts = 3
 
+// deviceCodeGrant carries the validated scopes and RFC 8707 resources a device request asks for.
+type deviceCodeGrant struct {
+	scopes    []string
+	resources []string
+}
+
 // createDeviceCodeRequest generates and stores a new device code request.
 func (h *OIDCHandler) createDeviceCodeRequest(
 	ctx *gin.Context,
 	client *config.OIDCClient,
 	oidcCfg *config.OIDCConfig,
-	scopes []string,
+	grant deviceCodeGrant,
 ) (string, string, *idp.DeviceCodeRequest, error) {
 	var err error
 
@@ -260,7 +274,7 @@ func (h *OIDCHandler) createDeviceCodeRequest(
 			request              *idp.DeviceCodeRequest
 		)
 
-		userCode, deviceCode, request, err = h.storeNewDeviceCodeRequest(ctx, client, oidcCfg, scopes)
+		userCode, deviceCode, request, err = h.storeNewDeviceCodeRequest(ctx, client, oidcCfg, grant)
 		if !errors.Is(err, idp.ErrDeviceUserCodeCollision) {
 			return userCode, deviceCode, request, err
 		}
@@ -274,7 +288,7 @@ func (h *OIDCHandler) storeNewDeviceCodeRequest(
 	ctx *gin.Context,
 	client *config.OIDCClient,
 	oidcCfg *config.OIDCConfig,
-	scopes []string,
+	grant deviceCodeGrant,
 ) (string, string, *idp.DeviceCodeRequest, error) {
 	userCode, err := h.userCodeGen.GenerateUserCode(oidcCfg.GetDeviceCodeUserCodeLength())
 	if err != nil {
@@ -286,7 +300,8 @@ func (h *OIDCHandler) storeNewDeviceCodeRequest(
 
 	request := &idp.DeviceCodeRequest{
 		ClientID:  client.ClientID,
-		Scopes:    scopes,
+		Scopes:    grant.scopes,
+		Resources: grant.resources,
 		UserCode:  userCode,
 		Status:    idp.DeviceCodeStatusPending,
 		ExpiresAt: time.Now().Add(expiry),
@@ -352,6 +367,10 @@ func (h *OIDCHandler) handleDeviceCodePollStatus(ctx *gin.Context, deviceCode st
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorAccessDenied})
 
 	case idp.DeviceCodeStatusAuthorized:
+		if !acceptTokenResourceNarrowing(ctx, request.Resources) {
+			return
+		}
+
 		claimed, err := h.deviceStore.ClaimAuthorizedDeviceCode(ctx.Request.Context(), deviceCode, client.ClientID)
 		if err != nil {
 			ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorInvalidGrant})
@@ -418,16 +437,17 @@ func (h *OIDCHandler) ensureDeviceCodeRequestClaims(ctx *gin.Context, deviceCode
 // newDeviceCodeOIDCSession builds an OIDC session from an authorized device request.
 func newDeviceCodeOIDCSession(request *idp.DeviceCodeRequest) *idp.OIDCSession {
 	return &idp.OIDCSession{
-		ClientID:          request.ClientID,
-		UserID:            request.UserID,
-		Username:          request.Username,
-		DisplayName:       request.DisplayName,
-		Scopes:            request.Scopes,
-		AuthTime:          time.Now(),
-		MFACompleted:      request.MFACompleted,
-		MFAMethod:         request.MFAMethod,
-		IDTokenClaims:     request.IDTokenClaims,
-		AccessTokenClaims: request.AccessTokenClaims,
+		ClientID:             request.ClientID,
+		UserID:               request.UserID,
+		Username:             request.Username,
+		DisplayName:          request.DisplayName,
+		Scopes:               request.Scopes,
+		AuthTime:             time.Now(),
+		MFACompleted:         request.MFACompleted,
+		MFAMethod:            request.MFAMethod,
+		IDTokenClaims:        request.IDTokenClaims,
+		AccessTokenClaims:    request.AccessTokenClaims,
+		AccessTokenResources: slices.Clone(request.Resources),
 	}
 }
 
@@ -439,7 +459,15 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 
 	session := newDeviceCodeOIDCSession(request)
 
-	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
+	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokensWithOptions(
+		ctx.Request.Context(), session, idp.TokenIssueOptions{Resources: oidcRequestedResources(ctx)},
+	)
+	if errors.Is(err, idp.ErrInvalidTarget) {
+		writeOIDCInvalidTargetResponse(ctx)
+
+		return
+	}
+
 	if err != nil {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),

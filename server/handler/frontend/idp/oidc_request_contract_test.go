@@ -62,6 +62,29 @@ func TestOIDCTokenRequestsMatchOpenAPIContract(t *testing.T) {
 			WantValid: true,
 		},
 		{
+			Name: "token request accepts repeated resource indicators",
+			Request: requesttest.NewFormRequest(http.MethodPost, "/oidc/token", url.Values{
+				oidcParamGrantType: {oidcGrantTypeRefreshToken}, oidcParamRefreshToken: {"synthetic-refresh-token"},
+				oidcParamResource: {"https://mail.example.org/jmap", "https://dav.example.org"},
+			}.Encode()),
+			WantValid: true,
+		},
+		{
+			Name: "authorization request accepts repeated resource indicators",
+			Request: requesttest.NewRequest(http.MethodGet, "/oidc/authorize?"+url.Values{
+				oidcParamClientID: {"synthetic-client"}, oidcParamResponseType: {oidcResponseTypeCode},
+				oidcParamResource: {"https://mail.example.org/jmap", "https://dav.example.org"},
+			}.Encode(), "", ""),
+			WantValid: true,
+		},
+		{
+			Name: "device authorization request accepts repeated resource indicators",
+			Request: requesttest.NewFormRequest(http.MethodPost, "/oidc/device", url.Values{
+				oidcParamClientID: {"synthetic-client"}, oidcParamResource: {"https://mail.example.org/jmap", "https://dav.example.org"},
+			}.Encode()),
+			WantValid: true,
+		},
+		{
 			Name: "token request rejects missing grant type",
 			Request: requesttest.NewFormRequest(
 				http.MethodPost,

@@ -362,3 +362,33 @@ func TestDeviceCodeStatus(t *testing.T) {
 		assert.Equal(t, DeviceCodeStatus("denied"), DeviceCodeStatusDenied)
 	})
 }
+
+func TestDeviceCodeTerminalTransitionKeepsResources(t *testing.T) {
+	expiresAt := time.Now().Add(time.Minute)
+	current := &DeviceCodeRequest{
+		ClientID: "device-client", UserCode: "ABCD-EFGH", Status: DeviceCodeStatusPending, VerificationLocked: true,
+		ExpiresAt: expiresAt, Scopes: []string{"openid", "profile"}, Resources: []string{"https://mail.example.org/jmap"},
+	}
+
+	cases := []struct {
+		name      string
+		resources []string
+		want      bool
+	}{
+		{name: "unchanged", resources: []string{"https://mail.example.org/jmap"}, want: true},
+		{name: "dropped", resources: nil},
+		{name: "widened", resources: []string{"https://mail.example.org/jmap", "https://other.example.org"}},
+		{name: "replaced", resources: []string{"https://other.example.org"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			desired := *current
+			desired.Status = DeviceCodeStatusAuthorized
+			desired.Scopes = []string{"openid"}
+			desired.Resources = tc.resources
+
+			assert.Equal(t, tc.want, deviceCodeTerminalTransitionValid(current, &desired))
+		})
+	}
+}

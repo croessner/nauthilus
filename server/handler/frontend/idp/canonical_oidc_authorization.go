@@ -454,7 +454,7 @@ func (h *OIDCHandler) buildCanonicalOIDCAuthorizeSession(
 		MFACompleted: mfaCompleted, MFAMethod: mfaMethod, Nonce: request.nonce,
 		CodeChallenge: request.codeChallenge, CodeChallengeMethod: request.codeChallengeMethod,
 		IDTokenClaims: idTokenClaims, AccessTokenClaims: accessTokenClaims,
-		RequiredMFALevel: client.RequiredMFALevel,
+		RequiredMFALevel: client.RequiredMFALevel, AccessTokenResources: slices.Clone(request.resources),
 	}, filteredScopes, nil
 }
 
@@ -490,6 +490,7 @@ func startCanonicalOIDCAuthorization(
 			flowdomain.FlowMetadataPrompt:              request.prompt,
 			flowdomain.FlowMetadataCodeChallenge:       request.codeChallenge,
 			flowdomain.FlowMetadataCodeChallengeMethod: request.codeChallengeMethod,
+			flowdomain.FlowMetadataResource:            joinResources(request.resources),
 			flowdomain.FlowMetadataResumeTarget:        resumeTarget,
 		},
 	}
@@ -666,7 +667,8 @@ func (h *OIDCHandler) validateCanonicalOIDCConsentSelection(selection canonicalO
 		selection.pending.Username != selection.identity.Account ||
 		selection.pending.Nonce != selection.state.Metadata[flowdomain.FlowMetadataNonce] ||
 		selection.pending.CodeChallenge != selection.state.Metadata[flowdomain.FlowMetadataCodeChallenge] ||
-		selection.pending.CodeChallengeMethod != selection.state.Metadata[flowdomain.FlowMetadataCodeChallengeMethod] {
+		selection.pending.CodeChallengeMethod != selection.state.Metadata[flowdomain.FlowMetadataCodeChallengeMethod] ||
+		!slices.Equal(selection.pending.AccessTokenResources, strings.Fields(selection.state.Metadata[flowdomain.FlowMetadataResource])) {
 		return sessionstate.ErrBindingMismatch
 	}
 
@@ -774,6 +776,7 @@ func canonicalOIDCAuthorizeRequestFromState(state *flowdomain.State) oidcAuthori
 		prompt:              metadata[flowdomain.FlowMetadataPrompt],
 		codeChallenge:       metadata[flowdomain.FlowMetadataCodeChallenge],
 		codeChallengeMethod: metadata[flowdomain.FlowMetadataCodeChallengeMethod],
+		resources:           strings.Fields(metadata[flowdomain.FlowMetadataResource]),
 	}
 }
 

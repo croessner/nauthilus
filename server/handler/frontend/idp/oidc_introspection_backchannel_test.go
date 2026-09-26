@@ -93,7 +93,7 @@ func TestCanIntrospectAccessToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &config.OIDCClient{ClientID: "inspector", ClientSecret: secret.New("test-secret"), AllowBackchannelIntrospection: tc.allowed, Dynamic: tc.dynamic}
 			claims := jwt.MapClaims{"aud": tc.audience, definitions.ClaimClientID: tc.clientID, definitions.ClaimTokenType: tc.tokenType}
-			assert.Equal(t, tc.want, canIntrospectAccessToken(client, claims))
+			assert.Equal(t, tc.want, accessTokenIntrospectionPolicy{}.allows(context.Background(), client, claims))
 		})
 	}
 }

@@ -282,9 +282,24 @@ func (n *NauthilusIDP) ValidatePostLogoutRedirectURI(client *config.OIDCClient, 
 // Per OIDC Core 1.0 §3.1.2.1, an ID token is only issued when the "openid" scope is present.
 // Without "openid", this behaves as a pure OAuth 2.0 token response (access_token only).
 func (n *NauthilusIDP) IssueTokens(ctx context.Context, session *OIDCSession) (string, string, string, time.Duration, error) {
+	return n.IssueTokensWithOptions(ctx, session, TokenIssueOptions{})
+}
+
+// IssueTokensWithOptions generates tokens like IssueTokens. Requested resources narrow only the issued
+// access token; they must be a subset of the session's granted resources (ErrInvalidTarget otherwise).
+func (n *NauthilusIDP) IssueTokensWithOptions(
+	ctx context.Context,
+	session *OIDCSession,
+	options TokenIssueOptions,
+) (string, string, string, time.Duration, error) {
 	client, err := n.ResolveClient(ctx, session.ClientID)
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("client not found")
+	}
+
+	accessResources, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	if err != nil {
+		return "", "", "", 0, err
 	}
 
 	if client.Dynamic {
@@ -300,7 +315,7 @@ func (n *NauthilusIDP) IssueTokens(ctx context.Context, session *OIDCSession) (s
 
 	session.DynamicUserEpoch = epoch
 
-	return n.issueTokensForClient(ctx, client, session, "")
+	return n.issueTokensForClient(ctx, client, session, "", accessResources)
 }
 
 // validateDynamicSessionPolicy rejects stale sessions after operator-policy narrowing.
@@ -329,13 +344,15 @@ func (n *NauthilusIDP) validateDynamicScopePolicy(client *config.OIDCClient, sco
 	return nil
 }
 
+// issueTokensForClient issues ID, access, and refresh tokens; accessResources narrows only the access token.
 func (n *NauthilusIDP) issueTokensForClient(
 	ctx context.Context,
 	client *config.OIDCClient,
 	session *OIDCSession,
 	persistedRefreshToken string,
+	accessResources []string,
 ) (string, string, string, time.Duration, error) {
-	idTokenString, accessTokenString, accessTokenLifetime, err := n.issueIDAndAccessTokens(ctx, client, session)
+	idTokenString, accessTokenString, accessTokenLifetime, err := n.issueIDAndAccessTokens(ctx, client, session, accessResources)
 	if err != nil {
 		return "", "", "", 0, err
 	}
@@ -390,10 +407,13 @@ func (n *NauthilusIDP) storeInitialDynamicRefreshToken(ctx context.Context, clie
 	return refreshToken, nil
 }
 
+// issueIDAndAccessTokens signs the ID token and issues the access token. A narrowed resource set is
+// applied to a copy of the session, so the caller's session keeps the full grant for refresh storage.
 func (n *NauthilusIDP) issueIDAndAccessTokens(
 	ctx context.Context,
 	client *config.OIDCClient,
 	session *OIDCSession,
+	accessResources []string,
 ) (string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.issue_tokens",
 		attribute.String("client_id", session.ClientID),
@@ -423,7 +443,8 @@ func (n *NauthilusIDP) issueIDAndAccessTokens(
 	}
 
 	// Access Token
-	tokenIssuer := NewTokenIssuer(issuer, signer, session, n.storage, n.tokenGen)
+	accessSession := session.withAccessTokenResources(accessResources)
+	tokenIssuer := NewTokenIssuer(issuer, signer, accessSession, n.storage, n.tokenGen)
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIDP().OIDC.GetAccessTokenType())
 
 	var accessTokenString string
@@ -439,6 +460,8 @@ func (n *NauthilusIDP) issueIDAndAccessTokens(
 
 		return "", "", 0, err
 	}
+
+	session.AccessTokenIssuedAt, session.AccessTokenExpiresAt = accessSession.AccessTokenIssuedAt, accessSession.AccessTokenExpiresAt
 
 	return idTokenString, accessTokenString, accessTokenLifetime, nil
 }
@@ -593,13 +616,24 @@ func (n *NauthilusIDP) IssueClientCredentialsToken(ctx context.Context, clientID
 
 // ExchangeRefreshToken exchanges a refresh token for a new set of tokens.
 func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, string, string, string, time.Duration, error) {
+	return n.ExchangeRefreshTokenWithOptions(ctx, refreshToken, clientID, TokenIssueOptions{})
+}
+
+// ExchangeRefreshTokenWithOptions exchanges a refresh token like ExchangeRefreshToken. Requested resources
+// narrow only the new access token and must lie inside the stored grant, which is never widened.
+func (n *NauthilusIDP) ExchangeRefreshTokenWithOptions(
+	ctx context.Context,
+	refreshToken string,
+	clientID string,
+	options TokenIssueOptions,
+) (*OIDCSession, string, string, string, time.Duration, error) {
 	_, sp := n.tracer.Start(ctx, "idp.exchange_refresh_token",
 		attribute.String("client_id", clientID),
 	)
 	defer sp.End()
 
 	if strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
-		return n.exchangeDynamicRefreshToken(ctx, refreshToken, clientID)
+		return n.exchangeDynamicRefreshToken(ctx, refreshToken, clientID, options)
 	}
 
 	session, err := n.storage.GetRefreshToken(ctx, refreshToken)
@@ -614,6 +648,11 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 	client, resolveErr := n.ResolveClient(ctx, clientID)
 	if resolveErr != nil {
 		return nil, "", "", "", 0, fmt.Errorf("client not found")
+	}
+
+	accessResources, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	if err != nil {
+		return nil, "", "", "", 0, err
 	}
 
 	rotateRefreshTokens := client.GetRevokeRefreshToken(n.deps.Cfg.GetIDP().OIDC.GetRevokeRefreshToken())
@@ -639,7 +678,7 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 		persistedRefreshToken = refreshToken
 	}
 
-	idToken, accessToken, newRefreshToken, expiresIn, issueErr := n.issueTokensForClient(ctx, client, session, persistedRefreshToken)
+	idToken, accessToken, newRefreshToken, expiresIn, issueErr := n.issueTokensForClient(ctx, client, session, persistedRefreshToken, accessResources)
 	if issueErr != nil {
 		return nil, "", "", "", 0, issueErr
 	}
@@ -647,28 +686,49 @@ func (n *NauthilusIDP) ExchangeRefreshToken(ctx context.Context, refreshToken st
 	return session, idToken, accessToken, newRefreshToken, expiresIn, nil
 }
 
-// exchangeDynamicRefreshToken rotates a public-native refresh family atomically.
-func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, string, string, string, time.Duration, error) { //nolint:gocyclo
+// loadDynamicRefreshGrant loads a dynamic refresh session and checks that its client and the current
+// profile policy still permit a refresh, before any token state changes.
+func (n *NauthilusIDP) loadDynamicRefreshGrant(ctx context.Context, refreshToken string, clientID string) (*OIDCSession, *config.OIDCClient, error) {
 	session, err := n.storage.GetDynamicRefreshToken(ctx, refreshToken)
 	if err != nil {
 		if errors.Is(err, redis.Nil) || errors.Is(err, ErrDynamicRefreshTokenReuse) {
-			return nil, "", "", "", 0, fmt.Errorf("%w: %w", ErrInvalidRefreshToken, err)
+			return nil, nil, fmt.Errorf("%w: %w", ErrInvalidRefreshToken, err)
 		}
 
-		return nil, "", "", "", 0, err
+		return nil, nil, err
 	}
 
 	if session.ClientID != clientID {
-		return nil, "", "", "", 0, fmt.Errorf("%w", ErrRefreshTokenClientMismatch)
+		return nil, nil, fmt.Errorf("%w", ErrRefreshTokenClientMismatch)
 	}
 
 	client, err := n.ResolveClient(ctx, clientID)
 	if err != nil || !client.Dynamic || !client.SupportsGrantType(dcr.GrantRefreshToken) || session.RefreshFamilyID == "" {
-		return nil, "", "", "", 0, fmt.Errorf("client not found")
+		return nil, nil, fmt.Errorf("client not found")
 	}
 
 	if err := n.validateDynamicSessionPolicy(client, session); err != nil {
-		return nil, "", "", "", 0, fmt.Errorf("%w: %v", ErrInvalidRefreshToken, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrInvalidRefreshToken, err)
+	}
+
+	return session, client, nil
+}
+
+// exchangeDynamicRefreshToken rotates a public-native refresh family atomically.
+func (n *NauthilusIDP) exchangeDynamicRefreshToken(
+	ctx context.Context,
+	refreshToken string,
+	clientID string,
+	options TokenIssueOptions,
+) (*OIDCSession, string, string, string, time.Duration, error) {
+	session, client, err := n.loadDynamicRefreshGrant(ctx, refreshToken, clientID)
+	if err != nil {
+		return nil, "", "", "", 0, err
+	}
+
+	accessResources, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	if err != nil {
+		return nil, "", "", "", 0, err
 	}
 
 	if err := n.invalidateOldAccessToken(ctx, session, client); err != nil {
@@ -677,7 +737,7 @@ func (n *NauthilusIDP) exchangeDynamicRefreshToken(ctx context.Context, refreshT
 
 	session.AccessToken = ""
 
-	idToken, accessToken, expiresIn, err := n.issueIDAndAccessTokens(ctx, client, session)
+	idToken, accessToken, expiresIn, err := n.issueIDAndAccessTokens(ctx, client, session, accessResources)
 	if err != nil {
 		return nil, "", "", "", 0, err
 	}
@@ -859,7 +919,15 @@ func (n *NauthilusIDP) validateJWTAccessTokenState(ctx context.Context, tokenStr
 // checks as opaque tokens: the client must still be active, the scopes must still be allowed,
 // and the token lifetime must not exceed the current policy.
 func (n *NauthilusIDP) validateDynamicJWTAccessToken(ctx context.Context, claims jwt.MapClaims) error {
-	clientID, _ := claims[oidcClaimAudience].(string)
+	clientID, ok := AccessTokenIssuingClient(claims)
+	if !ok {
+		if accessTokenMayBelongToDynamicClient(claims) {
+			return fmt.Errorf("access token has no resolvable issuing client")
+		}
+
+		return nil
+	}
+
 	if !strings.HasPrefix(clientID, dcr.ClientIDPrefix) {
 		return nil
 	}

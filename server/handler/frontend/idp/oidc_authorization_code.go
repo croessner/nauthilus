@@ -35,6 +35,7 @@ import (
 
 // oidcAuthorizeRequest carries validated authorization request parameters.
 type oidcAuthorizeRequest struct {
+	resources           []string
 	clientID            string
 	redirectURI         string
 	scope               string
@@ -60,6 +61,7 @@ func readOIDCAuthorizeRequest(ctx *gin.Context) (oidcAuthorizeRequest, bool) {
 	}
 
 	request.codeChallengeMethod = ctx.Query(oidcParamCodeChallengeMethod)
+	request.resources = ctx.QueryArray(oidcParamResource)
 
 	return request, true
 }
@@ -99,6 +101,13 @@ func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request *oi
 	if client.RequiresPKCE() && request.codeChallenge == "" {
 		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, "PKCE is required for this client")
 	}
+
+	resources, err := h.validateRequestedResources(client, request.resources)
+	if err != nil {
+		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidTarget, "Invalid resource")
+	}
+
+	request.resources = resources
 
 	return client, true
 }
@@ -170,7 +179,8 @@ func oidcAuthorizeRequestMatchesMetadata(metadata map[string]string, request oid
 		metadata[flowdomain.FlowMetadataResponseType] == request.responseType &&
 		metadata[flowdomain.FlowMetadataPrompt] == request.prompt &&
 		metadata[flowdomain.FlowMetadataCodeChallenge] == request.codeChallenge &&
-		metadata[flowdomain.FlowMetadataCodeChallengeMethod] == request.codeChallengeMethod
+		metadata[flowdomain.FlowMetadataCodeChallengeMethod] == request.codeChallengeMethod &&
+		metadata[flowdomain.FlowMetadataResource] == joinResources(request.resources)
 }
 
 var oidcAuthorizeSingleValueParameters = []string{
@@ -235,7 +245,9 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
-	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokens(ctx.Request.Context(), session)
+	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokensWithOptions(
+		ctx.Request.Context(), session, idp.TokenIssueOptions{Resources: oidcRequestedResources(ctx)},
+	)
 	if err != nil {
 		h.logTokenError(ctx, grantType, clientID, err)
 
@@ -267,7 +279,9 @@ func (h *OIDCHandler) handleRefreshTokenExchange(ctx *gin.Context, client *confi
 	clientID := client.ClientID
 	rt := formValue(ctx, oidcParamRefreshToken)
 
-	_, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshToken(ctx.Request.Context(), rt, clientID)
+	_, idToken, accessToken, refreshToken, expiresIn, err := h.idp.ExchangeRefreshTokenWithOptions(
+		ctx.Request.Context(), rt, clientID, idp.TokenIssueOptions{Resources: oidcRequestedResources(ctx)},
+	)
 	if err != nil {
 		if errors.Is(err, idp.ErrInvalidRefreshToken) || errors.Is(err, idp.ErrRefreshTokenClientMismatch) {
 			setOIDCTokenFailureReason(ctx, oidcRefreshTokenFailureReason(err))

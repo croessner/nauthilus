@@ -48,6 +48,8 @@ const (
 	FlowMetadataCodeChallenge = "code_challenge"
 	// FlowMetadataCodeChallengeMethod stores the PKCE code challenge method.
 	FlowMetadataCodeChallengeMethod = "code_challenge_method"
+	// FlowMetadataResource stores the validated RFC 8707 resource indicators, space-separated.
+	FlowMetadataResource = "resource"
 	// FlowMetadataConsentChallenge binds a consent surface to its owning typed OIDC flow.
 	FlowMetadataConsentChallenge = "consent_challenge"
 	// FlowMetadataSAMLEntityID stores the SAML entity identifier.

@@ -89,3 +89,95 @@ func TestOIDCClientBackchannelIntrospectionParsing(t *testing.T) {
 	assert.NoError(t, mapstructure.Decode(map[string]any{"client_id": "inspector"}, &omitted))
 	assert.False(t, omitted.AllowBackchannelIntrospection)
 }
+
+// tokenIntrospectionTestConfig builds a resource server, an issuing client, and a second resource server.
+func tokenIntrospectionTestConfig(introspection OIDCTokenIntrospection, dynamicEnabled bool) *FileSettings {
+	resourceServer := OIDCClient{
+		ClientID:                "mail-rs",
+		ClientSecret:            secret.New("test-secret"),
+		TokenEndpointAuthMethod: AuthorityClientSecretBasicAuth,
+		TokenIntrospection:      introspection,
+	}
+	otherResourceServer := OIDCClient{
+		ClientID:     "other-rs",
+		ClientSecret: secret.New("test-secret"),
+		TokenIntrospection: OIDCTokenIntrospection{
+			Resources: []string{"https://other.example.org/api"},
+			Clients:   []string{"webmail"},
+		},
+	}
+
+	return &FileSettings{IDP: &IDPSection{OIDC: OIDCConfig{
+		Clients:                   []OIDCClient{resourceServer, {ClientID: "webmail"}, otherResourceServer},
+		DynamicClientRegistration: OIDCDynamicClientRegistrationConfig{Enabled: dynamicEnabled},
+	}}}
+}
+
+func TestValidateIDPOIDCTokenIntrospectionSettings(t *testing.T) {
+	const basePath = "identity.oidc.clients[0].token_introspection"
+
+	cases := []struct {
+		name           string
+		introspection  OIDCTokenIntrospection
+		mutate         func(*OIDCClient)
+		dynamicEnabled bool
+		wantPath       string
+	}{
+		{name: "not configured", introspection: OIDCTokenIntrospection{}, mutate: func(c *OIDCClient) { c.ClientSecret = secret.Value{} }},
+		{name: "valid resources and clients", introspection: OIDCTokenIntrospection{Resources: []string{"https://mail.example.org/jmap", "urn:example:mail"}, Clients: []string{"webmail"}}},
+		{name: "valid allowlist only", introspection: OIDCTokenIntrospection{Clients: []string{"webmail"}}},
+		{name: "valid dynamic profile", introspection: OIDCTokenIntrospection{Resources: []string{"https://mail.example.org/jmap"}, DynamicClientProfiles: []string{"mail-client-v1"}}, dynamicEnabled: true},
+		{name: "public client", introspection: OIDCTokenIntrospection{Clients: []string{"webmail"}}, mutate: func(c *OIDCClient) { c.ClientSecret = secret.Value{} }, wantPath: basePath},
+		{name: "none auth method", introspection: OIDCTokenIntrospection{Clients: []string{"webmail"}}, mutate: func(c *OIDCClient) { c.TokenEndpointAuthMethod = oidcAuthMethodNone }, wantPath: basePath},
+		{name: "private key JWT without key", introspection: OIDCTokenIntrospection{Clients: []string{"webmail"}}, mutate: func(c *OIDCClient) { c.TokenEndpointAuthMethod = AuthorityPrivateKeyJWTAuth }, wantPath: basePath},
+		{name: "resources without allowlist", introspection: OIDCTokenIntrospection{Resources: []string{"https://mail.example.org/jmap"}}, wantPath: basePath},
+		{name: "relative resource", introspection: OIDCTokenIntrospection{Resources: []string{"/jmap"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "empty resource", introspection: OIDCTokenIntrospection{Resources: []string{""}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "fragment resource", introspection: OIDCTokenIntrospection{Resources: []string{"https://mail.example.org/jmap#x"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "surrounding whitespace", introspection: OIDCTokenIntrospection{Resources: []string{" https://mail.example.org/jmap"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "backchannel audience", introspection: OIDCTokenIntrospection{Resources: []string{"nauthilus:backchannel"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "policy audience", introspection: OIDCTokenIntrospection{Resources: []string{"nauthilus:policy"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "reserved scheme", introspection: OIDCTokenIntrospection{Resources: []string{"NAUTHILUS:mail"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[0]"},
+		{name: "resource equals client id", introspection: OIDCTokenIntrospection{Resources: []string{"https://mail.example.org/jmap"}, Clients: []string{"webmail"}}, mutate: func(c *OIDCClient) { c.ClientID = "https://mail.example.org/jmap" }, wantPath: basePath + ".resources[0]"},
+		{name: "duplicate resource within client", introspection: OIDCTokenIntrospection{Resources: []string{"https://mail.example.org/jmap", "https://mail.example.org/jmap"}, Clients: []string{"webmail"}}, wantPath: basePath + ".resources[1]"},
+		{name: "resource owned by another client", introspection: OIDCTokenIntrospection{Resources: []string{"https://other.example.org/api"}, Clients: []string{"webmail"}}, wantPath: "identity.oidc.clients[2].token_introspection.resources[0]"},
+		{name: "unknown client", introspection: OIDCTokenIntrospection{Clients: []string{"unknown"}}, wantPath: basePath + ".clients[0]"},
+		{name: "self in allowlist", introspection: OIDCTokenIntrospection{Clients: []string{"webmail", "mail-rs"}}, wantPath: basePath + ".clients[1]"},
+		{name: "profile without registration", introspection: OIDCTokenIntrospection{DynamicClientProfiles: []string{"mail-client-v1"}}, wantPath: basePath + ".dynamic_client_profiles"},
+		{name: "unknown profile", introspection: OIDCTokenIntrospection{DynamicClientProfiles: []string{"other-profile"}}, dynamicEnabled: true, wantPath: basePath + ".dynamic_client_profiles[0]"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tokenIntrospectionTestConfig(tc.introspection, tc.dynamicEnabled)
+			if tc.mutate != nil {
+				tc.mutate(&cfg.IDP.OIDC.Clients[0])
+			}
+
+			err := cfg.validateIDPOIDCTokenIntrospectionSettings()
+			if tc.wantPath == "" {
+				assert.NoError(t, err)
+
+				return
+			}
+
+			assert.ErrorContains(t, err, tc.wantPath)
+		})
+	}
+}
+
+func TestOIDCClientTokenIntrospectionParsing(t *testing.T) {
+	var client OIDCClient
+
+	err := mapstructure.Decode(map[string]any{"token_introspection": map[string]any{
+		"resources":               []string{"https://mail.example.org/jmap"},
+		"clients":                 []string{"webmail"},
+		"dynamic_client_profiles": []string{"mail-client-v1"},
+	}}, &client)
+	assert.NoError(t, err)
+	assert.Equal(t, OIDCTokenIntrospection{
+		Resources:             []string{"https://mail.example.org/jmap"},
+		Clients:               []string{"webmail"},
+		DynamicClientProfiles: []string{"mail-client-v1"},
+	}, client.TokenIntrospection)
+}

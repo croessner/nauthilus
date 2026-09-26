@@ -160,6 +160,7 @@ func parallelFlowStates(oidcID string, samlID string) (*State, *State) {
 		Metadata: map[string]string{
 			FlowMetadataClientID: "client-a",
 			FlowMetadataState:    "oidc-state",
+			FlowMetadataResource: "https://mail.example.org/jmap urn:example:calendar",
 		},
 	}
 	saml := &State{
@@ -208,7 +209,8 @@ func assertParallelTypedFlows(t *testing.T, fixture parallelTypedFlowFixture) {
 		t.Fatalf("load SAML flow: %v", err)
 	}
 
-	if loadedOIDC.Protocol != FlowProtocolOIDC || loadedOIDC.Metadata[FlowMetadataState] != "oidc-state" {
+	if loadedOIDC.Protocol != FlowProtocolOIDC || loadedOIDC.Metadata[FlowMetadataState] != "oidc-state" ||
+		loadedOIDC.Metadata[FlowMetadataResource] != "https://mail.example.org/jmap urn:example:calendar" {
 		t.Fatalf("OIDC state crossed repository boundary: %#v", loadedOIDC)
 	}
 

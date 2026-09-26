@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,6 +65,7 @@ const deviceCodeTransitionAttempts = 3
 type DeviceCodeRequest struct {
 	ClientID                    string                  `json:"client_id"`
 	Scopes                      []string                `json:"scopes"`
+	Resources                   []string                `json:"resources,omitempty"`
 	UserCode                    string                  `json:"user_code"`
 	Status                      DeviceCodeStatus        `json:"status"`
 	UserID                      string                  `json:"user_id,omitempty"`
@@ -344,11 +346,14 @@ func deviceCodeClaimable(request *DeviceCodeRequest, userCode string) bool {
 		NormalizeDeviceUserCode(request.UserCode) == userCode
 }
 
+// deviceCodeTerminalTransitionValid permits a verified decision that keeps client, code, expiry, and
+// resources and only narrows the scopes.
 func deviceCodeTerminalTransitionValid(current *DeviceCodeRequest, desired *DeviceCodeRequest) bool {
 	return current != nil && current.Status == DeviceCodeStatusPending && current.VerificationLocked &&
 		current.ClientID == desired.ClientID &&
 		NormalizeDeviceUserCode(current.UserCode) == NormalizeDeviceUserCode(desired.UserCode) &&
-		current.ExpiresAt.Equal(desired.ExpiresAt) && deviceCodeScopesBounded(desired.Scopes, current.Scopes)
+		current.ExpiresAt.Equal(desired.ExpiresAt) && deviceCodeScopesBounded(desired.Scopes, current.Scopes) &&
+		slices.Equal(current.Resources, desired.Resources)
 }
 
 // transitionDeviceCode runs one optimistic single-key transaction on a device request.

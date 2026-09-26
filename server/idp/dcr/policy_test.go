@@ -46,6 +46,10 @@ func TestRuntimePolicyNarrowsStoredDynamicClient(t *testing.T) {
 	if client.RequiredMFALevel != 2 || client.AccessTokenLifetime != 5*time.Minute {
 		t.Fatalf("Resolve() did not apply current MFA and token ceilings: %+v", client)
 	}
+
+	if !client.Dynamic || client.DynamicProfile != ProfileMailClientV1 {
+		t.Fatalf("Resolve() did not carry the registration profile: %+v", client)
+	}
 }
 
 func TestRuntimePolicyAppliesProfileClaimsTokenTypeAndImpliedScopes(t *testing.T) {
