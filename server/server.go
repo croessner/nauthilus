@@ -211,9 +211,9 @@ func setupWorkers(ctx context.Context, store *contextStore, cfg config.File, log
 			setupLuaWorker(ctx, store, cfg, logger, redisClient, channel)
 
 			luaStarted = true
-		case definitions.BackendCache, definitions.BackendTest:
+		case definitions.BackendCache, definitions.BackendTest, definitions.BackendPlugin, definitions.BackendRemote:
 		default:
-			level.Warn(logger).Log(definitions.LogKeyMsg, "Unknown backend", "backend")
+			level.Warn(logger).Log(definitions.LogKeyMsg, "Unknown backend", "backend", backendType.String())
 		}
 	}
 }

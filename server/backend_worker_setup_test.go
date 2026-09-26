@@ -12,25 +12,33 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 )
 
-func TestSetupWorkersTreatsTestBackendAsNoop(t *testing.T) {
-	var backend config.Backend
-	if err := backend.Set(definitions.BackendTestName); err != nil {
-		t.Fatalf("set test backend: %v", err)
-	}
+func TestSetupWorkersTreatsWorkerlessBackendsAsNoop(t *testing.T) {
+	for _, value := range []string{
+		definitions.BackendTestName,
+		definitions.BackendRemoteName,
+		definitions.BackendPluginName + "(mailde_auth.passdb)",
+	} {
+		t.Run(value, func(t *testing.T) {
+			var backend config.Backend
+			if err := backend.Set(value); err != nil {
+				t.Fatalf("set backend %q: %v", value, err)
+			}
 
-	cfg := &config.FileSettings{
-		Server: &config.ServerSection{
-			Backends: []*config.Backend{&backend},
-		},
-	}
+			cfg := &config.FileSettings{
+				Server: &config.ServerSection{
+					Backends: []*config.Backend{&backend},
+				},
+			}
 
-	var logs bytes.Buffer
+			var logs bytes.Buffer
 
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
 
-	setupWorkers(context.Background(), &contextStore{}, cfg, logger, nil, nil)
+			setupWorkers(context.Background(), &contextStore{}, cfg, logger, nil, nil)
 
-	if strings.Contains(logs.String(), "Unknown backend") {
-		t.Fatalf("test backend should not be logged as unknown: %s", logs.String())
+			if strings.Contains(logs.String(), "Unknown backend") {
+				t.Fatalf("backend %q should not be logged as unknown: %s", value, logs.String())
+			}
+		})
 	}
 }

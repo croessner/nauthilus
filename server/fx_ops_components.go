@@ -120,9 +120,9 @@ func (r *reloadOrchestrator) stopWorkersForConfig(ctx context.Context, cfg confi
 			r.stopLDAP(ctx, cfg)
 		case definitions.BackendLua:
 			r.stopLua(ctx)
-		case definitions.BackendCache, definitions.BackendTest:
+		case definitions.BackendCache, definitions.BackendTest, definitions.BackendPlugin, definitions.BackendRemote:
 		default:
-			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unknown backend")
+			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unknown backend", "backend", backendType.String())
 		}
 	}
 }
@@ -214,9 +214,9 @@ func (r *reloadOrchestrator) startWorkersForConfig(ctx context.Context, cfg conf
 			setupLuaWorker(ctx, r.store, cfg, getLogger(r.store), r.store.redisClient, r.store.channel)
 
 			luaStarted = true
-		case definitions.BackendCache, definitions.BackendTest:
+		case definitions.BackendCache, definitions.BackendTest, definitions.BackendPlugin, definitions.BackendRemote:
 		default:
-			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unknown backend", "backend")
+			level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unknown backend", "backend", backendType.String())
 		}
 	}
 }
@@ -566,9 +566,9 @@ func waitForBackendShutdown(ctx context.Context, cfg config.File, channel backen
 		return waitForLDAPBackendShutdown(ctx, cfg, channel.GetLdapChannel())
 	case definitions.BackendLua:
 		return waitForLuaBackendShutdown(ctx, channel.GetLuaChannel())
-	case definitions.BackendCache, definitions.BackendTest:
+	case definitions.BackendCache, definitions.BackendTest, definitions.BackendPlugin, definitions.BackendRemote:
 	default:
-		level.Warn(getLogger(nil)).Log(definitions.LogKeyMsg, "Unknown backend")
+		level.Warn(getLogger(nil)).Log(definitions.LogKeyMsg, "Unknown backend", "backend", passDB.String())
 	}
 
 	return true
