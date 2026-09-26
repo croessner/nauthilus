@@ -26,9 +26,10 @@ import (
 
 // OperationalObserver emits redacted logs, trace events, and bounded state metrics.
 type OperationalObserver struct {
-	logger *slog.Logger
-	states *prometheus.CounterVec
-	audit  AuditSink
+	logger             *slog.Logger
+	states             *prometheus.CounterVec
+	acceptanceFailures *prometheus.CounterVec
+	audit              AuditSink
 }
 
 // AuditSink records controlled internal lifecycle evidence outside response DTOs.
@@ -44,6 +45,18 @@ func NewOperationalObserver(logger *slog.Logger, states *prometheus.CounterVec, 
 	}
 
 	return observer
+}
+
+// WithAcceptanceFailures counts rejected ownership transfers by their host-owned error class.
+//
+// Acceptance failures surface synchronously to the caller, for example as a saturated queue, so the
+// counter makes supervisor pressure visible before it becomes an authentication tempfail.
+func (o *OperationalObserver) WithAcceptanceFailures(failures *prometheus.CounterVec) *OperationalObserver {
+	if o != nil {
+		o.acceptanceFailures = failures
+	}
+
+	return o
 }
 
 // LoggingAuditSink writes one explicitly classified controlled-audit record.
@@ -74,6 +87,10 @@ func (o *OperationalObserver) Observe(ctx context.Context, event Event) {
 
 	if o.states != nil {
 		o.states.WithLabelValues(string(event.State), string(event.Phase), string(event.Boundary)).Inc()
+	}
+
+	if o.acceptanceFailures != nil && event.State == StateFailed && event.Phase == PhaseAcceptance {
+		o.acceptanceFailures.WithLabelValues(event.ErrorClass).Inc()
 	}
 
 	span := trace.SpanFromContext(ctx)

@@ -24,6 +24,11 @@ import (
 	"golang.org/x/text/language"
 )
 
+const (
+	maximumPostActionWorkers       = 1024
+	maximumPostActionQueueCapacity = 64 * 1024
+)
+
 var (
 	// ErrValidation identifies a semantic unified policy contract violation.
 	ErrValidation = errors.New("invalid standalone policy configuration")
@@ -79,6 +84,10 @@ func Validate(document Document) error {
 	document = Normalize(document)
 
 	if err := validateAPI(document.Policy.API); err != nil {
+		return err
+	}
+
+	if err := validatePostActionRuntime(document.Policy.Runtime.PostActions); err != nil {
 		return err
 	}
 
@@ -170,6 +179,25 @@ func validateAPILimits(limits APILimitsConfig) error {
 
 	if limits.EvaluationTimeout < 0 {
 		return invalid("policy.api.limits.evaluation_timeout", "must not be negative")
+	}
+
+	return nil
+}
+
+// validatePostActionRuntime keeps the post-action worker set and queue finite and consistent.
+func validatePostActionRuntime(postActions PostActionRuntimeConfig) error {
+	const path = "policy.runtime.post_actions"
+
+	if postActions.Workers < 1 || postActions.Workers > maximumPostActionWorkers {
+		return invalid(path+".workers", fmt.Sprintf("must be between 1 and %d", maximumPostActionWorkers))
+	}
+
+	if postActions.QueueCapacity < 1 || postActions.QueueCapacity > maximumPostActionQueueCapacity {
+		return invalid(path+".queue_capacity", fmt.Sprintf("must be between 1 and %d", maximumPostActionQueueCapacity))
+	}
+
+	if postActions.Workers > postActions.QueueCapacity {
+		return invalid(path+".workers", "must not exceed queue_capacity")
 	}
 
 	return nil

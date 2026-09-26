@@ -141,6 +141,7 @@ const (
 	metricDescriptionLabel      = "description"
 	metricDimensionLabel        = "dimension"
 	metricDirectionLabel        = "direction"
+	metricErrorClassLabel       = "error_class"
 	metricEventLabel            = "event"
 	metricFromLabel             = "from"
 	metricGrantTypeLabel        = "grant_type"
@@ -397,6 +398,9 @@ type Metrics interface {
 
 	// GetPostActionEffectStatesTotal tracks bounded supervisor transitions without correlation labels.
 	GetPostActionEffectStatesTotal() *prometheus.CounterVec
+
+	// GetPostActionAcceptanceFailuresTotal counts rejected post-action ownership transfers by error class.
+	GetPostActionAcceptanceFailuresTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
@@ -473,6 +477,7 @@ type metricsImpl struct {
 	pluginCallDurationSeconds      *prometheus.HistogramVec
 	postActionPlanDuration         *prometheus.HistogramVec
 	postActionEffectStates         *prometheus.CounterVec
+	postActionAcceptanceFailures   *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -835,6 +840,11 @@ func (m *metricsImpl) GetPostActionEffectStatesTotal() *prometheus.CounterVec {
 	return m.postActionEffectStates
 }
 
+// GetPostActionAcceptanceFailuresTotal returns the rejected post-action ownership transfer counter.
+func (m *metricsImpl) GetPostActionAcceptanceFailuresTotal() *prometheus.CounterVec {
+	return m.postActionAcceptanceFailures
+}
+
 // NewMetrics provides the exported NewMetrics function.
 func NewMetrics() Metrics {
 	m := &metricsImpl{}
@@ -1017,6 +1027,7 @@ func (m *metricsImpl) initPluginMetrics() {
 	m.pluginCallDurationSeconds = newHistogramVecMetric("plugin_call_duration_seconds", "Duration of host-invoked native plugin calls", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricLabels...)
 	m.postActionPlanDuration = newHistogramVecMetric("post_action_plan_duration_seconds", "Duration of complete accepted post-action plans", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricResultLabel)
 	m.postActionEffectStates = newCounterVecMetric("post_action_effect_states_total", "Total host-internal post-action supervisor transitions", metricStateLabel, metricPhaseLabel, metricBoundaryLabel)
+	m.postActionAcceptanceFailures = newCounterVecMetric("post_action_acceptance_failures_total", "Total post-action ownership transfers rejected by the supervisor, for example because its queue is saturated", metricErrorClassLabel)
 }
 
 // GetMetrics initializes and returns a singleton instance of the Metrics interface.

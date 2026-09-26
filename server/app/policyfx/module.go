@@ -46,13 +46,12 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/stats"
 
 	"go.uber.org/fx"
 )
 
 const (
-	defaultPostActionCapacity = 256
-	defaultPostActionWorkers  = 8
 	defaultEvaluationTimeout  = 5 * time.Second
 	defaultPostActionBudget   = 30 * time.Second
 	defaultDiagnosticsEntries = 128
@@ -425,7 +424,7 @@ func newExtensionCandidateBuilder(
 		return nil, err
 	}
 
-	supervisor, err := newEffectSupervisor(providerIDs, slot.logger)
+	supervisor, err := newEffectSupervisor(providerIDs, prepared.Config().Runtime.PostActions, slot.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -660,7 +659,11 @@ func (r *supervisorResource) Dispose(ctx context.Context) error {
 }
 
 // newEffectSupervisor allocates one executable-work acceptor for every configured post-action owner.
-func newEffectSupervisor(providerIDs []string, logger *slog.Logger) (*effectsupervisor.Supervisor, error) {
+func newEffectSupervisor(
+	providerIDs []string,
+	runtime policyconfig.PostActionRuntimeConfig,
+	logger *slog.Logger,
+) (*effectsupervisor.Supervisor, error) {
 	bindings := make([]effectsupervisor.ProviderBinding, 0, len(providerIDs))
 	for _, providerID := range providerIDs {
 		bindings = append(bindings, effectsupervisor.ProviderBinding{
@@ -668,15 +671,16 @@ func newEffectSupervisor(providerIDs []string, logger *slog.Logger) (*effectsupe
 		})
 	}
 
+	metrics := stats.GetMetrics()
 	observer := effectsupervisor.NewOperationalObserver(
 		logger,
-		nil,
+		metrics.GetPostActionEffectStatesTotal(),
 		effectsupervisor.NewLoggingAuditSink(logger),
-	)
+	).WithAcceptanceFailures(metrics.GetPostActionAcceptanceFailuresTotal())
 
 	return effectsupervisor.New(effectsupervisor.Config{
 		Lifetime: context.Background(), Observer: observer,
-		Capacity: defaultPostActionCapacity, Workers: defaultPostActionWorkers,
+		Capacity: runtime.QueueCapacity, Workers: runtime.Workers,
 	}, bindings...)
 }
 

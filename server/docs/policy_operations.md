@@ -97,6 +97,36 @@ The example in [policy_api.yml](examples/policy_api.yml) shows route switches,
 global limits, per-client limits, separate credential profiles, target/schema
 grants, attribute allowlists, and diagnostics permission.
 
+### Post-action supervisor
+
+Every Policy generation owns one post-action supervisor with a fixed worker set
+and a bounded queue. A post-action is accepted synchronously before the
+response is finalized. When the queue is full the acceptance fails with the
+error class `saturated`, and the authentication request ends as a temporary
+failure. Slow post-action providers (database writes, external APIs) therefore
+need enough workers for their latency and enough queue for bursts:
+
+```yaml
+policy:
+  runtime:
+    post_actions:
+      workers: 8          # default 8, 1..1024, must not exceed queue_capacity
+      queue_capacity: 256 # default 256, 1..65536
+```
+
+Size workers as roughly peak accepted post-actions per second times the
+average post-action duration in seconds, with headroom. A reload that changes
+these values builds the next generation with a new supervisor.
+
+Two counters expose the supervisor without correlation labels:
+
+- `post_action_effect_states_total{state,phase,boundary}` counts every
+  supervisor transition.
+- `post_action_acceptance_failures_total{error_class}` counts rejected
+  ownership transfers, for example `saturated`, `shutdown`, or
+  `unknown_provider`. Any `saturated` increase means authentication requests
+  failed temporarily and the supervisor is undersized or a provider is slow.
+
 ## Diagnostics and data minimization
 
 Diagnostics are off unless the request opts in, the credential has diagnostics

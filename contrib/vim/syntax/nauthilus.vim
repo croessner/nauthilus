@@ -46,6 +46,7 @@ syntax match nauthilusKeyL2 /^  \zsprocess\ze:/
 syntax match nauthilusKeyL2 /^  \zsprofiles\ze:/
 syntax match nauthilusKeyL2 /^  \zsredis\ze:/
 syntax match nauthilusKeyL2 /^  \zsrequest\ze:/
+syntax match nauthilusKeyL2 /^  \zsruntime\ze:/
 syntax match nauthilusKeyL2 /^  \zssaml\ze:/
 syntax match nauthilusKeyL2 /^  \zsservers\ze:/
 syntax match nauthilusKeyL2 /^  \zsservices\ze:/
@@ -520,6 +521,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspools\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspop3\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsport\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspositive_cache_ttl\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspost_actions\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspost_logout_redirect_uris\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspprof\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspreferred_languages\ze:/
@@ -748,6 +750,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswebauthn_object_class\ze
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsweight\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswhere\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswithin_time_window\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsworkers\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zswrite_timeout\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsx_content_type_options\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsx_dns_prefetch_control\ze:/

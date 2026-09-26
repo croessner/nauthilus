@@ -1143,6 +1143,8 @@ func configDumpPolicyDefaults() map[string]configDumpValueProvider {
 		"policy.api.limits.per_client_requests_per_second": func() any {
 			return policyDefaults.API.Limits.PerClientRequestsPerSecond
 		},
+		"policy.runtime.post_actions.workers":        func() any { return policyDefaults.Runtime.PostActions.Workers },
+		"policy.runtime.post_actions.queue_capacity": func() any { return policyDefaults.Runtime.PostActions.QueueCapacity },
 	}
 }
 

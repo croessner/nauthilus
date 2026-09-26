@@ -50,6 +50,18 @@ type PolicyConfig struct {
 	Namespaces map[string]NamespaceConfig `mapstructure:"namespaces"`
 	API        APIConfig                  `mapstructure:"api"`
 	Targets    []TargetConfig             `mapstructure:"targets"`
+	Runtime    RuntimeConfig              `mapstructure:"runtime"`
+}
+
+// RuntimeConfig bounds process-local Policy execution resources.
+type RuntimeConfig struct {
+	PostActions PostActionRuntimeConfig `mapstructure:"post_actions"`
+}
+
+// PostActionRuntimeConfig sizes the post-action supervisor of every Policy generation.
+type PostActionRuntimeConfig struct {
+	Workers       int `mapstructure:"workers"`
+	QueueCapacity int `mapstructure:"queue_capacity"`
 }
 
 // APIConfig controls standalone Policy API enablement and caller admission.

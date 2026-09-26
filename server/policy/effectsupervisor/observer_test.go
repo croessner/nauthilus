@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestOperationalObserverKeepsCorrelationOutOfMetricLabels(t *testing.T) {
@@ -97,5 +98,36 @@ func TestOperationalObserverPreservesSeparateLoggingDestinations(t *testing.T) {
 		if strings.Count(output, "\n") != 1 {
 			t.Fatalf("%s destination did not receive exactly one failure", name)
 		}
+	}
+}
+
+func TestOperationalObserverCountsOnlyAcceptanceFailuresByErrorClass(t *testing.T) {
+	failures := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "test_post_action_acceptance_failures_total",
+		Help: "Test supervisor acceptance failures.",
+	}, []string{"error_class"})
+	observer := NewOperationalObserver(nil, nil).WithAcceptanceFailures(failures)
+
+	events := []Event{
+		{State: StateFailed, Phase: PhaseAcceptance, ErrorClass: "saturated"},
+		{State: StateFailed, Phase: PhaseAcceptance, ErrorClass: "saturated"},
+		{State: StateFailed, Phase: PhaseAcceptance, ErrorClass: "shutdown"},
+		{State: StateFailed, Phase: PhaseExecution, ErrorClass: "provider_error"},
+		{State: StateAccepted, Phase: PhaseAcceptance},
+	}
+	for _, event := range events {
+		observer.Observe(context.Background(), event)
+	}
+
+	if got := testutil.ToFloat64(failures.WithLabelValues("saturated")); got != 2 {
+		t.Fatalf("saturated acceptance failures = %v, want 2", got)
+	}
+
+	if got := testutil.ToFloat64(failures.WithLabelValues("shutdown")); got != 1 {
+		t.Fatalf("shutdown acceptance failures = %v, want 1", got)
+	}
+
+	if got := testutil.CollectAndCount(failures); got != 2 {
+		t.Fatalf("acceptance failure series = %d, want only acceptance classes", got)
 	}
 }

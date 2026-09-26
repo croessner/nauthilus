@@ -19,6 +19,8 @@ const (
 	defaultAPIMaxFacts             = 512
 	defaultAPIPerClientConcurrency = 8
 	defaultAPIRequestsPerSecond    = 25
+	defaultPostActionWorkers       = 8
+	defaultPostActionQueueCapacity = 256
 	standardAuthPolicy             = "authn/standard_auth"
 )
 
@@ -26,6 +28,7 @@ const (
 func Normalize(document Document) Document {
 	document = cloneDocument(document)
 	document.Policy.API.Limits = normalizeAPILimits(document.Policy.API.Limits)
+	document.Policy.Runtime.PostActions = normalizePostActionRuntime(document.Policy.Runtime.PostActions)
 	document.Policy.Namespaces = normalizeNamespaces(document.Policy.Namespaces)
 	document.Policy.Targets = normalizeTargets(document.Policy.Targets)
 
@@ -46,6 +49,14 @@ func normalizeAPILimits(limits APILimitsConfig) APILimitsConfig {
 	)
 
 	return limits
+}
+
+// normalizePostActionRuntime supplies the historical supervisor sizing for omitted bounds.
+func normalizePostActionRuntime(postActions PostActionRuntimeConfig) PostActionRuntimeConfig {
+	postActions.Workers = defaultAdmissionLimit(postActions.Workers, defaultPostActionWorkers)
+	postActions.QueueCapacity = defaultAdmissionLimit(postActions.QueueCapacity, defaultPostActionQueueCapacity)
+
+	return postActions
 }
 
 // defaultAdmissionLimit replaces only an omitted zero while preserving invalid negatives for validation.
