@@ -490,7 +490,7 @@ func startCanonicalOIDCAuthorization(
 			flowdomain.FlowMetadataPrompt:              request.prompt,
 			flowdomain.FlowMetadataCodeChallenge:       request.codeChallenge,
 			flowdomain.FlowMetadataCodeChallengeMethod: request.codeChallengeMethod,
-			flowdomain.FlowMetadataResource:            joinResources(request.resources),
+			flowdomain.FlowMetadataResource:            flowdomain.JoinResources(request.resources),
 			flowdomain.FlowMetadataResumeTarget:        resumeTarget,
 		},
 	}
@@ -668,7 +668,7 @@ func (h *OIDCHandler) validateCanonicalOIDCConsentSelection(selection canonicalO
 		selection.pending.Nonce != selection.state.Metadata[flowdomain.FlowMetadataNonce] ||
 		selection.pending.CodeChallenge != selection.state.Metadata[flowdomain.FlowMetadataCodeChallenge] ||
 		selection.pending.CodeChallengeMethod != selection.state.Metadata[flowdomain.FlowMetadataCodeChallengeMethod] ||
-		!slices.Equal(selection.pending.AccessTokenResources, strings.Fields(selection.state.Metadata[flowdomain.FlowMetadataResource])) {
+		!slices.Equal(selection.pending.AccessTokenResources, flowdomain.SplitResources(selection.state.Metadata[flowdomain.FlowMetadataResource])) {
 		return sessionstate.ErrBindingMismatch
 	}
 
@@ -776,7 +776,7 @@ func canonicalOIDCAuthorizeRequestFromState(state *flowdomain.State) oidcAuthori
 		prompt:              metadata[flowdomain.FlowMetadataPrompt],
 		codeChallenge:       metadata[flowdomain.FlowMetadataCodeChallenge],
 		codeChallengeMethod: metadata[flowdomain.FlowMetadataCodeChallengeMethod],
-		resources:           strings.Fields(metadata[flowdomain.FlowMetadataResource]),
+		resources:           flowdomain.SplitResources(metadata[flowdomain.FlowMetadataResource]),
 	}
 }
 

@@ -180,7 +180,7 @@ func oidcAuthorizeRequestMatchesMetadata(metadata map[string]string, request oid
 		metadata[flowdomain.FlowMetadataPrompt] == request.prompt &&
 		metadata[flowdomain.FlowMetadataCodeChallenge] == request.codeChallenge &&
 		metadata[flowdomain.FlowMetadataCodeChallengeMethod] == request.codeChallengeMethod &&
-		metadata[flowdomain.FlowMetadataResource] == joinResources(request.resources)
+		metadata[flowdomain.FlowMetadataResource] == flowdomain.JoinResources(request.resources)
 }
 
 var oidcAuthorizeSingleValueParameters = []string{
@@ -219,6 +219,10 @@ func rejectDuplicateOIDCAuthorizeParameters(ctx *gin.Context) bool {
 func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
 	code := formValue(ctx, oidcParamCode)
+
+	if !h.precheckAuthorizationCodeResources(ctx, client, code) {
+		return
+	}
 
 	session, getErr := h.storage.ConsumeSession(ctx.Request.Context(), code)
 	if getErr != nil {

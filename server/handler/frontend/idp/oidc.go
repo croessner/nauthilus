@@ -1747,9 +1747,11 @@ func (h *OIDCHandler) applyCanonicalOIDCLogoutIDTokenHint(
 	return client, nil
 }
 
-// oidcLogoutClientFromClaims resolves the client referenced by token claims.
+// oidcLogoutClientFromClaims resolves the client a logout hint was issued to. An ID token names it in its
+// single audience; an access token accepted as hint names it in azp, because a resource-bound access token
+// carries an audience array. A malformed azp or an array audience without azp resolves no client.
 func (h *OIDCHandler) oidcLogoutClientFromClaims(claims map[string]any) *config.OIDCClient {
-	cid, ok := claims["aud"].(string)
+	cid, ok := idp.AccessTokenIssuingClient(claims)
 	if !ok {
 		return nil
 	}

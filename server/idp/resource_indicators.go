@@ -83,6 +83,14 @@ func NarrowAccessTokenResources(granted []string, requested []string) ([]string,
 	return narrowed, nil
 }
 
+// CheckAccessTokenResources reports whether a token request may issue an access token for the requested
+// resources of a grant, without issuing anything. It returns ErrInvalidTarget otherwise.
+func (n *NauthilusIDP) CheckAccessTokenResources(client *config.OIDCClient, granted []string, requested []string) error {
+	_, err := n.accessTokenResources(client, granted, requested)
+
+	return err
+}
+
 // accessTokenResources resolves the resources of one access token: the requested subset of the grant
 // (nil keeps the whole grant). Every resource the token will carry must still be requestable by the
 // client under the current configuration, so a revoked allowlist entry stops refresh as well.

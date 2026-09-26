@@ -112,7 +112,18 @@ server, and requestable by the client; otherwise the request fails with
 `invalid_target`. At `/oidc/token` a `resource` value may only narrow the access
 token to a subset of the grant (`authorization_code`, `refresh_token`,
 `device_code`); a refresh never widens or shrinks the stored grant, and
-`client_credentials` rejects the parameter.
+`client_credentials` rejects the parameter. A token request without `resource`
+receives the full granted resource set, not an access token without
+resources.
+
+Withdrawing a client from an owner's allowlist takes effect at the next token
+request: code and refresh exchanges of grants carrying that owner's resource
+fail with `invalid_target` until the client authorizes again.
+
+A remembered consent is keyed by identity, client, and scopes only and does not
+cover resources. The owner's allowlist is the gate for resources; requesting an
+additional resource does not show the consent page again when the scopes are
+already covered.
 
 ### Example
 

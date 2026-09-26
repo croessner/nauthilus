@@ -164,16 +164,16 @@ func TestOIDCAuthorizeRejectsInvalidResources(t *testing.T) {
 	}
 }
 
-//nolint:funlen // The end-to-end flow keeps authorization, resume, code exchange, and refresh in one scenario.
-func TestOIDCResourceIndicatorsFlowFromAuthorizeThroughRefresh(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+// authorizeResourceCode runs an authorization request with resources through the login resume and
+// returns the issued authorization code.
+func authorizeResourceCode(t *testing.T, handler *OIDCHandler, resources ...string) string {
+	t.Helper()
 
 	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
-	handler := newResourceIndicatorHandler(t)
 	router := gin.New()
 	router.GET("/oidc/authorize", cookie.CanonicalMiddleware(runtime, cookie.CanonicalProtocolEntry), handler.AuthorizeCanonical)
 
-	entry := httptest.NewRequest(http.MethodGet, "/oidc/authorize?"+resourceAuthorizeQuery(resourceTestMail, resourceTestDAV, resourceTestMail).Encode(), nil)
+	entry := httptest.NewRequest(http.MethodGet, "/oidc/authorize?"+resourceAuthorizeQuery(resources...).Encode(), nil)
 	entry.AddCookie(browserCookie)
 
 	entryResponse := httptest.NewRecorder()
@@ -181,7 +181,7 @@ func TestOIDCResourceIndicatorsFlowFromAuthorizeThroughRefresh(t *testing.T) {
 
 	login, err := url.Parse(entryResponse.Header().Get("Location"))
 	if !assert.NoError(t, err) || !assert.Equal(t, http.StatusFound, entryResponse.Code) {
-		return
+		return ""
 	}
 
 	flowID := login.Query().Get(flow.FlowTicketParameter)
@@ -190,7 +190,7 @@ func TestOIDCResourceIndicatorsFlowFromAuthorizeThroughRefresh(t *testing.T) {
 
 	state, err := store.Load(context.Background(), flowID)
 	if !assert.NoError(t, err) {
-		return
+		return ""
 	}
 
 	assert.Equal(t, resourceTestMail+" "+resourceTestDAV, state.Metadata[flow.FlowMetadataResource], "resources are deduplicated in request order")
@@ -209,11 +209,20 @@ func TestOIDCResourceIndicatorsFlowFromAuthorizeThroughRefresh(t *testing.T) {
 
 	callback, err := url.Parse(resumeResponse.Header().Get("Location"))
 	if !assert.NoError(t, err) || !assert.Equal(t, http.StatusFound, resumeResponse.Code) {
-		return
+		return ""
 	}
 
 	code := callback.Query().Get(oidcParamCode)
 	assert.NotEmpty(t, code)
+
+	return code
+}
+
+func TestOIDCResourceIndicatorsFlowFromAuthorizeThroughRefresh(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := newResourceIndicatorHandler(t)
+	code := authorizeResourceCode(t, handler, resourceTestMail, resourceTestDAV, resourceTestMail)
 
 	// The code exchange narrows the access token; the refresh token keeps the full grant.
 	exchanged := postResourceTokenRequest(t, handler, url.Values{
@@ -264,6 +273,19 @@ func TestOIDCAuthorizationCodeExchangeRejectsResourceOutsideGrant(t *testing.T) 
 		oidcParamRedirectURI: {resourceTestRedirectURI}, oidcParamResource: {resourceTestDAV},
 	})
 	assert.Equal(t, map[string]any{definitions.LogKeyError: oidcErrorInvalidTarget}, response)
+
+	// The rejected narrowing is detected before the code is consumed, so the code stays redeemable once.
+	redeemed := postResourceTokenRequest(t, handler, url.Values{
+		oidcParamGrantType: {definitions.OIDCFlowAuthorizationCode}, oidcParamCode: {code},
+		oidcParamRedirectURI: {resourceTestRedirectURI}, oidcParamResource: {resourceTestMail},
+	})
+	assert.Equal(t, []any{resourceTestClientID, resourceTestMail}, accessTokenAudienceClaim(t, redeemed[oidcJSONFieldAccessToken]))
+
+	replayed := postResourceTokenRequest(t, handler, url.Values{
+		oidcParamGrantType: {definitions.OIDCFlowAuthorizationCode}, oidcParamCode: {code},
+		oidcParamRedirectURI: {resourceTestRedirectURI},
+	})
+	assert.Equal(t, map[string]any{definitions.LogKeyError: oidcErrorInvalidGrant}, replayed)
 }
 
 func TestOIDCClientCredentialsRejectsResource(t *testing.T) {
@@ -371,4 +393,96 @@ func TestDeviceCodeTokenCarriesAndNarrowsResources(t *testing.T) {
 
 	issued := pollAuthorizedDeviceCode(t, handler, "resource-device-code", resourceTestDAV)
 	assert.Equal(t, []any{resourceTestClientID, resourceTestDAV}, accessTokenAudienceClaim(t, issued[oidcJSONFieldAccessToken]))
+}
+
+func TestOIDCLogoutClientFromClaimsHandlesResourceAudiences(t *testing.T) {
+	handler := newResourceIndicatorHandler(t)
+
+	cases := []struct {
+		name   string
+		claims map[string]any
+		want   string
+	}{
+		{name: "id token with string audience", claims: map[string]any{"aud": resourceTestClientID}, want: resourceTestClientID},
+		{name: "resource access token names its client in azp", claims: map[string]any{
+			"aud": []any{resourceTestClientID, resourceTestMail}, definitions.ClaimAuthorizedParty: resourceTestClientID,
+		}, want: resourceTestClientID},
+		{name: "array audience without azp fails closed", claims: map[string]any{"aud": []any{resourceTestClientID, resourceTestMail}}},
+		{name: "malformed azp fails closed", claims: map[string]any{"aud": resourceTestClientID, definitions.ClaimAuthorizedParty: 42}},
+		{name: "unknown client", claims: map[string]any{"aud": "unknown-client"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := handler.oidcLogoutClientFromClaims(tc.claims)
+			if tc.want == "" {
+				assert.Nil(t, client)
+
+				return
+			}
+
+			if assert.NotNil(t, client) {
+				assert.Equal(t, tc.want, client.ClientID)
+			}
+		})
+	}
+}
+
+// introspectAsResourceServer introspects a token authenticated as the mail resource server.
+func introspectAsResourceServer(t *testing.T, handler *OIDCHandler, token any) map[string]any {
+	t.Helper()
+
+	tokenString, _ := token.(string)
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Request = httptest.NewRequest(http.MethodPost, oidcEndpointPathIntrospect, strings.NewReader(url.Values{"token": {tokenString}}.Encode()))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx.Request.SetBasicAuth("mail-rs", "test-secret")
+
+	handler.Introspect(ctx)
+
+	return mustDecodeOIDCTestJSON(t, response)
+}
+
+func TestOIDCOpaqueResourceTokensNarrowOnlyTheAccessToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := newResourceIndicatorHandler(t)
+	handler.deps.Cfg.(*mockOIDCCfg).clients[0].AccessTokenType = "opaque"
+	code := authorizeResourceCode(t, handler, resourceTestMail, resourceTestDAV)
+
+	exchanged := postResourceTokenRequest(t, handler, url.Values{
+		oidcParamGrantType: {definitions.OIDCFlowAuthorizationCode}, oidcParamCode: {code},
+		oidcParamRedirectURI: {resourceTestRedirectURI}, oidcParamResource: {resourceTestDAV},
+	})
+	accessToken, _ := exchanged[oidcJSONFieldAccessToken].(string)
+	refreshToken, _ := exchanged[oidcParamRefreshToken].(string)
+
+	if !assert.NotEmpty(t, accessToken) || !assert.NotContains(t, accessToken, ".", "opaque token expected") || !assert.NotEmpty(t, refreshToken) {
+		return
+	}
+
+	ctx := context.Background()
+
+	stored, err := handler.storage.GetAccessToken(ctx, accessToken)
+	if assert.NoError(t, err) {
+		assert.Equal(t, []string{resourceTestDAV}, stored.AccessTokenResources, "the opaque session carries only the narrowed resources")
+	}
+
+	grant, err := handler.storage.GetRefreshToken(ctx, refreshToken)
+	if assert.NoError(t, err) {
+		assert.Equal(t, []string{resourceTestMail, resourceTestDAV}, grant.AccessTokenResources, "the refresh grant keeps every resource")
+	}
+
+	introspected := introspectAsResourceServer(t, handler, accessToken)
+	assert.Equal(t, true, introspected["active"])
+	assert.Equal(t, []any{resourceTestClientID, resourceTestDAV}, introspected["aud"])
+	assert.Equal(t, resourceTestClientID, introspected[definitions.ClaimAuthorizedParty])
+
+	refreshed := postResourceTokenRequest(t, handler, url.Values{
+		oidcParamGrantType: {oidcGrantTypeRefreshToken}, oidcParamRefreshToken: {refreshToken},
+	})
+	full := introspectAsResourceServer(t, handler, refreshed[oidcJSONFieldAccessToken])
+	assert.Equal(t, true, full["active"])
+	assert.Equal(t, []any{resourceTestClientID, resourceTestMail, resourceTestDAV}, full["aud"], "a request without resource yields the full grant")
 }

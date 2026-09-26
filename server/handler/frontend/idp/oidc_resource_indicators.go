@@ -17,11 +17,9 @@ package idp
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,10 +39,10 @@ func (h *OIDCHandler) validateRequestedResources(client *config.OIDCClient, requ
 	return h.idp.ResourceRegistry().ValidateRequestedResources(client, requested)
 }
 
-// acceptTokenResourceNarrowing checks, before a grant is consumed, that the token request only narrows
-// the granted resources. It answers invalid_target otherwise.
-func acceptTokenResourceNarrowing(ctx *gin.Context, granted []string) bool {
-	if _, err := idp.NarrowAccessTokenResources(granted, oidcRequestedResources(ctx)); err != nil {
+// acceptTokenResources checks, before a grant is consumed, that the token request only narrows the
+// granted resources and that the client may still obtain them. It answers invalid_target otherwise.
+func (h *OIDCHandler) acceptTokenResources(ctx *gin.Context, client *config.OIDCClient, granted []string) bool {
+	if err := h.idp.CheckAccessTokenResources(client, granted, oidcRequestedResources(ctx)); err != nil {
 		writeOIDCInvalidTargetResponse(ctx)
 
 		return false
@@ -53,7 +51,18 @@ func acceptTokenResourceNarrowing(ctx *gin.Context, granted []string) bool {
 	return true
 }
 
-// joinResources renders validated resources for space-separated flow metadata.
-func joinResources(resources []string) string {
-	return strings.Join(resources, " ")
+// precheckAuthorizationCodeResources rejects an invalid resource narrowing before the authorization code is
+// consumed. It only reads the code; single use stays with the atomic consume, which also decides every code
+// that cannot be read here or belongs to another client.
+func (h *OIDCHandler) precheckAuthorizationCodeResources(ctx *gin.Context, client *config.OIDCClient, code string) bool {
+	if len(oidcRequestedResources(ctx)) == 0 {
+		return true
+	}
+
+	session, err := h.storage.GetSession(ctx.Request.Context(), code)
+	if err != nil || session == nil || session.ClientID != client.ClientID {
+		return true
+	}
+
+	return h.acceptTokenResources(ctx, client, session.AccessTokenResources)
 }

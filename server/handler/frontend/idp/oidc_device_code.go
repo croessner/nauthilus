@@ -367,7 +367,7 @@ func (h *OIDCHandler) handleDeviceCodePollStatus(ctx *gin.Context, deviceCode st
 		ctx.JSON(http.StatusBadRequest, gin.H{frontChannelLogoutTaskStatusError: oidcErrorAccessDenied})
 
 	case idp.DeviceCodeStatusAuthorized:
-		if !acceptTokenResourceNarrowing(ctx, request.Resources) {
+		if !h.acceptTokenResources(ctx, client, request.Resources) {
 			return
 		}
 

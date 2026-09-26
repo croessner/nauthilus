@@ -212,13 +212,14 @@ paths:
           $ref: "#/components/responses/Redirect"
         "400":
           description: >-
-            Invalid authorization request. A resource indicator that is malformed, unregistered, or not
-            requestable by the client is rejected with invalid_target; dynamic clients receive it as a
-            redirect to their validated redirect URI, static clients as a plain error response.
+            Invalid authorization request, answered as a plain-text message (for example "Invalid resource"
+            for a resource indicator that is malformed, unregistered, or not requestable by a static client).
+            Dynamic clients receive such errors, including invalid_target, as a redirect to their validated
+            redirect URI instead.
           content:
-            application/json:
+            text/plain:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                type: string
   /oidc/token:
     post:
       tags:

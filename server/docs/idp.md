@@ -619,9 +619,16 @@ authorization-code session.
 | `device_code`        | Optional subset of the resources of the device authorization request.                                   |
 | `client_credentials` | Not supported; any value returns `invalid_target`.                                                      |
 
-A value outside the grant returns `invalid_target`. Issuance also re-checks every resource the access token will
-carry against the current configuration: after an operator removes the client from the owner's allowlist, code
-and refresh exchanges for that resource fail with `invalid_target` and the client has to authorize again.
+A token request without `resource` receives the full granted resource set; it does not mean "no resources". A
+value outside the grant returns `invalid_target`. Issuance also re-checks every resource the access token will
+carry against the current configuration: after an operator withdraws the client from the owner's allowlist, code
+and refresh exchanges of grants carrying that resource fail with `invalid_target` until the client authorizes
+again without it. At the authorization-code exchange these checks run before the code is consumed, so a rejected
+`resource` leaves the code redeemable once.
+
+**Consent.** A remembered consent is keyed by identity, client, and scopes only; it does not cover resources. The
+owner's allowlist in `token_introspection` is the gate for resources, so adding a resource to a request does not
+show the consent page again when the scopes are already covered.
 
 **Introspection decision.** `POST /oidc/introspect` keeps its existing rules: a token whose audience contains the
 caller's client id is active, and a caller with `allow_backchannel_introspection` may see `nauthilus:backchannel`
