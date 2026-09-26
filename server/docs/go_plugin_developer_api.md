@@ -666,7 +666,10 @@ err := secret.WithBytes(func(password []byte) error {
 
 Never store the byte slice passed to `WithBytes`, never log it, and clear plugin-owned copies immediately after use.
 For Nauthilus-compatible password verification, import `github.com/croessner/nauthilus/v4/pluginapi/v1/password` and call
-`password.CompareHash(hash, secret)`. The same package exposes `GenerateHash` and `GenerateHashString` for the
+`password.CompareHash(hash, secret)`. It verifies `{SSHA256}`/`{SSHA512}` hashes, the crypt formats
+(`$1$`, `$5$`, `$6$`, `$apr1$` and the other schemes of `simia-tech/crypt`) and bcrypt in all common variants
+(`$2a$`, `$2b$` and PHP's `$2y$`); like PHP `password_verify`, bcrypt evaluates only the first 72 bytes of the
+password. A wrong password is a mismatch without error, a malformed or unknown hash is an error. The same package exposes `GenerateHash` and `GenerateHashString` for the
 canonical lowercase 64-hex SHA-256 digest used by Lua `nauthilus_password.generate_password_hash`. The server-side
 nonce remains host-owned, so plugin-owned hashes must pass the same `password.HashOptions` when they need exact
 server-context parity. `HashOptions.DevMode` remains source-compatible but never exposes prepared password bytes and

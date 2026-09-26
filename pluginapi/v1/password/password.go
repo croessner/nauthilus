@@ -31,6 +31,7 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/simia-tech/crypt"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Algorithm identifies supported salted SHA password hash algorithms.
@@ -191,6 +192,10 @@ func CompareHashBytes(hashPassword string, plainPassword []byte) (bool, error) {
 		return compareSaltedSHA(hashPassword, plainPassword)
 	}
 
+	if isBcryptHash(hashPassword) {
+		return compareBcrypt(hashPassword, plainPassword)
+	}
+
 	_, _, _, passwordHash, err := crypt.DecodeSettings(hashPassword)
 	if err != nil {
 		return false, err
@@ -207,6 +212,44 @@ func CompareHashBytes(hashPassword string, plainPassword []byte) (bool, error) {
 	}
 
 	return subtle.ConstantTimeCompare([]byte(encoded), []byte(hashPassword)) == 1, nil
+}
+
+// bcryptMaxPasswordBytes is the part of a password that bcrypt evaluates.
+const bcryptMaxPasswordBytes = 72
+
+// bcryptVersionPrefixes are the bcrypt variants written by OpenBSD, Go ($2a$, $2b$) and PHP ($2y$). They share one
+// algorithm; the letter only records historical bug fixes of individual implementations.
+var bcryptVersionPrefixes = []string{"$2a$", "$2b$", "$2y$"}
+
+// isBcryptHash reports whether a stored hash uses one of the supported bcrypt variants.
+func isBcryptHash(hashPassword string) bool {
+	for _, prefix := range bcryptVersionPrefixes {
+		if strings.HasPrefix(hashPassword, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// compareBcrypt verifies a bcrypt hash in constant time. Like PHP password_verify and OpenBSD crypt it uses only the
+// first 72 bytes of the password, so accounts whose longer password was hashed elsewhere keep working. A malformed
+// hash is an error; a wrong password is a clean mismatch.
+func compareBcrypt(hashPassword string, plainPassword []byte) (bool, error) {
+	if len(plainPassword) > bcryptMaxPasswordBytes {
+		plainPassword = plainPassword[:bcryptMaxPasswordBytes]
+	}
+
+	err := bcrypt.CompareHashAndPassword([]byte(hashPassword), plainPassword)
+
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // HashOptions controls generated password hashes.
