@@ -1277,7 +1277,8 @@ func (denylistObligation) Execute(ctx context.Context, request pluginapi.Obligat
 gates environment sources, subject sources, backends, and post-actions. The host projects it only when the module
 called `registrar.RequireCapability(pluginapi.CapabilityCredentials)` during registration and the operator listed
 `credentials` in the module's `allow_capabilities`; there is no separate obligation-specific capability. The field is
-always a non-nil provider on host-built requests. Without the grant, `Password(ctx)` returns `nil, false`. With the grant, the password is request-scoped: it becomes unavailable once the
+always a non-nil provider on host-built requests. Without the grant, `Password(ctx)` returns `nil, false`, and the
+provider holds no password material. With the grant, the password is request-scoped: it becomes unavailable once the
 request context ends, so obligations must read it synchronously inside `Execute` and never retain the `Secret`. Other
 modules never see a grant that was issued to a different module.
 
@@ -1313,6 +1314,10 @@ for example from the cached user-to-account mapping when the built-in brute-forc
 brute-force protection enabled, the brute-force check resolves the account for its own buckets without publishing it on
 the request, so pre-auth obligations commonly see an empty `Account`. Pre-auth obligations must therefore key lookups by
 `RequestSnapshot.Username` and treat `Account` only as an optional hint.
+
+The host renders its credential provider and secret values as a fixed redaction marker in `fmt`, `slog`, and plugin log
+fields, and JSON encoding yields no secret bytes. Plugins must still never put password bytes, derived hashes, or
+comparison inputs into log fields, facts, runtime deltas, status text, span attributes, or errors.
 
 Obligation result facts are validated against the active `auth_decision` registry before they are recorded. Unknown,
 wrong-stage, or wrong-operation facts fail safely. A status message returned by a request-time obligation can update the
