@@ -313,11 +313,23 @@ func newNativeAuthApplication(
 ) core.AuthApplicationService {
 	t.Helper()
 
+	return newNativeAuthApplicationWithVerifier(t, configured, service, nativeAuthTestPasswordVerifier{})
+}
+
+// newNativeAuthApplicationWithVerifier binds the production application to one explicit backend verifier.
+func newNativeAuthApplicationWithVerifier(
+	t *testing.T,
+	configured config.File,
+	service *decisionservice.DecisionService,
+	verifier core.PasswordVerifier,
+) core.AuthApplicationService {
+	t.Helper()
+
 	database, _ := redismock.NewClientMock()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	hostServices, err := core.NewAuthnHostServices(core.AuthnHostServicesInput{
-		PasswordVerifier: nativeAuthTestPasswordVerifier{},
+		PasswordVerifier: verifier,
 		Cache:            coreauth.DefaultCacheService{},
 		BruteForce:       coreauth.DefaultBruteForceService{},
 		Subject:          coreauth.DefaultLuaSubject{},
@@ -423,7 +435,18 @@ func nativeAuthGenerationCandidateWithProbe(
 ) (*config.FileSettings, *pluginloader.State) {
 	t.Helper()
 
-	document, err := policyconfig.Decode("yaml", strings.NewReader(nativeAuthGenerationFixture))
+	return nativeAuthGenerationCandidateFromFixture(t, nativeAuthGenerationFixture, probe)
+}
+
+// nativeAuthGenerationCandidateFromFixture loads the instrumented public plugin behind one explicit Policy fixture.
+func nativeAuthGenerationCandidateFromFixture(
+	t *testing.T,
+	fixture string,
+	probe *nativeAuthExecutionProbe,
+) (*config.FileSettings, *pluginloader.State) {
+	t.Helper()
+
+	document, err := policyconfig.Decode("yaml", strings.NewReader(fixture))
 	if err != nil {
 		t.Fatalf("decode native auth policy: %v", err)
 	}

@@ -43,6 +43,9 @@ const (
 	AuthnHostReasonNotObserveSafe = "not_observe_safe"
 	// AuthnHostReasonTerminal identifies remaining host instances closed after a terminal host result.
 	AuthnHostReasonTerminal = "terminal"
+	// AuthnHostReasonBackendUnavailable identifies a subject provider skipped because backend work settled the
+	// request without a backend result, for example after a temporary backend failure.
+	AuthnHostReasonBackendUnavailable = "backend_unavailable"
 )
 
 // AuthnHostReceiptState is the exact result reported for one scheduler-admitted host callback.
@@ -62,6 +65,11 @@ type AuthnHostScheduleInput struct {
 	Facts         decision.FactSet
 	Checkpoint    string
 	Authenticated bool
+
+	// BackendUnavailable reports that backend work already settled the request without a backend result.
+	// The request is then neither authenticated nor rejected by a backend, so subject providers, which
+	// analyze that result, are skipped regardless of their run_if auth state.
+	BackendUnavailable bool
 }
 
 // AuthnHostReceipt records one exact returned run directive by checkpoint-local instance name.
@@ -509,7 +517,44 @@ func (s *decisionSession) nextAuthnHostDirective(
 		return AuthnHostDirective{}, false, err
 	}
 
+	if found && input.BackendUnavailable {
+		directive = s.skipBackendDependentDirective(directive)
+	}
+
 	return s.acceptAuthnHostDirective(input, directive, cursor, found)
+}
+
+// skipBackendDependentDirective turns a run directive for a subject provider into a scheduler-owned skip when
+// no backend result exists. Earlier skip reasons are kept, and non-subject providers are returned unchanged.
+func (s *decisionSession) skipBackendDependentDirective(directive AuthnHostDirective) AuthnHostDirective {
+	if directive.Disposition() != AuthnHostDispositionRun || !s.authnProviderAnalyzesBackendResult(directive.instance.Use()) {
+		return directive
+	}
+
+	directive.disposition = AuthnHostDispositionSkipped
+	directive.reason = AuthnHostReasonBackendUnavailable
+
+	return directive
+}
+
+// authnProviderAnalyzesBackendResult reports whether one provider identity is a subject provider that can only run
+// on a backend result: the builtin subject provider or a captured Lua or native subject source.
+func (s *decisionSession) authnProviderAnalyzesBackendResult(use string) bool {
+	if use == policy.AuthnProviderSubject {
+		return true
+	}
+
+	provider, found := s.AuthnHostProvider(use)
+	if !found || provider == nil {
+		return false
+	}
+
+	switch provider.Kind() {
+	case AuthnHostProviderKindLuaSubject, AuthnHostProviderKindNativeSubject:
+		return true
+	default:
+		return false
+	}
 }
 
 // acceptAuthnHostDirective records one scheduler result while the session lock is held.

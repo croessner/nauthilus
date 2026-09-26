@@ -181,6 +181,7 @@ func (e *authnCandidateExecution) prepareCheckpoint(
 
 		directive, found, err := hostSession.NextAuthnHostProvider(decisionservice.AuthnHostScheduleInput{
 			Checkpoint: checkpoint.Name(), Facts: facts, Authenticated: e.auth.Runtime.Authenticated,
+			BackendUnavailable: e.backendSettledWithoutResult(),
 		})
 		if err != nil {
 			return authnApplicationResult{}, fmt.Errorf("schedule authn checkpoint %q: %w", checkpoint.Name(), err)
@@ -653,6 +654,14 @@ func (e *authnCandidateExecution) captureBackendOutcome(result *PassDBResult, ac
 	if err == nil {
 		e.backendOutcome = outcome
 	}
+}
+
+// backendSettledWithoutResult reports that backend work already ended the request with a failure or temporary
+// failure but staged no backend result, for example when the backend was unreachable or the credentials were empty.
+// Subject providers have nothing to analyze then and must be skipped instead of failing the whole request.
+func (e *authnCandidateExecution) backendSettledWithoutResult() bool {
+	return !e.backendReady && e.backendResult == nil &&
+		e.authResult != definitions.AuthResultUnset && e.authResult != definitions.AuthResultOK
 }
 
 // prepareBuiltinSubjectProvider records exact backend subject state without selecting legacy scripts.
