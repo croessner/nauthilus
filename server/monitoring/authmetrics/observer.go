@@ -113,6 +113,31 @@ func normalizeOutcome(value string) string {
 	}
 }
 
+// boundedProtocols is the closed set of protocol labels; every other value is ProtocolOther.
+// It names the mail protocols with their implicit-TLS and submission variants, so that
+// a deployment distinguishing them in its backends sees them apart in the metric too.
+var boundedProtocols = map[string]struct{}{
+	definitions.ProtoSMTP:            {},
+	"smtps":                          {},
+	"submission":                     {},
+	definitions.ProtoIMAP:            {},
+	"imaps":                          {},
+	definitions.ProtoPOP3:            {},
+	"pop3s":                          {},
+	"lmtp":                           {},
+	"lmtps":                          {},
+	"sieve":                          {},
+	"managesieve":                    {},
+	"jmap":                           {},
+	definitions.ProtoHTTP:            {},
+	"https":                          {},
+	definitions.ProtoOIDC:            {},
+	definitions.ProtoSAML:            {},
+	definitions.ProtoIDP:             {},
+	definitions.ProtoAccountProvider: {},
+	definitions.ProtoDefault:         {},
+}
+
 // normalizeProtocol bounds the caller-controlled protocol while preserving operationally relevant values.
 func normalizeProtocol(value string) string {
 	protocol := strings.ToLower(strings.TrimSpace(value))
@@ -120,22 +145,9 @@ func normalizeProtocol(value string) string {
 		return ProtocolUnknown
 	}
 
-	switch protocol {
-	case definitions.ProtoSMTP,
-		definitions.ProtoIMAP,
-		definitions.ProtoPOP3,
-		definitions.ProtoHTTP,
-		definitions.ProtoOIDC,
-		definitions.ProtoSAML,
-		definitions.ProtoIDP,
-		definitions.ProtoAccountProvider,
-		definitions.ProtoDefault,
-		"https",
-		"lmtp",
-		"sieve",
-		"managesieve":
+	if _, ok := boundedProtocols[protocol]; ok {
 		return protocol
-	default:
-		return ProtocolOther
 	}
+
+	return ProtocolOther
 }

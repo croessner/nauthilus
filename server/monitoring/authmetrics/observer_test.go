@@ -31,6 +31,12 @@ func TestNormalizeLabelsBoundsAuthenticationMetricCardinality(t *testing.T) {
 		{name: "http success", transport: "HTTP", outcome: "ok", protocol: " IMAP ", wantTransport: TransportHTTP, wantOutcome: OutcomeOK, wantProtocol: "imap"},
 		{name: "grpc denial", transport: "grpc", outcome: "fail", protocol: "SMTP", wantTransport: TransportGRPC, wantOutcome: OutcomeFail, wantProtocol: "smtp"},
 		{name: "temporary failure", transport: "grpc", outcome: "tempfail", protocol: "LMTP", wantTransport: TransportGRPC, wantOutcome: OutcomeTempFail, wantProtocol: "lmtp"},
+		{name: "implicit tls imap", transport: "http", outcome: "ok", protocol: "IMAPS", wantTransport: TransportHTTP, wantOutcome: OutcomeOK, wantProtocol: "imaps"},
+		{name: "implicit tls pop3", transport: "http", outcome: "ok", protocol: "pop3s", wantTransport: TransportHTTP, wantOutcome: OutcomeOK, wantProtocol: "pop3s"},
+		{name: "implicit tls smtp", transport: "http", outcome: "ok", protocol: "smtps", wantTransport: TransportHTTP, wantOutcome: OutcomeOK, wantProtocol: "smtps"},
+		{name: "message submission", transport: "grpc", outcome: "ok", protocol: "Submission", wantTransport: TransportGRPC, wantOutcome: OutcomeOK, wantProtocol: "submission"},
+		{name: "implicit tls lmtp", transport: "grpc", outcome: "ok", protocol: "lmtps", wantTransport: TransportGRPC, wantOutcome: OutcomeOK, wantProtocol: "lmtps"},
+		{name: "jmap", transport: "grpc", outcome: "ok", protocol: "JMAP", wantTransport: TransportGRPC, wantOutcome: OutcomeOK, wantProtocol: "jmap"},
 		{name: "unknown protocol", transport: "http", outcome: "error", wantTransport: TransportHTTP, wantOutcome: OutcomeError, wantProtocol: ProtocolUnknown},
 		{name: "attacker controlled labels", transport: "custom", outcome: "custom", protocol: "user-12345", wantTransport: TransportOther, wantOutcome: OutcomeError, wantProtocol: ProtocolOther},
 	}
