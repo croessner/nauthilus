@@ -42,6 +42,7 @@ type moduleConfig struct {
 	CacheKey         string        `mapstructure:"-"`
 	Timeout          time.Duration `mapstructure:"-"`
 	AuthDedupTTL     time.Duration `mapstructure:"-"`
+	FlushInterval    time.Duration `mapstructure:"-"`
 	BatchSize        int           `mapstructure:"-"`
 	MaxResponseBytes int64         `mapstructure:"-"`
 }
@@ -55,6 +56,7 @@ type rawModuleConfig struct {
 	CacheKey         string `mapstructure:"cache_key"`
 	Timeout          string `mapstructure:"timeout"`
 	AuthDedupTTL     string `mapstructure:"auth_dedup_ttl"`
+	FlushInterval    string `mapstructure:"flush_interval"`
 	BatchSize        int    `mapstructure:"batch_size"`
 	MaxResponseBytes int64  `mapstructure:"max_response_bytes"`
 }
@@ -93,6 +95,12 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	// Zero keeps size-only batching; a positive interval enables the periodic flush worker.
+	flushInterval, err := pluginutil.ParseDefaultedDuration("flush_interval", raw.FlushInterval, 0)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
 	cacheKey := strings.TrimSpace(raw.CacheKey)
 	if cacheKey == "" {
 		cacheKey = defaultCacheKey
@@ -107,6 +115,7 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		CacheKey:         cacheKey,
 		Timeout:          timeout,
 		AuthDedupTTL:     authDedupTTL,
+		FlushInterval:    flushInterval,
 		BatchSize:        batchSize,
 		MaxResponseBytes: maxResponseBytes,
 	}, nil

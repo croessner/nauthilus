@@ -32,6 +32,10 @@ const (
 	connectionTargetLabel = "service"
 	debugModuleBatch      = "batch"
 	docsURL               = "contrib/plugins/clickhouse/README.md"
+	flushTriggerInterval  = "interval"
+	flushTriggerStop      = "stop"
+	resultFlushFailed     = "flush_failed"
+	resultWorkerTimeout   = "worker_stop_timeout"
 )
 
 var _ pluginapi.Plugin = (*Plugin)(nil)
@@ -53,14 +57,16 @@ type Plugin struct {
 	http        pluginapi.HTTPClient
 	redis       pluginapi.Redis
 	cache       pluginapi.Cache
+	flushes     flushScheduler
 	metrics     pluginMetrics
 	config      moduleConfig
 	mu          sync.RWMutex
+	lifecycleMu sync.Mutex
 }
 
 // NewPlugin creates a ClickHouse native post-action plugin instance.
 func NewPlugin() *Plugin {
-	return &Plugin{}
+	return &Plugin{flushes: flushScheduler{newTicker: newTimeTicker}}
 }
 
 // Metadata returns the public plugin identity and API contract.
@@ -112,11 +118,14 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 	return registrar.RegisterPostActionTarget(postActionTarget{plugin: p})
 }
 
-// Start captures host facades and registers ClickHouse observability.
+// Start captures host facades, registers ClickHouse observability, and starts the optional flush worker.
 func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	if host == nil {
 		return fmt.Errorf("plugin host is nil")
 	}
+
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
 
 	logger := host.Logger(pluginName)
 	debugLogger := host.Logger(debugModuleBatch)
@@ -126,6 +135,8 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	if err != nil {
 		return err
 	}
+
+	metrics.initializeResultSeries(ctx)
 
 	cache, err := host.Cache(pluginName)
 	if err != nil {
@@ -145,13 +156,26 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.mu.Unlock()
 
 	p.registerConnectionTarget(ctx, host, config)
+
+	p.flushes.apply(ctx, host, config.FlushInterval, p.flushOnTick)
 	logger.Info(ctx, "clickhouse plugin started", pluginapi.LogField{Key: logFieldURLConfigured, Value: config.InsertURL != ""})
 
 	return nil
 }
 
-// Stop releases host facade references held by the plugin instance.
+// Stop ends the flush worker, flushes the pending local batch once, and releases host facade references.
+// It is safe after a failed Start and when called repeatedly.
 func (p *Plugin) Stop(ctx context.Context) error {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if err := p.flushes.stop(ctx); err != nil {
+		warnBounded(ctx, p.snapshot().logger, "clickhouse flush worker did not stop before the shutdown deadline",
+			pluginapi.LogField{Key: logFieldResult, Value: resultWorkerTimeout})
+	}
+
+	p.flushOnStop(ctx)
+
 	p.mu.Lock()
 	logger := p.logger
 	p.host = nil
@@ -171,23 +195,73 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Reconfigure validates and atomically swaps plugin-owned config.
+// Reconfigure validates and atomically swaps plugin-owned config and restarts the flush worker
+// when flush_interval changed.
 func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) error {
 	config, err := decodeModuleConfig(view)
 	if err != nil {
 		return err
 	}
 
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
 	p.mu.Lock()
 	host := p.host
 	p.config = config
 	p.mu.Unlock()
 
-	if host != nil {
-		p.registerConnectionTarget(ctx, host, config)
+	if host == nil {
+		return nil
 	}
 
+	p.registerConnectionTarget(ctx, host, config)
+	p.flushes.apply(ctx, host, config.FlushInterval, p.flushOnTick)
+
 	return nil
+}
+
+// flushOnTick flushes the pending local batch for the periodic flush worker.
+func (p *Plugin) flushOnTick(ctx context.Context) {
+	p.flushPending(ctx, flushTriggerInterval)
+}
+
+// flushOnStop flushes the pending local batch once, bounded by the configured request timeout.
+func (p *Plugin) flushOnStop(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	flushCtx, cancel := context.WithTimeout(ctx, p.snapshot().config.Timeout)
+	defer cancel()
+
+	p.flushPending(flushCtx, flushTriggerStop)
+}
+
+// flushPending flushes whatever the local batch holds and logs a bounded failure record.
+// It is a no-op before Start, after Stop, and when the batch is empty.
+func (p *Plugin) flushPending(ctx context.Context, trigger string) {
+	state := p.snapshot()
+	if state.cache == nil {
+		return
+	}
+
+	// The error text is not logged: transport errors can carry the insert URL and its query.
+	if err := flushBatch(ctx, state); err != nil {
+		warnBounded(ctx, state.logger, "clickhouse pending batch flush failed",
+			pluginapi.LogField{Key: logFieldResult, Value: resultFlushFailed},
+			pluginapi.LogField{Key: logFieldTrigger, Value: trigger},
+		)
+	}
+}
+
+// warnBounded emits a warning with bounded fields when a logger is attached.
+func warnBounded(ctx context.Context, logger pluginapi.Logger, message string, fields ...pluginapi.LogField) {
+	if logger == nil {
+		return
+	}
+
+	logger.Warn(ctx, message, fields...)
 }
 
 // snapshot returns the current lifecycle state needed by request-time code.

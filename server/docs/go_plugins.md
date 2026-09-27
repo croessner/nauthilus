@@ -695,8 +695,8 @@ policy obligations after the module is configured and loaded:
 
 Config highlights:
 
-- ClickHouse uses `insert_url`, optional `user` and `password`, `batch_size`, `cache_key`, `timeout`,
-  `max_response_bytes`, and `auth_dedup_ttl`.
+- ClickHouse uses `insert_url`, optional `user` and `password`, `batch_size`, `flush_interval`, `cache_key`, `timeout`,
+  `max_response_bytes`, and `auth_dedup_ttl`. Batches are per process; see `contrib/plugins/clickhouse/README.md`.
 - Have I Been Pwned uses `api_base_url`, HTTP/cache/Redis TTL settings, `redis_pool` for Lua config parity, and a `mail`
   block with `enabled`, `use_lmtp`, `server`, `port`, `helo_name`, `tls`, `starttls`, `username`, `password`,
   `mail_from`, `website`, `template_path`, and `subject_template`.

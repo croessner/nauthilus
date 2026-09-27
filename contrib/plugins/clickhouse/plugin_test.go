@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -561,11 +562,14 @@ type testRunnerOptions struct {
 	redis     pluginapi.Redis
 	logger    *slog.Logger
 	targets   *recordingConnectionTargetRegistrar
+	metrics   pluginapi.Metrics
+	tickers   *manualTickerFactory
 }
 
 type testHarness struct {
 	runner     *pluginruntime.Runner
 	host       *pluginruntime.Host
+	plugin     *Plugin
 	postAction pluginapi.PostActionTarget
 	transport  *recordingTransport
 }
@@ -581,33 +585,11 @@ func startTestRunner(t *testing.T, module config.PluginModule, options testRunne
 		transport = &recordingTransport{statusCode: http.StatusOK}
 	}
 
-	targets := options.targets
-	if targets == nil {
-		targets = &recordingConnectionTargetRegistrar{}
+	if options.tickers != nil {
+		plugin.flushes.newTicker = options.tickers.newTicker
 	}
 
-	metrics := newRecordingMetrics()
-	tracer := &recordingTracer{}
-
-	hostOptions := []pluginruntime.HostOption{
-		pluginruntime.WithHTTPClient(&http.Client{Transport: transport}),
-		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacade(targets)),
-		pluginruntime.WithMetricsFactory(func(string) pluginapi.Metrics {
-			return metrics
-		}),
-		pluginruntime.WithTracerFactory(func(string) pluginapi.Tracer {
-			return tracer
-		}),
-	}
-	if options.redis != nil {
-		hostOptions = append(hostOptions, pluginruntime.WithRedis(options.redis))
-	}
-
-	if options.logger != nil {
-		hostOptions = append(hostOptions, pluginruntime.WithLogger(options.logger))
-	}
-
-	host := pluginruntime.NewHost(hostOptions...)
+	host := pluginruntime.NewHost(testHostOptions(options, transport)...)
 	instances := []pluginloader.ModuleInstance{
 		{
 			Plugin:     plugin,
@@ -630,9 +612,45 @@ func startTestRunner(t *testing.T, module config.PluginModule, options testRunne
 	return testHarness{
 		runner:     runner,
 		host:       host,
+		plugin:     plugin,
 		postAction: testPostActionTarget(t, registry),
 		transport:  transport,
 	}
+}
+
+// testHostOptions builds host facades backed by recording fakes unless options override them.
+func testHostOptions(options testRunnerOptions, transport *recordingTransport) []pluginruntime.HostOption {
+	targets := options.targets
+	if targets == nil {
+		targets = &recordingConnectionTargetRegistrar{}
+	}
+
+	var metrics pluginapi.Metrics = newRecordingMetrics()
+	if options.metrics != nil {
+		metrics = options.metrics
+	}
+
+	tracer := &recordingTracer{}
+
+	hostOptions := []pluginruntime.HostOption{
+		pluginruntime.WithHTTPClient(&http.Client{Transport: transport}),
+		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacade(targets)),
+		pluginruntime.WithMetricsFactory(func(string) pluginapi.Metrics {
+			return metrics
+		}),
+		pluginruntime.WithTracerFactory(func(string) pluginapi.Tracer {
+			return tracer
+		}),
+	}
+	if options.redis != nil {
+		hostOptions = append(hostOptions, pluginruntime.WithRedis(options.redis))
+	}
+
+	if options.logger != nil {
+		hostOptions = append(hostOptions, pluginruntime.WithLogger(options.logger))
+	}
+
+	return hostOptions
 }
 
 // enqueuePostAction invokes the registered target directly after Runner has established lifecycle readiness.
@@ -832,15 +850,20 @@ type recordingTransport struct {
 	err        error
 	requests   []recordedHTTPRequest
 	statusCode int
+	mu         sync.Mutex
 }
 
 // RoundTrip records request bodies and returns the configured response.
+// Readers access requests only after synchronizing with the flush that produced them.
 func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	body, _ := io.ReadAll(request.Body)
+
+	t.mu.Lock()
 	t.requests = append(t.requests, recordedHTTPRequest{
 		header: request.Header.Clone(),
 		body:   append([]byte(nil), body...),
 	})
+	t.mu.Unlock()
 
 	if t.err != nil {
 		return nil, t.err
@@ -857,6 +880,14 @@ func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, e
 		Body:       io.NopCloser(strings.NewReader("")),
 		Request:    request,
 	}, nil
+}
+
+// requestCount returns the number of captured requests while flushes may still run.
+func (t *recordingTransport) requestCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return len(t.requests)
 }
 
 // onlyRequest returns the single captured request or fails the test.
@@ -929,6 +960,7 @@ func assertBoolField(t *testing.T, row map[string]any, key string, want bool) {
 
 type recordingMetrics struct {
 	observations []metricObservation
+	mu           sync.Mutex
 }
 
 type metricObservation struct {
@@ -983,6 +1015,9 @@ func (m recordingMetric) Observe(_ context.Context, _ float64, labels ...plugina
 
 // record stores one metric observation with bounded labels.
 func (m recordingMetric) record(labels ...pluginapi.LabelValue) {
+	m.metrics.mu.Lock()
+	defer m.metrics.mu.Unlock()
+
 	result := ""
 
 	for _, label := range labels {
@@ -996,6 +1031,7 @@ func (m recordingMetric) record(labels ...pluginapi.LabelValue) {
 
 type recordingTracer struct {
 	spans []recordedSpan
+	mu    sync.Mutex
 }
 
 type recordedSpan struct {
@@ -1009,6 +1045,9 @@ func (t *recordingTracer) Start(ctx context.Context, name string, attrs ...plugi
 	for _, attr := range attrs {
 		span.attrs[attr.Key] = attr.Value
 	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	t.spans = append(t.spans, span)
 
@@ -1029,6 +1068,9 @@ func (s recordingSpan) AddEvent(string, ...pluginapi.TraceAttribute) {}
 
 // SetAttributes records attributes on an existing span.
 func (s recordingSpan) SetAttributes(attrs ...pluginapi.TraceAttribute) {
+	s.tracer.mu.Lock()
+	defer s.tracer.mu.Unlock()
+
 	for _, attr := range attrs {
 		s.tracer.spans[s.index].attrs[attr.Key] = attr.Value
 	}
@@ -1036,6 +1078,9 @@ func (s recordingSpan) SetAttributes(attrs ...pluginapi.TraceAttribute) {
 
 // RecordError records error presence without exposing error text.
 func (s recordingSpan) RecordError(error) {
+	s.tracer.mu.Lock()
+	defer s.tracer.mu.Unlock()
+
 	s.tracer.spans[s.index].attrs["error"] = true
 }
 

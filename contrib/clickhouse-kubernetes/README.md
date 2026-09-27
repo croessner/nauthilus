@@ -146,6 +146,7 @@ plugins:
         user: ""
         password: ""
         batch_size: 100
+        flush_interval: 30s
         cache_key: clickhouse:batch:logins
         timeout: 10s
         max_response_bytes: 8192

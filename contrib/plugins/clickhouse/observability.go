@@ -49,8 +49,15 @@ const (
 	logFieldResult        = "result"
 	logFieldRows          = "rows"
 	logFieldThreshold     = "threshold"
+	logFieldTrigger       = "trigger"
 	logFieldURLConfigured = "url_configured"
 )
+
+// queueResults lists every result label recorded on metricQueuedRows.
+var queueResults = []string{resultQueued, resultSkipped, resultDedupSkipped, resultEncodeError}
+
+// flushResults lists every result label recorded on metricFlushBatches.
+var flushResults = []string{resultSuccess, resultHTTPError, resultStatusError, resultNoURL, resultRequeued}
 
 type pluginMetrics struct {
 	queuedRows    pluginapi.Counter
@@ -97,6 +104,27 @@ func registerMetrics(metrics pluginapi.Metrics) (pluginMetrics, error) {
 		flushBatches:  flushBatches,
 		flushDuration: flushDuration,
 	}, nil
+}
+
+// initializeResultSeries creates every known counter series with value zero.
+//
+// Without this, a series appears at 1 with its first increment after a restart and
+// increase() over that series misses the change. The flush duration histogram is not
+// pre-created because an observation would count as a real sample.
+func (m pluginMetrics) initializeResultSeries(ctx context.Context) {
+	initializeCounterSeries(ctx, m.queuedRows, queueResults)
+	initializeCounterSeries(ctx, m.flushBatches, flushResults)
+}
+
+// initializeCounterSeries adds zero to counter for each result label.
+func initializeCounterSeries(ctx context.Context, counter pluginapi.Counter, results []string) {
+	if counter == nil {
+		return
+	}
+
+	for _, result := range results {
+		counter.Add(ctx, 0, pluginapi.LabelValue{Name: metricLabelResult, Value: result})
+	}
 }
 
 // recordQueueResult increments the queue-result metric when available.

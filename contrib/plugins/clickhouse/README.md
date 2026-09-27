@@ -22,6 +22,7 @@ plugins:
         user: ""
         password: ""
         batch_size: 100
+        flush_interval: 30s
         cache_key: clickhouse:batch:logins
         timeout: 10s
         max_response_bytes: 8192
@@ -31,6 +32,32 @@ plugins:
 The plugin writes newline-delimited JSONEachRow payloads with the same row field names as the Lua action. It uses the
 module-scoped host cache for batching, the host Redis facade for authenticated request deduplication, and the host HTTP
 facade for inserts.
+
+## Batching and Delivery
+
+The batch lives in the module-scoped host cache, which is process-local memory. It is not stored in Redis and is not
+shared between processes: every Nauthilus process or Kubernetes pod collects and flushes its own batch under
+`cache_key`. With several replicas, each one holds up to `batch_size - 1` rows of its own at any time.
+
+A batch is flushed when one of the following happens:
+
+- **Size:** the request that makes the local batch reach `batch_size` rows (default `100`) flushes it inline.
+- **Interval:** when `flush_interval` is a positive duration such as `30s`, one background worker per process flushes
+  the local batch at that interval if it holds any rows. The default `0` (or `0s`) disables the worker and keeps
+  size-only batching; negative or unparsable values are rejected at startup. Without the worker, a quiet process can
+  hold rows for a long time, so production deployments should set it; the bound for a row's delay is then roughly
+  `flush_interval` plus one insert.
+- **Stop:** when the plugin stops, for example during process shutdown or a rollout, it ends the worker and flushes the
+  pending batch once, bounded by `timeout`. A failed final insert is logged with bounded fields (`result`,
+  `trigger`) and does not block shutdown; those rows are lost with the process.
+
+Size and interval flushes may overlap. Both take the batch with one atomic cache pop, so every row is sent by exactly
+one flush. An interval flush that already started is allowed to finish (bounded by `timeout`) instead of being
+cancelled, because aborting an insert that ClickHouse may already have accepted would requeue and later duplicate its
+rows. A failed insert, or a flush without `insert_url`, puts the rows back into the local batch for the next attempt.
+
+Like every other `config` value, `flush_interval` is read when the plugin starts. The plugin's reload hook restarts the
+worker when the interval changes, but module config changes currently require a process restart (see below).
 
 The analytics consumer reads standard `plugin.exchange.*` values, standard feature markers, and policy facts to populate
 the existing ClickHouse row fields, including `decision_sources`. Canonical `plugin.geoip.*` facts alone populate the
@@ -82,6 +109,22 @@ Observability is host-integrated: the plugin registers the remote ClickHouse end
 `Host.ConnectionTargets("clickhouse")`, sends inserts through `Host.HTTP("batch")`, and records bounded queue/flush
 metrics and spans. Logs, labels, and spans do not include row bodies, raw SQL query strings, usernames, client IPs, or
 credentials.
+
+## Metrics
+
+The plugin registers these metrics through the host metrics facade, which adds the `nauthilus_plugin_clickhouse_`
+prefix and the `plugin_scope` label:
+
+| Metric | Type | `result` values |
+|---|---|---|
+| `clickhouse_queued_rows_total` | counter | `queued`, `skipped` (no-auth request), `dedup_skipped` (Redis deduplication), `encode_error` |
+| `clickhouse_flush_batches_total` | counter | `success`, `http_error`, `status_error`, `no_url`, `requeued` |
+| `clickhouse_flush_duration_seconds` | histogram | same as the flush counter |
+
+Every `result` series of both counters exists from startup with value `0`, so `increase()` and `rate()` also see the
+first flush after a restart and alerts such as "no successful flush in the last hour" do not misfire after a rollout.
+Histogram series appear with their first observation. Because batches are per process, compare flush metrics per pod
+or sum them; with `flush_interval` unset, a quiet pod legitimately reports no flush for long periods.
 
 Known parity gaps:
 
