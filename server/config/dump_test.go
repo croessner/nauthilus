@@ -54,6 +54,7 @@ func TestRenderDefaultConfigDump_IncludesKnownDefaults(t *testing.T) {
 		`runtime.timeouts.lua_script = "30s"`,
 		`identity.oidc.tokens.revoke_refresh_token = true`,
 		`identity.oidc.dynamic_client_registration.access_token_type = "opaque"`,
+		`identity.oidc.dynamic_client_registration.delayed_response = false`,
 		`identity.oidc.dynamic_client_registration.limits.source_registrations = 5`,
 	}
 

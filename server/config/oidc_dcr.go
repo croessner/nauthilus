@@ -90,6 +90,7 @@ type OIDCDynamicClientRegistrationConfig struct {
 	Enabled              bool                                   `mapstructure:"enabled"`
 	AllowRefreshTokens   bool                                   `mapstructure:"allow_refresh_tokens"`
 	SkipConsent          bool                                   `mapstructure:"skip_consent"`
+	DelayedResponse      bool                                   `mapstructure:"delayed_response"`
 }
 
 // OIDCDynamicClientRegistrationLimits bounds registration input, storage, and rate consumption.
@@ -117,7 +118,7 @@ type OIDCDynamicClientRegistrationLifecycle struct {
 
 // String formats dynamic registration configuration without exposing source-key material.
 func (c OIDCDynamicClientRegistrationConfig) String() string {
-	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t SkipConsent:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
+	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t SkipConsent:%t DelayedResponse:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
 		c.Enabled,
 		c.GetProfile(),
 		c.GetProfileVersion(),
@@ -130,6 +131,7 @@ func (c OIDCDynamicClientRegistrationConfig) String() string {
 		len(c.AccessTokenClaims.Mappings),
 		c.AllowRefreshTokens,
 		c.SkipConsent,
+		c.DelayedResponse,
 		c.GetConsentMode(),
 		c.RequiredMFALevel,
 		c.GetAccessTokenLifetime(),

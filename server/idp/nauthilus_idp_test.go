@@ -892,8 +892,8 @@ func assertIDPFindClient(t *testing.T, fixture idpTokenTestFixture) {
 func assertIDPDelayedResponse(t *testing.T, fixture idpTokenTestFixture) {
 	t.Helper()
 
-	assert.True(t, fixture.idp.IsDelayedResponse(testClientID, ""))
-	assert.False(t, fixture.idp.IsDelayedResponse("nonexistent", ""))
+	assert.True(t, fixture.idp.IsDelayedResponse(t.Context(), testClientID, ""))
+	assert.False(t, fixture.idp.IsDelayedResponse(t.Context(), "nonexistent", ""))
 }
 
 // assertIssueAndValidateToken verifies ID token issuance and validation.
@@ -1419,6 +1419,57 @@ func TestValidateTokenOpaqueRevalidatesDynamicClientAuthoritatively(t *testing.T
 	assert.NoError(t, err)
 	assert.Equal(t, clientID, claims[claimAudience])
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestIsDelayedResponseResolvesDynamicClientProfile(t *testing.T) {
+	const clientID = dcr.ClientIDPrefix + "delayed-response-client"
+
+	tests := []struct {
+		expect  func(*testing.T, redismock.ClientMock)
+		name    string
+		delayed bool
+		want    bool
+	}{
+		{
+			name:    "profile enables delayed response",
+			delayed: true,
+			want:    true,
+			expect: func(t *testing.T, mock redismock.ClientMock) {
+				expectDynamicClientRecord(t, mock, clientID, definitions.ScopeOpenID)
+			},
+		},
+		{
+			name: "profile keeps delayed response disabled",
+			expect: func(t *testing.T, mock redismock.ClientMock) {
+				expectDynamicClientRecord(t, mock, clientID, definitions.ScopeOpenID)
+			},
+		},
+		{
+			name:    "unavailable dynamic client is not delayed",
+			delayed: true,
+			expect: func(_ *testing.T, mock redismock.ClientMock) {
+				mock.ExpectGet(testDynamicClientKey(clientID)).SetErr(errors.New("redis unavailable"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idp, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{
+				Issuer: testIssuer,
+				DynamicClientRegistration: config.OIDCDynamicClientRegistrationConfig{
+					Enabled:         true,
+					RequiredScopes:  []string{definitions.ScopeOpenID},
+					DelayedResponse: tt.delayed,
+				},
+			})
+
+			tt.expect(t, mock)
+
+			assert.Equal(t, tt.want, idp.IsDelayedResponse(t.Context(), clientID, ""))
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestValidateTokenJWTRevalidatesDynamicClientAuthoritatively(t *testing.T) {

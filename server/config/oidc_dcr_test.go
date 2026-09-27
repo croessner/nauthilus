@@ -401,12 +401,36 @@ func TestNativeLoopbackFormActionSources(t *testing.T) {
 	}
 }
 
-func TestOIDCDynamicClientRegistrationSkipConsentDefaultsToFalse(t *testing.T) {
-	if (OIDCDynamicClientRegistrationConfig{}).SkipConsent {
-		t.Fatal("dynamic registration must require consent unless skip_consent is configured")
+func TestOIDCDynamicClientRegistrationProfileFlagsDefaultToFalse(t *testing.T) {
+	tests := []struct {
+		get     func(OIDCDynamicClientRegistrationConfig) bool
+		enabled OIDCDynamicClientRegistrationConfig
+		name    string
+		output  string
+	}{
+		{
+			name:    "skip_consent",
+			get:     func(c OIDCDynamicClientRegistrationConfig) bool { return c.SkipConsent },
+			enabled: OIDCDynamicClientRegistrationConfig{SkipConsent: true},
+			output:  "SkipConsent:true",
+		},
+		{
+			name:    "delayed_response",
+			get:     func(c OIDCDynamicClientRegistrationConfig) bool { return c.DelayedResponse },
+			enabled: OIDCDynamicClientRegistrationConfig{DelayedResponse: true},
+			output:  "DelayedResponse:true",
+		},
 	}
 
-	if !strings.Contains((OIDCDynamicClientRegistrationConfig{SkipConsent: true}).String(), "SkipConsent:true") {
-		t.Fatal("String() must expose skip_consent")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.get(OIDCDynamicClientRegistrationConfig{}) {
+				t.Fatalf("dynamic registration must keep %s disabled unless configured", test.name)
+			}
+
+			if !strings.Contains(test.enabled.String(), test.output) {
+				t.Fatalf("String() must expose %s", test.name)
+			}
+		})
 	}
 }

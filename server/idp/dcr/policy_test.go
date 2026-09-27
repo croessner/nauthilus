@@ -91,25 +91,46 @@ func TestRuntimePolicyAppliesProfileClaimsTokenTypeAndImpliedScopes(t *testing.T
 	}
 }
 
-func TestRuntimePolicyAppliesProfileSkipConsent(t *testing.T) {
-	policy := config.OIDCDynamicClientRegistrationConfig{
-		Enabled:            true,
-		RequiredScopes:     []string{"openid"},
-		OptionalScopes:     []string{"offline_access", "mail:imap"},
-		AllowRefreshTokens: true,
+func TestRuntimePolicyAppliesProfileClientFlags(t *testing.T) {
+	tests := []struct {
+		set  func(*config.OIDCDynamicClientRegistrationConfig, bool)
+		get  func(*config.OIDCClient) bool
+		name string
+	}{
+		{
+			name: "skip_consent",
+			set:  func(p *config.OIDCDynamicClientRegistrationConfig, v bool) { p.SkipConsent = v },
+			get:  func(c *config.OIDCClient) bool { return c.SkipConsent },
+		},
+		{
+			name: "delayed_response",
+			set:  func(p *config.OIDCDynamicClientRegistrationConfig, v bool) { p.DelayedResponse = v },
+			get:  func(c *config.OIDCClient) bool { return c.IsDelayedResponse() },
+		},
 	}
 
-	for _, skip := range []bool{false, true} {
-		policy.SkipConsent = skip
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := config.OIDCDynamicClientRegistrationConfig{
+				Enabled:            true,
+				RequiredScopes:     []string{"openid"},
+				OptionalScopes:     []string{"offline_access", "mail:imap"},
+				AllowRefreshTokens: true,
+			}
 
-		client, err := NewRuntimePolicy(policy).Resolve(runtimePolicyTestRecord())
-		if err != nil {
-			t.Fatalf("Resolve() error = %v", err)
-		}
+			for _, enabled := range []bool{false, true} {
+				test.set(&policy, enabled)
 
-		if client.SkipConsent != skip {
-			t.Fatalf("Resolve() SkipConsent = %t, want %t", client.SkipConsent, skip)
-		}
+				client, err := NewRuntimePolicy(policy).Resolve(runtimePolicyTestRecord())
+				if err != nil {
+					t.Fatalf("Resolve() error = %v", err)
+				}
+
+				if got := test.get(client); got != enabled {
+					t.Fatalf("Resolve() %s = %t, want %t", test.name, got, enabled)
+				}
+			}
+		})
 	}
 }
 

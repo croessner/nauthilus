@@ -214,6 +214,9 @@ disabled by default and intentionally implements a narrow profile rather than un
   option for static clients; `prompt=consent` still forces it. Enable it only when every native application that can
   register is trusted: an application registered on the user's device then obtains tokens without a consent step
   whenever the browser already holds an authenticated IdP session.
+- `delayed_response: true` enables the delayed login-failure presentation for all dynamic clients, like the
+  per-client option for static clients: a wrong password proceeds to the MFA step for existing users and is only
+  reported at the end. The setting is applied on every use, so it also covers already registered clients.
 - Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive
   reads always use the authoritative primary/write handle and fail closed when Redis is unavailable.
 
@@ -246,6 +249,7 @@ identity:
       access_token_lifetime: 15m
       refresh_token_lifetime: 720h
       skip_consent: false
+      delayed_response: false
       # Optional profile extensions for native applications that omit scope and grant_types.
       default_scopes: [ "openid", "offline_access", "mail:imap" ]
       implied_scopes: [ ]

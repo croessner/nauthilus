@@ -323,7 +323,9 @@ flowchart LR
 
 ### 3.1.3 Delayed Response Without Premature Authentication
 
-`delayed_response` remains supported, but it no longer depends on a legacy pre-authentication cookie. A normal password
+`delayed_response` remains supported, but it no longer depends on a legacy pre-authentication cookie. Static OIDC
+clients and SAML service providers enable it per client; dynamic clients inherit it from the registration profile,
+which `NauthilusIDP.IsDelayedResponse` resolves authoritatively. A normal password
 failure may proceed to a factor challenge only when the selected backend returned a bounded identity snapshot and at
 least one usable factor. The browser anchor remains unauthenticated and has assurance level zero throughout that
 challenge.
@@ -707,8 +709,9 @@ source/global rate limits and the active-client quota. Dynamic-client resolution
 write handle; unavailable or corrupt state fails closed. Every dynamic authorization requires interaction and consent
 unless the profile sets `skip_consent`; dynamic clients never consult remembered consent grants.
 
-`dcr.RuntimePolicy.Resolve` materializes the current profile on every use: token format, profile-wide
-`id_token_claims`/`access_token_claims` mappings, and `implied_scopes` restricted to the scopes the client registered.
+`dcr.RuntimePolicy.Resolve` materializes the current profile on every use: token format, `skip_consent`,
+`delayed_response`, profile-wide `id_token_claims`/`access_token_claims` mappings, and `implied_scopes` restricted to
+the scopes the client registered.
 Operator changes therefore apply to existing dynamic clients without re-registration. JWT access tokens whose
 audience is a dynamic client are re-validated by `validateDynamicJWTAccessToken` against the authoritative client,
 its current scopes, and the current lifetime ceiling. JWTs carry no MFA level, so the MFA ceiling is enforced at

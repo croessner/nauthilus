@@ -240,9 +240,11 @@ func (n *NauthilusIDP) FindSAMLServiceProvider(entityID string) (*config.SAML2Se
 }
 
 // IsDelayedResponse returns true if delayed response is enabled for the given client.
-func (n *NauthilusIDP) IsDelayedResponse(clientID string, samlEntityID string) bool {
+// OIDC clients are resolved authoritatively so dynamic clients inherit the registration profile setting;
+// an unresolvable client keeps the immediate failure presentation.
+func (n *NauthilusIDP) IsDelayedResponse(ctx context.Context, clientID string, samlEntityID string) bool {
 	if clientID != "" {
-		if client, ok := n.FindClient(clientID); ok {
+		if client, err := n.ResolveClient(ctx, clientID); err == nil {
 			return client.IsDelayedResponse()
 		}
 	}
@@ -1213,7 +1215,7 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 		err = authFailureFromOutcome(outcome)
 	}
 
-	if err != nil && n.IsDelayedResponse(oidcCID, samlEntityID) &&
+	if err != nil && n.IsDelayedResponse(ctx.Request.Context(), oidcCID, samlEntityID) &&
 		delayedPasswordFailureEligible(err) {
 		if hydrated, lookupErr := n.lookupPasswordIdentity(
 			ctx, username, oidcCID, samlEntityID, core.AuthnEntryIDPDelayedIdentity, typedContext,

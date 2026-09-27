@@ -1266,7 +1266,7 @@ func (h *FrontendHandler) handleCanonicalPostLoginAuthFailure(
 
 	idpInstance := idp.NewNauthilusIDP(h.deps)
 	if !idpAuthFailureAllowsDelayedResponse(err) ||
-		!idpInstance.IsDelayedResponse(flowContext.oidcCID, flowContext.samlEntityID) ||
+		!idpInstance.IsDelayedResponse(ctx.Request.Context(), flowContext.oidcCID, flowContext.samlEntityID) ||
 		authentication.user == nil {
 		h.renderDetailedPostLoginFailure(ctx, flowContext, err)
 
