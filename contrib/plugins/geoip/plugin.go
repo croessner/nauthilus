@@ -488,13 +488,10 @@ func (p *Plugin) startPrivacyWorkersLocked() {
 
 	engine := p.privacy
 	for _, coordinator := range engine.coordinators {
-		workerCtx, cancel := context.WithCancel(p.host.ServiceContext())
-		p.privacyCancel = append(p.privacyCancel, cancel)
-		sourceID := coordinator.config.ID
-
-		p.host.Go(workerCtx, "geoip.privacy."+sourceID, func(ctx context.Context) error {
+		cancel := goStoppableWorker(p.host, "geoip.privacy."+coordinator.config.ID, func(ctx context.Context) error {
 			return p.runPrivacyRefreshLoop(ctx, engine, coordinator)
 		})
+		p.privacyCancel = append(p.privacyCancel, cancel)
 	}
 }
 
@@ -513,11 +510,8 @@ func (p *Plugin) startDatabaseRefreshWorkerLocked() {
 		return
 	}
 
-	workerCtx, cancel := context.WithCancel(p.host.ServiceContext())
-	p.refreshCancel = cancel
 	interval := p.config.RefreshInterval
-
-	p.host.Go(workerCtx, "geoip.refresh", func(ctx context.Context) error {
+	p.refreshCancel = goStoppableWorker(p.host, "geoip.refresh", func(ctx context.Context) error {
 		return p.refreshLoop(ctx, interval)
 	})
 }
@@ -542,11 +536,8 @@ func (p *Plugin) startASNLookupWorkerLocked() {
 		p.asnLookup = newASNLookupService()
 	}
 
-	workerCtx, cancel := context.WithCancel(p.host.ServiceContext())
-	p.asnRouteCancel = cancel
 	config := p.config.ASNLookup
-
-	p.host.Go(workerCtx, "geoip."+componentASNLookup, func(ctx context.Context) error {
+	p.asnRouteCancel = goStoppableWorker(p.host, "geoip."+componentASNLookup, func(ctx context.Context) error {
 		return p.asnLookupLoop(ctx, config)
 	})
 }
@@ -567,11 +558,8 @@ func (p *Plugin) startASNRegistryWorkerLocked() {
 		return
 	}
 
-	workerCtx, cancel := context.WithCancel(p.host.ServiceContext())
-	p.asnCancel = cancel
 	config := p.config.ASNRegistry
-
-	p.host.Go(workerCtx, "geoip.asn_registry", func(ctx context.Context) error {
+	p.asnCancel = goStoppableWorker(p.host, "geoip.asn_registry", func(ctx context.Context) error {
 		return p.asnRegistryLoop(ctx, config)
 	})
 }

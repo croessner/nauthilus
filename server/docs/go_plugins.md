@@ -594,8 +594,10 @@ tokens, passwords, SQL statements, or raw plugin errors into metric labels or ho
 
 ## Reload And Restart
 
-SIGHUP can apply plugin-owned `config` changes only when the plugin implements `pluginapi.ReloadablePlugin`. If
-`Reconfigure` returns an error, Nauthilus keeps the previous working plugin config.
+The whole `plugins` section, including plugin-owned `config`, is restart-bound. A SIGHUP reload that changes it is
+refused as `native plugin configuration changed`, and Nauthilus keeps the running configuration; apply such changes
+with a process restart. `pluginapi.ReloadablePlugin.Reconfigure` is part of the plugin contract, but the running
+server does not call it on SIGHUP.
 
 Generic policy deactivation is generation-bound. A successfully prepared reload can omit a previously configured native
 provider or effect from the new generation, while requests and accepted post-actions holding the old generation continue
@@ -726,8 +728,8 @@ Migration notes:
   `authn/plugin.haveibeenpwnd.post_action` after the
   `haveibeenpwnd` module is configured and the required capabilities are allowed.
 - Adding or removing either module, changing the module name, or replacing the `.so` artifact requires a process restart.
-  Changing `allow_capabilities` also requires restart. Config-only changes inside `plugins.modules[].config` can be
-  applied by SIGHUP when validation succeeds. Enabling HIBP mail for a module that was registered with
+  Changing `allow_capabilities` also requires restart, and so do config-only changes inside
+  `plugins.modules[].config`. Enabling HIBP mail for a module that was registered with
   `mail.enabled: false` requires restart so the plugin can acquire `CapabilityMail`.
 - Native and Lua post-actions run inside one detached plan in final-obligation order. A step's
   `PostActionEnqueueResult.RuntimeDelta` is host-validated and visible only to later post-action steps in that same

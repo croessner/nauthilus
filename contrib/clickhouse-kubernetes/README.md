@@ -157,8 +157,9 @@ The native plugin uses host-managed HTTP, Redis, process cache, metrics, traces,
 does not implement the optional Lua `clickhouse-query.lua` read-only hook, and native post-actions cannot apply the Lua
 `rt.post_clickhouse = true` runtime marker.
 
-Adding or removing the module, changing the module name, or replacing the `.so` artifact requires a Nauthilus process
-restart. Config-only changes inside `plugins.modules[].config` can be applied by SIGHUP when validation succeeds.
+Every change to the `plugins` section, including config-only changes inside `plugins.modules[].config` such as
+`batch_size` or `flush_interval`, requires a Nauthilus process restart. A SIGHUP reload refuses such a candidate as
+restart-bound (`native plugin configuration changed`) and keeps the running configuration.
 
 ## Historical Lua action
 
