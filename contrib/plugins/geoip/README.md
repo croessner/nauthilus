@@ -38,6 +38,12 @@ avoiding demand paging from the database volume during authentication. Operators
 combined primary and ASN MMDB file sizes per Nauthilus process. A reload temporarily holds the current and replacement
 database buffers until the atomic swap completes and the previous readers are released.
 
+A SIGHUP reload applies changes to the plugin `config` except `decision_bindings`. Before the reload is committed the
+plugin only decodes and validates the candidate; it loads the databases and privacy sources after the commit. If that
+load fails, the plugin keeps its previous databases and settings, the reload is reported as `failed` for the module, and
+the next reload retries it. The refresh workers restart with the new settings, and a periodic refresh that loaded data
+for the previous settings discards its result instead of publishing it.
+
 ## Build
 
 ```sh
@@ -52,7 +58,8 @@ The plugin-owned config subtree accepts:
 
 - `decision_bindings`: required list of 1–32 immutable bindings, each with `component`, exact same-namespace `targets`,
   `input.fact`, `input.category`, and `output_schema: geoip.facts.v1`. Component names and target/output ownership must
-  be unique. Changes require restart; reload cannot replace a captured input or target contract.
+  be unique. Changes require restart; reload cannot replace a captured input or target contract, and a SIGHUP reload that
+  changes them is rejected as restart-bound.
 - Record bindings use `input.records.ip_field`, optional exact string `match` predicates, optional
   `correlation_fields`, `output_schema: geoip.records.v1`, and one `output_fact`. At most eight input records are
   evaluated; caller network/ASN records do not match the IP selector. Correlation fields cannot overwrite geographic

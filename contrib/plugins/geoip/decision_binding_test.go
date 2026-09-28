@@ -8,10 +8,12 @@
 package main
 
 import (
-	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
-	"github.com/croessner/nauthilus/v4/server/pluginregistry"
+	"errors"
 	"strings"
 	"testing"
+
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 )
 
 func TestDecisionBindingRegistrationRequiresExplicitContract(t *testing.T) {
@@ -106,8 +108,8 @@ func TestDecisionBindingCannotChangeDuringReconfigure(t *testing.T) {
 	_, plugin := registerTestPlugin(t, module)
 
 	module.Config["decision_bindings"].([]any)[0].(map[string]any)["input"] = map[string]any{"fact": "resource.other_ip", "category": "resource"}
-	if _, _, _, err := plugin.loadConfigAndDatabases(t.Context(), pluginregistry.NewConfigView(module.Config)); err == nil {
-		t.Fatal("restart-bound input identity was changed by reload")
+	if _, _, _, err := plugin.loadConfigAndDatabases(t.Context(), pluginregistry.NewConfigView(module.Config)); !errors.Is(err, pluginapi.ErrRestartRequired) {
+		t.Fatalf("reload of a changed input identity error = %v, want restart required", err)
 	}
 }
 

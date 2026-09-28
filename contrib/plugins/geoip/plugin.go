@@ -54,6 +54,7 @@ const (
 var _ pluginapi.Plugin = (*Plugin)(nil)
 var _ pluginapi.RuntimePlugin = (*Plugin)(nil)
 var _ pluginapi.ReloadablePlugin = (*Plugin)(nil)
+var _ pluginapi.ReconfigureValidator = (*Plugin)(nil)
 
 // NauthilusPlugin is the factory symbol loaded by the Nauthilus native plugin loader.
 func NauthilusPlugin() (pluginapi.Plugin, error) {
@@ -83,6 +84,7 @@ type Plugin struct {
 	asnRouteCancel   context.CancelFunc
 	privacyCancel    []context.CancelFunc
 	config           moduleConfig
+	configGeneration uint64
 	mu               sync.RWMutex
 }
 
@@ -196,6 +198,8 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 func (p *Plugin) Stop(ctx context.Context) error {
 	p.mu.Lock()
 	p.stopWorkersLocked()
+	// Invalidate refreshes that are still loading so they cannot publish after Stop.
+	p.configGeneration++
 	owner := p.databaseOwner
 	p.databaseOwner = newGeoDatabaseOwner(geoDatabases{})
 	logger := p.logger
@@ -224,11 +228,18 @@ func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) err
 	return nil
 }
 
-// loadConfigAndDatabases validates config and loads the referenced databases.
-func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.ConfigView) (moduleConfig, geoDatabases, *privacyEngine, error) {
+// ValidateReconfigure decodes a candidate config and rejects restart-bound changes without loading databases.
+func (p *Plugin) ValidateReconfigure(_ context.Context, view pluginapi.ConfigView) error {
+	_, err := p.decodeReconfigureConfig(view)
+
+	return err
+}
+
+// decodeReconfigureConfig decodes a candidate config and keeps the registration-time decision bindings fixed.
+func (p *Plugin) decodeReconfigureConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 	config, err := decodeModuleConfig(view)
 	if err != nil {
-		return moduleConfig{}, geoDatabases{}, nil, err
+		return moduleConfig{}, err
 	}
 
 	p.mu.RLock()
@@ -236,7 +247,17 @@ func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.Conf
 	p.mu.RUnlock()
 
 	if !bindingsUnchanged {
-		return moduleConfig{}, geoDatabases{}, nil, fmt.Errorf("decision_bindings changes require restart")
+		return moduleConfig{}, fmt.Errorf("decision_bindings: %w", pluginapi.ErrRestartRequired)
+	}
+
+	return config, nil
+}
+
+// loadConfigAndDatabases validates config and loads the referenced databases.
+func (p *Plugin) loadConfigAndDatabases(ctx context.Context, view pluginapi.ConfigView) (moduleConfig, geoDatabases, *privacyEngine, error) {
+	config, err := p.decodeReconfigureConfig(view)
+	if err != nil {
+		return moduleConfig{}, geoDatabases{}, nil, err
 	}
 
 	databases, err := p.loadDatabases(ctx, config)
@@ -278,14 +299,40 @@ func (p *Plugin) swapState(ctx context.Context, config moduleConfig, databases g
 }
 
 // swapDatabases publishes validated databases and optionally restarts refresh work.
+//
+// restartRefresh marks a config transition: it restarts the workers and invalidates refreshes
+// that were loaded for the previous config.
 func (p *Plugin) swapDatabases(ctx context.Context, config moduleConfig, databases geoDatabases, restartRefresh bool) {
-	nextOwner := newGeoDatabaseOwner(databases)
-
 	p.mu.Lock()
+	published := p.publishDatabasesLocked(config, databases, restartRefresh)
+	p.mu.Unlock()
+
+	published.finish(ctx, databases)
+}
+
+// swapRefreshedDatabases publishes refreshed databases only while the config they were loaded for is current.
+func (p *Plugin) swapRefreshedDatabases(ctx context.Context, generation uint64, config moduleConfig, databases geoDatabases) bool {
+	p.mu.Lock()
+	if p.configGeneration != generation {
+		p.mu.Unlock()
+
+		return false
+	}
+
+	published := p.publishDatabasesLocked(config, databases, false)
+	p.mu.Unlock()
+
+	published.finish(ctx, databases)
+
+	return true
+}
+
+// publishDatabasesLocked installs databases and config while the caller holds the write lock.
+func (p *Plugin) publishDatabasesLocked(config moduleConfig, databases geoDatabases, restartRefresh bool) publishedDatabases {
 	oldOwner := p.databaseOwner
 
 	p.config = config
-	p.databaseOwner = nextOwner
+	p.databaseOwner = newGeoDatabaseOwner(databases)
 
 	if config.ASNLookup.Enabled {
 		if p.asnLookup == nil || restartRefresh {
@@ -300,21 +347,30 @@ func (p *Plugin) swapDatabases(ctx context.Context, config moduleConfig, databas
 	}
 
 	if restartRefresh {
+		p.configGeneration++
 		p.startWorkersLocked()
 	}
 
-	recordGauge := p.recordGauge
-	logger := p.logger
-	p.mu.Unlock()
+	return publishedDatabases{previous: oldOwner, recordGauge: p.recordGauge, logger: p.logger}
+}
 
-	oldOwner.Retire()
+// publishedDatabases carries the follow-up work of one database publication outside the state lock.
+type publishedDatabases struct {
+	previous    *geoDatabaseOwner
+	recordGauge pluginapi.Gauge
+	logger      pluginapi.Logger
+}
 
-	if recordGauge != nil {
-		recordGauge.Set(ctx, float64(databases.Records()), pluginapi.LabelValue{Name: metricLabelState, Value: metricStateLoaded})
+// finish retires the replaced databases and reports the published ones.
+func (d publishedDatabases) finish(ctx context.Context, databases geoDatabases) {
+	d.previous.Retire()
+
+	if d.recordGauge != nil {
+		d.recordGauge.Set(ctx, float64(databases.Records()), pluginapi.LabelValue{Name: metricLabelState, Value: metricStateLoaded})
 	}
 
-	if logger != nil {
-		logger.Info(
+	if d.logger != nil {
+		d.logger.Info(
 			ctx,
 			"geoip database loaded",
 			pluginapi.LogField{Key: "records", Value: databases.PrimaryRecords()},
@@ -325,10 +381,17 @@ func (p *Plugin) swapDatabases(ctx context.Context, config moduleConfig, databas
 
 // currentConfig returns the config snapshot and whether a database is loaded.
 func (p *Plugin) currentConfig() (moduleConfig, bool) {
+	config, _, ready := p.refreshTarget()
+
+	return config, ready
+}
+
+// refreshTarget returns the config snapshot, its generation, and whether a database is loaded.
+func (p *Plugin) refreshTarget() (moduleConfig, uint64, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return p.config, p.databaseOwner.Ready()
+	return p.config, p.configGeneration, p.databaseOwner.Ready()
 }
 
 type geoLookupResources struct {
@@ -604,21 +667,34 @@ func (p *Plugin) asnRegistryLoop(ctx context.Context, config asnRegistryConfig) 
 }
 
 // refreshOnce reloads the current database path without replacing state on failure.
+//
+// A result loaded for a config that was replaced meanwhile is discarded.
 func (p *Plugin) refreshOnce(ctx context.Context) {
-	config, ready := p.currentConfig()
+	if ctx.Err() != nil {
+		return
+	}
+
+	config, generation, ready := p.refreshTarget()
 	if !ready {
 		return
 	}
 
 	databases, err := p.loadDatabases(ctx, config)
 	if err != nil {
+		// A worker stopped by Reconfigure or Stop is not a refresh failure.
+		if ctx.Err() != nil {
+			return
+		}
+
 		p.recordLookup(ctx, resultError, 0)
 		p.logError(ctx, "geoip database refresh failed", err)
 
 		return
 	}
 
-	p.swapDatabases(ctx, config, databases, false)
+	if !p.swapRefreshedDatabases(ctx, generation, config, databases) {
+		closeDatabases(databases)
+	}
 }
 
 // refreshASNLookupOnce fetches and publishes local ASN routing prefixes.
@@ -630,11 +706,14 @@ func (p *Plugin) refreshASNLookupOnce(ctx context.Context, config asnLookupConfi
 		return err
 	}
 
+	// Workers are cancelled under the state lock, so checking here excludes a stopped worker.
+	p.mu.Lock()
 	if err := ctx.Err(); err != nil {
+		p.mu.Unlock()
+
 		return err
 	}
 
-	p.mu.Lock()
 	lookup := p.asnLookup
 
 	if lookup == nil && config.Enabled {
@@ -670,11 +749,14 @@ func (p *Plugin) refreshASNRegistryOnce(ctx context.Context, config asnRegistryC
 		return err
 	}
 
+	// Workers are cancelled under the state lock, so checking here excludes a stopped worker.
+	p.mu.Lock()
 	if err := ctx.Err(); err != nil {
+		p.mu.Unlock()
+
 		return err
 	}
 
-	p.mu.Lock()
 	p.asnRegistry = snapshot
 	logger := p.logger
 	p.mu.Unlock()
