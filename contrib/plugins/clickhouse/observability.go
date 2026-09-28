@@ -46,6 +46,7 @@ const (
 	logFieldAuthMethod    = "auth_method"
 	logFieldBatchSize     = "batch_size"
 	logFieldField         = "field"
+	logFieldFlushWorker   = "flush_worker"
 	logFieldResult        = "result"
 	logFieldRows          = "rows"
 	logFieldThreshold     = "threshold"

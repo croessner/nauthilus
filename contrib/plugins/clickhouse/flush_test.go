@@ -16,7 +16,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -466,5 +468,98 @@ func (t *manualTicker) tryTick() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func TestReconfigureCacheKeyChangeKeepsPendingRows(t *testing.T) {
+	harness := startTestRunner(t, batchingModule(map[string]any{}), testRunnerOptions{})
+
+	enqueueRows(t, harness, 2)
+	reconfigureBatching(t, harness, map[string]any{"cache_key": testCacheKey + ":next"})
+	enqueueRows(t, harness, 1)
+	harness.stop(t)
+
+	lines := 0
+	for _, request := range harness.transport.requests {
+		lines += len(strings.Split(strings.TrimSpace(string(request.body)), "\n"))
+	}
+
+	if lines != 3 {
+		t.Fatalf("flushed rows = %d, want every row queued before and after the cache_key change", lines)
+	}
+
+	if rows := popCachedRows(t, harness.host, testCacheKey); len(rows) != 0 {
+		t.Fatalf("rows left under the previous cache_key = %d, want 0", len(rows))
+	}
+}
+
+func TestValidateReconfigureDecodesWithoutSideEffects(t *testing.T) {
+	tickers := &manualTickerFactory{}
+	harness := startTestRunner(t, batchingModule(map[string]any{"flush_interval": testFlushInterval}), testRunnerOptions{tickers: tickers})
+
+	defer harness.stop(t)
+
+	valid := pluginregistry.NewConfigView(batchingModule(map[string]any{"flush_interval": "5s"}).Config)
+	if err := harness.plugin.ValidateReconfigure(context.Background(), valid); err != nil {
+		t.Fatalf("ValidateReconfigure(valid) error = %v", err)
+	}
+
+	invalid := pluginregistry.NewConfigView(batchingModule(map[string]any{"flush_interval": "soon"}).Config)
+	if err := harness.plugin.ValidateReconfigure(context.Background(), invalid); err == nil {
+		t.Fatal("ValidateReconfigure(invalid) accepted an invalid flush_interval")
+	}
+
+	if tickers.count() != 1 || harness.plugin.snapshot().config.FlushInterval.String() != testFlushInterval {
+		t.Fatal("ValidateReconfigure changed the running flush worker or config")
+	}
+}
+
+func TestFlushWorkerStateChangesAreLogged(t *testing.T) {
+	var logs bytes.Buffer
+
+	tickers := &manualTickerFactory{}
+	harness := startTestRunner(t, batchingModule(map[string]any{}), testRunnerOptions{
+		tickers: tickers, logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+
+	defer harness.stop(t)
+
+	steps := []struct {
+		interval string
+		want     int
+		state    string
+	}{
+		{interval: testFlushInterval, want: 1, state: "flush_worker=running"},
+		{interval: testFlushInterval, want: 1, state: "flush_worker=running"},
+		{interval: "0s", want: 2, state: "flush_worker=stopped"},
+	}
+
+	for _, step := range steps {
+		reconfigureBatching(t, harness, map[string]any{"flush_interval": step.interval})
+
+		if got := strings.Count(logs.String(), "clickhouse flush worker updated"); got != step.want ||
+			!strings.Contains(logs.String(), step.state) {
+			t.Fatalf("after flush_interval=%s: %d worker updates, want %d with %s:\n%s", step.interval, got, step.want, step.state, logs.String())
+		}
+	}
+}
+
+func TestRequeueAfterCacheKeyChangeUsesCurrentKey(t *testing.T) {
+	harness := startTestRunner(t, batchingModule(map[string]any{}), testRunnerOptions{})
+
+	defer harness.stop(t)
+
+	staleState := harness.plugin.snapshot()
+	nextKey := testCacheKey + ":next"
+
+	reconfigureBatching(t, harness, map[string]any{"cache_key": nextKey})
+	requeueRows(context.Background(), staleState, []any{"row"})
+
+	if rows := popCachedRows(t, harness.host, testCacheKey); len(rows) != 0 {
+		t.Fatalf("rows requeued under the previous cache_key = %d, want 0", len(rows))
+	}
+
+	if rows := popCachedRows(t, harness.host, nextKey); len(rows) != 1 {
+		t.Fatalf("rows requeued under the current cache_key = %d, want 1", len(rows))
 	}
 }

@@ -41,6 +41,7 @@ const (
 var _ pluginapi.Plugin = (*Plugin)(nil)
 var _ pluginapi.RuntimePlugin = (*Plugin)(nil)
 var _ pluginapi.ReloadablePlugin = (*Plugin)(nil)
+var _ pluginapi.ReconfigureValidator = (*Plugin)(nil)
 var _ pluginapi.PostActionTarget = (*postActionTarget)(nil)
 
 // NauthilusPlugin is the factory symbol loaded by the Nauthilus native plugin loader.
@@ -157,7 +158,7 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 
 	p.registerConnectionTarget(ctx, host, config)
 
-	p.flushes.apply(ctx, host, config.FlushInterval, p.flushOnTick)
+	p.applyFlushWorker(ctx, host, config)
 	logger.Info(ctx, "clickhouse plugin started", pluginapi.LogField{Key: logFieldURLConfigured, Value: config.InsertURL != ""})
 
 	return nil
@@ -195,6 +196,13 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	return nil
 }
 
+// ValidateReconfigure checks a candidate config without touching the running plugin.
+func (p *Plugin) ValidateReconfigure(_ context.Context, view pluginapi.ConfigView) error {
+	_, err := decodeModuleConfig(view)
+
+	return err
+}
+
 // Reconfigure validates and atomically swaps plugin-owned config and restarts the flush worker
 // when flush_interval changed.
 func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) error {
@@ -208,7 +216,9 @@ func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) err
 
 	p.mu.Lock()
 	host := p.host
+	previousKey := p.config.CacheKey
 	p.config = config
+	p.movePendingRowsLocked(ctx, previousKey)
 	p.mu.Unlock()
 
 	if host == nil {
@@ -216,9 +226,58 @@ func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) err
 	}
 
 	p.registerConnectionTarget(ctx, host, config)
-	p.flushes.apply(ctx, host, config.FlushInterval, p.flushOnTick)
+	p.applyFlushWorker(ctx, host, config)
 
 	return nil
+}
+
+// applyFlushWorker aligns the periodic flush worker with config and logs when its state changed.
+// The caller holds the lifecycle mutex.
+func (p *Plugin) applyFlushWorker(ctx context.Context, host pluginapi.Host, config moduleConfig) {
+	if !p.flushes.apply(ctx, host, config.FlushInterval, p.flushOnTick) {
+		return
+	}
+
+	state := "stopped"
+	if p.flushes.running() {
+		state = "running"
+	}
+
+	if logger := p.snapshot().logger; logger != nil {
+		logger.Info(ctx, "clickhouse flush worker updated", pluginapi.LogField{Key: logFieldFlushWorker, Value: state})
+	}
+}
+
+// movePendingRowsLocked carries rows queued under a replaced cache_key over to the current key.
+//
+// The caller holds the write lock, so no row can be pushed under the previous key concurrently:
+// every push reads the current key under the read lock.
+func (p *Plugin) movePendingRowsLocked(ctx context.Context, previousKey string) {
+	if p.cache == nil || previousKey == "" || previousKey == p.config.CacheKey {
+		return
+	}
+
+	for _, row := range p.cache.PopAll(ctx, previousKey) {
+		p.cache.Push(ctx, p.config.CacheKey, row)
+	}
+}
+
+// pushRows queues rows under the cache key that is current at push time and returns the queue length.
+func (p *Plugin) pushRows(ctx context.Context, rows ...any) int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	length := 0
+
+	if p.cache == nil {
+		return length
+	}
+
+	for _, row := range rows {
+		length = p.cache.Push(ctx, p.config.CacheKey, row)
+	}
+
+	return length
 }
 
 // flushOnTick flushes the pending local batch for the periodic flush worker.
@@ -270,6 +329,7 @@ func (p *Plugin) snapshot() pluginState {
 	defer p.mu.RUnlock()
 
 	return pluginState{
+		queue:       p,
 		config:      p.config,
 		logger:      p.logger,
 		debugLogger: p.debugLogger,
@@ -312,7 +372,13 @@ func (p *Plugin) registerConnectionTarget(ctx context.Context, host pluginapi.Ho
 	}
 }
 
+// rowQueue queues batch rows under the current cache key.
+type rowQueue interface {
+	pushRows(ctx context.Context, rows ...any) int
+}
+
 type pluginState struct {
+	queue       rowQueue
 	config      moduleConfig
 	logger      pluginapi.Logger
 	debugLogger pluginapi.Logger

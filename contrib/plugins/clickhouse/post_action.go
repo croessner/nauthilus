@@ -94,7 +94,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 
 	recordMappingDiagnostics(ctx, state.debugLogger, mappingDiagnostics)
 
-	length := state.cache.Push(ctx, state.config.CacheKey, string(rowJSON))
+	length := state.queue.pushRows(ctx, string(rowJSON))
 	state.metrics.recordQueueResult(ctx, resultQueued)
 	span.SetAttributes(
 		pluginapi.TraceAttribute{Key: traceAttrResult, Value: resultQueued},
@@ -351,10 +351,7 @@ func ndjsonBody(rows []any) []byte {
 
 // requeueRows restores a flushed batch to the cache after insert failure.
 func requeueRows(ctx context.Context, state pluginState, rows []any) {
-	for _, row := range rows {
-		state.cache.Push(ctx, state.config.CacheKey, row)
-	}
-
+	state.queue.pushRows(ctx, rows...)
 	state.metrics.recordFlushResult(ctx, resultRequeued, 0)
 
 	if state.logger != nil {

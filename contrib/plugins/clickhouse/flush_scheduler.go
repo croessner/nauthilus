@@ -64,15 +64,19 @@ type flushScheduler struct {
 // An unchanged interval keeps the running worker; a changed one replaces it after the old worker
 // exited. If ctx ends first, the old worker is already cancelled and only finishes its in-flight
 // flush, which the atomic cache pop keeps safe next to the new worker.
-func (s *flushScheduler) apply(ctx context.Context, host pluginapi.Host, interval time.Duration, flush func(context.Context)) {
+//
+// It reports whether a worker was started, replaced, or stopped.
+func (s *flushScheduler) apply(ctx context.Context, host pluginapi.Host, interval time.Duration, flush func(context.Context)) bool {
 	if s.worker != nil && s.worker.interval == interval && host != nil {
-		return
+		return false
 	}
+
+	hadWorker := s.worker != nil
 
 	_ = s.stop(ctx)
 
 	if host == nil || interval <= 0 || flush == nil {
-		return
+		return hadWorker
 	}
 
 	newTicker := s.newTicker
@@ -81,6 +85,13 @@ func (s *flushScheduler) apply(ctx context.Context, host pluginapi.Host, interva
 	}
 
 	s.worker = startFlushWorker(host, interval, newTicker(interval), flush)
+
+	return true
+}
+
+// running reports whether a flush worker is active.
+func (s *flushScheduler) running() bool {
+	return s.worker != nil
 }
 
 // stop cancels the running worker and waits until it exited or ctx ended.

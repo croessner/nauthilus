@@ -56,8 +56,9 @@ one flush. An interval flush that already started is allowed to finish (bounded 
 cancelled, because aborting an insert that ClickHouse may already have accepted would requeue and later duplicate its
 rows. A failed insert, or a flush without `insert_url`, puts the rows back into the local batch for the next attempt.
 
-Like every other `config` value, `flush_interval` is read when the plugin starts. The plugin's reload hook restarts the
-worker when the interval changes, but module config changes currently require a process restart (see below).
+A SIGHUP reload applies a changed `flush_interval`: the plugin stops the running worker and starts one with the new
+interval, or stops it for `0s`. An unchanged interval keeps the running worker. Each start or stop is logged as
+`clickhouse flush worker updated` with `flush_worker=running` or `flush_worker=stopped`.
 
 The analytics consumer reads standard `plugin.exchange.*` values, standard feature markers, and policy facts to populate
 the existing ClickHouse row fields, including `decision_sources`. Canonical `plugin.geoip.*` facts alone populate the
@@ -101,9 +102,14 @@ may select the authn-only effect `authn/plugin.clickhouse.post_action`; the gene
 generic `DecisionEffectRequest`.
 
 The registered `PostActionTarget` remains isolated behind the authentication-shaped generation binding. Adding or
-removing the module, changing its name or config, changing its capabilities, or replacing the `.so` artifact requires a
-process restart. A Policy reload may select or stop selecting the frozen canonical effect without changing the plugin
-object.
+removing the module, changing its name or capabilities, or replacing the `.so` artifact requires a process restart. A
+Policy reload may select or stop selecting the frozen canonical effect without changing the plugin object.
+
+Every key under the module `config` reloads on SIGHUP. The plugin validates the candidate before the reload is
+committed, so an invalid value rejects the whole reload and keeps the running settings. After the commit it swaps the
+settings atomically, restarts the flush worker only when `flush_interval` changed, and re-registers the connection target.
+Rows that are already batched stay queued: after a `cache_key` change they move to the new key, and a changed
+`insert_url` or credentials apply to the next flush, including rows queued before the reload.
 
 Observability is host-integrated: the plugin registers the remote ClickHouse endpoint through
 `Host.ConnectionTargets("clickhouse")`, sends inserts through `Host.HTTP("batch")`, and records bounded queue/flush
