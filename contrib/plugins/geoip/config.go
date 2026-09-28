@@ -17,11 +17,11 @@ package main
 
 import (
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/pluginutil"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
@@ -323,8 +323,8 @@ func parseASNSourceConfig(
 	}
 
 	for index, sourceURL := range sourceURLs {
-		if err := validateHTTPSourceURL(sourceURL); err != nil {
-			return asnSourceConfig{}, fmt.Errorf("%s.source_urls[%d]: %w", prefix, index, err)
+		if err := validateHTTPSourceURL(fmt.Sprintf("%s.source_urls[%d]", prefix, index), sourceURL); err != nil {
+			return asnSourceConfig{}, err
 		}
 	}
 
@@ -352,44 +352,18 @@ func parseDefaultedDuration(name string, value string, fallback time.Duration) (
 
 // parsePositiveDefaultedDuration parses a positive duration with a default.
 func parsePositiveDefaultedDuration(name string, value string, fallback time.Duration) (time.Duration, error) {
-	text := strings.TrimSpace(value)
-	if text == "" {
-		return fallback, nil
-	}
-
-	duration, err := time.ParseDuration(text)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a duration: %w", name, err)
-	}
-
-	if duration <= 0 {
-		return 0, fmt.Errorf("%s must be positive", name)
-	}
-
-	return duration, nil
+	return pluginutil.ParsePositiveDefaultedDuration(name, value, fallback)
 }
 
 // validateHTTPSourceURL checks that fetch sources use HTTP(S).
-func validateHTTPSourceURL(value string) error {
-	text := strings.TrimSpace(value)
-	if text == "" {
-		return fmt.Errorf("must not be empty")
+func validateHTTPSourceURL(name string, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s must not be empty", name)
 	}
 
-	parsed, err := url.Parse(text)
-	if err != nil {
-		return fmt.Errorf("must be a valid URL: %w", err)
-	}
+	_, err := pluginutil.ValidateOptionalHTTPURL(name, value)
 
-	if parsed.Scheme != sourceSchemeHTTPS && parsed.Scheme != sourceSchemeHTTP {
-		return fmt.Errorf("must use http or https")
-	}
-
-	if parsed.Host == "" {
-		return fmt.Errorf("must include a host")
-	}
-
-	return nil
+	return err
 }
 
 // defaultASNLookupSourceURLs returns CAIDA RouteViews pfx2as creation logs.
@@ -413,37 +387,14 @@ func defaultASNRegistrySourceURLs() []string {
 
 // parseOptionalDuration parses a zero-or-positive optional duration.
 func parseOptionalDuration(name string, value string) (time.Duration, error) {
-	text := strings.TrimSpace(value)
-	if text == "" {
-		return 0, nil
-	}
-
-	duration, err := time.ParseDuration(text)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a duration: %w", name, err)
-	}
-
-	if duration < 0 {
-		return 0, fmt.Errorf("%s must not be negative", name)
-	}
-
-	return duration, nil
+	return pluginutil.ParseDefaultedDuration(name, value, 0)
 }
 
 // parseLookupTimeout parses the request-time lookup timeout.
 func parseLookupTimeout(value string) (time.Duration, error) {
-	text := strings.TrimSpace(value)
-	if text == "" {
-		return defaultLookupTimeout, nil
-	}
-
-	duration, err := time.ParseDuration(text)
+	duration, err := pluginutil.ParsePositiveDefaultedDuration("lookup_timeout", value, defaultLookupTimeout)
 	if err != nil {
-		return 0, fmt.Errorf("lookup_timeout must be a duration: %w", err)
-	}
-
-	if duration <= 0 {
-		return 0, fmt.Errorf("lookup_timeout must be positive")
+		return 0, err
 	}
 
 	if duration > pluginapi.MaximumDecisionFactProviderTimeout {

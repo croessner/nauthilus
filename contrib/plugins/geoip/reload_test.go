@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -184,5 +185,36 @@ func TestRefreshInFlightDoesNotPublishAfterStop(t *testing.T) {
 	case <-loader.stale.closed:
 	default:
 		t.Fatal("the refresh result loaded across Stop was not closed")
+	}
+}
+
+// TestConfigErrorsDoNotEchoRawValues keeps configured values, including URL credentials, out of
+// errors that reach reload and startup logs.
+func TestConfigErrorsDoNotEchoRawValues(t *testing.T) {
+	const secretMarker = "s3cr3tValue"
+
+	cases := map[string]map[string]any{
+		"source url":     {"asn_lookup": map[string]any{"enabled": true, "source_urls": []any{"http://user:" + secretMarker + "@routing.example.test/%zz"}}},
+		"asn timeout":    {"asn_lookup": map[string]any{"enabled": true, "timeout": secretMarker}},
+		"refresh":        {"refresh_interval": secretMarker},
+		"lookup timeout": {"lookup_timeout": secretMarker},
+	}
+
+	for name, overrides := range cases {
+		t.Run(name, func(t *testing.T) {
+			module := testModule(testDatabasePath(t, "geoip.json"))
+			for key, value := range overrides {
+				module.Config[key] = value
+			}
+
+			_, err := decodeModuleConfig(pluginregistry.NewConfigView(module.Config))
+			if err == nil {
+				t.Fatal("invalid value was accepted")
+			}
+
+			if strings.Contains(err.Error(), secretMarker) {
+				t.Fatalf("error echoes the raw value: %v", err)
+			}
+		})
 	}
 }

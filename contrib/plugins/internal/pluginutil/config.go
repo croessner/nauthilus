@@ -30,6 +30,9 @@ const (
 	schemeHTTPS = "https"
 )
 
+// Config errors name the field but never echo the configured value: they reach startup and
+// reload logs, and values such as URLs can carry credentials.
+
 // ParseDefaultedDuration parses a non-negative duration with a fallback for empty input.
 func ParseDefaultedDuration(name string, value string, fallback time.Duration) (time.Duration, error) {
 	text := strings.TrimSpace(value)
@@ -39,7 +42,7 @@ func ParseDefaultedDuration(name string, value string, fallback time.Duration) (
 
 	duration, err := time.ParseDuration(text)
 	if err != nil {
-		return 0, fmt.Errorf("%s must be a duration: %w", name, err)
+		return 0, fmt.Errorf("%s must be a duration such as 30s", name)
 	}
 
 	if duration < 0 {
@@ -98,7 +101,7 @@ func ValidateOptionalHTTPURL(name string, value string) (string, error) {
 
 	parsed, err := url.Parse(text)
 	if err != nil {
-		return "", fmt.Errorf("%s must be a valid URL: %w", name, err)
+		return "", fmt.Errorf("%s must be a valid URL", name)
 	}
 
 	if parsed.Scheme != schemeHTTP && parsed.Scheme != schemeHTTPS {
