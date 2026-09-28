@@ -418,6 +418,7 @@ func TestRestartBaselineFxLifecycleReleasesOnlyTheProcessLeaseOnStop(t *testing.
 	validator, err := provideRestartBaseline(
 		lifecycle,
 		configfx.NewProviderWithSnapshot(configured),
+		&pluginloader.State{},
 	)
 	if err != nil {
 		t.Fatalf("provideRestartBaseline() error = %v", err)

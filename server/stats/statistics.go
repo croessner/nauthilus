@@ -170,9 +170,10 @@ const (
 	metricTypeLabel             = "type"
 	metricVersionLabel          = "version"
 	pluginCallMetricResultLabel = "result"
+	pluginMetricModuleLabel     = "module"
 )
 
-var pluginCallMetricLabels = []string{"module", "component", "extension_point", metricMethodLabel, pluginCallMetricResultLabel}
+var pluginCallMetricLabels = []string{pluginMetricModuleLabel, "component", "extension_point", metricMethodLabel, pluginCallMetricResultLabel}
 
 var authenticationResponseTimeBuckets = []float64{
 	0.001, 0.0025, 0.005, 0.0075,
@@ -393,6 +394,9 @@ type Metrics interface {
 	// GetPluginCallDurationSeconds tracks native plugin call duration with bounded component labels.
 	GetPluginCallDurationSeconds() *prometheus.HistogramVec
 
+	// GetPluginReconfigureTotal tracks per-module outcomes of native plugin config reloads.
+	GetPluginReconfigureTotal() *prometheus.CounterVec
+
 	// GetPostActionPlanDurationSeconds tracks complete accepted post-action plan duration by result.
 	GetPostActionPlanDurationSeconds() *prometheus.HistogramVec
 
@@ -475,6 +479,7 @@ type metricsImpl struct {
 	authFSMTransitionsTotal        *prometheus.CounterVec
 	pluginCallsTotal               *prometheus.CounterVec
 	pluginCallDurationSeconds      *prometheus.HistogramVec
+	pluginReconfigureTotal         *prometheus.CounterVec
 	postActionPlanDuration         *prometheus.HistogramVec
 	postActionEffectStates         *prometheus.CounterVec
 	postActionAcceptanceFailures   *prometheus.CounterVec
@@ -830,6 +835,11 @@ func (m *metricsImpl) GetPluginCallDurationSeconds() *prometheus.HistogramVec {
 	return m.pluginCallDurationSeconds
 }
 
+// GetPluginReconfigureTotal returns the native plugin config reload outcome counter.
+func (m *metricsImpl) GetPluginReconfigureTotal() *prometheus.CounterVec {
+	return m.pluginReconfigureTotal
+}
+
 // GetPostActionPlanDurationSeconds returns the accepted post-action plan duration histogram.
 func (m *metricsImpl) GetPostActionPlanDurationSeconds() *prometheus.HistogramVec {
 	return m.postActionPlanDuration
@@ -1025,6 +1035,7 @@ func (m *metricsImpl) initIDPMetrics() {
 func (m *metricsImpl) initPluginMetrics() {
 	m.pluginCallsTotal = newCounterVecMetric("plugin_calls_total", "Total number of host-invoked native plugin calls", pluginCallMetricLabels...)
 	m.pluginCallDurationSeconds = newHistogramVecMetric("plugin_call_duration_seconds", "Duration of host-invoked native plugin calls", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricLabels...)
+	m.pluginReconfigureTotal = newCounterVecMetric("plugin_reconfigure_total", "Total per-module outcomes of native plugin config reloads", pluginMetricModuleLabel, pluginCallMetricResultLabel)
 	m.postActionPlanDuration = newHistogramVecMetric("post_action_plan_duration_seconds", "Duration of complete accepted post-action plans", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricResultLabel)
 	m.postActionEffectStates = newCounterVecMetric("post_action_effect_states_total", "Total host-internal post-action supervisor transitions", metricStateLabel, metricPhaseLabel, metricBoundaryLabel)
 	m.postActionAcceptanceFailures = newCounterVecMetric("post_action_acceptance_failures_total", "Total post-action ownership transfers rejected by the supervisor, for example because its queue is saturated", metricErrorClassLabel)

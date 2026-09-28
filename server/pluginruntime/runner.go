@@ -75,8 +75,11 @@ type Runner struct {
 	startedInitTasks []pluginregistry.Component
 	moduleIndex      map[string]int
 	failedModules    map[string]error
+	classifier       ReloadClassifier
+	configVersion    uint64
 	mu               sync.RWMutex
 	stopMu           sync.Mutex
+	reconfigureMu    sync.Mutex
 	ready            bool
 	stopping         bool
 	stopped          bool
@@ -114,6 +117,7 @@ func NewRunnerFromInstances(
 		registry:      registry,
 		moduleIndex:   make(map[string]int, len(instances)),
 		failedModules: make(map[string]error),
+		classifier:    NewReloadClassifier(instances),
 	}
 	if runner.registry == nil {
 		runner.registry = pluginregistry.NewRegistry()
@@ -378,13 +382,7 @@ func (r *Runner) startModule(ctx context.Context, index int) error {
 		return nil
 	}
 
-	spec := invokeSpec{
-		moduleName:     instance.ModuleName,
-		componentName:  instance.ModuleName,
-		extensionPoint: extensionPointPlugin,
-		method:         "Start",
-	}
-	if err := r.invoke(ctx, spec, func(callCtx context.Context) error {
+	if err := r.invoke(ctx, moduleInvokeSpec(instance.ModuleName, "Start"), func(callCtx context.Context) error {
 		return runtimePlugin.Start(callCtx, r.moduleHost(instance.ModuleName))
 	}); err != nil {
 		return r.handleLifecycleError(instance, "Start", err)
@@ -409,17 +407,11 @@ func (r *Runner) stopModule(ctx context.Context, moduleName string) error {
 		return nil
 	}
 
-	spec := invokeSpec{
-		moduleName:     instance.ModuleName,
-		componentName:  instance.ModuleName,
-		extensionPoint: extensionPointPlugin,
-		method:         "Stop",
-	}
 	stopCtx, cancel := moduleStopContext(ctx, instance.Module.StopTimeout)
 
 	defer cancel()
 
-	if err := r.invoke(stopCtx, spec, func(callCtx context.Context) error {
+	if err := r.invoke(stopCtx, moduleInvokeSpec(instance.ModuleName, "Stop"), func(callCtx context.Context) error {
 		return runtimePlugin.Stop(callCtx)
 	}); err != nil {
 		return fmt.Errorf("%w: module %q Stop failed: %w", ErrLifecycleFailed, instance.ModuleName, err)

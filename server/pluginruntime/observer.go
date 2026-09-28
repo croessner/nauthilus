@@ -144,6 +144,38 @@ func (o *OperationalObserver) log(record CallRecord, result string) {
 	_ = level.Debug(o.logger).Log(keyvals...)
 }
 
+// ObservePluginReload records one bounded per-module reload outcome without config values or error text.
+func (o *OperationalObserver) ObservePluginReload(record ReloadRecord) {
+	if o == nil {
+		return
+	}
+
+	if o.metrics != nil {
+		o.metrics.GetPluginReconfigureTotal().WithLabelValues(record.ModuleName, string(record.Result)).Inc()
+	}
+
+	if o.logger == nil {
+		return
+	}
+
+	keyvals := []any{
+		definitions.LogKeyMsg, "Native plugin config reload",
+		"plugin_module", record.ModuleName,
+		"plugin_reload_result", string(record.Result),
+	}
+
+	switch record.Result {
+	case ReloadResultReloaded:
+		_ = level.Info(o.logger).Log(keyvals...)
+	case ReloadResultUnchanged:
+		_ = level.Debug(o.logger).Log(keyvals...)
+	case ReloadResultFailed:
+		_ = level.Error(o.logger).Log(keyvals...)
+	default:
+		_ = level.Warn(o.logger).Log(keyvals...)
+	}
+}
+
 // pluginCallResult maps errors into a bounded result label.
 func pluginCallResult(record CallRecord) string {
 	if record.Panicked {

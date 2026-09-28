@@ -461,6 +461,7 @@ func (t *runtimeInitTask) Stop(context.Context) error {
 
 type recordingObserver struct {
 	records []CallRecord
+	reloads []ReloadRecord
 }
 
 func (o *recordingObserver) ObservePluginCall(record CallRecord) {

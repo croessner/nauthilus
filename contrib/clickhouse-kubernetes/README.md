@@ -125,6 +125,11 @@ The bundled Docker images include `/usr/local/lib/nauthilus/plugins/clickhouse.s
 enabled, `/usr/local/lib/nauthilus/plugins/clickhouse.so.minisig`. Configure the module under `plugins.modules[]` and
 reference the native policy effect ID `authn/plugin.clickhouse.post_action`.
 
+The loader copies each plugin artifact into `$TMPDIR` (default `/tmp`) and opens the copy there. With
+`readOnlyRootFilesystem: true`, mount a writable `emptyDir` at `/tmp` (or set `TMPDIR` to one) that is not `noexec`;
+otherwise the module fails with `Operation not permitted` at startup. See
+[Artifact Staging Directory](../../server/docs/go_plugins.md#artifact-staging-directory).
+
 ```yaml
 plugins:
   verification_policy: signature_required
@@ -157,9 +162,11 @@ The native plugin uses host-managed HTTP, Redis, process cache, metrics, traces,
 does not implement the optional Lua `clickhouse-query.lua` read-only hook, and native post-actions cannot apply the Lua
 `rt.post_clickhouse = true` runtime marker.
 
-Every change to the `plugins` section, including config-only changes inside `plugins.modules[].config` such as
-`batch_size` or `flush_interval`, requires a Nauthilus process restart. A SIGHUP reload refuses such a candidate as
-restart-bound (`native plugin configuration changed`) and keeps the running configuration.
+Changes inside `plugins.modules[].config`, such as `batch_size` or `flush_interval`, apply on SIGHUP without a
+restart; `plugin_reconfigure_total{module="clickhouse",result="reloaded"}` counts each applied change. Every other change
+to the `plugins` section, for example the module `path`, `allow_capabilities`, or the verification settings, still
+requires a Nauthilus process restart. A SIGHUP reload refuses such a candidate as restart-bound (`plugin restart
+required`) and keeps the running configuration.
 
 ## Historical Lua action
 

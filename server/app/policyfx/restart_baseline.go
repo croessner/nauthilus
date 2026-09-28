@@ -23,6 +23,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/app/configfx"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/pluginloader"
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	"github.com/croessner/nauthilus/v4/server/secret"
@@ -57,7 +58,20 @@ type RestartBaselineValidator interface {
 type restartBaseline struct {
 	artifacts *config.ArtifactSnapshot
 	classes   []restartClassFingerprint
+	plugins   pluginruntime.ReloadClassifier
 	closeOnce sync.Once
+}
+
+// RestartBaselineOption customizes which configuration a restart baseline treats as reloadable.
+type RestartBaselineOption func(*restartBaseline)
+
+// WithReloadablePlugins excludes the plugin-owned config of reloadable native modules from the baseline.
+//
+// Without it every native module config is restart-bound.
+func WithReloadablePlugins(plugins pluginruntime.ReloadClassifier) RestartBaselineOption {
+	return func(baseline *restartBaseline) {
+		baseline.plugins = plugins
+	}
 }
 
 type restartClassFingerprint struct {
@@ -215,7 +229,12 @@ type authorityClientProvider interface {
 }
 
 // NewRestartBaseline freezes every process-owned config class from the boot snapshot.
-func NewRestartBaseline(configured config.File) (RestartBaselineValidator, error) {
+func NewRestartBaseline(configured config.File, options ...RestartBaselineOption) (RestartBaselineValidator, error) {
+	baseline := &restartBaseline{}
+	for _, option := range options {
+		option(baseline)
+	}
+
 	artifacts, err := config.EnsureArtifactSnapshot(configured)
 	if err != nil {
 		return nil, fmt.Errorf("capture production restart artifacts: %w", err)
@@ -227,7 +246,7 @@ func NewRestartBaseline(configured config.File) (RestartBaselineValidator, error
 		return nil, fmt.Errorf("validate production restart artifacts: %w", err)
 	}
 
-	classes, err := fingerprintRestartClasses(configured, artifacts)
+	classes, err := fingerprintRestartClasses(configured, artifacts, baseline.plugins)
 	if err != nil {
 		artifacts.Release()
 
@@ -240,13 +259,17 @@ func NewRestartBaseline(configured config.File) (RestartBaselineValidator, error
 		return nil, fmt.Errorf("retain production restart artifacts: %w", err)
 	}
 
-	return &restartBaseline{artifacts: artifacts, classes: classes}, nil
+	baseline.artifacts = artifacts
+	baseline.classes = classes
+
+	return baseline, nil
 }
 
 // provideRestartBaseline captures the immutable bootstrap snapshot before Fx starts runtime resources.
 func provideRestartBaseline(
 	lifecycle fx.Lifecycle,
 	provider configfx.Provider,
+	pluginState *pluginloader.State,
 ) (RestartBaselineValidator, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("%w: restart baseline config provider is required", policyruntime.ErrInvalidGeneration)
@@ -257,7 +280,10 @@ func provideRestartBaseline(
 		return nil, fmt.Errorf("%w: restart baseline boot snapshot is incomplete", policyruntime.ErrInvalidGeneration)
 	}
 
-	baseline, err := NewRestartBaseline(snapshot.File)
+	baseline, err := NewRestartBaseline(
+		snapshot.File,
+		WithReloadablePlugins(pluginruntime.NewReloadClassifier(pluginState.Instances())),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +312,7 @@ func (b *restartBaseline) Validate(candidate config.File) error {
 		return fmt.Errorf("%w: candidate artifact drift: %w", pluginruntime.ErrRestartRequired, err)
 	}
 
-	classes, err := fingerprintRestartClasses(candidate, artifacts)
+	classes, err := fingerprintRestartClasses(candidate, artifacts, b.plugins)
 	if err != nil {
 		return fmt.Errorf("%w: inspect restart-bound candidate: %v", pluginruntime.ErrRestartRequired, err)
 	}
@@ -323,12 +349,13 @@ func (b *restartBaseline) Close() {
 func fingerprintRestartClasses(
 	configured config.File,
 	artifacts *config.ArtifactSnapshot,
+	plugins pluginruntime.ReloadClassifier,
 ) ([]restartClassFingerprint, error) {
 	if configured == nil || artifacts == nil {
 		return nil, fmt.Errorf("%w: restart baseline config is nil", policyruntime.ErrInvalidGeneration)
 	}
 
-	inputs, err := restartClassInputs(configured, artifacts)
+	inputs, err := restartClassInputs(configured, artifacts, plugins)
 	if err != nil {
 		return nil, err
 	}
@@ -355,9 +382,12 @@ func fingerprintRestartClasses(
 }
 
 // restartClassInputs projects only process-owned fields; Policy and logging remain reloadable.
+//
+// Plugin-owned config of reloadable native modules is excluded as well.
 func restartClassInputs(
 	configured config.File,
 	artifacts *config.ArtifactSnapshot,
+	plugins pluginruntime.ReloadClassifier,
 ) ([]restartClassInput, error) {
 	paths, err := collectRestartClassArtifactPaths(configured, artifacts)
 	if err != nil {
@@ -370,7 +400,9 @@ func restartClassInputs(
 	identity := configured.GetIDP()
 	manifest := config.ProductionArtifactManifestFor(configured)
 
-	return projectRestartClassInputs(configured, server, lua, ldap, identity, manifest, paths), nil
+	return projectRestartClassInputs(
+		configured, server, lua, ldap, identity, manifest, paths, plugins.RestartBound(configured.GetPlugins()),
+	), nil
 }
 
 // collectRestartClassArtifactPaths resolves the manifest collections required by restart classes.
@@ -415,6 +447,7 @@ func projectRestartClassInputs(
 	identity *config.IDPSection,
 	manifest config.ProductionArtifactManifest,
 	paths restartClassArtifactPaths,
+	plugins *config.PluginsSection,
 ) []restartClassInput {
 	return []restartClassInput{
 		{
@@ -459,10 +492,10 @@ func projectRestartClassInputs(
 			artifacts: append([]string(nil), manifest.Transport...),
 		},
 		{
-			name: restartClassPlugins, value: configured.GetPlugins(),
+			name: restartClassPlugins, value: plugins,
 			artifacts: paths.plugins,
 		},
-		{name: restartClassPluginVisible, value: restartPluginVisibleConfig(configured)},
+		{name: restartClassPluginVisible, value: restartPluginVisibleConfig(configured, plugins)},
 	}
 }
 
@@ -603,7 +636,9 @@ func restartTransport(configured config.File, server *config.ServerSection) rest
 }
 
 // restartPluginVisibleConfig detaches the full boot Host.Config view except separately-owned mutable fields.
-func restartPluginVisibleConfig(configured config.File) restartPluginVisibleCarrier {
+//
+// plugins is the restart-bound projection of the plugins section.
+func restartPluginVisibleConfig(configured config.File, plugins *config.PluginsSection) restartPluginVisibleCarrier {
 	settings, ok := configured.(*config.FileSettings)
 	if !ok || settings == nil {
 		return restartPluginVisibleCarrier{}
@@ -612,7 +647,7 @@ func restartPluginVisibleConfig(configured config.File) restartPluginVisibleCarr
 	return restartPluginVisibleCarrier{
 		runtime: settings.Runtime, storage: settings.Storage,
 		auth: restartPluginAuthConfig(settings.Auth), identity: restartPluginIdentityConfig(settings.Identity),
-		plugins: settings.Plugins, other: settings.Other,
+		plugins: plugins, other: settings.Other,
 		observability: restartPluginObservabilityConfig(settings.Observability), present: true,
 	}
 }

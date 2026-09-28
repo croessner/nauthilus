@@ -580,6 +580,7 @@ type runtimeLifecycleParams struct {
 	PluginState   *pluginloader.State
 	PolicyStartup *policyfx.StartupCatalog
 	PolicyApply   reloadfx.GenerationCoordinator
+	PluginReload  *pluginruntime.Reconfigurer
 }
 
 // registerRuntimeLifecycle wires the legacy startup/shutdown sequence into fx.Lifecycle.
@@ -658,6 +659,7 @@ func startRuntimeLifecycle(p *runtimeLifecycleParams) (_ *pluginruntime.Runner, 
 	}
 
 	p.Store.pluginRunner = pluginRunner
+	p.PluginReload.Attach(pluginRunner)
 
 	defer func() {
 		if err == nil {
@@ -667,6 +669,7 @@ func startRuntimeLifecycle(p *runtimeLifecycleParams) (_ *pluginruntime.Runner, 
 		stopCtx, cancel := context.WithTimeout(context.Background(), definitions.FxStopTimeout)
 		defer cancel()
 
+		p.PluginReload.Detach(pluginRunner)
 		cleanupErr := stopRuntimePluginRunner(stopCtx, pluginRunner)
 		p.Store.pluginRunner = nil
 		err = errors.Join(err, cleanupErr)
@@ -922,6 +925,7 @@ func stopRuntimeLifecycle(stopCtx context.Context, p *runtimeLifecycleParams, pl
 		stopCtx,
 		p.Store.policyStore.Shutdown,
 		func(ctx context.Context) error {
+			p.PluginReload.Detach(pluginRunner)
 			err := stopRuntimePluginRunner(ctx, pluginRunner)
 			p.Store.pluginRunner = nil
 

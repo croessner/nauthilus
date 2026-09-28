@@ -1742,9 +1742,12 @@ the loaded module. Existing leased generations keep their frozen bindings until 
 or replacing or removing its `.so` artifact, still requires restart; artifact drift rejects candidate preparation and
 does not change the current generation.
 
-If `Reconfigure` fails, the host should keep the previous working plugin configuration and report the reload failure
-through logs and metrics. Plugins that do not implement `ReloadablePlugin` continue running with their existing
-configuration until process restart.
+The host first validates every changed module through the optional `ReconfigureValidator`, which may report a key as
+restart-bound by wrapping `ErrRestartRequired`; any failure rejects the whole reload. It calls `Reconfigure` only after
+the new policy generation was committed. If `Reconfigure` fails, the host keeps the previous plugin configuration for
+that module, retries the change on the next reload, and reports the failure through logs and
+`plugin_reconfigure_total{module,result}`. A config change of a plugin that does not implement `ReloadablePlugin` is
+rejected as restart-bound; the module keeps its existing configuration until process restart.
 
 ## Observability Contract
 

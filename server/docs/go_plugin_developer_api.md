@@ -41,6 +41,10 @@ classDiagram
         +Reconfigure(context.Context, ConfigView) error
     }
 
+    class ReconfigureValidator {
+        +ValidateReconfigure(context.Context, ConfigView) error
+    }
+
     class Registrar {
         +Config() ConfigView
         +RequireCapability(Capability) error
@@ -126,6 +130,7 @@ classDiagram
 
     Plugin <|.. RuntimePlugin
     Plugin <|.. ReloadablePlugin
+    ReloadablePlugin <|.. ReconfigureValidator
     Plugin --> Registrar : Register
     Registrar ..> DecisionRegistrar : optional assertion
     RuntimePlugin --> Host : Start
@@ -357,11 +362,53 @@ func (t databaseInitTask) Stop(ctx context.Context) error {
 ### Reconfigure
 
 Implement `pluginapi.ReloadablePlugin` only when plugin-owned config can be changed without replacing the `.so` artifact.
-`Reconfigure` receives the new module `ConfigView`. Validate and prepare new state before publishing it. If
-`Reconfigure` returns an error, Nauthilus keeps the previous working module config.
+Without it, any change of the module `config` requires a process restart.
+
+A SIGHUP reload runs in two phases:
+
+1. **Validate.** For every module whose `config` changed, Nauthilus calls
+   `pluginapi.ReconfigureValidator.ValidateReconfigure` when the plugin implements it. The call must only decode and
+   validate: no state changes, no workers, no network or file side effects beyond reading what validation needs. Any
+   error rejects the whole reload and no module is reconfigured. Wrap `pluginapi.ErrRestartRequired` to report a key
+   that only a restart can apply, for example a feature that needs a capability acquired in `Register`.
+2. **Apply.** After the new policy generation is committed, Nauthilus calls `Reconfigure` with the new module
+   `ConfigView` for each changed module in declaration order. Unchanged modules are not called.
+
+`Reconfigure` must be all or nothing. Decode and validate first (share the function with `ValidateReconfigure`), build
+the new state off to the side, then publish it atomically and restart only the workers whose settings changed. If
+`Reconfigure` returns an error, the plugin must still serve its previous configuration; Nauthilus keeps the previous
+config view for the module, reports the reload as failed, and retries the change on the next reload. Background work
+that loaded data for the previous config must not publish it after `Reconfigure` switched to the new one.
+
+```go
+// ValidateReconfigure checks a candidate without touching the running plugin.
+func (p *Plugin) ValidateReconfigure(_ context.Context, view pluginapi.ConfigView) error {
+    _, err := p.decodeReconfigureConfig(view)
+
+    return err
+}
+
+// decodeReconfigureConfig is shared by ValidateReconfigure and Reconfigure.
+func (p *Plugin) decodeReconfigureConfig(view pluginapi.ConfigView) (moduleConfig, error) {
+    config, err := decodeModuleConfig(view)
+    if err != nil {
+        return moduleConfig{}, err
+    }
+
+    if config.Feature.Enabled && !p.featureCapabilityActive {
+        return moduleConfig{}, fmt.Errorf("feature.enabled: %w", pluginapi.ErrRestartRequired)
+    }
+
+    return config, nil
+}
+```
+
+`Host.Config()` is the boot snapshot and does not change on reload; read module settings from the `ConfigView` passed to
+`Register` and `Reconfigure`.
 
 Changes outside `plugins.modules[].config` are restart-only. Module identity, artifact path, checksum, signature, signer,
-optional flag, capability allowlist, hook authorization, and verification settings require a process restart.
+optional flag, stop timeout, capability allowlist, hook authorization, compatibility allowlists, and verification settings
+require a process restart.
 
 Generic decision bindings have an additional generation boundary. A successful candidate preparation resolves the
 operator-configured subset of registered capabilities and freezes its provider references, target selectors, fact and
@@ -1363,8 +1410,9 @@ Bundled action replacements use the same policy effect registry:
 
 When porting a Lua action, keep the policy selection model unchanged: register a post-action target, configure the
 module, and reference `authn/plugin.<module>.<component>` in authn Policy obligations. The component remains internally
-qualified as `<module>.<component>`; no bare Policy alias exists. Adding or removing the module, changing module identity
-or config, or replacing the `.so` artifact requires a process restart.
+qualified as `<module>.<component>`; no bare Policy alias exists. Adding or removing the module, changing module identity,
+or replacing the `.so` artifact requires a process restart; a change of the module `config` reloads when the plugin
+implements `ReloadablePlugin`.
 Capability acquisition happens during registration, so enabling a feature that was disabled at registration time may need
 a restart even when the config keys themselves live under the plugin-owned `config` block.
 
@@ -1581,6 +1629,7 @@ metrics include:
 ```text
 plugin_calls_total{module,component,extension_point,method,result}
 plugin_call_duration_seconds{module,component,extension_point,method,result}
+plugin_reconfigure_total{module,result}
 ```
 
 Plugin-created logs should use low-cardinality fields. Do not log usernames, passwords, bearer tokens, session IDs, SQL
@@ -1642,7 +1691,7 @@ Before shipping a plugin:
 
 - Export `NauthilusPlugin() (pluginapi.Plugin, error)` from a `main` package.
 - Set `Metadata().APIVersion` to `pluginapi.APIVersion`.
-- Validate module config during `Register` and `Reconfigure`.
+- Validate module config during `Register`, `ValidateReconfigure`, and `Reconfigure`.
 - Register every component and policy attribute in `Register`.
 - Assert `DecisionRegistrar` before registering generic providers, and treat descriptors as capabilities rather than
   activation or scheduling authority.

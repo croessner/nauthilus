@@ -96,6 +96,58 @@ signature file, signer reference, signer format, signer key ID, and trusted sign
 `public_key_file`. Minisign signatures also verify the trusted-comment signature. Signatures are operational provenance
 checks for trusted in-process code; they do not sandbox plugin behavior.
 
+## Artifact Staging Directory
+
+Nauthilus does not open a plugin from its configured `path`. At startup the loader creates a private directory
+`nauthilus-plugin-artifacts-*` (mode `0700`) in the process temporary directory, copies each verified artifact into it as
+`verified-*.so` (mode `0400`), checks that the copy still matches the verified digest, and calls `plugin.Open` on the
+copy. The directory is removed when the loader run ends.
+
+The temporary directory is `$TMPDIR`, or `/tmp` when `TMPDIR` is unset. It must be
+
+- writable by the Nauthilus user,
+- mounted without `noexec`, because the dynamic loader maps the staged file as executable code, and
+- large enough to hold one copy of every configured artifact at the same time.
+
+If the mount carries `noexec`, `plugin.Open` fails with `Operation not permitted`, an optional module is skipped, and a
+required module aborts startup.
+
+This matters for hardened containers with a read-only root file system. Docker and Compose mount a `tmpfs` with
+`noexec` by default, so request `exec` explicitly:
+
+```yaml
+services:
+  nauthilus:
+    read_only: true
+    tmpfs:
+      - /tmp:exec
+```
+
+With `docker run`, use `--read-only --tmpfs /tmp:exec`. In Kubernetes with `readOnlyRootFilesystem: true`, mount an
+`emptyDir` at `/tmp`:
+
+```yaml
+spec:
+  containers:
+    - name: nauthilus
+      securityContext:
+        readOnlyRootFilesystem: true
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir:
+        medium: Memory
+        sizeLimit: 256Mi
+```
+
+An `emptyDir` carries no `noexec` option of its own; if node hardening mounts the kubelet directory with `noexec`,
+point `TMPDIR` at a volume that allows exec. To keep `/tmp` itself `noexec`, mount a separate exec-capable volume, for
+example at `/var/lib/nauthilus/tmp`, and set `TMPDIR` to that path. Size `sizeLimit` for the sum of all configured
+artifacts. Mandatory access control policies that deny executable mappings from the temporary directory, such as
+SELinux or fapolicyd rules, cause the same failure.
+
 ## Bundled Plugins And Release Image Signing
 
 Stable and debug Docker images build these native plugins with the same Go toolchain, module source tree, and build tags
@@ -587,6 +639,7 @@ Automatic metrics:
 
 - `plugin_calls_total{module,component,extension_point,method,result}`
 - `plugin_call_duration_seconds{module,component,extension_point,method,result}`
+- `plugin_reconfigure_total{module,result}`, one increment per module and config reload
 
 Automatic spans use the `nauthilus/plugin/runtime` instrumentation scope and attach the same low-cardinality module,
 component, extension point, method, and result attributes. The host does not put usernames, client IPs, account names,
@@ -594,10 +647,35 @@ tokens, passwords, SQL statements, or raw plugin errors into metric labels or ho
 
 ## Reload And Restart
 
-The whole `plugins` section, including plugin-owned `config`, is restart-bound. A SIGHUP reload that changes it is
-refused as `native plugin configuration changed`, and Nauthilus keeps the running configuration; apply such changes
-with a process restart. `pluginapi.ReloadablePlugin.Reconfigure` is part of the plugin contract, but the running
-server does not call it on SIGHUP.
+A SIGHUP reload applies changes inside `plugins.modules[].config` of a module whose plugin implements
+`pluginapi.ReloadablePlugin`. Every other field of the `plugins` section is restart-bound, and so is the `config` of a
+module whose plugin does not support reload.
+
+A reload runs in two phases around the policy generation swap:
+
+1. Preparation compares the candidate `plugins` section with the running one. A restart-bound change rejects the whole
+   reload with `plugin restart required` and names the module. Every module whose `config` changed then validates its
+   candidate through the optional `pluginapi.ReconfigureValidator`; a plugin can also report one of its own keys as
+   restart-bound. Any failure rejects the whole reload: no module is reconfigured and the active generation stays in
+   place.
+2. After the new policy generation is committed, Nauthilus calls `Reconfigure` for each changed module in declaration
+   order. A module that is unchanged is not called.
+
+If a `Reconfigure` call fails in the second phase, the new generation and the other modules stay active. The failing
+module keeps serving its previous configuration, the host keeps its previous config view, and the next reload retries
+the change. The reload is reported as failed with the module name.
+
+`Host.Config()` stays the boot snapshot. A reloadable module reads its current settings from the `ConfigView` passed to
+`Reconfigure`, not from `Host.Config()`.
+
+Each reload logs one record per module (`plugin_module`, `plugin_reload_result`) and counts it in
+`plugin_reconfigure_total{module,result}`. The result is one of `reloaded`, `unchanged`, `restart_required`,
+`rejected` (the plugin refused the candidate), `failed` (`Reconfigure` failed after commit), or `aborted` (the change
+was valid but the reload was rejected elsewhere). A change outside the modules, such as `plugins.trust`, is recorded once
+with an empty module label. Neither log nor metric contains config values or error text.
+
+Bundled plugins that reload their config: `clickhouse`, `geoip`, `haveibeenpwnd`, and `dkim2-intelligence`. Their
+READMEs list the keys that stay restart-bound.
 
 Generic policy deactivation is generation-bound. A successfully prepared reload can omit a previously configured native
 provider or effect from the new generation, while requests and accepted post-actions holding the old generation continue
@@ -605,6 +683,8 @@ through their immutable bindings until they drain. This is config deactivation, 
 
 These changes require a process restart:
 
+- any `config` change of a module whose plugin does not implement `ReloadablePlugin`
+- keys that a plugin reports as restart-bound, such as `decision_bindings` in `geoip`
 - adding or removing modules
 - replacing a `.so` artifact
 - changing module `name`, `type`, `path`, `checksum`, `signature`, `signer`, `optional`, `stop_timeout`,
@@ -728,9 +808,9 @@ Migration notes:
   `authn/plugin.haveibeenpwnd.post_action` after the
   `haveibeenpwnd` module is configured and the required capabilities are allowed.
 - Adding or removing either module, changing the module name, or replacing the `.so` artifact requires a process restart.
-  Changing `allow_capabilities` also requires restart, and so do config-only changes inside
-  `plugins.modules[].config`. Enabling HIBP mail for a module that was registered with
-  `mail.enabled: false` requires restart so the plugin can acquire `CapabilityMail`.
+  Changing `allow_capabilities` also requires restart. Changes inside `plugins.modules[].config` apply on SIGHUP.
+  Enabling HIBP mail for a module that was registered with `mail.enabled: false` requires restart so the plugin can
+  acquire `CapabilityMail`; disabling it, and enabling it again while the capability is active, reload.
 - Native and Lua post-actions run inside one detached plan in final-obligation order. A step's
   `PostActionEnqueueResult.RuntimeDelta` is host-validated and visible only to later post-action steps in that same
   plan. Post-action deltas do not mutate the already-selected policy decision, client response, response mutation state,

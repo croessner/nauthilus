@@ -12,10 +12,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
-	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -73,9 +73,10 @@ type policyPreparationSlot struct{}
 type artifactSnapshotResourceContextKey struct{}
 
 type extensionPreparationSlot struct {
-	native *pluginruntime.GenerationBindings
-	pools  *vmpool.Manager
-	logger *slog.Logger
+	native  *pluginruntime.GenerationBindings
+	pools   *vmpool.Manager
+	logger  *slog.Logger
+	plugins pluginruntime.ReloadClassifier
 }
 
 type extensionCandidateBuilder struct {
@@ -136,6 +137,52 @@ type artifactSnapshotResource struct {
 type Coordinator struct {
 	runtime *policyruntime.Coordinator
 	restart RestartBaselineValidator
+	plugins PluginReconfigurer
+}
+
+// PluginReconfigurer validates plugin-owned config changes before a generation is prepared.
+type PluginReconfigurer interface {
+	PrepareReconfigure(context.Context, config.File) (*pluginruntime.ReconfigurePlan, error)
+}
+
+// CoordinatorOption customizes optional production coordinator collaborators.
+type CoordinatorOption func(*Coordinator)
+
+// WithPluginReconfigurer applies validated plugin-owned config changes after each generation commit.
+func WithPluginReconfigurer(plugins PluginReconfigurer) CoordinatorOption {
+	return func(coordinator *Coordinator) {
+		if plugins != nil {
+			coordinator.plugins = plugins
+		}
+	}
+}
+
+// pluginCommitError reports plugin reconfiguration failures after the generation was published.
+type pluginCommitError struct {
+	cause error
+}
+
+// Error returns the plugin reconfiguration failure.
+func (e *pluginCommitError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap exposes the plugin reconfiguration failure.
+func (e *pluginCommitError) Unwrap() error {
+	return e.cause
+}
+
+// GenerationCommitted marks the failure as raised after the atomic publication point.
+func (*pluginCommitError) GenerationCommitted() bool {
+	return true
+}
+
+// noPluginReconfigurer is the default when no plugin runtime takes part in reloads.
+type noPluginReconfigurer struct{}
+
+// PrepareReconfigure reports that no running plugin state needs a reload.
+func (noPluginReconfigurer) PrepareReconfigure(context.Context, config.File) (*pluginruntime.ReconfigurePlan, error) {
+	return nil, nil
 }
 
 type coordinatorOutput struct {
@@ -156,6 +203,7 @@ type decisionServiceOutput struct {
 // Module registers the sole coordinator, Decision Service, and captured-session authority.
 func Module() fx.Option {
 	return fx.Options(
+		fx.Provide(pluginruntime.NewReconfigurer),
 		fx.Provide(provideStartupCatalog),
 		fx.Provide(provideRestartBaseline),
 		fx.Provide(provideCoordinator),
@@ -173,6 +221,7 @@ func NewCoordinator(
 	system localization.Catalog,
 	startup *StartupCatalog,
 	restart RestartBaselineValidator,
+	options ...CoordinatorOption,
 ) (*Coordinator, error) {
 	if store == nil || pluginState == nil || tokens == nil || transports == nil ||
 		system == nil || startup == nil || restart == nil {
@@ -184,12 +233,17 @@ func NewCoordinator(
 		return nil, err
 	}
 
+	extensions := extensionPreparationSlot{
+		native: native, pools: vmpool.NewManager(), logger: logger,
+		plugins: pluginruntime.NewReloadClassifier(pluginState.Instances()),
+	}
+
 	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
 		Store:  store,
 		Logger: logger,
 		Slots: policyruntime.PreparationSlots{
 			Policy:               policyPreparationSlot{},
-			Extensions:           extensionPreparationSlot{native: native, pools: vmpool.NewManager(), logger: logger},
+			Extensions:           extensions,
 			Catalog:              catalogPreparationSlot{},
 			CallerAuthentication: callerAuthenticationPreparationSlot{tokens: tokens, transports: transports},
 			Admission:            admissionPreparationSlot{},
@@ -202,7 +256,12 @@ func NewCoordinator(
 		return nil, err
 	}
 
-	return &Coordinator{runtime: coordinator, restart: restart}, nil
+	result := &Coordinator{runtime: coordinator, restart: restart, plugins: noPluginReconfigurer{}}
+	for _, option := range options {
+		option(result)
+	}
+
+	return result, nil
 }
 
 // provideCoordinator publishes concrete and reload views of the same coordinator instance.
@@ -215,6 +274,7 @@ func provideCoordinator(
 	languageManager corelanguage.Manager,
 	startup *StartupCatalog,
 	restart RestartBaselineValidator,
+	plugins *pluginruntime.Reconfigurer,
 ) (coordinatorOutput, error) {
 	if languageManager == nil {
 		return coordinatorOutput{}, fmt.Errorf("%w: language manager is required", policyruntime.ErrInvalidGeneration)
@@ -229,6 +289,7 @@ func provideCoordinator(
 		localization.NewManagerCatalog(languageManager),
 		startup,
 		restart,
+		WithPluginReconfigurer(plugins),
 	)
 	if err != nil {
 		return coordinatorOutput{}, err
@@ -268,18 +329,38 @@ func (c *Coordinator) Apply(ctx context.Context, snapshot configfx.Snapshot) err
 		return err
 	}
 
+	plan, err := c.plugins.PrepareReconfigure(ctx, snapshot.File)
+	if err != nil {
+		_ = resource.Dispose(ctx)
+
+		return err
+	}
+
 	if err = c.restart.Validate(snapshot.File); err != nil {
+		plan.Discard()
 		_ = resource.Dispose(ctx)
 
 		return err
 	}
 
 	generation, err := c.runtime.Apply(ctx, policyruntime.PrepareInput{Config: snapshot.File, ID: snapshot.Version})
-	if err != nil && generation == nil {
+	if generation == nil {
+		plan.Discard()
 		_ = resource.Dispose(ctx)
+
+		return err
 	}
 
-	return err
+	return commitPluginPlan(ctx, plan, err)
+}
+
+// commitPluginPlan applies validated plugin changes after publication and keeps the result marked as committed.
+func commitPluginPlan(ctx context.Context, plan *pluginruntime.ReconfigurePlan, generationErr error) error {
+	if pluginErr := plan.Commit(ctx); pluginErr != nil {
+		return errors.Join(generationErr, &pluginCommitError{cause: pluginErr})
+	}
+
+	return generationErr
 }
 
 // claimCandidateArtifactContext seals one config and binds its transferable lifecycle owner to preparation.
@@ -382,7 +463,7 @@ func (s extensionPreparationSlot) Prepare(
 	ctx context.Context,
 	input policyruntime.PreparationInput,
 ) (policyruntime.ExtensionPreparation, error) {
-	if err := validateExtensionPluginReload(input); err != nil {
+	if err := s.validatePluginReload(input); err != nil {
 		return policyruntime.ExtensionPreparation{}, err
 	}
 
@@ -398,14 +479,16 @@ func (s extensionPreparationSlot) Prepare(
 	return builder.prepare()
 }
 
-// validateExtensionPluginReload rejects process-owned native plugin drift before allocating candidate resources.
-func validateExtensionPluginReload(input policyruntime.PreparationInput) error {
+// validatePluginReload rejects restart-bound native plugin drift before allocating candidate resources.
+//
+// Plugin-owned config of reloadable modules may differ; the coordinator applies it after commit.
+func (s extensionPreparationSlot) validatePluginReload(input policyruntime.PreparationInput) error {
 	previous := input.PreviousConfig()
-	if previous == nil || reflect.DeepEqual(previous.GetPlugins(), input.Config().GetPlugins()) {
+	if previous == nil {
 		return nil
 	}
 
-	return fmt.Errorf("%w: native plugin configuration changed", pluginruntime.ErrRestartRequired)
+	return s.plugins.Validate(previous.GetPlugins(), input.Config().GetPlugins())
 }
 
 // newExtensionCandidateBuilder captures shared candidate dependencies and one owned post-action supervisor.

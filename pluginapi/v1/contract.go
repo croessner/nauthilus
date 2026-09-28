@@ -15,7 +15,10 @@
 
 package pluginapi
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Capability names a host-controlled permission a plugin may request.
 type Capability string
@@ -73,9 +76,30 @@ type RuntimePlugin interface {
 	Stop(context.Context) error
 }
 
+// ErrRestartRequired marks a changed plugin-owned setting that only takes effect after a process restart.
+//
+// ReconfigureValidator.ValidateReconfigure returns an error wrapping it to keep the whole reload
+// from being applied; the host then reports the module as restart-bound.
+var ErrRestartRequired = errors.New("plugin configuration change requires a restart")
+
 // ReloadablePlugin is implemented by plugins that support config-only reloads.
+//
+// The host calls Reconfigure only for a module whose plugin-owned config changed, only after every
+// changed module validated its candidate, and only after the new policy generation was committed.
+// Reconfigure must be all or nothing: on error the plugin keeps serving its previous configuration
+// and the host keeps the previous config view for the module.
 type ReloadablePlugin interface {
 	Reconfigure(context.Context, ConfigView) error
+}
+
+// ReconfigureValidator is implemented by reloadable plugins that can check a candidate config
+// before any module is reconfigured.
+//
+// ValidateReconfigure decodes and validates only. It must not change plugin state, start work,
+// or reach external systems. Any error rejects the whole reload; an error wrapping
+// ErrRestartRequired marks the change as needing a restart instead of being invalid.
+type ReconfigureValidator interface {
+	ValidateReconfigure(context.Context, ConfigView) error
 }
 
 // ConfigView exposes a read-only, format-neutral plugin configuration subtree.
