@@ -96,9 +96,15 @@ request-scoped `CredentialProvider`, account snapshot, plan-local exchange, and 
 generic `DecisionEffectRequest`.
 
 The registered `PostActionTarget` remains isolated behind the authentication-shaped generation binding. Adding or
-removing the module, changing its name or config, replacing the `.so` artifact, or changing `allow_capabilities`
-requires a process restart. A Policy reload may select or stop selecting the frozen canonical effect without changing
-the plugin object.
+removing the module, changing its name, replacing the `.so` artifact, or changing `allow_capabilities` requires a
+process restart. A Policy reload may select or stop selecting the frozen canonical effect without changing the plugin
+object.
+
+The module `config` reloads on SIGHUP. The plugin validates the candidate before the reload is committed; an invalid
+value, including an unreadable `mail.template_path`, rejects the whole reload. `mail.enabled` is restart-bound in one
+direction: when the module was registered with mail disabled, it holds no mail capability, so enabling mail is reported
+as `restart_required`. Disabling mail, and enabling it again while the capability from registration is still active,
+reload.
 
 Observability is host-integrated: the plugin registers the HIBP range API endpoint through
 `Host.ConnectionTargets("haveibeenpwnd")`, calls HIBP through `Host.HTTP("haveibeenpwnd")`, sends notification mail

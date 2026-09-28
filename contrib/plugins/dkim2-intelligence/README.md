@@ -59,8 +59,9 @@ both are enabled in the same module.
 The configuration requires `reputation_provider`, `reputation_fact`,
 `geoip_provider` and `decision_profile` (`fast`, `operational` or `baseline`).
 These values define the registered input contract and require restart when
-changed. `identity_contracts` and `signer_sets` may be reconfigured together as
-one immutable snapshot. Unknown configuration keys fail registration.
+changed; a SIGHUP reload that changes them is rejected as restart-bound.
+`identity_contracts` and `signer_sets` reload on SIGHUP together as one
+immutable snapshot. Unknown configuration keys fail registration.
 
 An identity contract names explicit canonical domains, optional canonical
 CIDRs and optional integer ASNs. CIDR match has priority when both kinds are

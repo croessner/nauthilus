@@ -150,12 +150,45 @@ func TestRegisterRequiresMailCapabilityOnlyWhenMailEnabled(t *testing.T) {
 
 func TestReconfigureCannotEnableMailWithoutActiveCapability(t *testing.T) {
 	_, plugin, _ := registerTestPlugin(t, testModule(map[string]any{}, true))
+	enableMail := pluginregistry.NewConfigView(map[string]any{"mail": map[string]any{"enabled": true}})
 
-	err := plugin.Reconfigure(context.Background(), pluginregistry.NewConfigView(map[string]any{
-		"mail": map[string]any{"enabled": true},
-	}))
-	if !errors.Is(err, errMailCapabilityNotActive) {
-		t.Fatalf("Reconfigure() error = %v, want errMailCapabilityNotActive", err)
+	for name, call := range map[string]func(context.Context, pluginapi.ConfigView) error{
+		"ValidateReconfigure": plugin.ValidateReconfigure,
+		"Reconfigure":         plugin.Reconfigure,
+	} {
+		if err := call(context.Background(), enableMail); !errors.Is(err, errMailCapabilityNotActive) || !errors.Is(err, pluginapi.ErrRestartRequired) {
+			t.Fatalf("%s() error = %v, want restart-bound errMailCapabilityNotActive", name, err)
+		}
+	}
+
+	if plugin.snapshot().config.Mail.Enabled {
+		t.Fatal("a rejected candidate enabled mail")
+	}
+}
+
+func TestReconfigureTogglesMailWhileCapabilityIsActive(t *testing.T) {
+	mailModule := testModuleWithCapabilities(
+		map[string]any{"mail": map[string]any{"enabled": true}}, pluginapi.CapabilityCredentials, pluginapi.CapabilityMail,
+	)
+	_, plugin, _ := registerTestPlugin(t, mailModule)
+
+	for _, enabled := range []bool{false, true} {
+		view := pluginregistry.NewConfigView(map[string]any{"mail": map[string]any{"enabled": enabled}})
+		if err := plugin.ValidateReconfigure(context.Background(), view); err != nil {
+			t.Fatalf("ValidateReconfigure(mail.enabled=%v) error = %v", enabled, err)
+		}
+
+		if err := plugin.Reconfigure(context.Background(), view); err != nil {
+			t.Fatalf("Reconfigure(mail.enabled=%v) error = %v", enabled, err)
+		}
+
+		if plugin.snapshot().config.Mail.Enabled != enabled {
+			t.Fatalf("mail.enabled after Reconfigure = %v, want %v", !enabled, enabled)
+		}
+	}
+
+	if err := plugin.ValidateReconfigure(context.Background(), pluginregistry.NewConfigView(map[string]any{"http_timeout": "never"})); err == nil {
+		t.Fatal("ValidateReconfigure accepted an invalid candidate")
 	}
 }
 

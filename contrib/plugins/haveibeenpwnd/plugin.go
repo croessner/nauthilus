@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -39,9 +38,11 @@ const (
 var _ pluginapi.Plugin = (*Plugin)(nil)
 var _ pluginapi.RuntimePlugin = (*Plugin)(nil)
 var _ pluginapi.ReloadablePlugin = (*Plugin)(nil)
+var _ pluginapi.ReconfigureValidator = (*Plugin)(nil)
 var _ pluginapi.PostActionTarget = (*postActionTarget)(nil)
 
-var errMailCapabilityNotActive = errors.New("haveibeenpwnd mail capability was not active at registration")
+// errMailCapabilityNotActive rejects enabling mail on reload: the mail capability is granted only at registration.
+var errMailCapabilityNotActive = fmt.Errorf("mail.enabled: mail capability was not active at registration: %w", pluginapi.ErrRestartRequired)
 
 // NauthilusPlugin is the factory symbol loaded by the Nauthilus native plugin loader.
 func NauthilusPlugin() (pluginapi.Plugin, error) {
@@ -207,21 +208,42 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	return nil
 }
 
+// ValidateReconfigure checks a candidate config without touching the running plugin.
+func (p *Plugin) ValidateReconfigure(_ context.Context, view pluginapi.ConfigView) error {
+	_, err := p.decodeReconfigureConfig(view)
+
+	return err
+}
+
+// decodeReconfigureConfig decodes a candidate config and rejects enabling mail without the registration-time capability.
+//
+// Disabling mail, and enabling it again while the capability is still active, stay reloadable.
+func (p *Plugin) decodeReconfigureConfig(view pluginapi.ConfigView) (moduleConfig, error) {
+	config, err := decodeModuleConfig(view)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
+	p.mu.RLock()
+	mailCapabilityActive := p.mailCapabilityActive
+	p.mu.RUnlock()
+
+	if config.Mail.Enabled && !mailCapabilityActive {
+		return moduleConfig{}, errMailCapabilityNotActive
+	}
+
+	return config, nil
+}
+
 // Reconfigure validates and atomically swaps plugin-owned config.
 func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) error {
-	config, err := decodeModuleConfig(view)
+	config, err := p.decodeReconfigureConfig(view)
 	if err != nil {
 		return err
 	}
 
 	p.mu.Lock()
 	host := p.host
-	if config.Mail.Enabled && !p.mailCapabilityActive {
-		p.mu.Unlock()
-
-		return errMailCapabilityNotActive
-	}
-
 	p.config = config
 	p.mailer = mailerForConfig(host, config)
 	p.mu.Unlock()

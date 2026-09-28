@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"sync"
+
 	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/telemetry"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
-	"sync"
 )
+
+var _ pluginapi.ReloadablePlugin = (*Plugin)(nil)
+var _ pluginapi.ReconfigureValidator = (*Plugin)(nil)
 
 // Plugin owns immutable operator configuration and fact-only composition registration.
 type Plugin struct {
@@ -76,25 +81,45 @@ func (p *Plugin) Start(_ context.Context, host pluginapi.Host) error {
 // Stop releases no resources because composition uses only immutable admitted facts.
 func (*Plugin) Stop(context.Context) error { return nil }
 
+// ValidateReconfigure checks a candidate config without touching the running plugin.
+func (p *Plugin) ValidateReconfigure(_ context.Context, input pluginapi.ConfigView) error {
+	_, err := p.decodeReconfigureConfig(input)
+
+	return err
+}
+
 // Reconfigure permits operator contract updates while requiring restart for dependency or profile changes.
 func (p *Plugin) Reconfigure(_ context.Context, input pluginapi.ConfigView) error {
-	cfg, err := decodeConfig(input)
+	cfg, err := p.decodeReconfigureConfig(input)
 	if err != nil {
 		return err
 	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	old := p.config
-	if old == nil || old.raw.ReputationProvider != cfg.raw.ReputationProvider || old.raw.ReputationFact != cfg.raw.ReputationFact ||
-		old.raw.GeoIPProvider != cfg.raw.GeoIPProvider || old.raw.DecisionProfile != cfg.raw.DecisionProfile {
-		return errConfig
-	}
-
 	p.config = cfg
+	p.mu.Unlock()
 
 	return nil
+}
+
+// decodeReconfigureConfig decodes a candidate and keeps the registration-time provider contract fixed.
+func (p *Plugin) decodeReconfigureConfig(input pluginapi.ConfigView) (*configuration, error) {
+	cfg, err := decodeConfig(input)
+	if err != nil {
+		return nil, err
+	}
+
+	old := p.snapshot()
+	if old == nil {
+		return nil, errConfig
+	}
+
+	if old.raw.ReputationProvider != cfg.raw.ReputationProvider || old.raw.ReputationFact != cfg.raw.ReputationFact ||
+		old.raw.GeoIPProvider != cfg.raw.GeoIPProvider || old.raw.DecisionProfile != cfg.raw.DecisionProfile {
+		return nil, fmt.Errorf("%w: providers and decision profile: %w", errConfig, pluginapi.ErrRestartRequired)
+	}
+
+	return cfg, nil
 }
 
 // snapshot retains one coherent immutable configuration for the entire request.
