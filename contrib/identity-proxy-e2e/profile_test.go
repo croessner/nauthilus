@@ -138,6 +138,9 @@ func TestComposeNetworksPreventDirectCrossRedisAccess(t *testing.T) {
 	assertServiceNetworks(t, compose, samlSPService, []string{edgeData, samlSPPublic})
 	assertServicePorts(t, compose, "authority", []string{"127.0.0.1:18081:18081", "127.0.0.1:19444:19444"})
 	assertServicePorts(t, compose, samlSPService, []string{"127.0.0.1:19095:19095"})
+	assertServiceNetworks(t, compose, "plugin-reload-redis", []string{"plugin-reload-data"})
+	assertServiceNetworks(t, compose, "plugin-reload", []string{"plugin-reload-data", "plugin-reload-public"})
+	assertServicePorts(t, compose, "plugin-reload", []string{"127.0.0.1:18083:18083"})
 }
 
 func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
@@ -170,6 +173,7 @@ func requiredSmokePlanScenarios() []string {
 		samlSmokePlanScenarios(),
 		continuitySmokePlanScenarios(),
 		failureSmokePlanScenarios(),
+		pluginReloadSmokePlanScenarios(),
 	)
 }
 
@@ -347,6 +351,15 @@ func failureSmokePlanScenarios() []string {
 	}
 }
 
+// pluginReloadSmokePlanScenarios returns required native plugin reload checks.
+func pluginReloadSmokePlanScenarios() []string {
+	return []string{
+		"plugin-config-reload-applied",
+		"plugin-artifact-change-restart-required",
+		"plugin-reload-without-restart",
+	}
+}
+
 func TestSmokeRunnerUsesGeneratedOpenAPIManagementClient(t *testing.T) {
 	root := fixtureRoot(t)
 
@@ -496,6 +509,8 @@ func TestRunScriptIncludesExecutablePositiveNegativeAndTopologyChecks(t *testing
 		"redis-cli -h edge-redis",
 		"redis-cli -h authority-redis",
 		"NAUTHILUS_E2E_SAML_URL",
+		"kill -s HUP plugin-reload",
+		"plugin_reload || status=$?",
 	} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("run script missing %q marker", marker)

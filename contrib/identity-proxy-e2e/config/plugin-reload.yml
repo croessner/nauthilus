@@ -1,0 +1,86 @@
+# Native plugin config reload profile.
+# scripts/run.sh copies this file to .work/plugin-reload/nauthilus.yml, edits the
+# copy, and sends SIGHUP to prove which plugin settings apply without a restart.
+
+runtime:
+  instance_name: "plugin-reload"
+
+  servers:
+    http:
+      address: "0.0.0.0:18083"
+      keep_alive:
+        enabled: true
+      middlewares:
+        recovery: true
+        request_decompression: false
+        response_compression: false
+        limit: false
+        rate: false
+
+  timeouts:
+    redis_read: 2s
+    redis_write: 2s
+
+observability:
+  log:
+    level: "info"
+    add_source: false
+    color: false
+    json: false
+
+  profiles:
+    pprof:
+      enabled: false
+    block:
+      enabled: false
+
+  tracing:
+    enabled: false
+
+storage:
+  redis:
+    protocol: 3
+    primary:
+      address: "plugin-reload-redis:6379"
+    database_number: 0
+    prefix: "plugin-reload:"
+    pool_size: 4
+    pool_timeout: 1s
+    read_timeout: 1s
+    write_timeout: 1s
+    idle_pool_size: 1
+    positive_cache_ttl: 120
+    negative_cache_ttl: 60
+    encryption_secret: "pluginReloadRedisSecret2026!"
+    password_nonce: "pluginReloadRedisNonce2026!"
+
+auth:
+  backchannel:
+    basic_auth:
+      enabled: true
+      username: "plugin-reload"
+      password: "pluginReloadBasic2026!"
+
+  backends:
+    order: [test]
+
+  controls:
+    enabled: []
+
+  services:
+    enabled: []
+
+plugins:
+  # The E2E image builds the bundled plugins without a signing key.
+  verification_policy: "off"
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  modules:
+    - name: clickhouse
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/clickhouse.so
+      allow_capabilities: [password_hash]
+      config:
+        batch_size: 100
+        # The reload check switches this to a positive interval.
+        flush_interval: 0s

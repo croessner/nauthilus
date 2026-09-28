@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(cd "${ROOT_DIR}/../.." && pwd)"
 COMPOSE=(docker compose --project-directory "${ROOT_DIR}" -f "${ROOT_DIR}/docker-compose.yml")
 PGO_DIR="${ROOT_DIR}/.work/pgo"
+PLUGIN_RELOAD_DIR="${ROOT_DIR}/.work/plugin-reload"
+PLUGIN_RELOAD_URL="http://127.0.0.1:18083"
 PGO_PIDS=()
 
 usage() {
@@ -19,6 +21,7 @@ Commands:
   rpc            Run gRPC and generated OpenAPI management checks against the running stack.
   redis-check    Prove authority and edge Redis are isolated at the Compose network layer.
   browser        Run the Playwright browser smoke against the running stack.
+  plugin-reload  Prove that SIGHUP applies native plugin config and refuses artifact changes.
   smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks.
   down           Stop and remove the E2E stack.
 
@@ -215,6 +218,83 @@ browser() {
   node "${ROOT_DIR}/scripts/browser-e2e.js"
 }
 
+# Write the plugin reload config from its fixture, applying optional sed expressions.
+write_plugin_reload_config() {
+  mkdir -p "${PLUGIN_RELOAD_DIR}"
+  sed -e '' "$@" "${ROOT_DIR}/config/plugin-reload.yml" >"${PLUGIN_RELOAD_DIR}/nauthilus.yml.tmp"
+  mv "${PLUGIN_RELOAD_DIR}/nauthilus.yml.tmp" "${PLUGIN_RELOAD_DIR}/nauthilus.yml"
+}
+
+# Print one clickhouse reload outcome counter, or 0 before the first observation.
+plugin_reload_metric() {
+  local result="$1"
+
+  curl -fsS "${PLUGIN_RELOAD_URL}/metrics" |
+    awk -v series="plugin_reconfigure_total{module=\"clickhouse\",result=\"${result}\"}" \
+      '$1 == series { value = $2 } END { print (value == "" ? 0 : value) }'
+}
+
+# Wait until one clickhouse reload outcome counter reaches the expected value.
+wait_for_plugin_reload_metric() {
+  local result="$1"
+  local want="$2"
+
+  for _ in $(seq 1 30); do
+    if [[ "$(plugin_reload_metric "${result}")" == "${want}" ]]; then
+      return
+    fi
+
+    sleep 1
+  done
+
+  echo "plugin_reconfigure_total{result=${result}} did not reach ${want}." >&2
+  return 1
+}
+
+# Print the start time of the plugin reload container to detect restarts.
+plugin_reload_started_at() {
+  docker inspect -f '{{.State.StartedAt}}' "$("${COMPOSE[@]}" ps -q plugin-reload)"
+}
+
+# Apply a config-only change and an artifact change through SIGHUP on one running instance.
+plugin_reload() {
+  local started
+
+  write_plugin_reload_config
+  "${COMPOSE[@]}" up -d plugin-reload-redis plugin-reload
+  wait_for_http "${PLUGIN_RELOAD_URL}/ping" "plugin-reload"
+  started="$(plugin_reload_started_at)"
+
+  write_plugin_reload_config -e 's/flush_interval: 0s/flush_interval: 2s/'
+  "${COMPOSE[@]}" kill -s HUP plugin-reload
+  wait_for_plugin_reload_metric reloaded 1
+
+  if ! "${COMPOSE[@]}" logs plugin-reload | grep "clickhouse flush worker updated" | grep -q "running"; then
+    echo "The clickhouse flush worker did not start after the config reload." >&2
+    return 1
+  fi
+
+  echo "ok plugin-config-reload-applied"
+
+  write_plugin_reload_config -e 's/flush_interval: 0s/flush_interval: 2s/' -e 's#plugins/clickhouse.so#plugins/geoip.so#'
+  "${COMPOSE[@]}" kill -s HUP plugin-reload
+  wait_for_plugin_reload_metric restart_required 1
+
+  if [[ "$(plugin_reload_metric reloaded)" != "1" ]]; then
+    echo "The artifact change was applied by a reload." >&2
+    return 1
+  fi
+
+  echo "ok plugin-artifact-change-restart-required"
+
+  if [[ "$(plugin_reload_started_at)" != "${started}" ]]; then
+    echo "The plugin reload instance restarted during the reload checks." >&2
+    return 1
+  fi
+
+  echo "ok plugin-reload-without-restart"
+}
+
 reset_stack() {
   "${COMPOSE[@]}" down -v --remove-orphans
 }
@@ -238,6 +318,9 @@ smoke() {
   fi
   if [[ "${status}" -eq 0 ]]; then
     rpc_post_browser || status=$?
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    plugin_reload || status=$?
   fi
 
   if [[ "${status}" -eq 0 ]]; then
@@ -277,6 +360,9 @@ case "${command}" in
     ;;
   browser)
     browser
+    ;;
+  plugin-reload)
+    plugin_reload
     ;;
   smoke)
     smoke

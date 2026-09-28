@@ -110,7 +110,39 @@ services:
     ports:
       - "127.0.0.1:19095:19095"
 
+  plugin-reload-redis:
+    image: ${NAUTHILUS_E2E_REDIS_IMAGE:-redis:7-alpine}
+    restart: "no"
+    networks:
+      - plugin-reload-data
+
+  plugin-reload:
+    <<: *nauthilus-service
+    depends_on:
+      - plugin-reload-redis
+    command:
+      - /usr/app/nauthilus
+      - -config
+      - /etc/nauthilus/plugin-reload/nauthilus.yml
+      - -config-format
+      - yaml
+    tmpfs:
+      # The plugin loader stages verified artifacts here and opens them with dlopen.
+      - /tmp:exec
+    volumes:
+      # A directory mount, so the container sees the edited config file.
+      - ./.work/plugin-reload:/etc/nauthilus/plugin-reload:ro
+    networks:
+      - plugin-reload-data
+      - plugin-reload-public
+    ports:
+      - "127.0.0.1:18083:18083"
+
 networks:
+  plugin-reload-data:
+    internal: true
+  plugin-reload-public:
+    internal: false
   authority-data:
     internal: true
   edge-data:

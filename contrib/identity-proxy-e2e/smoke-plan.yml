@@ -138,6 +138,9 @@ scenarios:
   - expired-backend-ref
   - authority-unavailable
   - idempotency-replay
+  - plugin-config-reload-applied
+  - plugin-artifact-change-restart-required
+  - plugin-reload-without-restart
 
 commands:
   profile-check: "GOEXPERIMENT=runtimesecret go test ./contrib/identity-proxy-e2e"
@@ -153,3 +156,4 @@ notes:
   - "The Go smoke uses the supported generated OpenAPI management client with the authority security scope against the live authority management API."
   - "The browser smoke uses Playwright and must create a CDP virtual authenticator before WebAuthn registration or login."
   - "The Compose topology keeps authority Redis and edge Redis on separate internal networks so neither Nauthilus role can address the other role's Redis."
+  - "The plugin reload instance runs the bundled clickhouse plugin; SIGHUP applies a changed flush_interval without a restart and reports a changed artifact path as restart_required."
