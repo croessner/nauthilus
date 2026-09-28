@@ -388,7 +388,9 @@ type failingScripts struct {
 func (s *failingScripts) Upload(context.Context, string, string) (string, error) { return "", s.err }
 
 // Run fails with err.
-func (s *failingScripts) Run(context.Context, string, []string, ...any) (any, error) { return nil, s.err }
+func (s *failingScripts) Run(context.Context, string, []string, ...any) (any, error) {
+	return nil, s.err
+}
 
 // TestClassifyRedisError pins which Redis failures count as transient.
 func TestClassifyRedisError(t *testing.T) {

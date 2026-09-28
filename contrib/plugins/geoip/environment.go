@@ -143,19 +143,28 @@ func (s geoIPLookupService) evaluateClientIP(
 		)
 	}
 
-	for _, fact := range result.Facts {
-		if fact.Name == factLookupState {
-			if state, ok := fact.Value.(string); ok {
-				freshness = state
-			}
-
-			break
-		}
-	}
+	freshness = resultLookupState(result, freshness)
 
 	s.plugin.recordLookup(spanCtx, lookupResult, time.Since(start))
 
 	return result, nil
+}
+
+// resultLookupState returns the lookup state fact of result, or fallback when the fact is missing.
+func resultLookupState(result geoIPLookupResult, fallback string) string {
+	for _, fact := range result.Facts {
+		if fact.Name != factLookupState {
+			continue
+		}
+
+		if state, ok := fact.Value.(string); ok {
+			return state
+		}
+
+		break
+	}
+
+	return fallback
 }
 
 // parseGeoIPAddress canonicalizes an unscoped network address for local geographic lookup.

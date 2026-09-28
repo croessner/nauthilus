@@ -905,6 +905,7 @@ func startTestPlugin(t *testing.T, pluginConfig map[string]any, options testPlug
 	}
 
 	_, plugin, _ := registerTestPlugin(t, testModuleWithCapabilities(pluginConfig, capabilities...))
+
 	hostOptions := []pluginruntime.HostOption{
 		pluginruntime.WithHTTPClient(&http.Client{Transport: transport}),
 		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacade(targets)),

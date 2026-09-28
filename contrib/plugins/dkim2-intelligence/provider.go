@@ -75,6 +75,7 @@ func providerFactPrefix(provider string) string {
 func (p decisionProvider) Collect(ctx context.Context, request pluginapi.DecisionFactRequest) (pluginapi.DecisionFactResult, error) {
 	metric := valueUnavailable
 	defer func() { p.plugin.recordComposition(ctx, metric) }()
+
 	if err := ctx.Err(); err != nil {
 		return pluginapi.DecisionFactResult{}, err
 	}
@@ -88,10 +89,17 @@ func (p decisionProvider) Collect(ctx context.Context, request pluginapi.Decisio
 		return pluginapi.DecisionFactResult{ErrorClass: pluginapi.DecisionErrorClassUnavailable}, nil
 	}
 
+	result, outcome, err := cfg.collect(request)
+	metric = outcome
+
+	return result, err
+}
+
+// collect runs every validation stage in order and returns the result with its bounded composition metric.
+func (c *configuration) collect(request pluginapi.DecisionFactRequest) (pluginapi.DecisionFactResult, string, error) {
 	source, err := projection.Decode(request)
 	if err != nil {
-		metric = metricProjectionInvalid
-		return invalidComposition(), nil
+		return invalidComposition(), metricProjectionInvalid, nil
 	}
 
 	facts := make(map[string]pluginapi.DecisionValue)
@@ -99,46 +107,45 @@ func (p decisionProvider) Collect(ctx context.Context, request pluginapi.Decisio
 		facts[fact.ID()] = fact.Value()
 	}
 
-	subjects, err := decodeSubjects(facts[cfg.raw.ReputationFact])
+	subjects, err := decodeSubjects(facts[c.raw.ReputationFact])
 	if err != nil {
-		metric = metricReputationInvalid
-		return invalidComposition(), nil
+		return invalidComposition(), metricReputationInvalid, nil
 	}
 
-	correlated, err := correlateSubjects(source, subjects, cfg.raw.DecisionProfile)
+	correlated, err := correlateSubjects(source, subjects, c.raw.DecisionProfile)
 	if err != nil {
-		metric = metricCorrelationInvalid
-		return invalidComposition(), nil
+		return invalidComposition(), metricCorrelationInvalid, nil
 	}
 
-	geographic := make(map[string]pluginapi.DecisionValue)
-
-	for _, field := range geographicInputs() {
-		if value, found := facts[providerFactPrefix(cfg.raw.GeoIPProvider)+field.Name]; found {
-			geographic[field.Name] = value
-		}
+	geo, err := decodeGeographic(geographicFacts(facts, c.raw.GeoIPProvider), source.ClientIP)
+	if err != nil {
+		return invalidComposition(), metricGeoIPInvalid, nil
 	}
 
-	geo, err := decodeGeographic(geographic, source.ClientIP)
+	composed, err := c.compose(source, correlated, geo)
 	if err != nil {
-		metric = metricGeoIPInvalid
-		return invalidComposition(), nil
-	}
-
-	composed, err := cfg.compose(source, correlated, geo)
-	if err != nil {
-		metric = metricCompositionInvalid
-		return invalidComposition(), nil
+		return invalidComposition(), metricCompositionInvalid, nil
 	}
 
 	result, err := composed.facts()
 	if err != nil {
-		metric = metricCompositionInvalid
-	} else {
-		metric = metricCompleted
+		return result, metricCompositionInvalid, err
 	}
 
-	return result, err
+	return result, metricCompleted, nil
+}
+
+// geographicFacts selects the GeoIP provider outputs the composition consumes.
+func geographicFacts(facts map[string]pluginapi.DecisionValue, provider string) map[string]pluginapi.DecisionValue {
+	geographic := make(map[string]pluginapi.DecisionValue)
+
+	for _, field := range geographicInputs() {
+		if value, found := facts[providerFactPrefix(provider)+field.Name]; found {
+			geographic[field.Name] = value
+		}
+	}
+
+	return geographic
 }
 
 // invalidComposition returns an explicit atomic failure with no partial chain or peer view.

@@ -424,7 +424,6 @@ func TestInternalLookupUsesASNDatabaseForOrganization(t *testing.T) {
 	assertFact(t, result.Facts, factCityName, testCityNameBerlin)
 	assertFact(t, result.Facts, factASN, 64500)
 	assertFact(t, result.Facts, factASNOrg, testASNOrg)
-
 }
 
 func TestASNLookupUsesLocalRoutingSnapshotLongestPrefix(t *testing.T) {
@@ -649,15 +648,6 @@ func registerTestPluginInstance(t *testing.T, plugin *Plugin, module config.Plug
 	}
 
 	return registry, plugin
-}
-
-// startedTestRunner starts a plugin runtime for the configured test module.
-func startedTestRunner(t *testing.T, module config.PluginModule) (*pluginruntime.Runner, *recordingMetrics, *recordingTracer) {
-	t.Helper()
-
-	runner, _, metrics, tracer := startedTestRunnerWithPlugin(t, module)
-
-	return runner, metrics, tracer
 }
 
 // startedTestRunnerWithPlugin starts a runtime and returns the underlying plugin instance.
