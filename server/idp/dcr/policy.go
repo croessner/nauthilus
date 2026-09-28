@@ -16,6 +16,7 @@
 package dcr
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -27,11 +28,12 @@ import (
 // RuntimePolicy revalidates stored registrations against current operator policy.
 type RuntimePolicy struct {
 	registration config.OIDCDynamicClientRegistrationConfig
+	mfaLevels    map[string]int
 }
 
 // NewRuntimePolicy creates a current-policy dynamic-client resolver.
-func NewRuntimePolicy(registration config.OIDCDynamicClientRegistrationConfig) RuntimePolicy {
-	return RuntimePolicy{registration: registration}
+func NewRuntimePolicy(registration config.OIDCDynamicClientRegistrationConfig, mfaLevels map[string]int) RuntimePolicy {
+	return RuntimePolicy{registration: registration, mfaLevels: mfaLevels}
 }
 
 // Resolve rejects retired records and only materializes privileges still allowed today.
@@ -73,6 +75,15 @@ func (p RuntimePolicy) Resolve(record *DynamicClientRecord) (*config.OIDCClient,
 	client.OptionalScopes = append([]string(nil), currentScopes...)
 	client.GrantTypes = grantTypes
 	client.RequiredMFALevel = max(record.RequiredMFALevel, p.registration.RequiredMFALevel)
+
+	// Configuration lists are read-only; consumers own any mutable enrollment state.
+	client.RequireMFA = p.registration.RequireMFA
+	client.SupportedMFA = p.registration.SupportedMFA
+
+	if err := config.ValidateRequiredMFALevel("dynamic_client.required_mfa_level", client.RequiredMFALevel, client.SupportedMFA, p.mfaLevels); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
+	}
+
 	client.AccessTokenLifetime = minimumPositiveDuration(record.AccessTokenTTL, p.registration.GetAccessTokenLifetime())
 	client.RefreshTokenLifetime = minimumPositiveDuration(record.RefreshTokenTTL, p.registration.GetRefreshTokenLifetime())
 	p.applyProfileIssuance(client, currentScopes)

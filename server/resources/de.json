@@ -1,4 +1,6 @@
 {
+  "Authentication method unavailable": "Authentifizierungsmethode nicht verfügbar",
+  "No registered authentication method meets this application's requirements. Please contact your administrator.": "Keine registrierte Authentifizierungsmethode erfüllt die Anforderungen dieser Anwendung. Bitte wenden Sie sich an Ihren Administrator.",
   "Login": "Anmelden",
   "Username": "Benutzername",
   "2FA Verification": "2FA-Verifizierung",

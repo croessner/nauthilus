@@ -217,6 +217,14 @@ disabled by default and intentionally implements a narrow profile rather than un
 - `delayed_response: true` enables the delayed login-failure presentation for all dynamic clients, like the
   per-client option for static clients: a wrong password proceeds to the MFA step for existing users and is only
   reported at the end. The setting is applied on every use, so it also covers already registered clients.
+- `require_mfa` enforces registration of **every** listed method before authorization; it is not an either/or
+  selection. `supported_mfa` limits usable methods (empty means all), while `required_mfa_level` sets assurance
+  strength. These are operator-owned settings, not registration request metadata. Both lists apply to existing
+  registrations without re-registration. The stored minimum assurance level is never lowered; registrations whose
+  effective minimum is no longer reachable through the allowed methods fail closed.
+- Enrollment uses the same parent-bound browser flow as static clients. `prompt=none` cannot enroll a missing factor.
+  Setting an assurance level alone does not configure enrollment. Policy changes do not retroactively revoke issued
+  tokens. For TOTP plus recovery enrollment, set `require_mfa: [totp, recovery_codes]` and `required_mfa_level: 2`.
 - Dynamic client state, rate limits, quotas, lifecycle state, and tombstones are stored in Redis. Security-sensitive
   reads always use the authoritative primary/write handle and fail closed when Redis is unavailable.
 
@@ -245,6 +253,8 @@ identity:
       optional_scopes: [ "offline_access", "mail:imap", "mail:smtp" ]
       allow_refresh_tokens: true
       consent_mode: "all_or_nothing"
+      require_mfa: [ ]
+      supported_mfa: [ ]
       required_mfa_level: 0
       access_token_lifetime: 15m
       refresh_token_lifetime: 720h

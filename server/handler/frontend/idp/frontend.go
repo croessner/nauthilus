@@ -1631,7 +1631,7 @@ func (h *FrontendHandler) LoginMFASelect(ctx *gin.Context) {
 	}
 
 	if selection.availability.count == 0 {
-		ctx.AbortWithStatus(http.StatusConflict)
+		h.renderUnavailableMFAError(ctx)
 
 		return
 	}
@@ -2486,4 +2486,20 @@ func (h *FrontendHandler) finishRemoteWebAuthnAuthorityChange(ctx *gin.Context, 
 // redirectWebAuthnDevices returns browser and HTMX callers to the localized device list.
 func redirectWebAuthnDevices(ctx *gin.Context) {
 	redirectCanonicalBrowserMutation(ctx, localizedMFARootPath(ctx, definitions.MFARoot+"/webauthn/devices"))
+}
+
+// renderUnavailableMFAError explains an unsatisfied method policy without exposing account or flow data.
+func (h *FrontendHandler) renderUnavailableMFAError(ctx *gin.Context) {
+	const reason = "no_eligible_mfa_method"
+
+	if h.deps != nil && h.deps.Logger != nil {
+		h.deps.Logger.Warn("MFA policy cannot be satisfied by enrolled methods", "reason", reason)
+	}
+
+	h.renderFrontendError(ctx, frontendErrorPage{
+		code:    reason,
+		title:   "Authentication method unavailable",
+		message: "No registered authentication method meets this application's requirements. Please contact your administrator.",
+		status:  http.StatusConflict,
+	})
 }

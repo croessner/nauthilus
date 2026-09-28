@@ -196,7 +196,7 @@ func (r *DynamicClientRecord) OIDCClient() *config.OIDCClient {
 
 	revokeRefreshToken := true
 
-	scopes := append([]string(nil), splitScope(r.Scope)...)
+	scopes := splitScope(r.Scope)
 
 	return &config.OIDCClient{
 		Name:                    r.ClientName,

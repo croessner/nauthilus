@@ -71,6 +71,8 @@ const (
 
 // OIDCDynamicClientRegistrationConfig defines the restricted native-client registration profile.
 type OIDCDynamicClientRegistrationConfig struct {
+	RequireMFA           []string                               `mapstructure:"require_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
+	SupportedMFA         []string                               `mapstructure:"supported_mfa" validate:"omitempty,dive,oneof=totp webauthn recovery_codes"`
 	RequiredScopes       []string                               `mapstructure:"required_scopes"`
 	OptionalScopes       []string                               `mapstructure:"optional_scopes"`
 	DefaultScopes        []string                               `mapstructure:"default_scopes"`
@@ -118,7 +120,7 @@ type OIDCDynamicClientRegistrationLifecycle struct {
 
 // String formats dynamic registration configuration without exposing source-key material.
 func (c OIDCDynamicClientRegistrationConfig) String() string {
-	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t SkipConsent:%t DelayedResponse:%t ConsentMode:%s RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
+	return fmt.Sprintf("OIDCDynamicClientRegistrationConfig:{Enabled:%t Profile:%s ProfileVersion:%d RequiredScopes:%v OptionalScopes:%v DefaultScopes:%v ImpliedScopes:%v AccessTokenType:%s IDTokenClaims:%d AccessTokenClaims:%d AllowRefreshTokens:%t SkipConsent:%t DelayedResponse:%t ConsentMode:%s RequireMFA:%v SupportedMFA:%v RequiredMFALevel:%d AccessTokenLifetime:%s RefreshTokenLifetime:%s SourceHMACKey:<hidden> Limits:%+v Lifecycle:%+v}",
 		c.Enabled,
 		c.GetProfile(),
 		c.GetProfileVersion(),
@@ -133,6 +135,8 @@ func (c OIDCDynamicClientRegistrationConfig) String() string {
 		c.SkipConsent,
 		c.DelayedResponse,
 		c.GetConsentMode(),
+		c.RequireMFA,
+		c.SupportedMFA,
 		c.RequiredMFALevel,
 		c.GetAccessTokenLifetime(),
 		c.GetRefreshTokenLifetime(),
@@ -410,10 +414,14 @@ func (f *FileSettings) validateIDPOIDCDynamicClientRegistration() error { //noli
 		}
 	}
 
-	return validateRequiredMFALevel(
+	if err := validateOIDCDCRMFASettings(registration); err != nil {
+		return err
+	}
+
+	return ValidateRequiredMFALevel(
 		oidcDCRPath+"required_mfa_level",
 		registration.RequiredMFALevel,
-		nil,
+		registration.SupportedMFA,
 		f.IDP.GetMFAPolicyLevels(),
 	)
 }
@@ -618,4 +626,31 @@ func oidcDCRHasRS256Signer(oidc *OIDCConfig) bool {
 	return slices.ContainsFunc(oidc.SigningKeys, func(key OIDCKey) bool {
 		return key.Active && key.GetAlgorithm() == oidcSigningAlgRS256
 	})
+}
+
+// validateOIDCDCRMFASettings checks operator-owned enrollment and challenge method lists without copying them.
+func validateOIDCDCRMFASettings(registration OIDCDynamicClientRegistrationConfig) error {
+	for _, list := range []struct {
+		name    string
+		methods []string
+	}{
+		{"require_mfa", registration.RequireMFA},
+		{"supported_mfa", registration.SupportedMFA},
+	} {
+		for index, method := range list.methods {
+			if !isKnownMFAPolicyMethod(method) {
+				return NewValidationProblem(oidcDCRPath+list.name, "contains an unknown MFA method")
+			}
+
+			if slices.Contains(list.methods[:index], method) {
+				return NewValidationProblem(oidcDCRPath+list.name, "must not contain duplicate MFA methods")
+			}
+		}
+	}
+
+	if !validateRequiredWithinSupported(registration.RequireMFA, registration.SupportedMFA) {
+		return NewValidationProblem(oidcDCRPath+"require_mfa", "must be a subset of supported_mfa")
+	}
+
+	return nil
 }

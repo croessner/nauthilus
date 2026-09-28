@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 func TestOIDCDynamicClientRegistrationSecureDefaults(t *testing.T) {
@@ -430,6 +431,45 @@ func TestOIDCDynamicClientRegistrationProfileFlagsDefaultToFalse(t *testing.T) {
 
 			if !strings.Contains(test.enabled.String(), test.output) {
 				t.Fatalf("String() must expose %s", test.name)
+			}
+		})
+	}
+}
+
+func TestDynamicClientRegistrationMFAConfiguration(t *testing.T) {
+	tests := []struct {
+		name      string
+		required  []string
+		supported []string
+		level     int
+		wantErr   string
+	}{
+		{name: "enrollment", required: []string{"totp", "recovery_codes"}, level: 2},
+		{name: "restricted methods", required: []string{"totp"}, supported: []string{"totp"}, level: 2},
+		{name: "unsupported enrollment", required: []string{"totp"}, supported: []string{"webauthn"}, level: 2, wantErr: "require_mfa"},
+		{name: "unreachable assurance", supported: []string{"recovery_codes"}, level: 2, wantErr: "required_mfa_level"},
+		{name: "unknown required", required: []string{"sms"}, wantErr: "require_mfa"},
+		{name: "unknown supported", supported: []string{"sms"}, wantErr: "supported_mfa"},
+		{name: "duplicate required", required: []string{"totp", "totp"}, wantErr: "require_mfa"},
+		{name: "duplicate supported", supported: []string{"totp", "totp"}, wantErr: "supported_mfa"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			settings := validOIDCDynamicClientRegistrationSettings()
+			registration := &settings.IDP.OIDC.DynamicClientRegistration
+
+			registration.RequiredMFALevel = test.level
+			if err := mapstructure.Decode(map[string]any{"require_mfa": test.required, "supported_mfa": test.supported}, registration); err != nil {
+				t.Fatal(err)
+			}
+
+			err := settings.validateIDPOIDCDynamicClientRegistration()
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("validation error = %v, want %s", err, test.wantErr)
 			}
 		})
 	}

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 func TestRuntimePolicyNarrowsStoredDynamicClient(t *testing.T) {
@@ -34,7 +35,7 @@ func TestRuntimePolicyNarrowsStoredDynamicClient(t *testing.T) {
 		AccessTokenLifetime: 5 * time.Minute,
 	}
 
-	client, err := NewRuntimePolicy(policy).Resolve(record)
+	client, err := NewRuntimePolicy(policy, config.DefaultMFAPolicyLevels()).Resolve(record)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -67,7 +68,7 @@ func TestRuntimePolicyAppliesProfileClaimsTokenTypeAndImpliedScopes(t *testing.T
 		AccessTokenClaims:  config.AccessTokenClaims{Mappings: mapping},
 	}
 
-	client, err := NewRuntimePolicy(policy).Resolve(record)
+	client, err := NewRuntimePolicy(policy, config.DefaultMFAPolicyLevels()).Resolve(record)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -121,7 +122,7 @@ func TestRuntimePolicyAppliesProfileClientFlags(t *testing.T) {
 			for _, enabled := range []bool{false, true} {
 				test.set(&policy, enabled)
 
-				client, err := NewRuntimePolicy(policy).Resolve(runtimePolicyTestRecord())
+				client, err := NewRuntimePolicy(policy, config.DefaultMFAPolicyLevels()).Resolve(runtimePolicyTestRecord())
 				if err != nil {
 					t.Fatalf("Resolve() error = %v", err)
 				}
@@ -140,7 +141,7 @@ func TestRuntimePolicyKeepsOpaqueTokensWithoutProfileOverrides(t *testing.T) {
 		RequiredScopes:     []string{"openid"},
 		OptionalScopes:     []string{"offline_access", "mail:imap"},
 		AllowRefreshTokens: true,
-	}).Resolve(runtimePolicyTestRecord())
+	}, config.DefaultMFAPolicyLevels()).Resolve(runtimePolicyTestRecord())
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -154,7 +155,7 @@ func TestRuntimePolicyRejectsUnknownProfileVersion(t *testing.T) {
 	record := runtimePolicyTestRecord()
 	record.ProfileVersion++
 
-	_, err := NewRuntimePolicy(config.OIDCDynamicClientRegistrationConfig{Enabled: true, RequiredScopes: []string{"openid"}}).Resolve(record)
+	_, err := NewRuntimePolicy(config.OIDCDynamicClientRegistrationConfig{Enabled: true, RequiredScopes: []string{"openid"}}, config.DefaultMFAPolicyLevels()).Resolve(record)
 	if !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Resolve() error = %v, want ErrCorrupt", err)
 	}
@@ -179,5 +180,58 @@ func runtimePolicyTestRecord() *DynamicClientRecord {
 		AccessTokenTTL:   15 * time.Minute,
 		RefreshTokenTTL:  30 * 24 * time.Hour,
 		RequiredMFALevel: 1,
+	}
+}
+
+func TestRuntimePolicyAppliesMFAEnrollmentToExistingRegistration(t *testing.T) {
+	policy := config.OIDCDynamicClientRegistrationConfig{Enabled: true, RequiredScopes: []string{"openid"}, RequiredMFALevel: 2}
+	required := []string{"totp", "recovery_codes"}
+	supported := []string{"totp", "webauthn", "recovery_codes"}
+
+	if err := mapstructure.Decode(map[string]any{"require_mfa": required, "supported_mfa": supported}, &policy); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := NewRuntimePolicy(policy, config.DefaultMFAPolicyLevels()).Resolve(runtimePolicyTestRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(client.GetRequireMFA(), required) || !slices.Equal(client.GetSupportedMFA(), supported) {
+		t.Fatalf("existing registration lost enrollment policy: required=%v supported=%v", client.GetRequireMFA(), client.GetSupportedMFA())
+	}
+}
+
+func TestRuntimePolicyChecksStoredMFAMinimumWithCurrentMethodLevels(t *testing.T) {
+	tests := []struct {
+		name    string
+		levels  map[string]int
+		wantErr bool
+	}{
+		{name: "stored level cannot be downgraded", levels: config.DefaultMFAPolicyLevels(), wantErr: true},
+		{name: "operator method level override", levels: map[string]int{"totp": 3}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := runtimePolicyTestRecord()
+			record.RequiredMFALevel = 3
+			policy := config.OIDCDynamicClientRegistrationConfig{
+				Enabled: true, RequiredScopes: []string{"openid"}, RequiredMFALevel: 2,
+				RequireMFA: []string{"totp"}, SupportedMFA: []string{"totp"},
+			}
+
+			client, err := NewRuntimePolicy(policy, test.levels).Resolve(record)
+			if test.wantErr {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("Resolve() error = %v, want unavailable client", err)
+				}
+
+				return
+			}
+
+			if err != nil || client.RequiredMFALevel != 3 {
+				t.Fatalf("stored minimum lost: client=%v err=%v", client, err)
+			}
+		})
 	}
 }

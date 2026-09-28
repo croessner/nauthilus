@@ -2277,3 +2277,25 @@ func assertClientCredentialsGrantTypes(t *testing.T, idpInst *NauthilusIDP) {
 	assert.True(t, acClient.SupportsGrantType("authorization_code"))
 	assert.False(t, acClient.SupportsGrantType("client_credentials"))
 }
+
+func TestResolveDynamicClientPreservesEnrollmentAndGlobalMFALevels(t *testing.T) {
+	const clientID = dcr.ClientIDPrefix + "mfa-enrollment-client"
+
+	registration := config.OIDCDynamicClientRegistrationConfig{
+		Enabled: true, RequiredScopes: []string{definitions.ScopeOpenID},
+		RequireMFA:       []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+		SupportedMFA:     []string{definitions.MFAMethodTOTP, definitions.MFAMethodRecoveryCodes},
+		RequiredMFALevel: 2,
+	}
+	instance, mock, _ := newTestIDPWithMock(t, config.OIDCConfig{Issuer: testIssuer, DynamicClientRegistration: registration})
+	expectDynamicClientRecord(t, mock, clientID, definitions.ScopeOpenID)
+
+	client, err := instance.ResolveClient(t.Context(), clientID)
+	if assert.NoError(t, err) {
+		assert.Equal(t, registration.RequireMFA, client.GetRequireMFA())
+		assert.Equal(t, registration.SupportedMFA, client.GetSupportedMFA())
+		assert.Equal(t, 2, client.GetRequiredMFALevel())
+	}
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}

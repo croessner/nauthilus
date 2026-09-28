@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,6 +186,10 @@ func TestLoginMFASelectUsesCanonicalStepUpTicket(t *testing.T) {
 
 	insufficientWriter := httptest.NewRecorder()
 	router.ServeHTTP(insufficientWriter, insufficientRequest)
+
+	if !strings.Contains(insufficientWriter.Body.String(), "no_eligible_mfa_method") {
+		t.Fatalf("missing actionable MFA error: %s", insufficientWriter.Body.String())
+	}
 
 	if insufficientWriter.Code != http.StatusConflict {
 		t.Fatalf("insufficient canonical MFA select status = %d, want %d",

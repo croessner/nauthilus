@@ -1,4 +1,6 @@
 {
+  "Authentication method unavailable": "Authentication method unavailable",
+  "No registered authentication method meets this application's requirements. Please contact your administrator.": "No registered authentication method meets this application's requirements. Please contact your administrator.",
   "Login": "Login",
   "Username": "Username",
   "2FA Verification": "2FA Verification",

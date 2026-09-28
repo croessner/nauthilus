@@ -96,8 +96,8 @@ func isKnownMFAPolicyMethod(method string) bool {
 	}
 }
 
-// validateRequiredMFALevel ensures a positive required level can be satisfied by the effective policy.
-func validateRequiredMFALevel(path string, requiredLevel int, supportedMFA []string, levels map[string]int) error {
+// ValidateRequiredMFALevel ensures a positive required level can be satisfied by the effective policy.
+func ValidateRequiredMFALevel(path string, requiredLevel int, supportedMFA []string, levels map[string]int) error {
 	if requiredLevel < 0 {
 		return NewValidationProblem(path, "must be >= 0")
 	}
@@ -140,7 +140,7 @@ func (f *FileSettings) validateIDPMFASettings() error {
 			return err
 		}
 
-		if err := validateRequiredMFALevel(
+		if err := ValidateRequiredMFALevel(
 			fmt.Sprintf("identity.oidc.clients[%s].required_mfa_level", client.ClientID),
 			client.RequiredMFALevel,
 			client.SupportedMFA,
@@ -159,7 +159,7 @@ func (f *FileSettings) validateIDPMFASettings() error {
 			return err
 		}
 
-		if err := validateRequiredMFALevel(
+		if err := ValidateRequiredMFALevel(
 			fmt.Sprintf("identity.saml.service_providers[%s].required_mfa_level", sp.EntityID),
 			sp.RequiredMFALevel,
 			sp.SupportedMFA,

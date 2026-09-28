@@ -204,7 +204,7 @@ func (n *NauthilusIDP) ResolveClient(ctx context.Context, clientID string) (*con
 		return nil, err
 	}
 
-	return dcr.NewRuntimePolicy(registration).Resolve(record)
+	return dcr.NewRuntimePolicy(registration, n.deps.Cfg.GetIDP().GetMFAPolicyLevels()).Resolve(record)
 }
 
 // TouchDynamicClient records activity after successful protocol validation.
