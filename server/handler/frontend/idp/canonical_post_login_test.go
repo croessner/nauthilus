@@ -153,12 +153,6 @@ func TestCanonicalPostLoginRejectsSecondPrimaryAuthenticationAfterRotation(t *te
 func TestCanonicalPostLoginFailLatchedStepUpNeverAuthenticatesAndConsumesOnce(t *testing.T) {
 	fixture := newCanonicalPostLoginFixture(t)
 
-	cfg, ok := fixture.handler.deps.Cfg.(*canonicalPostLoginConfig)
-	if !ok {
-		t.Fatal("canonical post-login config has unexpected type")
-	}
-
-	cfg.FileSettings.IDP.OIDC.Clients[0].DelayedResponse = true
 	fixture.handler.canonicalPasswordAuthenticator = func(
 		_ *gin.Context,
 		_ postLoginFlowContext,
@@ -173,6 +167,7 @@ func TestCanonicalPostLoginFailLatchedStepUpNeverAuthenticatesAndConsumesOnce(t 
 				Authority: "canonical-authority", OpaqueToken: "canonical-target-capability",
 			},
 			availableMethods: []string{definitions.MFAMethodTOTP},
+			delayedResponse:  true,
 		}, errors.New("invalid password")
 	}
 

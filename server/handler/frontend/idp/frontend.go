@@ -1033,6 +1033,8 @@ type canonicalPasswordAuthentication struct {
 	backendRef       core.RemoteBackendRef
 	mfaBackendRef    core.RemoteBackendRef
 	availableMethods []string
+	// delayedResponse is the authenticator's per-attempt decision for the delayed failure presentation.
+	delayedResponse bool
 }
 
 type canonicalPasswordAuthenticator func(
@@ -1102,6 +1104,7 @@ func (h *FrontendHandler) authenticateCanonicalPassword(
 		user: result.User, mfaUser: mfaUser,
 		backendRef: result.BackendRef, mfaBackendRef: mfaBackendRef,
 		availableMethods: methods,
+		delayedResponse:  result.DelayedResponse,
 	}, err
 }
 
@@ -1264,9 +1267,10 @@ func (h *FrontendHandler) handleCanonicalPostLoginAuthFailure(
 	sp.RecordError(err)
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "fail").Inc()
 
-	idpInstance := idp.NewNauthilusIDP(h.deps)
+	// The failure check is a defensive guard for injected authenticators; the IdP authenticator
+	// already reports delayedResponse only for eligible failures.
 	if !idpAuthFailureAllowsDelayedResponse(err) ||
-		!idpInstance.IsDelayedResponse(ctx.Request.Context(), flowContext.oidcCID, flowContext.samlEntityID) ||
+		!authentication.delayedResponse ||
 		authentication.user == nil {
 		h.renderDetailedPostLoginFailure(ctx, flowContext, err)
 

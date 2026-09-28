@@ -243,19 +243,7 @@ func (n *NauthilusIDP) FindSAMLServiceProvider(entityID string) (*config.SAML2Se
 // OIDC clients are resolved authoritatively so dynamic clients inherit the registration profile setting;
 // an unresolvable client keeps the immediate failure presentation.
 func (n *NauthilusIDP) IsDelayedResponse(ctx context.Context, clientID string, samlEntityID string) bool {
-	if clientID != "" {
-		if client, err := n.ResolveClient(ctx, clientID); err == nil {
-			return client.IsDelayedResponse()
-		}
-	}
-
-	if samlEntityID != "" {
-		if sp, ok := n.FindSAMLServiceProvider(samlEntityID); ok {
-			return sp.IsDelayedResponse()
-		}
-	}
-
-	return false
+	return n.newPasswordProtocolBinding(ctx, clientID, samlEntityID).delayedResponse()
 }
 
 // ValidateRedirectURI checks if the given redirect URI is valid for the client.
@@ -1175,6 +1163,8 @@ type PasswordAuthentication struct {
 	MFAUser       *backend.User
 	BackendRef    core.RemoteBackendRef
 	MFABackendRef core.RemoteBackendRef
+	// DelayedResponse reports that this failed attempt must use the delayed login-failure presentation.
+	DelayedResponse bool
 }
 
 // AuthenticateWithBackend authenticates without reading or writing browser session state.
@@ -1215,10 +1205,12 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 		err = authFailureFromOutcome(outcome)
 	}
 
-	if err != nil && n.IsDelayedResponse(ctx.Request.Context(), oidcCID, samlEntityID) &&
-		delayedPasswordFailureEligible(err) {
+	binding := n.newPasswordProtocolBinding(ctx.Request.Context(), oidcCID, samlEntityID)
+	delayed := err != nil && delayedPasswordFailureEligible(err) && binding.delayedResponse()
+
+	if delayed {
 		if hydrated, lookupErr := n.lookupPasswordIdentity(
-			ctx, username, oidcCID, samlEntityID, core.AuthnEntryIDPDelayedIdentity, typedContext,
+			ctx, username, binding, core.AuthnEntryIDPDelayedIdentity, typedContext,
 		); lookupErr == nil {
 			result = hydrated
 		} else if n.deps.Logger != nil {
@@ -1231,7 +1223,7 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 
 	if result.User != nil {
 		bound, bindErr := n.bindPasswordMFAIdentity(
-			ctx, username, oidcCID, samlEntityID, typedContext, result,
+			ctx, username, binding, typedContext, result,
 		)
 		if bindErr != nil {
 			if err == nil {
@@ -1248,6 +1240,8 @@ func (n *NauthilusIDP) AuthenticateWithBackend(
 			result = bound
 		}
 	}
+
+	result.DelayedResponse = delayed
 
 	return result, err
 }
@@ -1279,8 +1273,7 @@ func delayedPasswordFailureEligible(err error) bool {
 func (n *NauthilusIDP) bindPasswordMFAIdentity(
 	ctx *gin.Context,
 	username string,
-	oidcCID string,
-	samlEntityID string,
+	binding *passwordProtocolBinding,
 	protocolContext core.IDPRequestContext,
 	result PasswordAuthentication,
 ) (PasswordAuthentication, error) {
@@ -1308,7 +1301,7 @@ func (n *NauthilusIDP) bindPasswordMFAIdentity(
 	}
 
 	factor, err := n.lookupPasswordIdentity(
-		ctx, master, oidcCID, samlEntityID, core.AuthnEntryIDPMasterFactor, protocolContext,
+		ctx, master, binding, core.AuthnEntryIDPMasterFactor, protocolContext,
 	)
 	if err != nil {
 		return PasswordAuthentication{}, err
@@ -1325,11 +1318,11 @@ func (n *NauthilusIDP) bindPasswordMFAIdentity(
 }
 
 // lookupPasswordIdentity resolves one explicit account without password verification or browser state.
+// The binding supplies the peer's attribute request so repeated lookups share one client resolution.
 func (n *NauthilusIDP) lookupPasswordIdentity(
 	ctx *gin.Context,
 	username string,
-	oidcCID string,
-	samlEntityID string,
+	binding *passwordProtocolBinding,
 	entryPoint core.AuthnEntryPoint,
 	protocolContext core.IDPRequestContext,
 ) (PasswordAuthentication, error) {
@@ -1337,7 +1330,7 @@ func (n *NauthilusIDP) lookupPasswordIdentity(
 		return PasswordAuthentication{}, fmt.Errorf("password identity lookup unavailable")
 	}
 
-	attributeRequest, err := n.delayedPasswordIdentityAttributes(ctx.Request.Context(), oidcCID, samlEntityID, protocolContext)
+	attributeRequest, err := binding.identityAttributes(protocolContext)
 	if err != nil {
 		return PasswordAuthentication{}, err
 	}
@@ -1349,8 +1342,8 @@ func (n *NauthilusIDP) lookupPasswordIdentity(
 		attributeRequest: attributeRequest,
 		protocolContext:  typedContext,
 		username:         username,
-		oidcClientID:     oidcCID,
-		samlEntityID:     samlEntityID,
+		oidcClientID:     binding.oidcClientID,
+		samlEntityID:     binding.samlEntityID,
 		entryPoint:       entryPoint,
 	})
 	if err != nil {
@@ -1362,37 +1355,6 @@ func (n *NauthilusIDP) lookupPasswordIdentity(
 	}
 
 	return passwordAuthenticationFromOutcome(outcome)
-}
-
-func (n *NauthilusIDP) delayedPasswordIdentityAttributes(
-	ctx context.Context,
-	oidcCID string,
-	samlEntityID string,
-	protocolContext core.IDPRequestContext,
-) (*core.IdentityAttributeRequest, error) {
-	if oidcCID != "" {
-		client, err := n.ResolveClient(ctx, oidcCID)
-		if err != nil {
-			return nil, err
-		}
-
-		effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
-
-		return core.NewOIDCIdentityAttributeRequest(
-			client, protocolContext.RequestedScopes, effectiveScopes,
-		), nil
-	}
-
-	if samlEntityID != "" {
-		serviceProvider, ok := n.FindSAMLServiceProvider(samlEntityID)
-		if !ok {
-			return nil, fmt.Errorf("delayed password SAML service provider not found")
-		}
-
-		return core.NewSAMLIdentityAttributeRequest(serviceProvider), nil
-	}
-
-	return nil, fmt.Errorf("delayed password protocol binding is missing")
 }
 
 // GetUserByUsernameForOIDCClaims retrieves user data needed for OIDC claim materialization.

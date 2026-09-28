@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/idp/dcr"
 	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/gin-gonic/gin"
@@ -200,6 +201,57 @@ func TestNauthilusIDPDelayedHydrationAndMasterFactorUseDistinctLookupEntries(t *
 	assertDelayedMasterAuthentication(t, result, targetRef, masterRef)
 }
 
+func TestNauthilusIDPDelayedDynamicClientResolvesOnce(t *testing.T) {
+	const clientID = dcr.ClientIDPrefix + "delayed-master-client"
+
+	application, targetRef, masterRef := newDelayedMasterRecordingApplication()
+	idp, mock := newApplicationBoundaryDynamicIDP(t, application)
+	ctx := newApplicationBoundaryContext(t, http.MethodPost, "/oidc/authorize")
+
+	expectDynamicClientRecord(t, mock, clientID, definitions.ScopeOpenID)
+
+	result, err := idp.AuthenticateWithBackend(
+		ctx,
+		"alice@example.test*admin@example.test",
+		applicationBoundaryPassword,
+		clientID,
+		"",
+		core.IDPRequestContext{GrantType: definitions.OIDCFlowAuthorizationCode},
+	)
+
+	assertDelayedApplicationFailure(t, err)
+	assertIDPApplicationCalls(t, application, 1, 2)
+	assertDelayedMasterAuthentication(t, result, targetRef, masterRef)
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("dynamic client must be resolved exactly once per password attempt: %v", err)
+	}
+}
+
+// newApplicationBoundaryDynamicIDP serves the master-user fixture through a delayed dynamic registration profile.
+func newApplicationBoundaryDynamicIDP(
+	t *testing.T,
+	application core.AuthApplicationService,
+) (*NauthilusIDP, redismock.ClientMock) {
+	t.Helper()
+
+	cfg := applicationBoundaryConfig(true)
+	cfg.Server.Redis.Prefix = testRedisPrefix
+	cfg.IDP.OIDC.DynamicClientRegistration = config.OIDCDynamicClientRegistrationConfig{
+		Enabled:         true,
+		RequiredScopes:  []string{definitions.ScopeOpenID},
+		DelayedResponse: true,
+	}
+
+	db, mock := redismock.NewClientMock()
+	idp := NewNauthilusIDP(&deps.Deps{
+		Cfg: cfg, Env: config.NewTestEnvironmentConfig(), Logger: slog.Default(),
+		Redis: rediscli.NewTestClient(db), AuthApplication: application,
+	})
+
+	return idp, mock
+}
+
 // newDelayedMasterRecordingApplication builds the ordered authentication and identity outcomes for delayed login.
 func newDelayedMasterRecordingApplication() (*recordingIDPAuthApplication, core.RemoteBackendRef, core.RemoteBackendRef) {
 	targetRef := applicationBoundaryBackendRef("target")
@@ -251,6 +303,10 @@ func assertDelayedMasterAuthentication(
 	if result.User == nil || result.User.Name != "alice@example.test" || result.BackendRef != targetRef ||
 		result.MFAUser == nil || result.MFAUser.Name != "admin@example.test" || result.MFABackendRef != masterRef {
 		t.Fatalf("delayed master-user result = %#v, want detached target and factor identities", result)
+	}
+
+	if !result.DelayedResponse {
+		t.Fatal("delayed master-user result must report the delayed login-failure presentation")
 	}
 }
 
