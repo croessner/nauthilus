@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/pluginutil"
 )
 
 const (
@@ -172,7 +174,7 @@ type rawPrivacyOverrideConfig struct {
 
 // parsePrivacyConfig validates the optional privacy-intelligence subtree.
 func parsePrivacyConfig(raw rawPrivacyConfig, parentLookupTimeout time.Duration) (privacyConfig, error) {
-	lookupTimeout, err := parsePositiveDefaultedDuration("privacy_intelligence.lookup_timeout", raw.LookupTimeout, defaultPrivacyLookupTimeout)
+	lookupTimeout, err := pluginutil.ParsePositiveDefaultedDuration("privacy_intelligence.lookup_timeout", raw.LookupTimeout, defaultPrivacyLookupTimeout)
 	if err != nil {
 		return privacyConfig{}, err
 	}
@@ -256,22 +258,22 @@ func parsePrivacySources(raw []rawPrivacySourceConfig, refresh privacyRefreshCon
 
 // parsePrivacyRefreshConfig applies shared scheduling and cache defaults.
 func parsePrivacyRefreshConfig(raw rawPrivacyRefreshConfig) (privacyRefreshConfig, error) {
-	interval, err := parsePositiveDefaultedDuration("privacy_intelligence.refresh.default_refresh_interval", raw.DefaultRefreshInterval, defaultPrivacyRefreshInterval)
+	interval, err := pluginutil.ParsePositiveDefaultedDuration("privacy_intelligence.refresh.default_refresh_interval", raw.DefaultRefreshInterval, defaultPrivacyRefreshInterval)
 	if err != nil {
 		return privacyRefreshConfig{}, err
 	}
 
-	minimum, err := parsePositiveDefaultedDuration("privacy_intelligence.refresh.default_min_refresh_interval", raw.DefaultMinRefreshInterval, defaultPrivacyMinRefreshInterval)
+	minimum, err := pluginutil.ParsePositiveDefaultedDuration("privacy_intelligence.refresh.default_min_refresh_interval", raw.DefaultMinRefreshInterval, defaultPrivacyMinRefreshInterval)
 	if err != nil {
 		return privacyRefreshConfig{}, err
 	}
 
-	backoff, err := parsePositiveDefaultedDuration("privacy_intelligence.refresh.default_max_refresh_backoff", raw.DefaultMaxRefreshBackoff, defaultPrivacyMaxRefreshBackoff)
+	backoff, err := pluginutil.ParsePositiveDefaultedDuration("privacy_intelligence.refresh.default_max_refresh_backoff", raw.DefaultMaxRefreshBackoff, defaultPrivacyMaxRefreshBackoff)
 	if err != nil {
 		return privacyRefreshConfig{}, err
 	}
 
-	jitter, err := parseOptionalDuration("privacy_intelligence.refresh.startup_jitter", raw.StartupJitter)
+	jitter, err := pluginutil.ParseDefaultedDuration("privacy_intelligence.refresh.startup_jitter", raw.StartupJitter, 0)
 	if err != nil {
 		return privacyRefreshConfig{}, err
 	}
@@ -478,12 +480,12 @@ func applyPrivacySourceSchedule(source *privacySourceConfig, raw rawPrivacySourc
 		minimumFallback = minimumTorRefreshInterval
 	}
 
-	interval, err := parsePositiveDefaultedDuration("refresh_interval", raw.RefreshInterval, intervalFallback)
+	interval, err := pluginutil.ParsePositiveDefaultedDuration("refresh_interval", raw.RefreshInterval, intervalFallback)
 	if err != nil {
 		return err
 	}
 
-	minimum, err := parsePositiveDefaultedDuration("min_refresh_interval", raw.MinRefreshInterval, minimumFallback)
+	minimum, err := pluginutil.ParsePositiveDefaultedDuration("min_refresh_interval", raw.MinRefreshInterval, minimumFallback)
 	if err != nil {
 		return err
 	}
@@ -492,12 +494,12 @@ func applyPrivacySourceSchedule(source *privacySourceConfig, raw rawPrivacySourc
 		return fmt.Errorf("refresh interval must respect the %s minimum", minimumFallback)
 	}
 
-	backoff, err := parsePositiveDefaultedDuration("max_refresh_backoff", raw.MaxRefreshBackoff, refresh.DefaultMaxRefreshBackoff)
+	backoff, err := pluginutil.ParsePositiveDefaultedDuration("max_refresh_backoff", raw.MaxRefreshBackoff, refresh.DefaultMaxRefreshBackoff)
 	if err != nil || backoff < interval {
 		return fmt.Errorf("max_refresh_backoff must be at least refresh_interval")
 	}
 
-	jitter, err := parseOptionalDuration("refresh_jitter", raw.RefreshJitter)
+	jitter, err := pluginutil.ParseDefaultedDuration("refresh_jitter", raw.RefreshJitter, 0)
 	if err != nil {
 		return err
 	}
@@ -510,7 +512,7 @@ func applyPrivacySourceSchedule(source *privacySourceConfig, raw rawPrivacySourc
 		return fmt.Errorf("refresh_jitter must be smaller than refresh_interval")
 	}
 
-	maxAge, err := parsePositiveDefaultedDuration("max_age", raw.MaxAge, defaultPrivacySourceMaxAge)
+	maxAge, err := pluginutil.ParsePositiveDefaultedDuration("max_age", raw.MaxAge, defaultPrivacySourceMaxAge)
 	if err != nil {
 		return err
 	}

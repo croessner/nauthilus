@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/netip"
 	"time"
+
+	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/pluginutil"
 )
 
 const (
@@ -36,12 +38,12 @@ type databaseFreshness struct{ maxAge, maxStaleAge time.Duration }
 
 // compileDatabaseFreshness bounds acceptable source age independently of reload time.
 func compileDatabaseFreshness(raw rawDatabaseFreshness) (databaseFreshness, error) {
-	maxAge, err := parsePositiveDefaultedDuration("freshness.max_age", raw.MaxAge, defaultDatabaseMaxAge)
+	maxAge, err := pluginutil.ParsePositiveDefaultedDuration("freshness.max_age", raw.MaxAge, defaultDatabaseMaxAge)
 	if err != nil {
 		return databaseFreshness{}, err
 	}
 
-	maxStale, err := parsePositiveDefaultedDuration("freshness.max_stale_age", raw.MaxStaleAge, defaultDatabaseMaxStaleAge)
+	maxStale, err := pluginutil.ParsePositiveDefaultedDuration("freshness.max_stale_age", raw.MaxStaleAge, defaultDatabaseMaxStaleAge)
 	if err != nil {
 		return databaseFreshness{}, err
 	}

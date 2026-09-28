@@ -35,7 +35,6 @@ const (
 	databaseFormatAuto                = "auto"
 	databaseFormatJSON                = "json"
 	databaseFormatMMDB                = "mmdb"
-	sourceSchemeHTTP                  = "http"
 	sourceSchemeHTTPS                 = "https"
 )
 
@@ -104,6 +103,16 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		}
 	}
 
+	config, err := parseDatabaseSettings(raw)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
+	return withEnrichmentSettings(raw, config)
+}
+
+// parseDatabaseSettings validates the database paths and formats, the refresh interval, and the lookup timeout.
+func parseDatabaseSettings(raw rawModuleConfig) (moduleConfig, error) {
 	databasePath, err := parseRequiredDatabasePath("database_path", raw.DatabasePath)
 	if err != nil {
 		return moduleConfig{}, err
@@ -114,7 +123,7 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
-	refreshInterval, err := parseOptionalDuration("refresh_interval", raw.RefreshInterval)
+	refreshInterval, err := pluginutil.ParseDefaultedDuration("refresh_interval", raw.RefreshInterval, 0)
 	if err != nil {
 		return moduleConfig{}, err
 	}
@@ -134,6 +143,18 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	return moduleConfig{
+		ASNDatabasePath:   asnDatabasePath,
+		DatabasePath:      databasePath,
+		ASNDatabaseFormat: asnDatabaseFormat,
+		DatabaseFormat:    databaseFormat,
+		RefreshInterval:   refreshInterval,
+		LookupTimeout:     lookupTimeout,
+	}, nil
+}
+
+// withEnrichmentSettings adds the ASN sources, privacy intelligence, freshness, and decision bindings to config.
+func withEnrichmentSettings(raw rawModuleConfig, config moduleConfig) (moduleConfig, error) {
 	asnRegistry, err := parseASNRegistryConfig(raw.ASNRegistry)
 	if err != nil {
 		return moduleConfig{}, err
@@ -144,7 +165,7 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
-	privacy, err := parsePrivacyConfig(raw.Privacy, lookupTimeout)
+	privacy, err := parsePrivacyConfig(raw.Privacy, config.LookupTimeout)
 	if err != nil {
 		return moduleConfig{}, err
 	}
@@ -159,19 +180,13 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
-	return moduleConfig{
-		Freshness:         freshness,
-		DecisionBindings:  bindings,
-		Privacy:           privacy,
-		ASNRegistry:       asnRegistry,
-		ASNLookup:         asnLookup,
-		ASNDatabasePath:   asnDatabasePath,
-		DatabasePath:      databasePath,
-		ASNDatabaseFormat: asnDatabaseFormat,
-		DatabaseFormat:    databaseFormat,
-		RefreshInterval:   refreshInterval,
-		LookupTimeout:     lookupTimeout,
-	}, nil
+	config.ASNRegistry = asnRegistry
+	config.ASNLookup = asnLookup
+	config.Privacy = privacy
+	config.Freshness = freshness
+	config.DecisionBindings = bindings
+
+	return config, nil
 }
 
 // parseRequiredDatabasePath validates a mandatory absolute database path.
@@ -307,17 +322,21 @@ func parseASNSourceConfig(
 	rawSourceURLs []string,
 	defaultSourceURLs func() []string,
 ) (asnSourceConfig, error) {
-	refreshInterval, err := parseDefaultedDuration(prefix+".refresh_interval", refreshIntervalValue, defaultRefreshInterval)
+	refreshInterval, err := parseZeroDefaultedDuration(prefix+".refresh_interval", refreshIntervalValue, defaultRefreshInterval)
 	if err != nil {
 		return asnSourceConfig{}, err
 	}
 
-	timeout, err := parsePositiveDefaultedDuration(prefix+".timeout", timeoutValue, defaultTimeout)
+	timeout, err := pluginutil.ParsePositiveDefaultedDuration(prefix+".timeout", timeoutValue, defaultTimeout)
 	if err != nil {
 		return asnSourceConfig{}, err
 	}
 
-	sourceURLs := append([]string{}, rawSourceURLs...)
+	sourceURLs := make([]string, 0, len(rawSourceURLs))
+	for _, sourceURL := range rawSourceURLs {
+		sourceURLs = append(sourceURLs, strings.TrimSpace(sourceURL))
+	}
+
 	if enabled && len(sourceURLs) == 0 {
 		sourceURLs = defaultSourceURLs()
 	}
@@ -336,9 +355,11 @@ func parseASNSourceConfig(
 	}, nil
 }
 
-// parseDefaultedDuration parses a non-negative duration with a default.
-func parseDefaultedDuration(name string, value string, fallback time.Duration) (time.Duration, error) {
-	duration, err := parseOptionalDuration(name, value)
+// parseZeroDefaultedDuration parses a non-negative duration and treats an empty or zero value as the default.
+//
+// Unlike pluginutil.ParseDefaultedDuration, an explicit zero selects the default here.
+func parseZeroDefaultedDuration(name string, value string, fallback time.Duration) (time.Duration, error) {
+	duration, err := pluginutil.ParseDefaultedDuration(name, value, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -350,12 +371,7 @@ func parseDefaultedDuration(name string, value string, fallback time.Duration) (
 	return duration, nil
 }
 
-// parsePositiveDefaultedDuration parses a positive duration with a default.
-func parsePositiveDefaultedDuration(name string, value string, fallback time.Duration) (time.Duration, error) {
-	return pluginutil.ParsePositiveDefaultedDuration(name, value, fallback)
-}
-
-// validateHTTPSourceURL checks that fetch sources use HTTP(S).
+// validateHTTPSourceURL checks that the fetch source named name is a non-empty HTTP(S) URL.
 func validateHTTPSourceURL(name string, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%s must not be empty", name)
@@ -383,11 +399,6 @@ func defaultASNRegistrySourceURLs() []string {
 		"https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest",
 		"https://ftp.ripe.net/ripe/stats/delegated-ripencc-extended-latest",
 	}
-}
-
-// parseOptionalDuration parses a zero-or-positive optional duration.
-func parseOptionalDuration(name string, value string) (time.Duration, error) {
-	return pluginutil.ParseDefaultedDuration(name, value, 0)
 }
 
 // parseLookupTimeout parses the request-time lookup timeout.

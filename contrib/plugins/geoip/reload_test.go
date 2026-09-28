@@ -218,3 +218,21 @@ func TestConfigErrorsDoNotEchoRawValues(t *testing.T) {
 		})
 	}
 }
+
+// TestSourceURLsAreStoredTrimmed reproduces a source URL that passed validation only after
+// trimming but was stored untrimmed, so every fetch failed on the leading whitespace.
+func TestSourceURLsAreStoredTrimmed(t *testing.T) {
+	const sourceURL = "https://routing.example.test/pfx2as"
+
+	module := testModule(testDatabasePath(t, "geoip.json"))
+	module.Config["asn_lookup"] = map[string]any{"enabled": true, "source_urls": []any{"  " + sourceURL + " "}}
+
+	config, err := decodeModuleConfig(pluginregistry.NewConfigView(module.Config))
+	if err != nil {
+		t.Fatalf("decodeModuleConfig() error = %v", err)
+	}
+
+	if got := config.ASNLookup.SourceURLs; len(got) != 1 || got[0] != sourceURL {
+		t.Fatalf("source URLs = %q, want the trimmed URL", got)
+	}
+}
