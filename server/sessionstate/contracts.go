@@ -198,7 +198,6 @@ type OIDCFlow struct {
 	CodeChallengeMethod  string
 	ConsentChallenge     string
 	ConsentDecision      string
-	DelayedResponse      bool
 	Authenticated        bool
 	AssuranceSatisfied   bool
 	Issuable             bool
@@ -227,7 +226,6 @@ type SAMLFlow struct {
 	OriginalURL        string
 	ResumeTarget       string
 	Logout             bool
-	DelayedResponse    bool
 	Authenticated      bool
 	EnrollmentComplete bool
 	AssuranceSatisfied bool
