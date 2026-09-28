@@ -256,3 +256,17 @@ func canonicalHTTPCookie(name string, value string, maxAge int, secure bool) *ht
 		Secure: secure, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	}
 }
+
+// RestartLogin replaces browser SSO and its pending operations with an anonymous session.
+// It leaves application tokens untouched and publishes no replacement if revocation fails.
+func (s *CanonicalSession) RestartLogin(ctx context.Context, writer http.ResponseWriter) (*CanonicalSession, error) {
+	if s == nil || s.runtime == nil {
+		return nil, ErrEnvelopeConfiguration
+	}
+
+	if err := s.Revoke(ctx, writer); err != nil {
+		return nil, err
+	}
+
+	return s.runtime.Create(ctx, writer, false)
+}

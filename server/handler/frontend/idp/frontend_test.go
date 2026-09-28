@@ -614,15 +614,11 @@ func TestIDPUISubmitDisableDefersNativeFormHandling(t *testing.T) {
 	assert.Contains(t, script, "deferNativeFormSubmitDisable(form, submitter);")
 }
 
-func TestIDPUIFollowsSafeHtmxRedirectAfterSuccessfulMutation(t *testing.T) {
+// TestIDPUILeavesRedirectOwnershipToHTMX prevents duplicate enrollment navigation.
+func TestIDPUILeavesRedirectOwnershipToHTMX(t *testing.T) {
 	script := loadIDPUIScript(t)
-
-	assert.Contains(t, script, "function followSafeHtmxRedirect(event)")
-	assert.Contains(t, script, "xhr.getResponseHeader('HX-Redirect')")
-	assert.Contains(t, script, "function isSafeHtmxRedirect(redirect)")
-	assert.Contains(t, script, "new URL(redirect, window.location.href).origin === window.location.origin")
-	assert.Contains(t, script, "window.location.assign(redirect)")
-	assert.Contains(t, script, "followSafeHtmxRedirect(evt);")
+	assert.NotContains(t, script, "getResponseHeader('HX-Redirect')")
+	assert.Contains(t, script, "restoreAutoDisabledControls(elt)")
 }
 
 func TestIDPUIWebAuthnPreservesCredentialMetadata(t *testing.T) {

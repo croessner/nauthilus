@@ -34,6 +34,7 @@ func TestConsentRequirementWithoutGrant(t *testing.T) {
 		{name: "dynamic client requires consent by default", client: &config.OIDCClient{Dynamic: true}, wantRequired: true, wantDecided: true},
 		{name: "dynamic client with profile skip_consent", client: &config.OIDCClient{Dynamic: true, SkipConsent: true}, wantDecided: true},
 		{name: "prompt consent overrides dynamic skip_consent", client: &config.OIDCClient{Dynamic: true, SkipConsent: true}, prompt: "consent", wantRequired: true, wantDecided: true},
+		{name: "combined consent prompt", client: &config.OIDCClient{SkipConsent: true}, prompt: "select_account consent", wantRequired: true, wantDecided: true},
 		{name: "static skip_consent", client: &config.OIDCClient{SkipConsent: true}, wantDecided: true},
 		{name: "static client consults remembered grants", client: &config.OIDCClient{}},
 	}

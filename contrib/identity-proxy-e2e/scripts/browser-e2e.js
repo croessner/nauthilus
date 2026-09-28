@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+require('./idp-redirect-test');
+
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {execFileSync} = require('node:child_process');
@@ -130,7 +132,31 @@ async function runAuthorizationCodeFlow(browser) {
   assert.ok(token.access_token, 'authorization-code flow returned an access token');
   assert.ok(token.id_token, 'authorization-code flow returned an ID token');
   console.log('ok oidc-authorization-code-login');
+  await assertExplicitAccountSelection(page, context);
   await context.close();
+}
+
+// assertExplicitAccountSelection covers SSO replacement, editable hint, consent, and final callback.
+async function assertExplicitAccountSelection(page, context) {
+  const before = (await context.cookies()).find((cookie) => cookie.name === secureDataCookieName);
+  assert.ok(before, 'initial login must establish browser SSO');
+  assert.equal(before.expires, -1, 'unchecked Remember me must produce a session cookie');
+  const callback = await withCallbackServer('explicit account selection', async (redirectURI, callbackPromise) => {
+    await page.goto(buildAuthorizeURL(edgeA, browserClient.id, redirectURI, 'openid profile', {
+      prompt: 'select_account consent', login_hint: 'another-user@example.test',
+    }));
+    await page.waitForSelector('input[name="username"]');
+    assert.equal(await page.inputValue('input[name="username"]'), 'another-user@example.test');
+    const after = (await context.cookies()).find((cookie) => cookie.name === secureDataCookieName);
+    assert.notEqual(after.value, before.value, 'explicit account selection must replace old SSO');
+    await submitPasswordLogin(page, username, password);
+    await page.waitForURL(/\/oidc\/consent/, {timeout: 15000});
+    await page.click('button[name="submit"][value="allow"]');
+    return callbackPromise;
+  });
+  const token = await exchangeCode(edgeAAPI, browserClient, callback.code, callback.redirectURI);
+  assert.ok(token.access_token, 'account selection must finish without a repeated login prompt');
+  console.log('ok oidc-explicit-account-selection-session-hint-consent-callback');
 }
 
 async function runNegativeIDPChecks(browser) {

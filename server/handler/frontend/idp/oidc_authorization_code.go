@@ -56,7 +56,7 @@ func readOIDCAuthorizeRequest(ctx *gin.Context) (oidcAuthorizeRequest, bool) {
 		state:         ctx.Query(oidcParamState),
 		nonce:         ctx.Query(oidcParamNonce),
 		responseType:  ctx.Query(oidcParamResponseType),
-		prompt:        ctx.Query(oidcParamPrompt),
+		prompt:        strings.Join(strings.Fields(ctx.Query(oidcParamPrompt)), " "),
 		codeChallenge: ctx.Query(oidcParamCodeChallenge),
 	}
 
@@ -85,6 +85,10 @@ func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request *oi
 		ctx.String(http.StatusBadRequest, "Invalid redirect_uri")
 
 		return nil, false
+	}
+
+	if hasOIDCPrompt(request.prompt, oidcClientAuthMethodNone) && len(strings.Fields(request.prompt)) != 1 {
+		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, "prompt=none cannot be combined with other values")
 	}
 
 	if request.responseType != oidcResponseTypeCode {
@@ -136,6 +140,7 @@ func redirectOIDCAuthorizeError(ctx *gin.Context, redirectURI string, state stri
 
 	query := target.Query()
 	query.Set(definitions.LogKeyError, errorCode)
+
 	if state != "" {
 		query.Set(oidcParamState, state)
 	}
@@ -402,4 +407,20 @@ func isValidCodeVerifier(verifier string) bool {
 	}
 
 	return true
+}
+
+// hasOIDCPrompt matches one value in the OIDC space-separated prompt set.
+func hasOIDCPrompt(prompt, value string) bool {
+	for _, item := range strings.Fields(prompt) {
+		if item == value {
+			return true
+		}
+	}
+
+	return false
+}
+
+// requestsFreshOIDCLogin requires explicit credentials for login or account selection.
+func requestsFreshOIDCLogin(prompt string) bool {
+	return hasOIDCPrompt(prompt, "login") || hasOIDCPrompt(prompt, "select_account")
 }

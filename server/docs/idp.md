@@ -2221,3 +2221,31 @@ server/handler/frontend/idp/
 ├── oidc.go                    # Sole OIDC registrar plus cookie-free backchannels and logout fanout
 └── saml.go                    # Sole SAML registrar, metadata, and canonical SLO
 ```
+
+
+### Browser SSO, explicit account selection, and enrollment navigation
+
+Without Remember me, the browser envelope is a session cookie (no Max-Age).
+The server still maintains SSO state across protocol steps and browser tabs:
+30 minutes idle, at most seven days without a new primary authentication.
+Closing one tab does not end this session; browser session restoration may also
+retain session cookies. Remember me adds cookie persistence for the configured
+lifetime, capped at 30 days. Application tokens have independent lifetimes.
+
+A fresh authorization request with `prompt=login` or `prompt=select_account`
+starts an anonymous browser session and invalidates the previous browser SSO
+anchor and pending operations. Existing application tokens are not revoked.
+This single-account implementation presents credentials again for account
+selection; pending login tabs from the previous browser session must restart.
+The already bound continuation ticket prevents repeatedly restarting the same
+successful login. A `login_hint` from the bound authorization request only
+prefills the editable username; it never selects or authenticates an identity.
+Prompt values are space-separated: `select_account consent` requests both
+credentials/account choice and consent. Combining `none` with other values is
+rejected before changing the session.
+
+HTMX alone follows `HX-Redirect` after enrollment. The shared UI must not replay
+that redirect, because navigating twice can interrupt or consume a single-use
+recovery-code page. The deterministic JavaScript regression test runs as part
+of the browser release gate. It reproduces duplicate navigation, not a specific
+historic browser/network timing sequence.

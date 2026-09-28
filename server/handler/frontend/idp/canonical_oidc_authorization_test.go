@@ -682,3 +682,53 @@ func assertCanonicalOIDCAuthorizationStart(
 		t.Fatalf("canonical OIDC login target is invalid: %v", err)
 	}
 }
+
+// TestCanonicalAccountSelectionRequestsCredentials keeps a fresh account choice away from old-user MFA.
+func TestCanonicalAccountSelectionRequestsCredentials(t *testing.T) {
+	for _, prompt := range []string{"select_account consent", "login", "login consent"} {
+		t.Run(prompt, func(t *testing.T) {
+			runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
+			authenticateCanonicalFixture(t, runtime, browserCookie)
+
+			client := latchedConsentOIDCClient()
+			handler, _ := newOIDCCallbackRedirectTestHandlerWithClient(t, client)
+			router := gin.New()
+			router.GET("/oidc/authorize", cookie.CanonicalMiddleware(runtime, cookie.CanonicalProtocolEntry), handler.AuthorizeCanonical)
+
+			query := url.Values{oidcParamClientID: {client.ClientID}, oidcParamRedirectURI: {client.RedirectURIs[0]}, oidcParamScope: {definitions.ScopeOpenID}, oidcParamState: {"new-account"}, oidcParamResponseType: {oidcResponseTypeCode}, oidcParamPrompt: {prompt}, "login_hint": {"bob"}}
+			request := httptest.NewRequest(http.MethodGet, "/oidc/authorize?"+query.Encode(), nil)
+			request.AddCookie(browserCookie)
+
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			target, err := url.Parse(response.Header().Get("Location"))
+			if err != nil || response.Code != http.StatusFound || target.Path != frontendLoginPath || target.Query().Get("flow") == "" {
+				t.Fatalf("new account did not reach credentials: status=%d location=%q", response.Code, response.Header().Get("Location"))
+			}
+
+			for _, updated := range response.Result().Cookies() {
+				if updated.Name == browserCookie.Name && updated.MaxAge >= 0 {
+					browserCookie = updated
+				}
+			}
+
+			session := openCanonicalFixture(t, runtime, browserCookie)
+			if _, authenticated := session.Identity(); authenticated {
+				t.Fatal("old identity survived account selection")
+			}
+
+			_, state, err := loadCanonicalOIDCAuthorization(context.Background(), session, target.Query().Get("flow"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			frontend := &FrontendHandler{}
+
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			if frontend.resumeCanonicalExistingLoginSession(ctx, session, state) {
+				t.Fatal("new account reused old identity")
+			}
+		})
+	}
+}

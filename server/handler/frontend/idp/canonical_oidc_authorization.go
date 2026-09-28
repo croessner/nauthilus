@@ -91,6 +91,18 @@ func (h *OIDCHandler) AuthorizeCanonical(ctx *gin.Context) {
 		return
 	}
 
+	if requestsFreshOIDCLogin(request.prompt) && !ctx.Request.URL.Query().Has(flowdomain.FlowTicketParameter) {
+		var err error
+
+		session, err = session.RestartLogin(ctx.Request.Context(), ctx.Writer)
+		if err != nil {
+			ctx.AbortWithStatus(http.StatusServiceUnavailable)
+			return
+		}
+
+		cookie.SetCanonicalSession(ctx, session)
+	}
+
 	identity, authenticated := session.Identity()
 	if !authenticated {
 		if request.prompt == oidcClientAuthMethodNone {
@@ -378,7 +390,7 @@ func (h *OIDCHandler) canonicalOIDCAuthorizeNeedsConsent(
 // the profile skip_consent can waive their consent; static clients may waive it per client.
 func consentRequirementWithoutGrant(client *config.OIDCClient, prompt string) (required bool, decided bool) {
 	switch {
-	case prompt == "consent":
+	case hasOIDCPrompt(prompt, "consent"):
 		return true, true
 	case client.Dynamic:
 		return !client.SkipConsent, true

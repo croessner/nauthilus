@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"maps"
 	"net/http"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -577,6 +578,7 @@ func (h *FrontendHandler) basePageData(ctx *gin.Context) gin.H {
 	data := BasePageData(ctx, h.deps.Cfg, h.deps.LangManager)
 
 	data["DevMode"] = h.deps.Env.GetDevMode()
+
 	data["HXRequest"] = ctx.GetHeader("HX-Request") != ""
 	if ticket, err := flowdomain.TicketFromRequest(ctx.Request); err == nil {
 		data["FlowTicket"] = string(ticket)
@@ -789,6 +791,11 @@ func (h *FrontendHandler) Login(ctx *gin.Context) {
 	}
 
 	flowState := h.loginFlowState(protocolState)
+	if protocolState.Protocol == flowdomain.FlowProtocolOIDC {
+		if target, err := url.Parse(protocolState.Metadata[flowdomain.FlowMetadataResumeTarget]); err == nil {
+			ctx.Set("canonical_login_hint", target.Query().Get("login_hint"))
+		}
+	}
 
 	if h.resumeCanonicalExistingLoginSession(ctx, cookie.GetCanonicalSession(ctx), protocolState) {
 		return
@@ -919,6 +926,7 @@ func (h *FrontendHandler) canonicalMissingEnrollment(
 				definitions.LogKeyError, err,
 			)
 		}
+
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return nil, false
@@ -953,6 +961,7 @@ func (h *FrontendHandler) renderLoginPage(ctx *gin.Context, flowState loginFlowS
 
 	data := h.basePageData(ctx)
 	h.applyLoginPageLabels(ctx, data)
+	data["LoginHint"] = ctx.GetString("canonical_login_hint")
 	h.applyLoginErrorData(ctx, data)
 	h.setLoginRememberData(ctx, data, flowState.oidcCID, flowState.samlEntityID)
 
@@ -1195,6 +1204,7 @@ func postLoginFlowContextFromState(state *flowdomain.State) postLoginFlowContext
 	result.grantType = state.GrantType
 	result.oidcCID = state.Metadata[flowdomain.FlowMetadataClientID]
 	result.samlEntityID = state.Metadata[flowdomain.FlowMetadataSAMLEntityID]
+
 	result.protocol = string(state.Protocol)
 	if state.Protocol == flowdomain.FlowProtocolInternal {
 		result.protocol = definitions.ProtoIDP
