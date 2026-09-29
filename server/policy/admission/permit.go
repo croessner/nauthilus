@@ -41,13 +41,22 @@ func (p *permit) Facts() decision.FactSet {
 	return p.facts
 }
 
-// Release idempotently returns the profile concurrency slot.
+// Release idempotently returns the profile concurrency slot, if the profile is bounded.
 func (p *permit) Release() {
 	if p == nil {
 		return
 	}
 
 	p.release.Do(func() {
-		<-p.concurrency
+		releaseConcurrencySlot(p.concurrency)
 	})
+}
+
+// releaseConcurrencySlot returns one held slot; an unbounded profile has no channel to release.
+func releaseConcurrencySlot(concurrency chan struct{}) {
+	if concurrency == nil {
+		return
+	}
+
+	<-concurrency
 }

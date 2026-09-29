@@ -136,7 +136,6 @@ func grpcBoundaryFailureCases() []grpcBoundaryFailureCase {
 		{name: "generation capture", err: decisionservice.ErrDecisionGenerationUnavailable, code: codes.Unavailable},
 		{name: "admission", err: decisionservice.ErrDecisionAdmission, code: codes.PermissionDenied},
 		{name: "request limit", err: errors.Join(decisionservice.ErrDecisionAdmission, admission.ErrRequestLimitExceeded), code: codes.ResourceExhausted},
-		{name: "capacity limit", err: errors.Join(decisionservice.ErrDecisionAdmission, admission.ErrCapacityLimitExceeded), code: codes.ResourceExhausted},
 		{name: "authentication", err: decisionservice.ErrDecisionAuthentication, code: codes.Unauthenticated},
 		{name: "dependency", err: decisionservice.ErrDecisionServiceDependencyMissing, code: codes.Unavailable},
 	}
@@ -256,9 +255,9 @@ func grpcBoundaryOperationCases() []grpcBoundaryOperationCase {
 	}
 }
 
-// invokeGRPCBoundaryAuthenticate calls authenticate with the shared boundary fixture.
-func invokeGRPCBoundaryAuthenticate(ctx context.Context, handler *Handler) error {
-	_, err := handler.Authenticate(ctx, &authv1.AuthRequest{
+// grpcBoundaryAuthRequest returns the shared authenticate boundary fixture.
+func grpcBoundaryAuthRequest() *authv1.AuthRequest {
+	return &authv1.AuthRequest{
 		Username:   grpcBoundaryUsername,
 		Password:   "test-only-password",
 		ClientIp:   grpcBoundaryClientIP,
@@ -266,35 +265,50 @@ func invokeGRPCBoundaryAuthenticate(ctx context.Context, handler *Handler) error
 		Protocol:   grpcBoundaryProtocol,
 		Method:     grpcBoundaryMethod,
 		ClientPort: grpcBoundaryClientPort,
-	})
+	}
+}
+
+// grpcBoundaryLookupIdentityRequest returns the shared identity lookup boundary fixture.
+func grpcBoundaryLookupIdentityRequest() *authv1.LookupIdentityRequest {
+	return &authv1.LookupIdentityRequest{
+		Username:   grpcBoundaryUsername,
+		ClientIp:   grpcBoundaryClientIP,
+		UserAgent:  grpcBoundaryUserAgent,
+		Protocol:   grpcBoundaryProtocol,
+		Method:     grpcBoundaryMethod,
+		ClientPort: grpcBoundaryClientPort,
+	}
+}
+
+// grpcBoundaryListAccountsRequest returns the shared account listing boundary fixture.
+func grpcBoundaryListAccountsRequest() *authv1.ListAccountsRequest {
+	return &authv1.ListAccountsRequest{
+		Username:   grpcBoundaryUsername,
+		ClientIp:   grpcBoundaryClientIP,
+		UserAgent:  grpcBoundaryUserAgent,
+		Protocol:   grpcBoundaryProtocol,
+		Method:     grpcBoundaryMethod,
+		ClientPort: grpcBoundaryClientPort,
+	}
+}
+
+// invokeGRPCBoundaryAuthenticate calls authenticate with the shared boundary fixture.
+func invokeGRPCBoundaryAuthenticate(ctx context.Context, handler *Handler) error {
+	_, err := handler.Authenticate(ctx, grpcBoundaryAuthRequest())
 
 	return err
 }
 
 // invokeGRPCBoundaryLookupIdentity calls identity lookup with the shared boundary fixture.
 func invokeGRPCBoundaryLookupIdentity(ctx context.Context, handler *Handler) error {
-	_, err := handler.LookupIdentity(ctx, &authv1.LookupIdentityRequest{
-		Username:   grpcBoundaryUsername,
-		ClientIp:   grpcBoundaryClientIP,
-		UserAgent:  grpcBoundaryUserAgent,
-		Protocol:   grpcBoundaryProtocol,
-		Method:     grpcBoundaryMethod,
-		ClientPort: grpcBoundaryClientPort,
-	})
+	_, err := handler.LookupIdentity(ctx, grpcBoundaryLookupIdentityRequest())
 
 	return err
 }
 
 // invokeGRPCBoundaryListAccounts calls account listing with the shared boundary fixture.
 func invokeGRPCBoundaryListAccounts(ctx context.Context, handler *Handler) error {
-	_, err := handler.ListAccounts(ctx, &authv1.ListAccountsRequest{
-		Username:   grpcBoundaryUsername,
-		ClientIp:   grpcBoundaryClientIP,
-		UserAgent:  grpcBoundaryUserAgent,
-		Protocol:   grpcBoundaryProtocol,
-		Method:     grpcBoundaryMethod,
-		ClientPort: grpcBoundaryClientPort,
-	})
+	_, err := handler.ListAccounts(ctx, grpcBoundaryListAccountsRequest())
 
 	return err
 }

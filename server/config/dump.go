@@ -1145,6 +1145,8 @@ func configDumpPolicyDefaults() map[string]configDumpValueProvider {
 		},
 		"policy.runtime.post_actions.workers":        func() any { return policyDefaults.Runtime.PostActions.Workers },
 		"policy.runtime.post_actions.queue_capacity": func() any { return policyDefaults.Runtime.PostActions.QueueCapacity },
+		"policy.runtime.authn.max_concurrency":       func() any { return policyDefaults.Runtime.Authn.MaxConcurrency },
+		"policy.runtime.authn.requests_per_second":   func() any { return policyDefaults.Runtime.Authn.RequestsPerSecond },
 	}
 }
 

@@ -44,6 +44,23 @@ var (
 
 	// ErrCapacityLimitExceeded identifies profile concurrency or rate exhaustion.
 	ErrCapacityLimitExceeded = fmt.Errorf("%w: capacity", ErrLimitExceeded)
+
+	// ErrConcurrencyLimitExceeded identifies exhausted profile concurrency slots.
+	ErrConcurrencyLimitExceeded = fmt.Errorf("%w: concurrency", ErrCapacityLimitExceeded)
+
+	// ErrRateLimitExceeded identifies an exhausted profile request rate.
+	ErrRateLimitExceeded = fmt.Errorf("%w: rate", ErrCapacityLimitExceeded)
+)
+
+const (
+	// CapacityReasonConcurrency labels a rejection caused by exhausted profile concurrency.
+	CapacityReasonConcurrency = "concurrency"
+
+	// CapacityReasonRate labels a rejection caused by an exhausted profile request rate.
+	CapacityReasonRate = "rate"
+
+	// CapacityReasonUnspecified labels a capacity rejection without a more specific cause.
+	CapacityReasonUnspecified = "capacity"
 )
 
 // Configuration contains every caller-admission profile captured by one runtime generation.
@@ -96,6 +113,23 @@ func (e *classifiedError) Unwrap() []error {
 	}
 
 	return []error{e.primary, e.category}
+}
+
+// CapacityRejectionReason classifies a transient capacity rejection with a bounded reason.
+//
+// It reports false for every other admission, request-shape, or configuration failure so
+// callers can keep those fail-closed while treating capacity exhaustion as retryable.
+func CapacityRejectionReason(err error) (string, bool) {
+	switch {
+	case errors.Is(err, ErrConcurrencyLimitExceeded):
+		return CapacityReasonConcurrency, true
+	case errors.Is(err, ErrRateLimitExceeded):
+		return CapacityReasonRate, true
+	case errors.Is(err, ErrCapacityLimitExceeded):
+		return CapacityReasonUnspecified, true
+	default:
+		return "", false
+	}
 }
 
 // configurationError constructs one safe preparation failure.

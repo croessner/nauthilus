@@ -27,6 +27,8 @@ import (
 const (
 	maximumPostActionWorkers       = 1024
 	maximumPostActionQueueCapacity = 64 * 1024
+	maximumAuthnMaxConcurrency     = 1_000_000
+	maximumAuthnRequestsPerSecond  = 10_000_000
 )
 
 var (
@@ -88,6 +90,10 @@ func Validate(document Document) error {
 	}
 
 	if err := validatePostActionRuntime(document.Policy.Runtime.PostActions); err != nil {
+		return err
+	}
+
+	if err := validateAuthnRuntime(document.Policy.Runtime.Authn); err != nil {
 		return err
 	}
 
@@ -198,6 +204,24 @@ func validatePostActionRuntime(postActions PostActionRuntimeConfig) error {
 
 	if postActions.Workers > postActions.QueueCapacity {
 		return invalid(path+".workers", "must not exceed queue_capacity")
+	}
+
+	return nil
+}
+
+// validateAuthnRuntime keeps optional internal authentication capacity bounds finite; zero means unbounded.
+func validateAuthnRuntime(authn AuthnRuntimeConfig) error {
+	const path = "policy.runtime.authn"
+
+	if authn.MaxConcurrency < 0 || authn.MaxConcurrency > maximumAuthnMaxConcurrency {
+		return invalid(path+".max_concurrency", fmt.Sprintf("must be between 0 and %d", maximumAuthnMaxConcurrency))
+	}
+
+	if authn.RequestsPerSecond < 0 || authn.RequestsPerSecond > maximumAuthnRequestsPerSecond {
+		return invalid(
+			path+".requests_per_second",
+			fmt.Sprintf("must be between 0 and %d", maximumAuthnRequestsPerSecond),
+		)
 	}
 
 	return nil

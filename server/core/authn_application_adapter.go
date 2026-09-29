@@ -134,12 +134,13 @@ func authnOperations() []policy.Operation {
 }
 
 type authnPolicyApplicationService struct {
-	current          AuthApplicationService
-	host             authnCandidateHost
-	sessions         authnCandidateDecisionSessionFactory
-	internalSessions authnInternalDecisionSessionFactory
-	profiles         AuthnInternalCallerProfiles
-	facts            authnFactBuilder
+	current             AuthApplicationService
+	host                authnCandidateHost
+	sessions            authnCandidateDecisionSessionFactory
+	internalSessions    authnInternalDecisionSessionFactory
+	profiles            AuthnInternalCallerProfiles
+	facts               authnFactBuilder
+	admissionRejections authnAdmissionRejections
 }
 
 type authnCandidateDecisionSessionFactory interface {
@@ -335,9 +336,10 @@ func NewProductionAuthApplicationService(
 	}
 
 	return &authnPolicyApplicationService{
-		host:             newAuthApplicationServiceHost(deps),
-		internalSessions: decisions,
-		facts:            facts,
+		host:                newAuthApplicationServiceHost(deps),
+		internalSessions:    decisions,
+		facts:               facts,
+		admissionRejections: authnAdmissionRejections{logger: deps.Logger},
 	}, nil
 }
 
@@ -419,9 +421,11 @@ func (s *authnPolicyApplicationService) run(
 	var (
 		result    authnApplicationResult
 		execution *authnCandidateExecution
+		admitted  bool
 	)
 
 	err := s.withAuthnSession(ctx, input, operation, func(session decisionservice.DecisionSession) error {
+		admitted = true
 		evaluationCtx := session.RequestContext(ctx)
 		messageResolver, _ := decisionservice.CapturedMessageResolverFromContext(evaluationCtx)
 
@@ -448,7 +452,7 @@ func (s *authnPolicyApplicationService) run(
 		return traversalErr
 	})
 	if err != nil {
-		return authnApplicationResult{}, fmt.Errorf("authn Policy decision session: %w", err)
+		return s.sessionFailure(input, operation, err, admitted)
 	}
 
 	if !result.validFor(operation) {
@@ -456,6 +460,22 @@ func (s *authnPolicyApplicationService) run(
 	}
 
 	return result, nil
+}
+
+// sessionFailure answers a pre-admission capacity rejection as tempfail and keeps every other failure fail-closed.
+func (s *authnPolicyApplicationService) sessionFailure(
+	input AuthInput,
+	operation policy.Operation,
+	err error,
+	admitted bool,
+) (authnApplicationResult, error) {
+	if !admitted {
+		if rejected, ok := s.admissionRejections.tempFail(input, operation, err); ok {
+			return rejected, nil
+		}
+	}
+
+	return authnApplicationResult{}, fmt.Errorf("authn Policy decision session: %w", err)
 }
 
 // withAuthnSession selects generation-owned production admission or explicit-evidence test admission.

@@ -123,17 +123,21 @@ func (p *compiledProfile) permitsDiagnostics(caller decision.CallerContext, requ
 }
 
 // acquire nonblockingly owns concurrency and rate capacity for one full permit lifetime.
+//
+// A nil concurrency channel marks an unbounded internal profile and never takes a slot.
 func (p *compiledProfile) acquire(facts decision.FactSet) (policyruntime.AdmissionPermit, error) {
-	select {
-	case p.concurrency <- struct{}{}:
-	default:
-		return nil, admissionError(ErrCapacityLimitExceeded, "profile concurrency is exhausted")
+	if p.concurrency != nil {
+		select {
+		case p.concurrency <- struct{}{}:
+		default:
+			return nil, admissionError(ErrConcurrencyLimitExceeded, "profile concurrency is exhausted")
+		}
 	}
 
 	if !p.limiter.Allow() {
-		<-p.concurrency
+		releaseConcurrencySlot(p.concurrency)
 
-		return nil, admissionError(ErrCapacityLimitExceeded, "profile request rate is exhausted")
+		return nil, admissionError(ErrRateLimitExceeded, "profile request rate is exhausted")
 	}
 
 	return &permit{facts: facts, concurrency: p.concurrency}, nil

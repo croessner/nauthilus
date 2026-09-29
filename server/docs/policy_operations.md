@@ -84,7 +84,10 @@ runtime enforces request bytes, fact count, scalar/string/list/value bounds,
 aggregate fact bytes, record-list count, fields per record, record bytes,
 effect counts and parameter bytes, diagnostics, reports, rate, concurrency,
 provider timeouts, and total evaluation timeout. A client's effective request,
-fact, rate, and concurrency bounds cannot widen the global limits.
+fact, rate, and concurrency bounds cannot widen the global limits. The
+per-client rate and concurrency limits govern external Policy API clients only;
+internal authentication has its own bounds, see
+[Internal authentication admission](#internal-authentication-admission).
 
 Target schemas are authoritative for each fact's type, source, sensitivity,
 and tighter value or collection bounds. Provider descriptors and the prepared
@@ -126,6 +129,41 @@ Two counters expose the supervisor without correlation labels:
   ownership transfers, for example `saturated`, `shutdown`, or
   `unknown_provider`. Any `saturated` increase means authentication requests
   failed temporarily and the supervisor is undersized or a provider is slow.
+
+### Internal authentication admission
+
+Every authentication request (HTTP backchannel, nginx, gRPC authority, and the
+identity provider) opens one Decision Session under a host-owned internal
+caller profile. These internal profiles do not inherit
+`policy.api.limits.per_client_concurrency` or
+`policy.api.limits.per_client_requests_per_second`; those limits only govern
+external Policy API clients. Request-size and fact-count limits are still
+inherited from `policy.api.limits`.
+
+By default internal authentication has no separate Policy admission bound,
+because it is already limited by `auth.pipeline.max_concurrent_requests`, the
+request budget shared by HTTP and gRPC. Operators can add an explicit bound per
+internal caller profile, that is per entry point and operation:
+
+```yaml
+policy:
+  runtime:
+    authn:
+      max_concurrency: 0     # default 0 = unbounded, 0..1000000
+      requests_per_second: 0 # default 0 = unbounded, 0..10000000
+```
+
+When a bound is exhausted, the request is not admitted and ends as a regular
+temporary failure: the HTTP endpoints answer with their temporary-failure
+representation including `Auth-Status` (nginx also sets `Auth-Error-Code` for
+SMTP), and the gRPC authority returns `AUTH_DECISION_TEMPFAIL`. Other admission
+rejections, for example a missing grant, stay fail-closed. A reload that changes
+these values builds the next generation with new internal profiles.
+
+The counter `policy_authn_admission_rejections_total{reason}` counts such
+rejections with the reason `concurrency` or `rate`, and each rejection is
+logged at warn level. Any increase means the configured bound is too tight for
+the current load.
 
 ## Diagnostics and data minimization
 

@@ -56,6 +56,17 @@ type PolicyConfig struct {
 // RuntimeConfig bounds process-local Policy execution resources.
 type RuntimeConfig struct {
 	PostActions PostActionRuntimeConfig `mapstructure:"post_actions"`
+	Authn       AuthnRuntimeConfig      `mapstructure:"authn"`
+}
+
+// AuthnRuntimeConfig bounds the host-owned internal authentication caller profiles.
+//
+// These bounds are independent of policy.api.limits, which govern only external Policy API
+// clients. Zero keeps the respective bound disabled because internal authentication is
+// already limited by the server-wide request budget shared by HTTP and gRPC.
+type AuthnRuntimeConfig struct {
+	MaxConcurrency    int `mapstructure:"max_concurrency"`
+	RequestsPerSecond int `mapstructure:"requests_per_second"`
 }
 
 // PostActionRuntimeConfig sizes the post-action supervisor of every Policy generation.

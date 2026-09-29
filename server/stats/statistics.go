@@ -157,6 +157,7 @@ const (
 	metricPoolLabel             = "pool"
 	metricPoolNameLabel         = "pool_name"
 	metricProtocolLabel         = "protocol"
+	metricReasonLabel           = "reason"
 	metricResourceLabel         = "resource"
 	metricRBLLabel              = "rbl"
 	metricServerStatusLabel     = "server_status"
@@ -405,6 +406,9 @@ type Metrics interface {
 
 	// GetPostActionAcceptanceFailuresTotal counts rejected post-action ownership transfers by error class.
 	GetPostActionAcceptanceFailuresTotal() *prometheus.CounterVec
+
+	// GetPolicyAuthnAdmissionRejectionsTotal counts internal authn sessions rejected for capacity by bounded reason.
+	GetPolicyAuthnAdmissionRejectionsTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
@@ -483,6 +487,7 @@ type metricsImpl struct {
 	postActionPlanDuration         *prometheus.HistogramVec
 	postActionEffectStates         *prometheus.CounterVec
 	postActionAcceptanceFailures   *prometheus.CounterVec
+	policyAuthnAdmissionRejections *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -855,6 +860,11 @@ func (m *metricsImpl) GetPostActionAcceptanceFailuresTotal() *prometheus.Counter
 	return m.postActionAcceptanceFailures
 }
 
+// GetPolicyAuthnAdmissionRejectionsTotal returns the internal authn admission capacity rejection counter.
+func (m *metricsImpl) GetPolicyAuthnAdmissionRejectionsTotal() *prometheus.CounterVec {
+	return m.policyAuthnAdmissionRejections
+}
+
 // NewMetrics provides the exported NewMetrics function.
 func NewMetrics() Metrics {
 	m := &metricsImpl{}
@@ -1039,6 +1049,7 @@ func (m *metricsImpl) initPluginMetrics() {
 	m.postActionPlanDuration = newHistogramVecMetric("post_action_plan_duration_seconds", "Duration of complete accepted post-action plans", prometheus.ExponentialBuckets(0.001, 1.75, 15), pluginCallMetricResultLabel)
 	m.postActionEffectStates = newCounterVecMetric("post_action_effect_states_total", "Total host-internal post-action supervisor transitions", metricStateLabel, metricPhaseLabel, metricBoundaryLabel)
 	m.postActionAcceptanceFailures = newCounterVecMetric("post_action_acceptance_failures_total", "Total post-action ownership transfers rejected by the supervisor, for example because its queue is saturated", metricErrorClassLabel)
+	m.policyAuthnAdmissionRejections = newCounterVecMetric("policy_authn_admission_rejections_total", "Total internal authentication sessions rejected by Policy admission capacity and answered as temporary failures", metricReasonLabel)
 }
 
 // GetMetrics initializes and returns a singleton instance of the Metrics interface.

@@ -1083,7 +1083,9 @@ func (admissionPreparationSlot) Prepare(
 
 	configuration := prepared.CallerAdmission()
 
-	profiles, err := internalAdmissionProfiles(input.TargetCatalog())
+	limits := internalAdmissionLimits(prepared.Config().Runtime.Authn)
+
+	profiles, err := internalAdmissionProfiles(input.TargetCatalog(), limits)
 	if err != nil {
 		return policyruntime.AdmissionPreparation{}, err
 	}
@@ -1093,8 +1095,18 @@ func (admissionPreparationSlot) Prepare(
 	return admission.Prepare(configuration, input.TargetCatalog(), input.CredentialProfiles())
 }
 
+// internalAdmissionLimits projects the host-owned internal authn bounds onto admission limits.
+//
+// Only capacity is set; request-shape limits stay zero so they keep inheriting the global values.
+func internalAdmissionLimits(authn policyconfig.AuthnRuntimeConfig) admission.Limits {
+	return admission.Limits{MaxConcurrency: authn.MaxConcurrency, RequestsPerSecond: authn.RequestsPerSecond}
+}
+
 // internalAdmissionProfiles maps each code-owned operation to its activated exact authn target/schema.
-func internalAdmissionProfiles(catalog *policyruntime.TargetCatalog) ([]admission.Profile, error) {
+func internalAdmissionProfiles(
+	catalog *policyruntime.TargetCatalog,
+	limits admission.Limits,
+) ([]admission.Profile, error) {
 	profileIDs, err := core.AuthnInternalProfileIDs()
 	if err != nil {
 		return nil, err
@@ -1128,7 +1140,7 @@ func internalAdmissionProfiles(catalog *policyruntime.TargetCatalog) ([]admissio
 			References:               []registry.ClientAdmissionReference{reference},
 			AllowedSubjectAttributes: fields.subject, AllowedResourceAttributes: fields.resource,
 			AllowedEnvironmentAttributes: fields.environment, AllowedInputAttributes: fields.input,
-			Diagnostics: true, Internal: true,
+			Limits: limits, Diagnostics: true, Internal: true,
 		})
 	}
 

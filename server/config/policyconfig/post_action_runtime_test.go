@@ -8,7 +8,6 @@
 package policyconfig
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -44,12 +43,7 @@ func TestValidatePostActionRuntimeBounds(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Validate(Document{Policy: PolicyConfig{Runtime: RuntimeConfig{PostActions: tc.postActions}}})
-
-			var pathError *PathError
-			if !errors.As(err, &pathError) || !errors.Is(err, ErrValidation) || pathError.Path != tc.path {
-				t.Fatalf("Validate() error = %v, want path %s", err, tc.path)
-			}
+			assertRuntimeValidationPath(t, RuntimeConfig{PostActions: tc.postActions}, tc.path)
 		})
 	}
 

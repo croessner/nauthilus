@@ -144,7 +144,7 @@ func compileProfile(
 		return nil, err
 	}
 
-	limits, err := effectiveLimits(profile.Limits, global)
+	limits, err := effectiveLimits(profile.Limits, global, capacityResolverFor(profile.Internal))
 	if err != nil {
 		return nil, err
 	}
@@ -153,8 +153,8 @@ func compileProfile(
 		grants:      grants,
 		kinds:       kinds,
 		fields:      fields,
-		limiter:     rate.NewLimiter(rate.Limit(limits.RequestsPerSecond), limits.RequestsPerSecond),
-		concurrency: make(chan struct{}, limits.MaxConcurrency),
+		limiter:     newProfileLimiter(limits.RequestsPerSecond),
+		concurrency: newProfileConcurrency(limits.MaxConcurrency),
 		principal:   profile.Principal,
 		limits:      limits,
 		diagnostics: profile.Diagnostics,
@@ -337,8 +337,32 @@ func validateGlobalLimits(limits Limits) error {
 	return nil
 }
 
-// effectiveLimits inherits zero profile values and rejects broader profile overrides.
-func effectiveLimits(profile Limits, global Limits) (Limits, error) {
+// capacityResolver resolves one profile concurrency or rate value against its global counterpart.
+type capacityResolver func(profile int, global int) (int, error)
+
+// capacityResolverFor selects the capacity semantics of one profile class.
+//
+// External profiles inherit and may only narrow the operator-owned Policy API limits. Internal
+// profiles carry host-owned capacity that is independent of those external ceilings.
+func capacityResolverFor(internal bool) capacityResolver {
+	if internal {
+		return resolveInternalCapacity
+	}
+
+	return ResolveLimit
+}
+
+// resolveInternalCapacity keeps a host-owned internal bound as-is, where zero means unbounded.
+func resolveInternalCapacity(profile int, _ int) (int, error) {
+	if profile < 0 {
+		return 0, configurationError("internal profile capacity limit must not be negative")
+	}
+
+	return profile, nil
+}
+
+// effectiveLimits inherits request-shape limits and resolves capacity through the profile-class resolver.
+func effectiveLimits(profile Limits, global Limits, resolveCapacity capacityResolver) (Limits, error) {
 	requestBytes, err := ResolveLimit(profile.MaxRequestBytes, global.MaxRequestBytes)
 	if err != nil {
 		return Limits{}, err
@@ -349,12 +373,12 @@ func effectiveLimits(profile Limits, global Limits) (Limits, error) {
 		return Limits{}, err
 	}
 
-	concurrency, err := ResolveLimit(profile.MaxConcurrency, global.MaxConcurrency)
+	concurrency, err := resolveCapacity(profile.MaxConcurrency, global.MaxConcurrency)
 	if err != nil {
 		return Limits{}, err
 	}
 
-	requestRate, err := ResolveLimit(profile.RequestsPerSecond, global.RequestsPerSecond)
+	requestRate, err := resolveCapacity(profile.RequestsPerSecond, global.RequestsPerSecond)
 	if err != nil {
 		return Limits{}, err
 	}
@@ -365,6 +389,24 @@ func effectiveLimits(profile Limits, global Limits) (Limits, error) {
 		MaxConcurrency:    concurrency,
 		RequestsPerSecond: requestRate,
 	}, nil
+}
+
+// newProfileLimiter builds the per-profile request-rate limiter; zero disables the rate bound.
+func newProfileLimiter(requestsPerSecond int) *rate.Limiter {
+	if requestsPerSecond == 0 {
+		return rate.NewLimiter(rate.Inf, 0)
+	}
+
+	return rate.NewLimiter(rate.Limit(requestsPerSecond), requestsPerSecond)
+}
+
+// newProfileConcurrency builds the per-profile slot channel; zero disables the concurrency bound.
+func newProfileConcurrency(maxConcurrency int) chan struct{} {
+	if maxConcurrency == 0 {
+		return nil
+	}
+
+	return make(chan struct{}, maxConcurrency)
 }
 
 // ResolveLimit returns one inherited finite bound and rejects broader profile overrides.
