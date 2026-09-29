@@ -24,7 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
-	"github.com/croessner/nauthilus/v4/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/monitoring/authmetrics"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
@@ -199,7 +199,7 @@ func (h *Handler) responseDeps() core.ResponseDeps {
 	}
 }
 
-// renderApplicationError maps typed application failures without invoking domain logic in the handler.
+// renderApplicationError maps typed application failures and answers unexpected ones as temporary failures.
 func (h *Handler) renderApplicationError(
 	ctx *gin.Context,
 	renderer *core.HTTPAuthResponseRenderer,
@@ -227,22 +227,10 @@ func (h *Handler) renderApplicationError(
 		return
 	}
 
-	h.logInternalApplicationError(ctx, err)
-
-	ctx.AbortWithStatus(http.StatusInternalServerError)
-}
-
-// logInternalApplicationError preserves the exact fail-closed cause and request correlation.
-func (h *Handler) logInternalApplicationError(ctx *gin.Context, err error) {
-	if h == nil || h.deps == nil || h.deps.Logger == nil || ctx == nil || err == nil {
-		return
-	}
-
-	level.Error(h.deps.Logger).Log(
-		definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-		definitions.LogKeyMsg, "Authentication application failed",
-		definitions.LogKeyError, err,
-	)
+	// Every other failure is unexpected: log and count its exact cause, then answer the regular fail-closed
+	// temporary failure so auth_http and structured clients receive Auth-Status instead of a bare 500.
+	failures := core.NewAuthApplicationFailures(h.deps.Logger, authmetrics.TransportHTTP)
+	h.renderAuthOutcome(ctx, renderer, input, failures.TempFail(input, err))
 }
 
 // renderAuthOutcome publishes terminal metric metadata before rendering the HTTP response.

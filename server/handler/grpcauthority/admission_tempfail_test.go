@@ -60,15 +60,13 @@ func TestGRPCBackchannelCapacityAdmissionRejectionAnswersTempFail(t *testing.T) 
 			defer gate.Complete()
 
 			authResponse, err := handler.Authenticate(ctx, grpcBoundaryAuthRequest())
-			assertGRPCCapacityTempFail(t, "Authenticate", authResponse, err)
+			assertGRPCTempFailResponse(t, "Authenticate", authResponse, err)
 
 			lookupResponse, err := handler.LookupIdentity(ctx, grpcBoundaryLookupIdentityRequest())
-			assertGRPCCapacityTempFail(t, "LookupIdentity", lookupResponse, err)
+			assertGRPCTempFailResponse(t, "LookupIdentity", lookupResponse, err)
 
 			listResponse, err := handler.ListAccounts(ctx, grpcBoundaryListAccountsRequest())
-			if err != nil || listResponse == nil || len(listResponse.GetAccounts()) != 0 || listResponse.GetSession() == "" {
-				t.Fatalf("ListAccounts() = %v / %v, want empty tempfail listing with session", listResponse, err)
-			}
+			assertGRPCListAccountsTempFail(t, listResponse, err)
 
 			if factory.calls != 3 || factory.callbackCalls != 0 || current.totalHostCalls() != 0 {
 				t.Fatalf(
@@ -80,8 +78,8 @@ func TestGRPCBackchannelCapacityAdmissionRejectionAnswersTempFail(t *testing.T) 
 	}
 }
 
-// assertGRPCCapacityTempFail verifies the regular temporary-failure response mapping.
-func assertGRPCCapacityTempFail(t *testing.T, method string, response *authv1.AuthResponse, err error) {
+// assertGRPCTempFailResponse verifies the regular temporary-failure response mapping.
+func assertGRPCTempFailResponse(t *testing.T, method string, response *authv1.AuthResponse, err error) {
 	t.Helper()
 
 	if err != nil || response == nil {
@@ -91,5 +89,14 @@ func assertGRPCCapacityTempFail(t *testing.T, method string, response *authv1.Au
 	if response.GetDecision() != authv1.AuthDecision_AUTH_DECISION_TEMPFAIL || response.GetOk() ||
 		response.GetStatusMessage() != definitions.TempFailDefault || response.GetSession() == "" {
 		t.Fatalf("%s() response = %v, want regular tempfail mapping", method, response)
+	}
+}
+
+// assertGRPCListAccountsTempFail verifies the regular empty temporary-failure listing.
+func assertGRPCListAccountsTempFail(t *testing.T, response *authv1.ListAccountsResponse, err error) {
+	t.Helper()
+
+	if err != nil || response == nil || len(response.GetAccounts()) != 0 || response.GetSession() == "" {
+		t.Fatalf("ListAccounts() = %v / %v, want empty tempfail listing with session", response, err)
 	}
 }

@@ -84,11 +84,11 @@ func (o *Observer) Observe(startedAt time.Time, transport string, outcome string
 
 // normalizeLabels constrains caller-controlled values to the public metric contract.
 func normalizeLabels(transport string, outcome string, protocol string) (string, string, string) {
-	return normalizeTransport(transport), normalizeOutcome(outcome), normalizeProtocol(protocol)
+	return NormalizeTransport(transport), normalizeOutcome(outcome), normalizeProtocol(protocol)
 }
 
-// normalizeTransport bounds the transport label.
-func normalizeTransport(value string) string {
+// NormalizeTransport bounds one transport value to the public transport label set.
+func NormalizeTransport(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case TransportHTTP:
 		return TransportHTTP

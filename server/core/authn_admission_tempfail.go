@@ -82,19 +82,11 @@ func authnAdmissionCapacityReason(err error) (string, bool) {
 
 // newAuthnAdmissionTempFailResult builds the operation-specific temporary failure without host execution.
 func newAuthnAdmissionTempFailResult(input AuthInput, operation policy.Operation) authnApplicationResult {
-	session := authApplicationCorrelationID(input.CorrelationID)
-
 	if operation == policy.OperationListAccounts {
-		outcome := &ListAccountsOutcome{Decision: AuthDecisionTempFail, Session: session, Protocol: input.Context.Protocol}
-		applyAuthnCandidateListTempFail(outcome)
-
-		return authnApplicationResult{accounts: outcome}
+		return authnApplicationResult{accounts: newListAccountsTempFailOutcome(input)}
 	}
 
-	outcome := &AuthOutcome{Decision: AuthDecisionTempFail, Session: session, Protocol: input.Context.Protocol}
-	applyAuthnCandidateTempFail(outcome)
-
-	return authnApplicationResult{auth: outcome}
+	return authnApplicationResult{auth: newAuthTempFailOutcome(input)}
 }
 
 // session returns the correlation session of whichever operation outcome the result carries.

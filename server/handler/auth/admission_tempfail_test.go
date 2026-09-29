@@ -54,17 +54,19 @@ func capacityRejectedHTTPRouter(t *testing.T, logs *bytes.Buffer) (*gin.Engine, 
 	return applicationBoundaryRouter(deps, candidate), current
 }
 
-func TestBackchannelHTTPCapacityAdmissionRejectionRendersTempFail(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+// httpTempFailSurfaceCase describes the established temporary-failure representation of one HTTP auth surface.
+type httpTempFailSurfaceCase struct {
+	name       string
+	service    string
+	protocol   string
+	wantBody   string
+	wantCode   string
+	wantStatus int
+}
 
-	tests := []struct {
-		name       string
-		service    string
-		protocol   string
-		wantStatus int
-		wantBody   string
-		wantCode   string
-	}{
+// httpTempFailSurfaceCases returns the JSON, header, and nginx temporary-failure surfaces.
+func httpTempFailSurfaceCases() []httpTempFailSurfaceCase {
+	return []httpTempFailSurfaceCase{
 		{
 			name: "json", service: definitions.ServJSON, wantStatus: http.StatusInternalServerError,
 			wantBody: `{"error":"` + definitions.TempFailDefault + `"}`,
@@ -82,22 +84,39 @@ func TestBackchannelHTTPCapacityAdmissionRejectionRendersTempFail(t *testing.T) 
 			wantStatus: http.StatusOK, wantBody: definitions.TempFailDefault, wantCode: definitions.TempFailCode,
 		},
 	}
+}
 
-	for _, test := range tests {
+// request builds one real request for this surface and operation mode.
+func (c httpTempFailSurfaceCase) request(t *testing.T, mode string) *http.Request {
+	t.Helper()
+
+	request := applicationBoundaryRequest(t, c.service, mode)
+	if c.protocol != "" {
+		request.Header.Set("Auth-Protocol", c.protocol)
+	}
+
+	return request
+}
+
+// assert verifies the recorded response against this surface's temporary-failure representation.
+func (c httpTempFailSurfaceCase) assert(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	assertHTTPTempFailResponse(t, recorder, c.wantStatus, c.wantBody, c.wantCode)
+}
+
+func TestBackchannelHTTPCapacityAdmissionRejectionRendersTempFail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range httpTempFailSurfaceCases() {
 		t.Run(test.name, func(t *testing.T) {
 			var logs bytes.Buffer
 
 			router, current := capacityRejectedHTTPRouter(t, &logs)
-			request := applicationBoundaryRequest(t, test.service, "")
-
-			if test.protocol != "" {
-				request.Header.Set("Auth-Protocol", test.protocol)
-			}
-
 			recorder := httptest.NewRecorder()
-			router.ServeHTTP(recorder, request)
+			router.ServeHTTP(recorder, test.request(t, ""))
 
-			assertCapacityTempFailResponse(t, recorder, test.wantStatus, test.wantBody, test.wantCode)
+			test.assert(t, recorder)
 
 			if current.totalCalls() != 0 {
 				t.Fatalf("current application calls = %d, want 0 without admission", current.totalCalls())
@@ -110,8 +129,8 @@ func TestBackchannelHTTPCapacityAdmissionRejectionRendersTempFail(t *testing.T) 
 	}
 }
 
-// assertCapacityTempFailResponse verifies the established temporary-failure HTTP surface.
-func assertCapacityTempFailResponse(
+// assertHTTPTempFailResponse verifies the established temporary-failure HTTP surface.
+func assertHTTPTempFailResponse(
 	t *testing.T,
 	recorder *httptest.ResponseRecorder,
 	wantStatus int,

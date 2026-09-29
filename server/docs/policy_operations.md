@@ -165,6 +165,37 @@ rejections with the reason `concurrency` or `rate`, and each rejection is
 logged at warn level. Any increase means the configured bound is too tight for
 the current load.
 
+### Unexpected authentication application errors
+
+An admitted authentication session can still end without a decision, for
+example when a `host_sync` provider fails (a subject plugin reporting
+`backend_temporary_failure` because its LDAP queue dropped the request) or the
+Decision Service generation is unavailable. Such unexpected application errors
+end as a regular temporary failure and never authenticate the request:
+
+- The HTTP auth endpoints (`json`, `cbor`, `header`, `nginx`, `basic`) answer
+  with their temporary-failure representation: `Auth-Status: Temporary server
+  problem, try again later`, `X-Nauthilus-Session`, and the usual body. nginx
+  receives HTTP 200 (plus `Auth-Error-Code` for SMTP); the other surfaces keep
+  HTTP 500 with the `Auth-Status` header and, for JSON and CBOR, an `error`
+  body field.
+- The gRPC authority `Authenticate` and `LookupIdentity` return
+  `AUTH_DECISION_TEMPFAIL`; `ListAccounts` returns an empty listing with the
+  session and the `auth-status` response header.
+
+Typed rejections keep their mapping: invalid input stays HTTP 400 or
+`InvalidArgument`, permission denials stay HTTP 403 or `PermissionDenied`, and
+a preprocessing rejection keeps its own outcome. On gRPC, cancellation,
+deadline, and Decision Service admission or availability categories also keep
+their status codes.
+
+Each unexpected error is logged at error level as `Authentication application
+failed` with the exact cause and the request session, and counted by
+`auth_application_errors_total{transport}` with the transport `http` or
+`grpc`. Such requests appear as `tempfail` in
+`authentication_response_time_seconds`. A rising counter points to an
+overloaded or failing provider or backend; the log cause names it.
+
 ## Diagnostics and data minimization
 
 Diagnostics are off unless the request opts in, the credential has diagnostics

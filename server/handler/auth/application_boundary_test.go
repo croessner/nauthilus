@@ -13,7 +13,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	stdjson "encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -320,29 +319,6 @@ func TestBackchannelHTTPNilApplicationOutcomesFailClosed(t *testing.T) {
 				t.Fatalf("HTTP status = %d, want fail-closed 500", recorder.Code)
 			}
 		})
-	}
-}
-
-func TestBackchannelHTTPInternalApplicationFailureIsLogged(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	var logs bytes.Buffer
-
-	deps := applicationBoundaryDeps()
-	deps.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	service := failingAuthApplicationService{err: errors.New("checkpoint provider unavailable")}
-	router := applicationBoundaryRouter(deps, service)
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, applicationBoundaryRequest(t, definitions.ServJSON, "no-auth"))
-
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("HTTP status = %d, want fail-closed 500", recorder.Code)
-	}
-
-	if !bytes.Contains(logs.Bytes(), []byte("checkpoint provider unavailable")) ||
-		!bytes.Contains(logs.Bytes(), []byte(applicationBoundaryCorrelation)) {
-		t.Fatalf("application failure log = %q, want error and correlation", logs.String())
 	}
 }
 

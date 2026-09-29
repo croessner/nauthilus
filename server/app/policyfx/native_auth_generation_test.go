@@ -586,6 +586,8 @@ func (p *nativeAuthTestPlugin) Register(registrar pluginapi.Registrar) error {
 }
 
 type nativeAuthExecutionProbe struct {
+	// subjectErr is returned by the subject source when set before the generation is committed.
+	subjectErr       error
 	environmentCalls atomic.Int32
 	subjectCalls     atomic.Int32
 	obligationCalls  atomic.Int32
@@ -625,13 +627,17 @@ func (nativeAuthTestSubject) Descriptor() pluginapi.SourceDescriptor {
 	return pluginapi.SourceDescriptor{Name: "risk", Timeout: time.Second}
 }
 
-// Evaluate returns one neutral subject result.
+// Evaluate returns one neutral subject result or the probe's configured subject failure.
 func (s nativeAuthTestSubject) Evaluate(
 	context.Context,
 	pluginapi.SubjectRequest,
 ) (pluginapi.SubjectResult, error) {
 	if s.probe != nil {
 		s.probe.subjectCalls.Add(1)
+
+		if s.probe.subjectErr != nil {
+			return pluginapi.SubjectResult{}, s.probe.subjectErr
+		}
 	}
 
 	return pluginapi.SubjectResult{}, nil

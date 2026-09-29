@@ -199,7 +199,7 @@ func NewServer(deps ServerDeps) (*grpc.Server, error) {
 		deps.MessageResolver,
 		identityService,
 		backendRefs,
-	)
+	).withLogger(deps.effectiveLogger())
 	authv1.RegisterAuthServiceServer(server, handler)
 
 	if backendRefs != nil {

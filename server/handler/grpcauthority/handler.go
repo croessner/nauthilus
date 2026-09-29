@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
@@ -32,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/grpcapi/authmapper"
 	"github.com/croessner/nauthilus/v4/server/grpcapi/decisionstatus"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
+	"github.com/croessner/nauthilus/v4/server/monitoring/authmetrics"
 	"github.com/croessner/nauthilus/v4/server/policy/transportsecurity"
 
 	"google.golang.org/grpc"
@@ -55,6 +57,7 @@ type Handler struct {
 	backendRefs     BackendRefStore
 	idempotency     idempotencyStore
 	resolver        localization.MessageResolver
+	logger          *slog.Logger
 }
 
 // New constructs the authority handler around the application service.
@@ -87,6 +90,37 @@ func NewWithServices(
 	}
 }
 
+// withLogger binds the logger that records unexpected application failures answered as temporary failures.
+func (h *Handler) withLogger(logger *slog.Logger) *Handler {
+	h.logger = logger
+
+	return h
+}
+
+// applicationFailures returns the fail-closed temporary-failure handling for the gRPC transport.
+func (h *Handler) applicationFailures() core.AuthApplicationFailures {
+	return core.NewAuthApplicationFailures(h.logger, authmetrics.TransportGRPC)
+}
+
+// resolveApplicationOutcome keeps typed application failures as gRPC status errors and answers every
+// unexpected failure with the regular temporary-failure outcome instead of an Internal status.
+func resolveApplicationOutcome[T any](
+	input core.AuthInput,
+	outcome *T,
+	err error,
+	tempFail func(core.AuthInput, error) *T,
+) (*T, error) {
+	if err == nil {
+		return outcome, nil
+	}
+
+	if mapped := grpcStatusFromTypedServiceError(err); mapped != nil {
+		return nil, mapped
+	}
+
+	return tempFail(input, err), nil
+}
+
 // Authenticate maps the gRPC request into the auth application service.
 func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest) (*authv1.AuthResponse, error) {
 	if h == nil || h.service == nil {
@@ -103,8 +137,10 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 	}
 
 	outcome, err := h.service.Authenticate(ctx, input)
+
+	outcome, err = resolveApplicationOutcome(input, outcome, err, h.applicationFailures().TempFail)
 	if err != nil {
-		return nil, grpcErrorFromServiceError(err)
+		return nil, err
 	}
 
 	if outcome == nil {
@@ -133,8 +169,10 @@ func (h *Handler) LookupIdentity(
 	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_LookupIdentity_FullMethodName)
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
+
+	outcome, err = resolveApplicationOutcome(input, outcome, err, h.applicationFailures().TempFail)
 	if err != nil {
-		return nil, grpcErrorFromServiceError(err)
+		return nil, err
 	}
 
 	if outcome == nil {
@@ -163,8 +201,10 @@ func (h *Handler) ListAccounts(
 	ctx, input = authInputWithGRPCTransport(ctx, input, authv1.AuthService_ListAccounts_FullMethodName)
 
 	outcome, err := h.service.ListAccounts(ctx, input)
+
+	outcome, err = resolveApplicationOutcome(input, outcome, err, h.applicationFailures().ListAccountsTempFail)
 	if err != nil {
-		return nil, grpcErrorFromServiceError(err)
+		return nil, err
 	}
 
 	if outcome == nil {
@@ -541,12 +581,22 @@ func stringifyAttributeValues(values []any) []string {
 	return result
 }
 
-// grpcErrorFromServiceError preserves application failure categories at the authority boundary.
+// grpcErrorFromServiceError preserves application failure categories and maps unexpected failures to Internal.
 func grpcErrorFromServiceError(err error) error {
 	if err == nil {
 		return nil
 	}
 
+	if mapped := grpcStatusFromTypedServiceError(err); mapped != nil {
+		return mapped
+	}
+
+	return status.Error(codes.Internal, err.Error())
+}
+
+// grpcStatusFromTypedServiceError maps typed application, cancellation, and Decision Service failures to a
+// gRPC status. It returns nil for every unexpected failure so callers choose the fallback representation.
+func grpcStatusFromTypedServiceError(err error) error {
 	if inputErr, ok := stderrors.AsType[*core.AuthInputError](err); ok {
 		return status.Error(codes.InvalidArgument, inputErr.Error())
 	}
@@ -567,9 +617,5 @@ func grpcErrorFromServiceError(err error) error {
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	}
 
-	if mapped := decisionstatus.FromError(err); mapped != nil {
-		return mapped
-	}
-
-	return status.Error(codes.Internal, err.Error())
+	return decisionstatus.FromError(err)
 }

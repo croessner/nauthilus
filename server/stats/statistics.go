@@ -409,6 +409,9 @@ type Metrics interface {
 
 	// GetPolicyAuthnAdmissionRejectionsTotal counts internal authn sessions rejected for capacity by bounded reason.
 	GetPolicyAuthnAdmissionRejectionsTotal() *prometheus.CounterVec
+
+	// GetAuthApplicationErrorsTotal counts unexpected auth application errors answered as tempfail by bounded transport.
+	GetAuthApplicationErrorsTotal() *prometheus.CounterVec
 }
 
 type metricsImpl struct {
@@ -488,6 +491,7 @@ type metricsImpl struct {
 	postActionEffectStates         *prometheus.CounterVec
 	postActionAcceptanceFailures   *prometheus.CounterVec
 	policyAuthnAdmissionRejections *prometheus.CounterVec
+	authApplicationErrors          *prometheus.CounterVec
 }
 
 // GetInstanceInfo returns the instanceInfo field.
@@ -865,6 +869,11 @@ func (m *metricsImpl) GetPolicyAuthnAdmissionRejectionsTotal() *prometheus.Count
 	return m.policyAuthnAdmissionRejections
 }
 
+// GetAuthApplicationErrorsTotal returns the unexpected auth application error counter.
+func (m *metricsImpl) GetAuthApplicationErrorsTotal() *prometheus.CounterVec {
+	return m.authApplicationErrors
+}
+
 // NewMetrics provides the exported NewMetrics function.
 func NewMetrics() Metrics {
 	m := &metricsImpl{}
@@ -972,6 +981,8 @@ func (m *metricsImpl) initAuthMetrics() {
 		prometheus.LinearBuckets(0, 10, 11))
 	m.rejectedProtocols = newCounterVecMetric("rejected_protocols_total", "The total number of rejects per protocol", metricProtocolLabel)
 	m.acceptedProtocols = newCounterVecMetric("accepted_protocols_total", "The total number of acceptances per protocol", metricProtocolLabel)
+	m.authApplicationErrors = newCounterVecMetric("auth_application_errors_total",
+		"Unexpected authentication application errors answered as temporary failures, by transport", metricTransportLabel)
 }
 
 // initLDAPMetrics registers LDAP pool, queue, cache, and error metrics.
