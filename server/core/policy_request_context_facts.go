@@ -193,7 +193,7 @@ func (a *AuthState) requestClientIPFacts(ctx *gin.Context) requestClientIPFacts 
 	candidate := strings.TrimSpace(a.Request.ClientIP)
 
 	if candidate == "" && a.Request.Service == definitions.ServGRPC {
-		candidate = grpcPeerIP(contextFromGin(ctx))
+		candidate = a.requestGRPCPeerIP(ctx)
 		source = requestPolicyClientIPSourceGRPCPeer
 	}
 
@@ -243,6 +243,17 @@ func requestGRPCCallerIPFacts(ctx *gin.Context) requestIPFacts {
 	return parseRequestIPFacts(directPeerIP(ctx), requestPolicyClientIPSourceDirectPeer)
 }
 
+// requestGRPCPeerIP prefers the boundary-observed gRPC peer and falls back to the request context peer.
+func (a *AuthState) requestGRPCPeerIP(ctx *gin.Context) string {
+	if a != nil {
+		if peerIP := strings.TrimSpace(a.Request.Transport.Peer); peerIP != "" {
+			return peerIP
+		}
+	}
+
+	return grpcPeerIP(contextFromGin(ctx))
+}
+
 // requestLocalEndpointFacts parses the local endpoint values supplied by the caller.
 func (a *AuthState) requestLocalEndpointFacts() requestLocalEndpointFacts {
 	if a == nil {
@@ -289,12 +300,7 @@ func (a *AuthState) requestClientIPTrust(ctx *gin.Context, candidate string, fal
 	}
 
 	if a.Request.Service == definitions.ServGRPC {
-		peerIP := a.Request.Transport.Peer
-		if peerIP == "" {
-			peerIP = grpcPeerIP(contextFromGin(ctx))
-		}
-
-		if sameIP(candidate, peerIP) {
+		if sameIP(candidate, a.requestGRPCPeerIP(ctx)) {
 			return requestPolicyClientIPSourceGRPCPeer, true
 		}
 
