@@ -15,10 +15,31 @@ This checklist is intended for release readiness and recurring security operatio
 - [ ] **Staging**: At least one backchannel auth method is enabled.
 - [ ] **Production**: `/api/v1/*` is reachable only from trusted internal networks.
 - [ ] Backchannel listeners (`/api/v1/*` including the Policy API, and the gRPC authority listener) are not
-      reachable from untrusted networks. Backchannel callers are never locked out; a rejected caller is only delayed and logged.
+      reachable from untrusted networks. A rejected caller is delayed and logged; with the HTTP rate
+      middleware enabled, an address that exhausts its failure budget is refused on `/api/v1` until it refills.
 - [ ] Backchannel credentials (Basic passwords, Policy-Basic passwords, and OIDC `client_credentials` client
       secrets or keys) are high-entropy.
 - [ ] Alerts watch `backchannel_caller_auth_total{outcome=~"rejected|unavailable"}`.
+- [ ] `auth.pipeline.max_concurrent_requests` is sized for the backchannel peak. On the caller-authenticated
+      backchannel API (`/api/v1/auth/*`, `/api/v1/cache/*`, `/api/v1/bruteforce/*`, the management OpenAPI
+      documents, and the other routes behind `auth.backchannel`), the per-client-IP HTTP rate limit
+      (`runtime.servers.http.middlewares.rate` with `runtime.servers.http.rate_limit.per_second` and `burst`) is a
+      failure budget: requests whose Basic or Bearer caller authentication succeeds never consume it, because a
+      few proxy or load balancer addresses carry all backchannel traffic. The shared HTTP/gRPC request budget is
+      the process-wide bound for these callers.
+- [ ] Every failed caller authentication on these routes (missing or wrong credentials, a token without the
+      required scope, missing `auth.backchannel` configuration) and every request to the `auth.basic` endpoint
+      consumes one token of the client address. An undecided token validation (`503`) does not. Within the budget
+      a failure is answered with `401` or `403` after the rejection delay. Once the address has no token left,
+      every request from it, including requests with valid credentials, is answered with `429` (`scope: rate`)
+      immediately and without evaluating credentials, until the budget refills at `per_second`. Credential
+      guessing is therefore bounded per address to `burst` attempts plus `per_second` attempts per second on
+      average; concurrent failures that pass the check together are all charged and delay the refill.
+- [ ] Callers that share an address with a misconfigured or hostile client lose backchannel access while that
+      client exhausts the budget. Watch `backchannel_caller_auth_total{outcome="rejected"}` and `429` answers
+      with `ratelimit_reason=rate` on `/api/v1`, and fix failing callers promptly. Routes without backchannel
+      caller authentication, such as the IdP, the frontend, the Policy API, custom hooks, and backchannel routes
+      of a developer-mode server without `auth.backchannel`, keep the per-client-IP limit for every request.
 - [ ] `/oidc/token` and `/oidc/introspect` have no per-address brake for client-secret guessing; guessing
       there is limited by network exposure and upstream rate limits.
 - [ ] With `runtime.servers.http.haproxy_v2` enabled, the listener accepts PROXY headers from every TCP peer

@@ -1444,6 +1444,13 @@ token into an outage for all of them. Instead, every genuine rejection is delaye
 logged at warning level with the transport, the client IP, and a fixed reason; the log never contains
 credentials, tokens, or usernames.
 
+The HTTP API has one bounded exception. With `runtime.servers.http.middlewares.rate` enabled, the per-client-IP
+rate limit is a failure budget on the caller-authenticated `/api/v1` routes: successful caller authentications
+never consume it, each failed one consumes a token, and an address without tokens is answered with `429` before
+its credentials are evaluated until the budget refills at `rate_limit.per_second`. This keeps credential guessing
+bounded per address; an address shared with a failing caller is refused only while that caller keeps failing.
+The gRPC authority listener has no such budget.
+
 | Caller authentication result | gRPC status | HTTP | Outcome | Delayed |
 |---|---|---|---|---|
 | Missing metadata, wrong Basic credentials, unknown, expired, revoked, denylisted, or wrongly signed token | `UNAUTHENTICATED` | 401 | `rejected` | yes |

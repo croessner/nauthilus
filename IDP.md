@@ -786,8 +786,10 @@ with `CROSSSLOT`. Bearer secrets and user-facing codes never appear in keys; key
 - Device requests are single-key `WATCH`/`MULTI` transitions with a bounded retry. A poll only merges its timestamp,
   so it can never overwrite a concurrent claim or completion, and no write recreates a consumed request.
 - User codes are short by design. Enable the per-client-IP HTTP rate limit (`runtime.servers.http.middlewares.rate`
-  with `runtime.servers.http.rate_limit.per_second` and `burst`); it covers all HTTP endpoints including the device
-  verification endpoint `/oidc/device/verify`, so user codes cannot be guessed online.
+  with `runtime.servers.http.rate_limit.per_second` and `burst`); it covers all IdP, frontend, and UI endpoints
+  including the device verification endpoint `/oidc/device/verify`, so user codes cannot be guessed online. Probes
+  and `/metrics` are exempt, and on the caller-authenticated backchannel API the limit only counts failed caller
+  authentications (see `server/docs/operational_security_checklist.md`).
 
 Upgrading from a release that stored this state under the shared `{dynamic}` and `{registry}` hash tags or with raw
 codes in keys is a hard cut without migration. The previous keys are not read. After the upgrade:
