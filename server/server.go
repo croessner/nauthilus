@@ -337,6 +337,9 @@ type httpServerRuntime struct {
 	routeArtifacts  *core.RouteArtifacts
 	// requestLimit is the one concurrency budget of the HTTP API and the gRPC authority; nil when disabled.
 	requestLimit *mdlimit.Counter
+	// rateLimit is the per-client-IP limiter of the global rate middleware and the backchannel caller
+	// authentication; nil when disabled.
+	rateLimit *mdlimit.IPRateLimiter
 }
 
 type httpSetupCallbacks struct {
@@ -361,6 +364,7 @@ func startHTTPServerWithOptions(ctx context.Context, store *contextStore, option
 		AccountCache:   runtime.store.accountCache,
 		RouteArtifacts: runtime.routeArtifacts,
 		RequestLimit:   runtime.requestLimit,
+		RateLimit:      runtime.rateLimit,
 	})
 
 	if err := startGRPCAuthorityForHTTP(runtime.store.server.ctx, runtime, options); err != nil {
@@ -413,7 +417,19 @@ func prepareHTTPServerRuntime(ctx context.Context, store *contextStore) (httpSer
 		signals:         store.signals,
 		routeArtifacts:  store.routeArtifacts,
 		requestLimit:    newSharedRequestLimit(cfg),
+		rateLimit:       newSharedRateLimit(cfg),
 	}, nil
+}
+
+// newSharedRateLimit creates the per-client-IP rate limiter that the global rate middleware and the backchannel
+// caller authentication share, so routes behind caller authentication are limited only for requests that do not
+// authenticate. It returns nil when the rate middleware is disabled.
+func newSharedRateLimit(cfg config.File) *mdlimit.IPRateLimiter {
+	if !cfg.GetServer().GetMiddlewares().IsRateEnabled() {
+		return nil
+	}
+
+	return mdlimit.NewIPRateLimiterFromConfig(cfg)
 }
 
 // newSharedRequestLimit creates the concurrency budget that the HTTP API and the gRPC authority share, because both
@@ -643,6 +659,10 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 			RouteArtifacts: runtime.routeArtifacts,
 			LDAPQueue:      priorityqueue.LDAPQueue,
 			LDAPAuthQueue:  priorityqueue.LDAPAuthQueue,
+		}
+
+		if runtime.rateLimit != nil {
+			deps.CallerRateLimiter = runtime.rateLimit
 		}
 
 		deps.AuthApplication = runtime.authApplication

@@ -104,18 +104,52 @@ func ValidateAuthConfiguration(cfg config.File, developerMode bool) error {
 	return ensureBackchannelAuthConfigured(cfg, developerMode)
 }
 
+// backchannelAuthMiddleware authenticates backchannel callers. Its routes are exempted from the global per-IP
+// rate middleware; the shared limiter is a failure budget per client IP instead. An address without budget is
+// answered with 429 before its credentials are evaluated, and only requests that charge the budget consume it.
+// The early 429 skips the rejection delay: no credential was checked, so there is nothing to slow down, and an
+// immediate answer keeps a flood from holding request slots of the shared concurrency budget.
 func backchannelAuthMiddleware(
 	cfg config.File,
 	validator oidcbearer.TokenValidator,
 	logger *slog.Logger,
+	limiter mdauth.CallerRateLimiter,
 ) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if !authorizeBackchannelRequest(ctx, cfg, validator, logger) {
+		if limiter != nil && limiter.AbortIfExhausted(ctx) {
+			return
+		}
+
+		authorized := authorizeBackchannelRequest(ctx, cfg, validator, logger)
+
+		if limiter != nil && chargesFailureBudget(ctx, authorized) {
+			limiter.ChargeFailure(ctx)
+		}
+
+		if !authorized {
 			return
 		}
 
 		ctx.Next()
 	}
+}
+
+// chargesFailureBudget reports whether the request consumes the per-IP failure budget: its caller authentication
+// was rejected with 401 or 403, or the route passed without caller authentication. An undecided token validation
+// (503) or a routing error (500) says nothing about the caller's credentials and is not charged.
+func chargesFailureBudget(ctx *gin.Context, authorized bool) bool {
+	if authorized {
+		return !isAuthenticatedCaller(ctx)
+	}
+
+	status := ctx.Writer.Status()
+
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
+}
+
+// isAuthenticatedCaller reports whether Basic or Bearer caller authentication succeeded for the request.
+func isAuthenticatedCaller(ctx *gin.Context) bool {
+	return ctx.GetBool(definitions.CtxBasicAuthValidatedKey) || oidcbearer.GetClaimsFromContext(ctx) != nil
 }
 
 func openAPIContextMiddleware() gin.HandlerFunc {
@@ -229,13 +263,17 @@ func Setup(router *gin.Engine, deps *handlerdeps.Deps) error {
 	cfg := deps.Cfg
 	developerMode := deps.Env != nil && deps.Env.GetDevMode()
 
-	nauthilusIDP, authenticatedGroup, err := registerAuthenticatedBackchannelRoutes(router, deps, cfg, developerMode)
+	exemption := newCallerAuthRouteExemption(router, cfg, deps.CallerRateLimiter)
+
+	nauthilusIDP, authenticatedGroup, err := registerAuthenticatedBackchannelRoutes(router, deps, cfg, developerMode, exemption)
 	if err != nil {
 		return err
 	}
 
 	registerCustomHookRoutes(router, deps, nauthilusIDP)
-	registerDevUIRoutes(deps, authenticatedGroup)
+	exemption.register(func() {
+		registerDevUIRoutes(deps, authenticatedGroup)
+	})
 
 	return nil
 }
@@ -255,6 +293,7 @@ func registerAuthenticatedBackchannelRoutes(
 	deps *handlerdeps.Deps,
 	cfg config.File,
 	developerMode bool,
+	exemption callerAuthRouteExemption,
 ) (oidcbearer.TokenValidator, *gin.RouterGroup, error) {
 	if !hasBackchannelProtectedRouteAuth(cfg, developerMode) {
 		deps.Logger.Warn(
@@ -269,17 +308,25 @@ func registerAuthenticatedBackchannelRoutes(
 
 	nauthilusIDP := backchannelTokenValidator(deps, cfg)
 	if hasConfiguredBackchannelAuth(cfg) {
-		authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIDP, deps.Logger))
+		authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIDP, deps.Logger, deps.CallerRateLimiter))
 	}
 
 	authenticatedGroup.Use(mdlua.ContextMiddleware())
 
-	if err := useManagementOpenAPIValidation(authenticatedGroup, deps, cfg); err != nil {
+	var err error
+
+	exemption.register(func() {
+		if err = useManagementOpenAPIValidation(authenticatedGroup, deps, cfg); err != nil {
+			return
+		}
+
+		registerManagementModules(authenticatedGroup, deps)
+		registerOIDCSessionManagement(authenticatedGroup, deps)
+	})
+
+	if err != nil {
 		return nil, nil, err
 	}
-
-	registerManagementModules(authenticatedGroup, deps)
-	registerOIDCSessionManagement(authenticatedGroup, deps)
 
 	return nauthilusIDP, authenticatedGroup, nil
 }
@@ -438,4 +485,49 @@ func nativeHookRequest(
 		OIDCCID:       caller.ClientID,
 		Authenticated: caller.Authenticated,
 	}, pluginruntime.WithSnapshotConfig(cfg)), nil
+}
+
+// callerAuthRouteExemption hands the routes registered behind the backchannel caller-auth middleware to the shared
+// per-IP rate limiter. The limiter then skips them in the global middleware, and the caller-auth middleware uses it
+// as a failure budget. Without a limiter or without caller auth nothing is exempted, so the
+// routes keep the global limit.
+type callerAuthRouteExemption struct {
+	router  *gin.Engine
+	limiter mdauth.CallerRateLimiter
+}
+
+// newCallerAuthRouteExemption returns the exemption for the authenticated backchannel group. It is only active
+// when the group installs the caller-auth middleware, which applies the limiter itself.
+func newCallerAuthRouteExemption(
+	router *gin.Engine,
+	cfg config.File,
+	limiter mdauth.CallerRateLimiter,
+) callerAuthRouteExemption {
+	if !hasConfiguredBackchannelAuth(cfg) {
+		return callerAuthRouteExemption{router: router}
+	}
+
+	return callerAuthRouteExemption{router: router, limiter: limiter}
+}
+
+// register runs registerRoutes and exempts every route it added to the router.
+func (e callerAuthRouteExemption) register(registerRoutes func()) {
+	if e.router == nil || e.limiter == nil {
+		registerRoutes()
+
+		return
+	}
+
+	known := make(map[string]struct{})
+	for _, route := range e.router.Routes() {
+		known[route.Method+" "+route.Path] = struct{}{}
+	}
+
+	registerRoutes()
+
+	for _, route := range e.router.Routes() {
+		if _, found := known[route.Method+" "+route.Path]; !found {
+			e.limiter.ExemptRoute(route.Method, route.Path)
+		}
+	}
 }

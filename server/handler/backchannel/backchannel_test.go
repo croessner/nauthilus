@@ -315,7 +315,7 @@ func TestBackchannelAsyncJobStatusAllowsSecurityScopeBearer(t *testing.T) {
 
 func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenValidator) *gin.Engine {
 	router := gin.New()
-	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default()))
+	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default(), nil))
 	router.GET("/api/v1/auth/probe", func(ctx *gin.Context) {
 		ctx.Status(http.StatusNoContent)
 	})

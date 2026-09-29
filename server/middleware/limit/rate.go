@@ -1,8 +1,10 @@
 package limit
 
 import (
+	"maps"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -17,12 +19,24 @@ import (
 const limitScopeRate = "rate"
 
 // IPRateLimiter manages rate limiters for individual IP addresses.
+//
+// Routes behind backchannel caller authentication are exempted from Middleware through ExemptRoute. Their
+// caller-authentication middleware uses the same per-IP state as a failure budget: AbortIfExhausted rejects an
+// address without budget before its credentials are checked, and ChargeFailure consumes a token only for a failed
+// caller authentication. Authenticated infrastructure callers are bounded by the concurrency budget instead.
 type IPRateLimiter struct {
-	ips *cache.Cache
-	cfg config.File
-	mu  sync.RWMutex
-	r   rate.Limit
-	b   int
+	ips    *cache.Cache
+	cfg    config.File
+	exempt atomic.Pointer[map[routeKey]struct{}]
+	mu     sync.RWMutex
+	r      rate.Limit
+	b      int
+}
+
+// routeKey identifies a registered route by method and route pattern.
+type routeKey struct {
+	method string
+	path   string
 }
 
 // NewIPRateLimiter creates a new IPRateLimiter with the specified rate and burst.
@@ -41,6 +55,78 @@ func NewIPRateLimiterWithConfig(r rate.Limit, b int, cfg config.File) *IPRateLim
 		r:   r,
 		b:   b,
 	}
+}
+
+// NewIPRateLimiterFromConfig creates the IP rate limiter configured by runtime.servers.http.rate_limit.
+func NewIPRateLimiterFromConfig(cfg config.File) *IPRateLimiter {
+	return NewIPRateLimiterWithConfig(Rate(cfg.GetServer().GetRateLimitPerSecond()), cfg.GetServer().GetRateLimitBurst(), cfg)
+}
+
+// ExemptRoute removes the route with method and route pattern path from Middleware. The caller must then apply
+// the limit itself through AbortIfExhausted and ChargeFailure. Routes are exempted while the router is composed; the set is replaced
+// copy-on-write, so request-time lookups never take a lock.
+func (i *IPRateLimiter) ExemptRoute(method string, path string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	next := make(map[routeKey]struct{})
+
+	if current := i.exempt.Load(); current != nil {
+		maps.Copy(next, *current)
+	}
+
+	next[routeKey{method: method, path: path}] = struct{}{}
+
+	i.exempt.Store(&next)
+}
+
+// isExemptRoute reports whether the matched route of ctx was handed to its caller-authentication middleware.
+func (i *IPRateLimiter) isExemptRoute(ctx *gin.Context) bool {
+	exempt := i.exempt.Load()
+	if exempt == nil {
+		return false
+	}
+
+	_, found := (*exempt)[routeKey{method: ctx.Request.Method, path: ctx.FullPath()}]
+
+	return found
+}
+
+// AbortIfExhausted answers with the rate-limit response and returns true when the client IP of ctx has no token
+// left right now. It never consumes a token, so requests that pass it cost nothing.
+func (i *IPRateLimiter) AbortIfExhausted(ctx *gin.Context) bool {
+	ip := i.clientIP(ctx)
+	if i.GetLimiter(ip).Tokens() >= 1 {
+		return false
+	}
+
+	abortRateLimited(ctx, ip)
+
+	return true
+}
+
+// ChargeFailure consumes one token of the client IP of ctx. Concurrent failures may drive the budget below zero,
+// so every failure is charged and delays the refill instead of being forgiven.
+func (i *IPRateLimiter) ChargeFailure(ctx *gin.Context) {
+	i.GetLimiter(i.clientIP(ctx)).Reserve()
+}
+
+// clientIP resolves the address that owns the per-IP state of ctx through the trusted proxy configuration.
+func (i *IPRateLimiter) clientIP(ctx *gin.Context) string {
+	return util.RequestClientIPWithConfig(ctx, i.cfg, nil)
+}
+
+// abortRateLimited writes the rate-limit response for ip and aborts the request.
+func abortRateLimited(ctx *gin.Context, ip string) {
+	ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeRate)
+
+	ctx.JSON(http.StatusTooManyRequests, gin.H{
+		definitions.LogKeyMsg: "Rate limit exceeded",
+		limitResponseKeyScope: limitScopeRate,
+		"ip":                  ip,
+	})
+
+	ctx.Abort()
 }
 
 // Rate is a helper to convert float64 to rate.Limit.
@@ -70,28 +156,18 @@ func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 }
 
 // Middleware returns a gin middleware that performs rate limiting based on the client's IP address.
+// Probe and metrics routes and routes exempted through ExemptRoute pass without counting.
 func (i *IPRateLimiter) Middleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// Skip rate limiting for health check and metrics
-		if isLimitBypassPath(ctx.FullPath()) {
+		if isLimitBypassPath(ctx.FullPath()) || i.isExemptRoute(ctx) {
 			ctx.Next()
 
 			return
 		}
 
-		ip := util.RequestClientIPWithConfig(ctx, i.cfg, nil)
-		limiter := i.GetLimiter(ip)
-
-		if !limiter.Allow() {
-			ctx.Set(definitions.CtxRateLimitReasonKey, limitScopeRate)
-
-			ctx.JSON(http.StatusTooManyRequests, gin.H{
-				definitions.LogKeyMsg: "Rate limit exceeded",
-				limitResponseKeyScope: limitScopeRate,
-				"ip":                  ip,
-			})
-
-			ctx.Abort()
+		ip := i.clientIP(ctx)
+		if !i.GetLimiter(ip).Allow() {
+			abortRateLimited(ctx, ip)
 
 			return
 		}

@@ -68,8 +68,9 @@ type callerAuthMetrics interface {
 //
 // The backchannel is a tunnel: its caller is protected only by its credentials and by the trusted network
 // segment it runs in, while the subject inside the payload is protected by auth.controls brute_force.
-// Callers are therefore never blocked. Many callers share one address behind load balancers and sidecars,
-// so a lockout by address would turn a single misconfigured caller into an outage for all of them.
+// The accounting therefore never blocks a caller. Many callers share one address behind load balancers and
+// sidecars, so a permanent lockout by address would turn a single misconfigured caller into an outage for all of
+// them. The HTTP backchannel only adds the refilling per-IP failure budget of the rate middleware.
 type CallerAccounting struct {
 	logger    *slog.Logger
 	metrics   callerAuthMetrics

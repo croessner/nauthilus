@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core/language"
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/handler/policyhttp"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
@@ -121,4 +122,6 @@ type Deps struct {
 	LDAPAuthQueue core.LDAPAuthRequestQueue
 	// RouteArtifacts owns immutable listener, template, and public-file material prepared before startup commit.
 	RouteArtifacts *core.RouteArtifacts
+	// CallerRateLimiter is the per-client-IP HTTP rate limiter shared with the global middleware; nil when disabled.
+	CallerRateLimiter mdauth.CallerRateLimiter
 }

@@ -63,6 +63,8 @@ type HTTPDeps struct {
 	RouteArtifacts *RouteArtifacts
 	// RequestLimit is the concurrency budget shared with the gRPC authority; nil creates an HTTP-only one.
 	RequestLimit *mdlimit.Counter
+	// RateLimit is the per-client-IP rate limiter shared with backchannel caller authentication; nil creates one.
+	RateLimit *mdlimit.IPRateLimiter
 }
 
 // DefaultBootstrap wires the existing bootstrapping functions.
@@ -108,6 +110,7 @@ type DefaultRouterComposer struct {
 	accountCache   *accountcache.Manager
 	routeArtifacts *RouteArtifacts
 	requestLimit   *mdlimit.Counter
+	rateLimit      *mdlimit.IPRateLimiter
 }
 
 // NewDefaultRouterComposer provides the exported NewDefaultRouterComposer function.
@@ -115,6 +118,7 @@ func NewDefaultRouterComposer(deps HTTPDeps) DefaultRouterComposer {
 	return DefaultRouterComposer{
 		cfg: deps.Cfg, logger: deps.Logger, env: deps.Env, redis: deps.Redis,
 		accountCache: deps.AccountCache, routeArtifacts: deps.RouteArtifacts, requestLimit: deps.RequestLimit,
+		rateLimit: deps.RateLimit,
 	}
 }
 
@@ -151,11 +155,10 @@ func (c DefaultRouterComposer) ApplyEarlyMiddlewares(r *gin.Engine) {
 	}
 
 	if mw.IsRateEnabled() {
-		rateLimiter := mdlimit.NewIPRateLimiterWithConfig(
-			mdlimit.Rate(c.cfg.GetServer().GetRateLimitPerSecond()),
-			c.cfg.GetServer().GetRateLimitBurst(),
-			c.cfg,
-		)
+		rateLimiter := c.rateLimit
+		if rateLimiter == nil {
+			rateLimiter = mdlimit.NewIPRateLimiterFromConfig(c.cfg)
+		}
 
 		r.Use(rateLimiter.Middleware())
 	}
