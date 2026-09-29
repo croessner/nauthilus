@@ -2421,7 +2421,9 @@ async function maybeRunSAMLFlow(browser) {
   try {
     await page.goto(samlLoginURL);
     await submitPasswordLogin(page, `${username}.saml`, password);
-    await page.waitForLoadState('networkidle');
+    // The SAML response returns to the SP through a redirect and auto-submitted POST after the login
+    // response. networkidle can already hold for the IdP page at that point, so wait for the SP URL itself.
+    await page.waitForURL(/localhost:19095/i, {timeout: callbackTimeoutMS});
     assert.match(page.url(), /localhost:19095/i, 'SAML flow should return to the local SP');
     await expectPageText(page, /SAML2 Authentication Successful/i);
     console.log('ok saml-sso-login');
