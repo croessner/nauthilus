@@ -24,10 +24,10 @@ import (
 
 // LuaSection describes the exported LuaSection type.
 type LuaSection struct {
-	Hooks               []LuaHooks             `mapstructure:"hooks" validate:"omitempty,dive"`
-	Config              *LuaConf               `mapstructure:"config" validate:"omitempty"`
-	OptionalLuaBackends map[string]*LuaConf    `mapstructure:"optional_lua_backends" validate:"omitempty,dive"`
-	Search              []LuaSearchProtocol    `mapstructure:"search" validate:"omitempty,dive"`
+	Hooks               []LuaHooks          `mapstructure:"hooks" validate:"omitempty,dive"`
+	Config              *LuaConf            `mapstructure:"config" validate:"omitempty"`
+	OptionalLuaBackends map[string]*LuaConf `mapstructure:"optional_lua_backends" validate:"omitempty,dive"`
+	Search              []LuaSearchProtocol `mapstructure:"search" validate:"omitempty,dive"`
 }
 
 func (l *LuaSection) String() string {

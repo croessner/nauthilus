@@ -94,9 +94,9 @@ func TestNewServerKeepsIdentityBackendDisabledWithoutBackendRefs(t *testing.T) {
 
 func TestNewServerRejectsEnabledBackendRefsWithoutStore(t *testing.T) {
 	_, err := NewServer(ServerDeps{
-		Cfg:         enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
-		Logger:      slog.Default(),
-		AuthService: &recordingService{},
+		Cfg:           enableGRPCAuthBackendRefs(grpcAuthTestConfig(validBasicAuthConfig(), config.OIDCAuth{})),
+		Logger:        slog.Default(),
+		AuthService:   &recordingService{},
 		PolicyService: effectPolicyService{},
 	})
 	if err == nil {
