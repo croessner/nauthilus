@@ -528,7 +528,7 @@ func TestClickHouseAuthHeadersAreBuiltWithoutLoggingSecrets(t *testing.T) {
 	}
 
 	request := harness.transport.onlyRequest()
-	wantAuth := "Basic " + base64.RawStdEncoding.EncodeToString([]byte("clickhouse-user:"+testSecret))
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("clickhouse-user:"+testSecret))
 
 	if got := request.header.Get(headerAuthorization); got != wantAuth {
 		t.Fatalf("Authorization header = %q, want Basic credentials", got)
@@ -536,6 +536,24 @@ func TestClickHouseAuthHeadersAreBuiltWithoutLoggingSecrets(t *testing.T) {
 
 	if strings.Contains(logs.String(), testSecret) || strings.Contains(logs.String(), wantAuth) {
 		t.Fatalf("logs leaked ClickHouse secret material: %s", logs.String())
+	}
+}
+
+// TestBasicAuthHeaderIsPaddedForEveryCredentialLength proves that every credential length
+// round-trips through a standard HTTP Basic auth parser, including lengths that need padding.
+func TestBasicAuthHeaderIsPaddedForEveryCredentialLength(t *testing.T) {
+	for _, password := range []string{"a", "ab", "abc", "abcd", strings.Repeat("x", 43), strings.Repeat("x", 44)} {
+		headers, method := buildHeaders(moduleConfig{User: "nauthilus", Password: password})
+		if method != authMethodBasic {
+			t.Fatalf("auth method = %q, want %q", method, authMethodBasic)
+		}
+
+		request := &http.Request{Header: http.Header{headerAuthorization: headers[headerAuthorization]}}
+
+		user, got, ok := request.BasicAuth()
+		if !ok || user != "nauthilus" || got != password {
+			t.Fatalf("password of length %d did not round-trip through Basic auth", len(password))
+		}
 	}
 }
 

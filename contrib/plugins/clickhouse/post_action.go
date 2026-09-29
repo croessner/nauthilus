@@ -310,7 +310,10 @@ func buildHeaders(config moduleConfig) (map[string][]string, string) {
 
 	switch {
 	case user != "" && password != "":
-		encoded := base64.RawStdEncoding.EncodeToString([]byte(user + ":" + password))
+		// HTTP Basic auth (RFC 7617) uses padded base64. Without padding, a
+		// credential whose length is not a multiple of three bytes decodes to a
+		// different password on the ClickHouse side and is rejected.
+		encoded := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
 		headers[headerAuthorization] = []string{"Basic " + encoded}
 
 		return headers, authMethodBasic
