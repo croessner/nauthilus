@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1489,6 +1490,12 @@ func negativeLDAPCacheKey(poolName string, ldapRequest *bktype.LDAPRequest) stri
 	return poolName + "|" + ldapRequest.BaseDN + "|" + ldapRequest.Filter
 }
 
+// searchSingleflightKey extends the negative-cache key with the scope and attribute list, which also shape the
+// answer, so only searches the server would answer identically share one in-flight result.
+func searchSingleflightKey(negKey string, ldapRequest *bktype.LDAPRequest) string {
+	return negKey + "|" + strconv.Itoa(ldapRequest.Scope.Get()) + "|" + strings.Join(ldapRequest.SearchAttributes, ",")
+}
+
 // applyNegativeCacheHit writes an empty reply when a negative-cache entry exists.
 func (l *ldapPoolImpl) applyNegativeCacheHit(cache localcache.SimpleCache, negKey string, ldapRequest *bktype.LDAPRequest, ldapReply *bktype.LDAPReply) bool {
 	if _, ok := cache.Get(negKey); !ok {
@@ -1508,6 +1515,7 @@ func (l *ldapPoolImpl) applyNegativeCacheHit(cache localcache.SimpleCache, negKe
 
 // searchWithNegativeSingleflight protects identical negative-cache misses from stampeding LDAP.
 //
+// Only searches with the same base DN, filter, scope, and attribute list join one flight; see searchSingleflightKey.
 // Every caller receives an attribute map it owns: callers mutate their reply (MFA decryption, subject attribute
 // patches) on their own request goroutine, so a deduplicated result is cloned for each caller instead of being
 // handed out once and written by all of them. Raw entries stay shared because callers only read them.
@@ -1517,7 +1525,7 @@ func (l *ldapPoolImpl) searchWithNegativeSingleflight(
 	conf *config.LDAPConf,
 	negKey string,
 ) (bktype.AttributeMapping, []*ldap.Entry, error) {
-	val, _, shared := negSF.Do(negKey, func() (any, error) {
+	val, _, shared := negSF.Do(searchSingleflightKey(negKey, ldapRequest), func() (any, error) {
 		result, rawResult, err := l.searchWithRetries(index, ldapRequest, conf)
 
 		return &ldapSearchSingleflightResult{res: result, raw: rawResult, err: err}, nil
