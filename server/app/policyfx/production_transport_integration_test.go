@@ -41,7 +41,11 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-const productionTransportBearerCredential = "production-policy-token"
+const (
+	productionTransportBearerCredential    = "production-policy-token"
+	productionTransportBackchannelUser     = "grpc-backchannel"
+	productionTransportBackchannelPassword = "grpc-backchannel-secret"
+)
 
 // TestProductionCoordinatorServesOneNonAuthGenerationOverHTTPAndGRPC proves both public transports use one authority.
 func TestProductionCoordinatorServesOneNonAuthGenerationOverHTTPAndGRPC(t *testing.T) {
@@ -101,19 +105,28 @@ func productionTransportCandidate(t *testing.T) *config.FileSettings {
 		policy.CallerAuthenticationKindBasic,
 		policy.CallerAuthenticationKindBearer,
 	}
-	configured.Server = &config.ServerSection{BasicAuth: config.BasicAuth{
+	enableGRPCAuthorityBackchannel(configured)
+
+	return configured
+}
+
+// enableGRPCAuthorityBackchannel activates the gRPC authority route behind the dedicated backchannel Basic credential.
+func enableGRPCAuthorityBackchannel(configured *config.FileSettings) {
+	if configured.Server == nil {
+		configured.Server = &config.ServerSection{}
+	}
+
+	configured.Server.BasicAuth = config.BasicAuth{
 		Enabled:  true,
-		Username: "grpc-backchannel",
-		Password: secret.New("grpc-backchannel-secret"),
-	}}
+		Username: productionTransportBackchannelUser,
+		Password: secret.New(productionTransportBackchannelPassword),
+	}
 	configured.Runtime = &config.RuntimeSection{Servers: config.RuntimeServersSection{
 		GRPC: config.RuntimeGRPCServersSection{Authority: config.RuntimeGRPCAuthServerSection{
 			Enabled: true,
 			Address: "127.0.0.1:9444",
 		}},
 	}}
-
-	return configured
 }
 
 // productionTransportTokenFactory returns one candidate-scoped exact Policy access-token validator.
@@ -241,20 +254,30 @@ func newProductionTransportGRPCClient(
 ) policyv1.PolicyDecisionServiceClient {
 	t.Helper()
 
-	listener := bufconn.Listen(1024 * 1024)
-
-	server, err := grpcauthority.NewServer(grpcauthority.ServerDeps{
+	connection := serveProductionGRPCAuthority(t, grpcauthority.ServerDeps{
 		Cfg:           configured,
 		AuthService:   productionTransportNoopAuthService{},
 		PolicyService: service,
-	})
+	}, nil)
+
+	return policyv1.NewPolicyDecisionServiceClient(connection)
+}
+
+// serveProductionGRPCAuthority serves one production gRPC authority over bufconn and returns a client connection.
+// A non-nil remote address replaces the in-memory peer that grpc-go observes for every accepted connection.
+func serveProductionGRPCAuthority(t *testing.T, deps grpcauthority.ServerDeps, remote net.Addr) *grpc.ClientConn {
+	t.Helper()
+
+	server, err := grpcauthority.NewServer(deps)
 	if err != nil {
 		t.Fatalf("grpcauthority.NewServer() error = %v", err)
 	}
 
+	listener := bufconn.Listen(1024 * 1024)
 	serveErr := make(chan error, 1)
+
 	go func() {
-		serveErr <- server.Serve(listener)
+		serveErr <- server.Serve(peerAddressListener{Listener: listener, remote: remote})
 	}()
 
 	connection, err := grpc.NewClient(
@@ -289,8 +312,32 @@ func newProductionTransportGRPCClient(
 		}
 	})
 
-	return policyv1.NewPolicyDecisionServiceClient(connection)
+	return connection
 }
+
+// peerAddressListener optionally makes grpc-go observe one controlled remote address.
+type peerAddressListener struct {
+	net.Listener
+	remote net.Addr
+}
+
+// Accept wraps the in-memory connection with the configured peer address.
+func (l peerAddressListener) Accept() (net.Conn, error) {
+	connection, err := l.Listener.Accept()
+	if err != nil || l.remote == nil {
+		return connection, err
+	}
+
+	return peerAddressConn{Conn: connection, remote: l.remote}, nil
+}
+
+type peerAddressConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+// RemoteAddr returns the controlled peer address instead of the in-memory pipe name.
+func (c peerAddressConn) RemoteAddr() net.Addr { return c.remote }
 
 type productionTransportNoopAuthService struct{}
 

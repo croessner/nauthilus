@@ -446,12 +446,24 @@ func nativeAuthGenerationCandidateFromFixture(
 ) (*config.FileSettings, *pluginloader.State) {
 	t.Helper()
 
+	return nativeGenerationCandidateFromFixture(t, fixture, "example", nativeAuthTestOpener{probe: probe})
+}
+
+// nativeGenerationCandidateFromFixture loads one hermetic native module behind one explicit Policy fixture.
+func nativeGenerationCandidateFromFixture(
+	t *testing.T,
+	fixture string,
+	moduleName string,
+	opener pluginloader.Opener,
+) (*config.FileSettings, *pluginloader.State) {
+	t.Helper()
+
 	document, err := policyconfig.Decode("yaml", strings.NewReader(fixture))
 	if err != nil {
 		t.Fatalf("decode native auth policy: %v", err)
 	}
 
-	artifact := filepath.Join(t.TempDir(), "example.so")
+	artifact := filepath.Join(t.TempDir(), moduleName+".so")
 	if err = os.WriteFile(artifact, []byte("native-auth-test-artifact"), 0o600); err != nil {
 		t.Fatalf("write plugin artifact: %v", err)
 	}
@@ -461,10 +473,10 @@ func nativeAuthGenerationCandidateFromFixture(
 		t.Fatalf("DigestArtifact() error = %v", err)
 	}
 
-	module := config.PluginModule{Name: "example", Path: artifact}
+	module := config.PluginModule{Name: moduleName, Path: artifact}
 	loader := pluginloader.NewLoader(
 		pluginloader.WithLoaderArtifactReader(os.ReadFile),
-		pluginloader.WithOpener(nativeAuthTestOpener{probe: probe}),
+		pluginloader.WithOpener(opener),
 	)
 
 	state, err := loader.Load([]pluginloader.VerifiedModule{{
