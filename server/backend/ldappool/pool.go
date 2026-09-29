@@ -1507,13 +1507,17 @@ func (l *ldapPoolImpl) applyNegativeCacheHit(cache localcache.SimpleCache, negKe
 }
 
 // searchWithNegativeSingleflight protects identical negative-cache misses from stampeding LDAP.
+//
+// Every caller receives an attribute map it owns: callers mutate their reply (MFA decryption, subject attribute
+// patches) on their own request goroutine, so a deduplicated result is cloned for each caller instead of being
+// handed out once and written by all of them. Raw entries stay shared because callers only read them.
 func (l *ldapPoolImpl) searchWithNegativeSingleflight(
 	index int,
 	ldapRequest *bktype.LDAPRequest,
 	conf *config.LDAPConf,
 	negKey string,
 ) (bktype.AttributeMapping, []*ldap.Entry, error) {
-	val, _, _ := negSF.Do(negKey, func() (any, error) {
+	val, _, shared := negSF.Do(negKey, func() (any, error) {
 		result, rawResult, err := l.searchWithRetries(index, ldapRequest, conf)
 
 		return &ldapSearchSingleflightResult{res: result, raw: rawResult, err: err}, nil
@@ -1521,7 +1525,17 @@ func (l *ldapPoolImpl) searchWithNegativeSingleflight(
 
 	pack := val.(*ldapSearchSingleflightResult)
 
-	return pack.res, pack.raw, pack.err
+	return pack.callerOwned(shared)
+}
+
+// callerOwned returns the search result for one singleflight caller. A result that other callers also received is
+// cloned, so the flight's own map is never exposed and no two requests can write the same map.
+func (r *ldapSearchSingleflightResult) callerOwned(shared bool) (bktype.AttributeMapping, []*ldap.Entry, error) {
+	if !shared {
+		return r.res, r.raw, r.err
+	}
+
+	return r.res.Clone(), r.raw, r.err
 }
 
 // searchWithRetries retries transient LDAP search failures according to pool settings.
