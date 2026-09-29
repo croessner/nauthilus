@@ -64,7 +64,7 @@ plugins:
         decision_bindings:
           - component: environment
             targets: [authn/authenticate, authn/lookup_identity]
-            input: {fact: input.auth.client_ip, category: environment}
+            input: {fact: nauthilus.request.client.ip, category: environment}
             output_schema: geoip.facts.v1
         database_path: /var/lib/nauthilus/geoip.json
 ```

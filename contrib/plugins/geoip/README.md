@@ -247,7 +247,18 @@ policy example.
 - `plugin.geoip.is_hosting_network`
 - `plugin.geoip.is_shared_egress`
 
-The authentication example selects `input.auth.client_ip` for `authn/authenticate` and `authn/lookup_identity`.
+The authentication example selects the host-normalized `nauthilus.request.client.ip` for `authn/authenticate` and
+`authn/lookup_identity`. It carries the caller-supplied client address when one was sent (labelled untrusted unless it
+matches the transport peer) and otherwise the transport peer that scheduler guards also see, for example the gRPC peer
+of a backchannel identity lookup without `client_ip`. The caller-asserted `input.auth.client_ip` is only present when
+the transport adapter received a client address: HTTP falls back to the connection peer, gRPC does not. Binding it lets
+the loopback exemption guard and GeoIP disagree about the same request, and a gRPC call without `client_ip` from a
+non-exempt peer then fails the required input.
+
+A request without any parseable client address, for example over a Unix socket, has no input fact. The provider
+reports `invalid_input`, and the configured provider `failure` mode applies, so a required GeoIP provider fails
+closed. A plan that treats such requests as not applicable skips the provider explicitly with a scheduler guard such as
+`{attribute: nauthilus.request.client.ip.present, is: false}` in `skip_if`.
 A DKIM2 current-peer binding instead selects `environment.rspamd.smtp_client_ip` for
 `dkim2/accept-message-instance`. Neither identity is embedded in lookup code. Current-peer output is never attached
 to a historical hop. The optional [observation fragment](../../../server/docs/examples/reputation_geoip_observation.yml)
