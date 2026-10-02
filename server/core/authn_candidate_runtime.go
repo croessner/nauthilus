@@ -528,7 +528,7 @@ func (e *authnCandidateExecution) prepareBackendPlan(plan backendExecutionPlan) 
 	}
 
 	if result := e.auth.usernamePasswordChecks(); result != definitions.AuthResultUnset {
-		e.settleCredential(result)
+		e.settleCredential(result, false)
 
 		return true, nil
 	}
@@ -555,7 +555,7 @@ func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecuti
 	e.backendAccount = account
 	e.backendReady = true
 	e.backendCached = true
-	e.settleCredential(definitions.AuthResultOK)
+	e.settleCredential(definitions.AuthResultOK, result.UserFound)
 
 	return true
 }
@@ -607,7 +607,7 @@ func (e *authnCandidateExecution) recordBackendFailure(result *PassDBResult, err
 
 	e.auth.Runtime.Authenticated = false
 	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, result, err)
-	e.settleCredential(definitions.AuthResultTempFail)
+	e.settleCredential(definitions.AuthResultTempFail, result != nil && result.UserFound)
 }
 
 // installVerifiedBackendResult completes the staged backend state after identity normalization succeeds.
@@ -625,7 +625,7 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 	e.backendAccount = accountName
 
 	e.backendReady = true
-	e.settleCredential(verifiedBackendVerdict(result, e.auth.Runtime.BruteForceError))
+	e.settleCredential(verifiedBackendVerdict(result, e.auth.Runtime.BruteForceError), result.UserFound)
 }
 
 // verifiedBackendVerdict classifies one verified backend result before subject processing can change it.
@@ -709,7 +709,9 @@ func (e *authnCandidateExecution) finishTypedBackendProvider() {
 			e.auth.Runtime.Authenticated = false
 			e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, e.backendResult, err)
 			e.authResult = definitions.AuthResultTempFail
-			e.hostEvidence.lowerCredential(definitions.AuthResultTempFail)
+			e.updateHostEvidence(func(evidence *authnHostEvidence) {
+				evidence.lowerCredential(definitions.AuthResultTempFail)
+			})
 		}
 	}
 
@@ -745,11 +747,14 @@ func (e *authnCandidateExecution) prepareAccountProvider() {
 	accounts, errSeen := e.auth.listUserAccounts()
 	e.accounts = accounts
 
+	verdict := definitions.AuthResultOK
 	if errSeen {
-		e.hostEvidence.freezeAccounts(definitions.AuthResultTempFail)
-	} else {
-		e.hostEvidence.freezeAccounts(definitions.AuthResultOK)
+		verdict = definitions.AuthResultTempFail
 	}
+
+	e.updateHostEvidence(func(evidence *authnHostEvidence) {
+		evidence.freezeAccounts(verdict)
+	})
 }
 
 // currentResult projects collected host state without publishing a terminal response.
@@ -1009,8 +1014,23 @@ func (e *authnCandidateExecution) clearAuthnCandidateTempFailLocalization(
 }
 
 // finalizeUnselected maps a checkpoint result when no application presentation was selected. An ok result still
-// needs the host evidence a selected permit needs and fails closed without it.
+// needs the host evidence a selected permit needs and fails closed without it, and the host auth FSM records the
+// enforced decision like a selected one.
 func (e *authnCandidateExecution) finalizeUnselected(
+	checkpoint string,
+	effect decision.Effect,
+	current authnApplicationResult,
+) (authnApplicationResult, error) {
+	result, err := e.unselectedResult(checkpoint, effect, current)
+	if err != nil {
+		return authnApplicationResult{}, err
+	}
+
+	return e.recordUnselectedAuthnFSM(checkpoint, result)
+}
+
+// unselectedResult maps the effect onto the host result and guards an ok result without host evidence.
+func (e *authnCandidateExecution) unselectedResult(
 	checkpoint string,
 	effect decision.Effect,
 	current authnApplicationResult,
@@ -1020,7 +1040,7 @@ func (e *authnCandidateExecution) finalizeUnselected(
 	}
 
 	result, err := current.mapEffect(effect)
-	if err != nil || result.currentDecision() != AuthDecisionOK || e.hostEvidence.permits(e.operation) {
+	if err != nil || result.currentDecision() != AuthDecisionOK || e.hostEvidenceSnapshot().permits(e.operation) {
 		return result, err
 	}
 

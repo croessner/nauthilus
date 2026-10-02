@@ -674,8 +674,8 @@ func TestAuthnHostEvidenceFreezesFirstVerdictAndNeverRaises(t *testing.T) {
 		t.Fatal("unobserved evidence permits")
 	}
 
-	evidence.freezeCredential(definitions.AuthResultFail)
-	evidence.freezeCredential(definitions.AuthResultOK)
+	evidence.freezeCredential(definitions.AuthResultFail, true)
+	evidence.freezeCredential(definitions.AuthResultOK, true)
 	evidence.lowerCredential(definitions.AuthResultOK)
 
 	if evidence.permits(policy.OperationAuthenticate) || evidence.permits(policy.OperationLookupIdentity) {
@@ -705,7 +705,7 @@ func TestAuthnHostEvidenceFreezesFirstVerdictAndNeverRaises(t *testing.T) {
 	}
 
 	verified := authnHostEvidence{}
-	verified.freezeCredential(definitions.AuthResultOK)
+	verified.freezeCredential(definitions.AuthResultOK, true)
 	verified.lowerCredential(definitions.AuthResultTempFail)
 
 	if verified.permits(policy.OperationAuthenticate) {
