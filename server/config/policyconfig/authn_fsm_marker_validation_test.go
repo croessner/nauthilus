@@ -78,31 +78,6 @@ type authnFSMMarkerCase struct {
 
 const authnFSMMarkerPath = "policy.namespaces.authn.policy_sets.configured.rules[0].then.fsm_event_marker"
 
-// authnFSMMarkerMissingCases lists terminal authn rule outcomes without the required marker.
-func authnFSMMarkerMissingCases() []authnFSMMarkerCase {
-	return []authnFSMMarkerCase{
-		{
-			name:       "terminal deny without marker at auth_decision is rejected",
-			checkpoint: "auth_decision",
-			actions:    "[authenticate]",
-			then: `                decision: deny
-                outcome_marker: auth.outcome.subject_reject
-                response_marker: auth.response.fail`,
-			wantParts: []string{
-				`rule "subject_reject"`, "target authn/authenticate", "decision deny", "checkpoint auth_decision",
-				"requires fsm_event_marker", "auth.fsm.event.auth_deny", "auth.fsm.event.auth_empty_pass",
-			},
-		},
-		{
-			name:       "terminal tempfail without marker at pre_auth is rejected",
-			checkpoint: "pre_auth",
-			actions:    "[authenticate]",
-			then:       `                decision: tempfail`,
-			wantParts:  []string{"decision tempfail", "checkpoint pre_auth", "auth.fsm.event.pre_auth_tempfail"},
-		},
-	}
-}
-
 // authnFSMMarkerInvalidCases lists authn rule markers the auth FSM cannot apply at their checkpoint.
 func authnFSMMarkerInvalidCases() []authnFSMMarkerCase {
 	return []authnFSMMarkerCase{
@@ -172,7 +147,7 @@ func requireAuthnRuleRejection(t *testing.T, err error, wantPath string, wantPar
 }
 
 func TestAuthnRuleFSMEventMarkerValidation(t *testing.T) {
-	for _, test := range append(authnFSMMarkerMissingCases(), authnFSMMarkerInvalidCases()...) {
+	for _, test := range authnFSMMarkerInvalidCases() {
 		t.Run(test.name, func(t *testing.T) {
 			err := validateYAMLDocument(t, authnFSMMarkerDocument(test.checkpoint, test.actions, test.then))
 

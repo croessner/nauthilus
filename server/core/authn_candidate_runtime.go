@@ -33,7 +33,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
-	policyfsm "github.com/croessner/nauthilus/v4/server/policy/fsm"
 	"github.com/croessner/nauthilus/v4/server/policy/report"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +58,7 @@ type authnCandidateExecution struct {
 	auth           *AuthState
 	backendResult  *PassDBResult
 	backendOutcome pluginapi.BackendOutcomeView
+	hostEvidence   authnHostEvidence
 	ginCtx         *gin.Context
 	capture        *CaptureResponseWriter
 	selected       map[string]*report.FinalDecision
@@ -470,6 +470,7 @@ func (e *authnCandidateExecution) prepareLuaSubjectSource(
 		modules,
 	)
 	e.subjectReady = true
+	e.enforceHostCredentialBound()
 
 	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
 }
@@ -527,7 +528,7 @@ func (e *authnCandidateExecution) prepareBackendPlan(plan backendExecutionPlan) 
 	}
 
 	if result := e.auth.usernamePasswordChecks(); result != definitions.AuthResultUnset {
-		e.authResult = result
+		e.settleCredential(result)
 
 		return true, nil
 	}
@@ -554,7 +555,7 @@ func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecuti
 	e.backendAccount = account
 	e.backendReady = true
 	e.backendCached = true
-	e.authResult = definitions.AuthResultOK
+	e.settleCredential(definitions.AuthResultOK)
 
 	return true
 }
@@ -606,7 +607,7 @@ func (e *authnCandidateExecution) recordBackendFailure(result *PassDBResult, err
 
 	e.auth.Runtime.Authenticated = false
 	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, result, err)
-	e.authResult = definitions.AuthResultTempFail
+	e.settleCredential(definitions.AuthResultTempFail)
 }
 
 // installVerifiedBackendResult completes the staged backend state after identity normalization succeeds.
@@ -624,17 +625,21 @@ func (e *authnCandidateExecution) installVerifiedBackendResult(
 	e.backendAccount = accountName
 
 	e.backendReady = true
+	e.settleCredential(verifiedBackendVerdict(result, e.auth.Runtime.BruteForceError))
+}
 
+// verifiedBackendVerdict classifies one verified backend result before subject processing can change it.
+func verifiedBackendVerdict(result *PassDBResult, bruteForceError bool) definitions.AuthResult {
 	switch {
 	case result.Authenticated:
-		e.authResult = definitions.AuthResultOK
-	case e.auth.Runtime.BruteForceError:
+		return definitions.AuthResultOK
+	case bruteForceError:
 		// Brute-force accounting could not classify this failure. Answering a
 		// credential rejection would both mislead the client and feed the very
 		// counters that could not be read.
-		e.authResult = definitions.AuthResultTempFail
+		return definitions.AuthResultTempFail
 	default:
-		e.authResult = definitions.AuthResultFail
+		return definitions.AuthResultFail
 	}
 }
 
@@ -704,6 +709,7 @@ func (e *authnCandidateExecution) finishTypedBackendProvider() {
 			e.auth.Runtime.Authenticated = false
 			e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, e.backendResult, err)
 			e.authResult = definitions.AuthResultTempFail
+			e.hostEvidence.lowerCredential(definitions.AuthResultTempFail)
 		}
 	}
 
@@ -728,14 +734,22 @@ func (e *authnCandidateExecution) release() {
 	}
 }
 
-// prepareAccountProvider runs the existing account provider once.
+// prepareAccountProvider runs the existing account provider once and freezes its completion as host evidence.
 func (e *authnCandidateExecution) prepareAccountProvider() {
 	if e.finalReady {
 		return
 	}
 
 	e.finalReady = true
-	e.accounts = e.auth.ListUserAccounts()
+
+	accounts, errSeen := e.auth.listUserAccounts()
+	e.accounts = accounts
+
+	if errSeen {
+		e.hostEvidence.freezeAccounts(definitions.AuthResultTempFail)
+	} else {
+		e.hostEvidence.freezeAccounts(definitions.AuthResultOK)
+	}
 }
 
 // currentResult projects collected host state without publishing a terminal response.
@@ -935,7 +949,8 @@ func (e *authnCandidateExecution) selectedDecision(checkpoint string) *report.Fi
 	return report.CloneFinalDecision(e.selected[checkpoint])
 }
 
-// finalize applies captured presentation and FSM metadata after the shared runtime owns all effects.
+// finalize applies captured presentation and FSM metadata after the shared runtime owns all effects. The auth FSM,
+// driven by host evidence, decides whether a selected permit may answer ok before anything is published.
 func (e *authnCandidateExecution) finalize(
 	checkpoint string,
 	response decision.DecisionResponse,
@@ -945,12 +960,13 @@ func (e *authnCandidateExecution) finalize(
 	final := e.selectedDecision(checkpoint)
 
 	if final == nil {
-		return e.finalizeUnselected(effect, current)
+		return e.finalizeUnselected(checkpoint, effect, current)
 	}
 
 	presentation, acceptanceFailure := e.authnCandidatePresentation(response, final)
+	effect, presentation = e.guardAuthnPermit(checkpoint, effect, presentation)
 
-	if err := e.auth.applyAuthFSMMarkers(e.authnCandidateFSMEventMarkers(presentation)); err != nil {
+	if err := e.auth.applyAuthFSMMarkers(e.authnHostFSMEventPath(presentation)); err != nil {
 		return authnApplicationResult{}, err
 	}
 
@@ -992,34 +1008,25 @@ func (e *authnCandidateExecution) clearAuthnCandidateTempFailLocalization(
 	}
 }
 
-// authnCandidateFSMEventMarkers projects the captured checkpoint selections without a second evaluator. The
-// checkpoint prefix is shared with configuration validation so both agree on the marker entry state.
-func (e *authnCandidateExecution) authnCandidateFSMEventMarkers(final *report.FinalDecision) []string {
-	if final == nil {
-		return []string{policy.FSMEventMarkerParseOK}
-	}
-
-	preAuthMarker := ""
-
-	if final.Stage != policy.StagePreAuth {
-		if selected := e.selectedDecision(string(policy.StagePreAuth)); selected != nil {
-			preAuthMarker = selected.FSMEventMarker
-		}
-	}
-
-	return append(policyfsm.CheckpointEventPrefix(e.operation, final.Stage, preAuthMarker), final.FSMEventMarker)
-}
-
-// finalizeUnselected maps a checkpoint result when no application presentation was selected.
+// finalizeUnselected maps a checkpoint result when no application presentation was selected. An ok result still
+// needs the host evidence a selected permit needs and fails closed without it.
 func (e *authnCandidateExecution) finalizeUnselected(
+	checkpoint string,
 	effect decision.Effect,
 	current authnApplicationResult,
 ) (authnApplicationResult, error) {
-	if current.validFor(e.operation) {
-		return current.mapEffect(effect)
+	if !current.validFor(e.operation) {
+		return newAuthnTerminalResult(e.operation, effect)
 	}
 
-	return newAuthnTerminalResult(e.operation, effect)
+	result, err := current.mapEffect(effect)
+	if err != nil || result.currentDecision() != AuthDecisionOK || e.hostEvidence.permits(e.operation) {
+		return result, err
+	}
+
+	e.recordAuthnFSMGuardViolation(checkpoint, "")
+
+	return current.mapEffect(decision.EffectIndeterminate)
 }
 
 // authnCandidatePresentation projects runtime failures onto the final response.
@@ -1165,6 +1172,8 @@ func (e *authnCandidateExecution) permittedListResult(current authnApplicationRe
 	}
 
 	result.Decision = AuthDecisionOK
+	result.TerminalState = e.auth.Runtime.AuthFSMTerminalState
+	result.FSMEventPath = append([]string(nil), e.auth.Runtime.AuthFSMEventPath...)
 	result.Session = e.auth.Runtime.GUID
 	result.StatusMessage = e.auth.Runtime.StatusMessage
 	result.StatusMessageI18NKey = e.auth.Runtime.StatusMessageI18NKey

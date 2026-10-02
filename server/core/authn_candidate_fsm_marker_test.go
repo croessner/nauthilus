@@ -16,7 +16,6 @@
 package core
 
 import (
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -49,9 +48,9 @@ func authnCandidateFSMMarkerCases() []authnCandidateFSMMarkerCase {
 			wantState: policyfsm.StateAuthFail,
 		},
 		{
-			name:      "auth_decision denial defaults an unmarked neutral pre-auth selection",
+			name:      "auth_decision denial follows the host pre-auth step, not the pre-auth selection",
 			operation: policy.OperationAuthenticate,
-			preAuth:   &report.FinalDecision{Stage: policy.StagePreAuth},
+			preAuth:   &report.FinalDecision{Stage: policy.StagePreAuth, FSMEventMarker: policy.FSMEventMarkerPreAuthAbort},
 			final:     &report.FinalDecision{Stage: policy.StageAuthDecision, FSMEventMarker: policy.FSMEventMarkerAuthDeny},
 			wantPath: []string{
 				policy.FSMEventMarkerParseOK, policy.FSMEventMarkerPreAuthOK, policy.FSMEventMarkerAuthEvaluated,
@@ -80,7 +79,7 @@ func TestAuthnCandidateFSMEventMarkersProjectCheckpointSelections(t *testing.T) 
 				selected:  map[string]*report.FinalDecision{string(policy.StagePreAuth): test.preAuth},
 			}
 
-			path := execution.authnCandidateFSMEventMarkers(test.final)
+			path := execution.authnHostFSMEventPath(test.final)
 			if !slices.Equal(path, test.wantPath) {
 				t.Fatalf("marker path = %v, want %v", path, test.wantPath)
 			}
@@ -97,20 +96,23 @@ func TestAuthnCandidateFSMEventMarkersProjectCheckpointSelections(t *testing.T) 
 	}
 }
 
-// TestAuthnCandidateUnmarkedTerminalRuleIsRejectedBeforeRuntime pins the production symptom of an unmarked deny rule
-// at auth_decision and proves configuration validation rejects the same rule before it can be selected.
-func TestAuthnCandidateUnmarkedTerminalRuleIsRejectedBeforeRuntime(t *testing.T) {
+// TestAuthnCandidateUnmarkedTerminalRuleDerivesMarker pins the production symptom of an unmarked deny rule at
+// auth_decision: configuration validation accepts it, and the auth FSM records the derived auth_deny event.
+func TestAuthnCandidateUnmarkedTerminalRuleDerivesMarker(t *testing.T) {
 	execution := &authnCandidateExecution{operation: policy.OperationAuthenticate}
 	final := &report.FinalDecision{Stage: policy.StageAuthDecision, Effect: policy.DecisionDeny}
 
-	_, err := policyfsm.Evaluate(execution.authnCandidateFSMEventMarkers(final))
-	if err == nil || !strings.Contains(err.Error(), "invalid target auth fsm transition: state=auth_checked marker=") {
-		t.Fatalf("Evaluate() error = %v, want the unmarked auth_checked transition failure", err)
+	result, err := policyfsm.Evaluate(execution.authnHostFSMEventPath(final))
+	if err != nil || result.TerminalState != policyfsm.StateAuthFail {
+		t.Fatalf("Evaluate() terminal = %q error = %v, want %q", result.TerminalState, err, policyfsm.StateAuthFail)
 	}
 
-	err = policyfsm.ValidateRuleMarker(policy.OperationAuthenticate, final.Stage, final.Effect, final.FSMEventMarker)
-	if !errors.Is(err, policyfsm.ErrRuleMarkerRequired) {
-		t.Fatalf("ValidateRuleMarker() error = %v, want %v", err, policyfsm.ErrRuleMarkerRequired)
+	if got := result.TargetEventPath[len(result.TargetEventPath)-1]; got != policy.FSMEventMarkerAuthDeny {
+		t.Fatalf("terminal event = %q, want %q", got, policy.FSMEventMarkerAuthDeny)
+	}
+
+	if err = policyfsm.ValidateRuleMarker(policy.OperationAuthenticate, final.Stage, final.Effect, ""); err != nil {
+		t.Fatalf("ValidateRuleMarker() error = %v, want the derived marker to be accepted", err)
 	}
 }
 
@@ -140,7 +142,7 @@ func TestAuthnFinalNeutralIsRejectedBeforeRuntime(t *testing.T) {
 	execution := &authnCandidateExecution{operation: policy.OperationAuthenticate}
 	final := &report.FinalDecision{Stage: policy.StageAuthDecision, Effect: policy.DecisionNeutral}
 
-	_, err := policyfsm.Evaluate(execution.authnCandidateFSMEventMarkers(final))
+	_, err := policyfsm.Evaluate(execution.authnHostFSMEventPath(final))
 	if err == nil || !strings.Contains(err.Error(), "invalid target auth fsm transition: state=auth_checked marker=") {
 		t.Fatalf("Evaluate() error = %v, want the unmarked auth_checked transition failure", err)
 	}

@@ -134,6 +134,7 @@ const (
 	metricBackendLabel          = "backend"
 	metricBoundaryLabel         = "boundary"
 	metricBucketLabel           = "bucket"
+	metricCheckpointLabel       = "checkpoint"
 	metricVerdictLabel          = "verdict"
 	metricTolerationModeLabel   = "mode"
 	metricClientIDLabel         = "client_id"
@@ -151,6 +152,7 @@ const (
 	metricLoginsLabel           = "logins"
 	metricMethodLabel           = "method"
 	metricOpLabel               = "op"
+	metricOperationLabel        = "operation"
 	metricOutcomeLabel          = "outcome"
 	metricPathLabel             = "path"
 	metricPhaseLabel            = "phase"
@@ -389,6 +391,10 @@ type Metrics interface {
 	// GetAuthFSMTransitionsTotal tracks auth FSM transitions labeled by from/event/to.
 	GetAuthFSMTransitionsTotal() *prometheus.CounterVec
 
+	// GetAuthnFSMGuardViolationsTotal counts policy permits the host-evidence auth FSM rejected, by bounded
+	// operation and checkpoint.
+	GetAuthnFSMGuardViolationsTotal() *prometheus.CounterVec
+
 	// GetPluginCallsTotal tracks host-invoked native plugin calls with bounded component labels.
 	GetPluginCallsTotal() *prometheus.CounterVec
 
@@ -484,6 +490,7 @@ type metricsImpl struct {
 	webAuthnCeremonyCookieSize     prometheus.Histogram
 	webAuthnCeremonyOperations     *prometheus.CounterVec
 	authFSMTransitionsTotal        *prometheus.CounterVec
+	authnFSMGuardViolationsTotal   *prometheus.CounterVec
 	pluginCallsTotal               *prometheus.CounterVec
 	pluginCallDurationSeconds      *prometheus.HistogramVec
 	pluginReconfigureTotal         *prometheus.CounterVec
@@ -834,6 +841,11 @@ func (m *metricsImpl) GetAuthFSMTransitionsTotal() *prometheus.CounterVec {
 	return m.authFSMTransitionsTotal
 }
 
+// GetAuthnFSMGuardViolationsTotal returns the counter of policy permits rejected by the auth FSM guard.
+func (m *metricsImpl) GetAuthnFSMGuardViolationsTotal() *prometheus.CounterVec {
+	return m.authnFSMGuardViolationsTotal
+}
+
 // GetPluginCallsTotal returns the native plugin call counter.
 func (m *metricsImpl) GetPluginCallsTotal() *prometheus.CounterVec {
 	return m.pluginCallsTotal
@@ -1050,6 +1062,12 @@ func (m *metricsImpl) initIDPMetrics() {
 		metricOutcomeLabel,
 	)
 	m.authFSMTransitionsTotal = newCounterVecMetric("auth_fsm_transitions_total", "Total number of auth FSM transitions", metricFromLabel, metricEventLabel, metricToLabel)
+	m.authnFSMGuardViolationsTotal = newCounterVecMetric(
+		"authn_fsm_guard_violations_total",
+		"Total policy permits without host evidence that the auth FSM answered as temporary failures",
+		metricOperationLabel,
+		metricCheckpointLabel,
+	)
 }
 
 // initPluginMetrics registers native plugin runtime metrics.

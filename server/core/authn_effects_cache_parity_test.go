@@ -1068,6 +1068,9 @@ func TestAuthnPolicyDispatcherRetainsBackendAcrossNativeSubjectSources(t *testin
 	}
 	defer execution.release()
 
+	// The fixture stages a verified backend result, so the host froze its credential verdict.
+	execution.hostEvidence.freezeCredential(definitions.AuthResultOK)
+
 	providers := []*authnCapturedNativeSubjectSource{
 		{id: "authn/plugin.example.subject.first"},
 		{id: "authn/plugin.example.subject.second"},

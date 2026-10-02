@@ -14,6 +14,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyfsm "github.com/croessner/nauthilus/v4/server/policy/fsm"
 	"github.com/croessner/nauthilus/v4/server/policy/registry"
 )
 
@@ -173,7 +174,7 @@ func (n *policyNormalizer) normalizePolicyRule(
 	ruleInput := registry.PolicyRuleInput{
 		Name: rule.Name, Checkpoint: rule.Checkpoint, Actions: rule.Actions, RequiredProviders: requiredProviders,
 		Expression: expression, Effects: effects, Advice: advice, Decision: selectedDecision, Reason: rule.Then.Reason,
-		OutcomeMarker: rule.Then.OutcomeMarker, FSMEventMarker: rule.Then.FSMEventMarker,
+		OutcomeMarker: rule.Then.OutcomeMarker, FSMEventMarker: authnRuleFSMEventMarker(namespace, rule),
 		ResponseMarker: rule.Then.ResponseMarker, ResponseMessage: message, ResponseLanguage: language,
 		SkipRemainingCheckpointProviders: rule.Then.Control.SkipRemainingCheckpointProviders,
 	}
@@ -190,6 +191,16 @@ func (n *policyNormalizer) normalizePolicyRule(
 	}
 
 	return definition, nil
+}
+
+// authnRuleFSMEventMarker returns the configured auth FSM event marker of an authn rule or, when omitted, the
+// marker the auth FSM derives from its checkpoint and decision. Generic rules keep their configured value.
+func authnRuleFSMEventMarker(namespace string, rule policyconfig.PolicyRuleConfig) string {
+	if namespace != policy.AuthnNamespace || rule.Then.FSMEventMarker != "" {
+		return rule.Then.FSMEventMarker
+	}
+
+	return policyfsm.DefaultRuleMarker(policy.Stage(rule.Checkpoint), policy.Decision(rule.Then.Decision))
 }
 
 // resolveRequiredProviderReference retains configured instance names and adapts only immutable builtin schedules.

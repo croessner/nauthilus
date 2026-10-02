@@ -25,19 +25,17 @@ import (
 
 func TestCheckpointEventPrefixMirrorsAuthnOrchestration(t *testing.T) {
 	tests := []struct {
-		name          string
-		operation     policy.Operation
-		checkpoint    policy.Stage
-		preAuthMarker string
-		want          []string
+		name       string
+		operation  policy.Operation
+		checkpoint policy.Stage
+		want       []string
 	}{
 		{
 			name: "pre_auth applies only the parser marker", operation: policy.OperationAuthenticate,
-			checkpoint: policy.StagePreAuth, preAuthMarker: policy.FSMEventMarkerPreAuthDeny,
-			want: []string{policy.FSMEventMarkerParseOK},
+			checkpoint: policy.StagePreAuth, want: []string{policy.FSMEventMarkerParseOK},
 		},
 		{
-			name: "auth_decision defaults the neutral pre-auth marker", operation: policy.OperationAuthenticate,
+			name: "auth_decision follows the passed pre-auth checkpoint", operation: policy.OperationAuthenticate,
 			checkpoint: policy.StageAuthDecision,
 			want: []string{
 				policy.FSMEventMarkerParseOK, policy.FSMEventMarkerPreAuthOK, policy.FSMEventMarkerAuthEvaluated,
@@ -45,7 +43,7 @@ func TestCheckpointEventPrefixMirrorsAuthnOrchestration(t *testing.T) {
 		},
 		{
 			name: "intermediate checkpoints share the auth evaluation entry", operation: policy.OperationLookupIdentity,
-			checkpoint: policy.StageSubjectAnalysis, preAuthMarker: policy.FSMEventMarkerPreAuthOK,
+			checkpoint: policy.StageSubjectAnalysis,
 			want: []string{
 				policy.FSMEventMarkerParseOK, policy.FSMEventMarkerPreAuthOK, policy.FSMEventMarkerAuthEvaluated,
 			},
@@ -62,7 +60,7 @@ func TestCheckpointEventPrefixMirrorsAuthnOrchestration(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := CheckpointEventPrefix(test.operation, test.checkpoint, test.preAuthMarker)
+			got := CheckpointEventPrefix(test.operation, test.checkpoint)
 			if !slices.Equal(got, test.want) {
 				t.Fatalf("CheckpointEventPrefix() = %v, want %v", got, test.want)
 			}
@@ -138,8 +136,8 @@ func TestValidateRuleMarker(t *testing.T) {
 		wantErr    error
 	}{
 		{
-			name: "terminal decision requires a marker", operation: policy.OperationAuthenticate,
-			checkpoint: policy.StageAuthDecision, decision: policy.DecisionDeny, wantErr: ErrRuleMarkerRequired,
+			name: "omitted terminal marker is derived", operation: policy.OperationAuthenticate,
+			checkpoint: policy.StageAuthDecision, decision: policy.DecisionDeny,
 		},
 		{
 			name: "valid terminal marker", operation: policy.OperationAuthenticate,
@@ -199,7 +197,7 @@ func TestAllowedRuleMarkersReachDecisionTerminalState(t *testing.T) {
 		for _, checkpoint := range checkpoints {
 			for _, decision := range decisions {
 				for _, marker := range AllowedRuleMarkers(operation, checkpoint, decision) {
-					path := append(CheckpointEventPrefix(operation, checkpoint, ""), marker)
+					path := append(CheckpointEventPrefix(operation, checkpoint), marker)
 
 					result, err := Evaluate(path)
 					if err != nil {

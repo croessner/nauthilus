@@ -25,8 +25,9 @@ import (
 )
 
 // validateAuthnRuleOutcomes requires every rule an authn target binds at one checkpoint to select a decision the
-// authn orchestration can apply at that checkpoint position and an auth FSM event marker that applies to that
-// decision. Generic targets do not drive the authn orchestration or the auth FSM.
+// authn orchestration can apply at that checkpoint position. An explicit auth FSM event marker must apply to that
+// decision at that checkpoint; an omitted marker is derived from checkpoint and decision. Generic targets do not
+// drive the authn orchestration or the auth FSM.
 func validateAuthnRuleOutcomes(
 	policySet PolicySetConfig,
 	setNamespace string,

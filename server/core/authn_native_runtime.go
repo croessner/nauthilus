@@ -377,7 +377,12 @@ func (e *authnCandidateExecution) prepareNativeSubjectSource(
 		Snapshot: capture.Snapshot, Runtime: capture.Runtime,
 		BackendResult: backend, Credentials: capture.Credentials,
 	})
-	if err = e.recordAuthnNativeSubjectResult(providerID, result, callErr); err != nil {
+	err = e.recordAuthnNativeSubjectResult(providerID, result, callErr)
+
+	// A backend result patch may only lower the frozen credential verdict, even when the source failed.
+	e.enforceHostCredentialBound()
+
+	if err != nil {
 		return false, err
 	}
 

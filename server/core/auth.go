@@ -3378,9 +3378,16 @@ func (a *AuthState) takePositiveBackendAuthenticationCache(ctx *gin.Context) (*P
 }
 
 // ListUserAccounts returns the list of all known users from the account databases.
-func (a *AuthState) ListUserAccounts() (accountList AccountList) {
+func (a *AuthState) ListUserAccounts() AccountList {
+	accountList, _ := a.listUserAccounts()
+
+	return accountList
+}
+
+// listUserAccounts returns the known users and whether any account database failed, so the host can freeze the
+// account provider completion as auth FSM evidence.
+func (a *AuthState) listUserAccounts() (accountList AccountList, errSeen bool) {
 	ginCtx := a.Request.HTTPClientContext
-	errSeen := false
 
 	defer func() {
 		a.finishListAccountsPolicy(ginCtx, len(accountList), errSeen)
@@ -3395,7 +3402,7 @@ func (a *AuthState) ListUserAccounts() (accountList AccountList) {
 	accounts := a.accountListBackends()
 	errSeen = a.appendAccountDBResults(accounts, &accountList)
 
-	return accountList
+	return accountList, errSeen
 }
 
 // accountListBackends builds account-database handlers from configured backends.
