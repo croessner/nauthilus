@@ -55,8 +55,15 @@ func TestListUserAccountsUsesPluginBackend(t *testing.T) {
 func mustPluginAccountDBBackend(t *testing.T) *config.Backend {
 	t.Helper()
 
+	return mustNamedPluginAccountDBBackend(t, pluginAccountDBBackendName)
+}
+
+// mustNamedPluginAccountDBBackend configures one plugin backend by exact name.
+func mustNamedPluginAccountDBBackend(t *testing.T, name string) *config.Backend {
+	t.Helper()
+
 	backend := &config.Backend{}
-	if err := backend.Set("plugin(" + pluginAccountDBBackendName + ")"); err != nil {
+	if err := backend.Set("plugin(" + name + ")"); err != nil {
 		t.Fatalf("backend.Set(plugin) failed: %v", err)
 	}
 
@@ -65,12 +72,17 @@ func mustPluginAccountDBBackend(t *testing.T) *config.Backend {
 
 type accountDBBackendManager struct {
 	BackendManager
+	err      error
 	accounts AccountList
 	calls    int
 }
 
 func (m *accountDBBackendManager) AccountDB(*AuthState) (AccountList, error) {
 	m.calls++
+
+	if m.err != nil {
+		return nil, m.err
+	}
 
 	return append(AccountList(nil), m.accounts...), nil
 }

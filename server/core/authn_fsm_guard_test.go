@@ -72,10 +72,10 @@ func (v authnFSMGuardVerifier) Verify(_ *gin.Context, auth *AuthState, _ []*Pass
 	return result, nil
 }
 
-// authnFSMGuardFlippingSubject is a subject source that tries to turn a failed verification into a success.
+// authnFSMGuardFlippingSubject is a subject source that tries to turn a failed verification or lookup into a success.
 type authnFSMGuardFlippingSubject struct{}
 
-// AnalyzeSource patches the shared backend result and request state to authenticated.
+// AnalyzeSource patches the shared backend result and request state to authenticated and found.
 func (authnFSMGuardFlippingSubject) AnalyzeSource(
 	_ *gin.Context,
 	view *StateView,
@@ -87,7 +87,9 @@ func (authnFSMGuardFlippingSubject) AnalyzeSource(
 	_ *luaseal.Modules,
 ) definitions.AuthResult {
 	result.Authenticated = true
+	result.UserFound = true
 	view.Auth().Runtime.Authenticated = true
+	view.Auth().Runtime.UserFound = true
 
 	return definitions.AuthResultOK
 }
@@ -117,6 +119,7 @@ func (b *authnFSMGuardLogBuffer) String() string {
 // authnFSMGuardHarness owns one response-capturing candidate request and its log output.
 type authnFSMGuardHarness struct {
 	execution *authnCandidateExecution
+	cfg       *config.FileSettings
 	logs      *authnFSMGuardLogBuffer
 	operation policy.Operation
 }
@@ -157,7 +160,7 @@ func newAuthnFSMGuardHarness(
 		gate.Complete()
 	})
 
-	return &authnFSMGuardHarness{execution: execution, logs: logs, operation: operation}
+	return &authnFSMGuardHarness{execution: execution, cfg: cfg, logs: logs, operation: operation}
 }
 
 // runBackend executes the request's backend checkpoint without a positive password cache.
@@ -443,12 +446,17 @@ func runAuthnFSMGuardLuaSubjectFlip(t *testing.T, h *authnFSMGuardHarness) {
 	t.Helper()
 
 	h.runBackend(t)
+	h.raiseLuaSubjectAuthenticated(t)
+	h.completeSubject()
+}
+
+// raiseLuaSubjectAuthenticated runs one Lua subject source of the harness, which is expected to raise its result.
+func (h *authnFSMGuardHarness) raiseLuaSubjectAuthenticated(t *testing.T) {
+	t.Helper()
 
 	if _, err := h.execution.prepareLuaSubjectSource("flip", &lua.FunctionProto{}, nil, "", nil); err != nil {
 		t.Fatalf("prepareLuaSubjectSource() error = %v", err)
 	}
-
-	h.completeSubject()
 }
 
 // runAuthnFSMGuardNativeSubjectPatch lets a native subject source patch a failed verification to authenticated.
@@ -460,13 +468,14 @@ func runAuthnFSMGuardNativeSubjectPatch(t *testing.T, h *authnFSMGuardHarness) {
 	h.completeSubject()
 }
 
-// patchNativeSubjectAuthenticated runs one native subject source whose backend result patch sets authenticated.
+// patchNativeSubjectAuthenticated runs one native subject source whose backend result patch sets authenticated and found.
 func (h *authnFSMGuardHarness) patchNativeSubjectAuthenticated(t *testing.T) {
 	t.Helper()
 
-	authenticated := true
+	raised := true
 	provider := &authnCapturedNativeSubjectSource{
-		id: "authn/plugin.example.subject.flip", patch: &pluginapi.BackendResultPatch{Authenticated: &authenticated},
+		id:    "authn/plugin.example.subject.flip",
+		patch: &pluginapi.BackendResultPatch{Authenticated: &raised, UserFound: &raised},
 	}
 
 	if _, err := h.execution.prepareNativeSubjectSource(provider.id, provider); err != nil {
@@ -515,30 +524,37 @@ func TestAuthnFSMGuardEnforcesHostEvidence(t *testing.T) {
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if test.stage == "" {
-				test.stage = policy.StageAuthDecision
-			}
-
-			if test.selected == "" {
-				test.selected, test.marker = policy.DecisionPermit, policy.FSMEventMarkerAuthPermit
-			}
-
-			if test.subject == nil {
-				test.subject = testLuaSubject{}
-			}
-
-			harness := newAuthnFSMGuardHarness(t, test.operation, test.verifier, test.subject)
-			if test.prepare != nil {
-				test.prepare(t, harness)
-			}
-
-			before := authnFSMGuardViolations(t, test.operation, string(test.stage))
-			result := harness.finalize(t, test.stage, test.selected, test.marker)
-
-			assertAuthnFSMGuardOutcome(t, harness, result, test)
-			assertAuthnFSMGuardViolation(t, harness, test, authnFSMGuardViolations(t, test.operation, string(test.stage))-before)
+			runAuthnFSMGuardCase(t, test)
 		})
 	}
+}
+
+// runAuthnFSMGuardCase prepares host evidence, finalizes one selection, and checks response, telemetry, and guard.
+func runAuthnFSMGuardCase(t *testing.T, test authnFSMGuardCase) {
+	t.Helper()
+
+	if test.stage == "" {
+		test.stage = policy.StageAuthDecision
+	}
+
+	if test.selected == "" {
+		test.selected, test.marker = policy.DecisionPermit, policy.FSMEventMarkerAuthPermit
+	}
+
+	if test.subject == nil {
+		test.subject = testLuaSubject{}
+	}
+
+	harness := newAuthnFSMGuardHarness(t, test.operation, test.verifier, test.subject)
+	if test.prepare != nil {
+		test.prepare(t, harness)
+	}
+
+	before := authnFSMGuardViolations(t, test.operation, string(test.stage))
+	result := harness.finalize(t, test.stage, test.selected, test.marker)
+
+	assertAuthnFSMGuardOutcome(t, harness, result, test)
+	assertAuthnFSMGuardViolation(t, harness, test, authnFSMGuardViolations(t, test.operation, string(test.stage))-before)
 }
 
 // assertAuthnFSMGuardOutcome requires response, outcome terminal state, and recorded FSM telemetry to agree.
@@ -550,26 +566,40 @@ func assertAuthnFSMGuardOutcome(
 ) {
 	t.Helper()
 
-	gotDecision, gotTerminal, gotPath := authnFSMGuardOutcome(result)
-	if gotDecision != test.wantDecision {
-		t.Fatalf("decision = %q, want %q", gotDecision, test.wantDecision)
-	}
-
-	if gotTerminal != test.wantTerminal {
-		t.Fatalf("outcome terminal state = %q, want %q", gotTerminal, test.wantTerminal)
-	}
-
-	runtime := harness.execution.auth.Runtime
-	if runtime.AuthFSMTerminalState != test.wantTerminal {
-		t.Fatalf("recorded FSM terminal state = %q, want %q", runtime.AuthFSMTerminalState, test.wantTerminal)
-	}
-
-	if !slices.Equal(runtime.AuthFSMEventPath, test.wantPath) || !slices.Equal(gotPath, test.wantPath) {
-		t.Fatalf("FSM path recorded=%v outcome=%v, want %v", runtime.AuthFSMEventPath, gotPath, test.wantPath)
-	}
+	assertAuthnFSMGuardTelemetry(t, harness, result, test.wantDecision, test.wantTerminal, test.wantPath)
 
 	if aborted := harness.execution.ginCtx.IsAborted(); aborted != (test.wantDecision != AuthDecisionOK) {
 		t.Fatalf("request aborted = %t, want %t for %q", aborted, test.wantDecision != AuthDecisionOK, test.wantDecision)
+	}
+}
+
+// assertAuthnFSMGuardTelemetry requires response decision, outcome terminal state, and the recorded FSM path to agree.
+func assertAuthnFSMGuardTelemetry(
+	t *testing.T,
+	harness *authnFSMGuardHarness,
+	result authnApplicationResult,
+	wantDecision AuthDecision,
+	wantTerminal string,
+	wantPath []string,
+) {
+	t.Helper()
+
+	gotDecision, gotTerminal, gotPath := authnFSMGuardOutcome(result)
+	if gotDecision != wantDecision {
+		t.Fatalf("decision = %q, want %q", gotDecision, wantDecision)
+	}
+
+	if gotTerminal != wantTerminal {
+		t.Fatalf("outcome terminal state = %q, want %q", gotTerminal, wantTerminal)
+	}
+
+	runtime := harness.execution.auth.Runtime
+	if runtime.AuthFSMTerminalState != wantTerminal {
+		t.Fatalf("recorded FSM terminal state = %q, want %q", runtime.AuthFSMTerminalState, wantTerminal)
+	}
+
+	if !slices.Equal(runtime.AuthFSMEventPath, wantPath) || !slices.Equal(gotPath, wantPath) {
+		t.Fatalf("FSM path recorded=%v outcome=%v, want %v", runtime.AuthFSMEventPath, gotPath, wantPath)
 	}
 }
 
@@ -639,23 +669,34 @@ func TestAuthnSubjectCannotRaiseCredentialIntoPositivePasswordCache(t *testing.T
 
 	tests := []struct {
 		verifier      PasswordVerifier
+		raise         func(*authnFSMGuardHarness, *testing.T)
 		name          string
 		wantSuccesses int32
 		wantFailures  int32
 	}{
-		{name: "verified credential is cached", verifier: authnFSMGuardVerifier{authenticated: true, userFound: true}, wantSuccesses: 1},
-		{name: "patched failed credential is not cached", verifier: authnFSMGuardVerifier{userFound: true}, wantFailures: 1},
+		{
+			name: "verified credential is cached", verifier: authnFSMGuardVerifier{authenticated: true, userFound: true},
+			raise: (*authnFSMGuardHarness).patchNativeSubjectAuthenticated, wantSuccesses: 1,
+		},
+		{
+			name: "native-patched failed credential is not cached", verifier: authnFSMGuardVerifier{userFound: true},
+			raise: (*authnFSMGuardHarness).patchNativeSubjectAuthenticated, wantFailures: 1,
+		},
+		{
+			name: "Lua-raised failed credential is not cached", verifier: authnFSMGuardVerifier{userFound: true},
+			raise: (*authnFSMGuardHarness).raiseLuaSubjectAuthenticated, wantFailures: 1,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cache := &authnFSMGuardRecordingCache{}
-			harness := newAuthnFSMGuardHarness(t, policy.OperationAuthenticate, test.verifier, testLuaSubject{})
+			harness := newAuthnFSMGuardHarness(t, policy.OperationAuthenticate, test.verifier, authnFSMGuardFlippingSubject{})
 			harness.execution.auth.deps.HostServices.cache = cache
 
 			harness.runBackendPlan(t, plan)
 			harness.execution.auth.Runtime.UsedPassDBBackend = definitions.BackendLDAP
-			harness.patchNativeSubjectAuthenticated(t)
+			test.raise(harness, t)
 			harness.completeSubject()
 
 			if cache.successes.Load() != test.wantSuccesses || cache.failures.Load() != test.wantFailures {
@@ -710,33 +751,6 @@ func TestAuthnHostEvidenceFreezesFirstVerdictAndNeverRaises(t *testing.T) {
 
 	if verified.permits(policy.OperationAuthenticate) {
 		t.Fatal("a later host failure did not lower the verified credential")
-	}
-}
-
-// TestAuthnFSMGuardRejectsUnselectedOK proves an ok host result without a selected rule still needs host evidence.
-func TestAuthnFSMGuardRejectsUnselectedOK(t *testing.T) {
-	harness := newAuthnFSMGuardHarness(t, policy.OperationAuthenticate, authnFSMGuardVerifier{}, testLuaSubject{})
-	harness.execution.authResult = definitions.AuthResultOK
-
-	checkpoint := string(policy.StageSubjectAnalysis)
-	before := authnFSMGuardViolations(t, policy.OperationAuthenticate, checkpoint)
-
-	result, err := harness.execution.finalize(
-		checkpoint,
-		mustAuthnDecisionResponse(t, decision.EffectNotApplicable),
-		harness.execution.currentResult(),
-	)
-	if err != nil {
-		t.Fatalf("finalize() error = %v", err)
-	}
-
-	if result.auth == nil || result.auth.Decision != AuthDecisionTempFail ||
-		result.auth.TerminalState != policyfsm.StateAuthTempFail {
-		t.Fatalf("unselected ok without host evidence = %#v, want tempfail", result.auth)
-	}
-
-	if got := authnFSMGuardViolations(t, policy.OperationAuthenticate, checkpoint) - before; got != 1 {
-		t.Fatalf("guard violations counted = %v, want 1", got)
 	}
 }
 

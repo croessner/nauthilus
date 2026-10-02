@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -474,7 +475,7 @@ func TestAuthnOutcomesKeepCapturedResolverAcrossGenerationReload(t *testing.T) {
 		Generation: 701, Mode: "enforce",
 	})
 	catalog := compileAuthnCandidateCatalogWithModel(t, acceptor, model)
-	runtime := newAuthnCandidateReloadableDecisionRuntime(t, cfg, acceptor, catalog, model, nil)
+	runtime := newAuthnCandidateReloadableDecisionRuntime(t, cfg, acceptor, catalog, model, authnCandidateExtraBindings{})
 	current := newAuthnResolverLeaseApplication(cfg)
 
 	installAuthnCandidateServices(t, failingPasswordVerifier{}, testLuaSubject{})
@@ -1961,7 +1962,7 @@ func newAuthnCandidateDecisionServiceFromCatalogAndModel(
 	catalog *policyruntime.TargetCatalog,
 	model *authnCandidatePolicyModel,
 ) *decisionservice.DecisionService {
-	return newAuthnCandidateDecisionServiceWithBindings(t, cfg, acceptor, catalog, model, nil)
+	return newAuthnCandidateDecisionServiceWithBindings(t, cfg, acceptor, catalog, model, authnCandidateExtraBindings{})
 }
 
 // authnCandidateModelWithBuiltins gives the fixture the same builtin registry as production compilation.
@@ -2001,7 +2002,7 @@ func newAuthnCandidateDecisionServiceWithBindings(
 	acceptor effectsupervisor.Acceptor,
 	catalog *policyruntime.TargetCatalog,
 	model *authnCandidatePolicyModel,
-	extraSyncEffects map[string]policyruntime.SyncEffectProvider,
+	extra authnCandidateExtraBindings,
 ) *decisionservice.DecisionService {
 	return newAuthnCandidateReloadableDecisionRuntime(
 		t,
@@ -2009,8 +2010,14 @@ func newAuthnCandidateDecisionServiceWithBindings(
 		acceptor,
 		catalog,
 		model,
-		extraSyncEffects,
+		extra,
 	).service
+}
+
+// authnCandidateExtraBindings adds exact test-owned effect owners beside the standard bindings.
+type authnCandidateExtraBindings struct {
+	syncEffects map[string]policyruntime.SyncEffectProvider
+	postActions map[string]policyruntime.PostActionProvider
 }
 
 type authnCandidateDecisionRuntime struct {
@@ -2026,15 +2033,14 @@ func newAuthnCandidateReloadableDecisionRuntime(
 	acceptor effectsupervisor.Acceptor,
 	catalog *policyruntime.TargetCatalog,
 	model *authnCandidatePolicyModel,
-	extraSyncEffects map[string]policyruntime.SyncEffectProvider,
+	extra authnCandidateExtraBindings,
 ) *authnCandidateDecisionRuntime {
 	t.Helper()
 	model = authnCandidateModelWithBuiltins(t, model)
 
 	syncEffects, postActions := AuthnStandardEffectBindings()
-	for providerID, provider := range extraSyncEffects {
-		syncEffects[providerID] = provider
-	}
+	maps.Copy(syncEffects, extra.syncEffects)
+	maps.Copy(postActions, extra.postActions)
 
 	bindings, err := policyruntime.NewBindingSet(policyruntime.BindingSetInput{
 		SyncEffects: syncEffects, PostActions: postActions, PostActionAcceptance: acceptor,
@@ -2229,6 +2235,18 @@ func newAuthnCandidateConfiguredContribution(
 ) (registry.PolicySetID, registry.DefinitionContribution) {
 	t.Helper()
 
+	return newAuthnCandidateConfiguredContributionWithEffects(t, rule, nil, nil)
+}
+
+// newAuthnCandidateConfiguredContributionWithEffects adds test-owned effect owners to the configured set.
+func newAuthnCandidateConfiguredContributionWithEffects(
+	t *testing.T,
+	rule registry.PolicyRule,
+	providers []registry.ProviderDefinition,
+	effects []registry.EffectDefinition,
+) (registry.PolicySetID, registry.DefinitionContribution) {
+	t.Helper()
+
 	setID, err := registry.ParsePolicySetID("test.authn.configured", "authn/configured_candidate")
 	if err != nil {
 		t.Fatalf("ParsePolicySetID() error = %v", err)
@@ -2247,7 +2265,7 @@ func newAuthnCandidateConfiguredContribution(
 	}
 
 	contribution, err := registry.NewCompleteDefinitionContribution(registry.DefinitionContributionInput{
-		Ownership: ownership, PolicySets: []registry.PolicySetDefinition{set},
+		Ownership: ownership, PolicySets: []registry.PolicySetDefinition{set}, Providers: providers, Effects: effects,
 	})
 	if err != nil {
 		t.Fatalf("NewCompleteDefinitionContribution() error = %v", err)
