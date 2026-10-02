@@ -779,21 +779,34 @@ itself, not from the selected rule:
 
 The host freezes this verdict when backend verification or the account provider
 completes, before subject providers, Lua or native plugins, cached projections,
-or Policy facts see it. A subject provider may reject a verified credential, but
-it cannot turn a failed or missing verification into a success: a backend
-result patch or subject result that tries is reset to the host verdict, logged
-at warn level, and never stored in the positive password cache.
+or Policy facts see it. The first verdict wins; a second, different backend
+verdict for the same request is logged at warn level and ignored. A subject
+provider may reject a verified credential or a found identity, but it cannot
+turn a failed or missing verification into a success or report an identity the
+backend did not find: a backend result patch or subject result that raises the
+authenticated or user-found flag is reset to the host verdict, logged at warn
+level, and never stored in the positive password cache.
 
-A selected `deny` or `tempfail`, at `pre_auth` or later, always applies and
-records the rule's marker. A selected `permit` applies only when the frozen
+A selected `deny` or `tempfail`, at `pre_auth` or later, always applies. The FSM
+records the host event whenever it ends in the same terminal state as the
+enforced decision, otherwise the rule's marker or the derived one. An empty
+username therefore records `auth_empty_user` and an empty password
+`auth_empty_pass` even when the selected rule names `auth_tempfail` or
+`auth_deny`, and a checked wrong password records `auth_deny` even when the
+rule names `auth_empty_pass`. A selected `permit` applies only when the frozen
 host evidence supports it. Otherwise the request fails closed: it is answered
 as a temporary failure, the FSM records `auth_tempfail`, the event is logged at
 error level as `Policy permit rejected by the auth FSM guard` with the session,
 operation, checkpoint, policy rule, and host event, and the counter
 `authn_fsm_guard_violations_total{operation,checkpoint}` is incremented. The
 same applies when a plan ends without a selected rule and the host result would
-answer ok without that evidence. Response, outcome terminal state, and the
-recorded FSM path therefore always agree.
+answer ok without that evidence; such a finalization also drives the host FSM
+for ok, deny, and tempfail. Response, outcome terminal state, and the recorded
+FSM path therefore always agree.
+
+A `list_accounts` permit needs every account database to answer. A configured
+set that permits although `nauthilus.auth.account_provider.tempfail` is true, for
+example to return a partial listing, now answers a temporary failure instead.
 
 The check runs before any effect is dispatched. A permit without host evidence
 runs none of its obligations, post-actions, or advice, so a Lua action, a
