@@ -278,7 +278,7 @@ The owner paths above do not change the following nested semantic contract.
 | rule `operations` | `actions` | Actions are checked against every importing target. |
 | `require_checks` | `require_providers` | Provider names resolve inside the same domain plan and compatible checkpoint. |
 | rule `name` and `if` | unchanged | The complete condition-tree semantics are retained. |
-| decision, reason, markers, response message, and response language | unchanged | Their field names and behavior are retained. |
+| decision, reason, markers, response message, and response language | unchanged | Their field names are retained. Authn rules no longer receive an implicit `fsm_event_marker`; see the auth FSM marker rules below. |
 | `skip_remaining_stage_checks` | `skip_remaining_checkpoint_providers` | Control remains local to the containing checkpoint. |
 | effect `id` | exact qualified effect `id` | Obligation and advice identities must resolve in the target effect registry. |
 | effect `args` | typed `parameters` | Parameters are schema-validated instead of remaining opaque. |
@@ -688,6 +688,7 @@ policy:
               then:
                 decision: deny
                 reason: rbl
+                fsm_event_marker: auth.fsm.event.pre_auth_deny
   targets:
     - namespace: authn
       action: authenticate
@@ -711,6 +712,37 @@ decisions. The `authn` namespace additionally accepts the operator outcomes
 mapping them to the policy runtime's `indeterminate` and `not_applicable`
 effects respectively. Configuration must not use those internal effect names
 as authn rule decisions.
+
+### Auth FSM event markers on authn rules
+
+Every rule that an `authn` target binds drives the auth FSM when it is selected.
+The removed `auth.policy` compiler derived an omitted `fsm_event_marker` from
+the stage and decision; the new model does not. Configuration loading and
+`--config-check` therefore reject an authn rule whose marker is missing or
+cannot be applied, and the error names the rule path, the target, the
+checkpoint, and the allowed markers. Before this check existed, such a rule
+loaded successfully and every request that selected it ended as a temporary
+failure with `invalid target auth fsm transition`.
+
+| Checkpoint | Decision | Required `fsm_event_marker` |
+|---|---|---|
+| `pre_auth` | `deny` | `auth.fsm.event.pre_auth_deny` |
+| `pre_auth` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` |
+| `pre_auth` | `neutral` | optional; only `auth.fsm.event.pre_auth_ok` |
+| `pre_auth` | `permit` | not supported |
+| any later checkpoint | `permit` | `auth.fsm.event.auth_permit` |
+| any later checkpoint | `deny` | `auth.fsm.event.auth_deny`, or `auth.fsm.event.auth_empty_pass` for `authenticate` and `lookup_identity` |
+| any later checkpoint | `tempfail` | `auth.fsm.event.auth_tempfail`, or `auth.fsm.event.auth_empty_user` for `authenticate` and `lookup_identity` |
+| any later checkpoint | `neutral` | none |
+
+Later checkpoints are `auth_backend`, `subject_analysis`, `account_provider`,
+and `auth_decision`. A rule without `actions` is checked for every authn
+target that binds it, so `auth_empty_user` and `auth_empty_pass` are rejected
+when the rule is also bound to `list_accounts`. When migrating, add the marker
+the removed compiler used to derive: `pre_auth_deny` or `pre_auth_tempfail` at
+`pre_auth`, and `auth_permit`, `auth_deny`, or `auth_tempfail` at
+`auth_decision`. Rules in generic namespaces do not drive the auth FSM and do
+not need a marker.
 
 Before deploying a new configuration, validate exact provider/effect
 resolution, target action and checkpoint compatibility, source fact types,

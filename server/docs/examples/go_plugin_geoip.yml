@@ -230,6 +230,7 @@ policy:
                     is: false
               then:
                 decision: deny
+                fsm_event_marker: auth.fsm.event.pre_auth_deny
                 response_marker: auth.response.fail
             - name: deny_unexpected_country
               checkpoint: pre_auth
@@ -247,6 +248,7 @@ policy:
                       - arin
               then:
                 decision: deny
+                fsm_event_marker: auth.fsm.event.pre_auth_deny
                 response_marker: auth.response.fail
   targets:
     - namespace: authn
