@@ -152,24 +152,31 @@ func authnFSMMarkerInvalidCases() []authnFSMMarkerCase {
 	}
 }
 
+// requireAuthnRuleRejection asserts one validation error at wantPath whose message carries every wanted part.
+func requireAuthnRuleRejection(t *testing.T, err error, wantPath string, wantParts []string) {
+	t.Helper()
+
+	var pathError *PathError
+	requireErrorAs(t, err, &pathError)
+	requireEqual(t, wantPath, pathError.Path)
+
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("error = %v, want ErrValidation", err)
+	}
+
+	for _, part := range wantParts {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("error %q does not contain %q", err.Error(), part)
+		}
+	}
+}
+
 func TestAuthnRuleFSMEventMarkerValidation(t *testing.T) {
 	for _, test := range append(authnFSMMarkerMissingCases(), authnFSMMarkerInvalidCases()...) {
 		t.Run(test.name, func(t *testing.T) {
 			err := validateYAMLDocument(t, authnFSMMarkerDocument(test.checkpoint, test.actions, test.then))
 
-			var pathError *PathError
-			requireErrorAs(t, err, &pathError)
-			requireEqual(t, authnFSMMarkerPath, pathError.Path)
-
-			if !errors.Is(err, ErrValidation) {
-				t.Fatalf("error = %v, want ErrValidation", err)
-			}
-
-			for _, part := range test.wantParts {
-				if !strings.Contains(err.Error(), part) {
-					t.Errorf("error %q does not contain %q", err.Error(), part)
-				}
-			}
+			requireAuthnRuleRejection(t, err, authnFSMMarkerPath, test.wantParts)
 		})
 	}
 }

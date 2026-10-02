@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/policy"
+	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	policyfsm "github.com/croessner/nauthilus/v4/server/policy/fsm"
 	"github.com/croessner/nauthilus/v4/server/policy/report"
 )
@@ -110,5 +111,41 @@ func TestAuthnCandidateUnmarkedTerminalRuleIsRejectedBeforeRuntime(t *testing.T)
 	err = policyfsm.ValidateRuleMarker(policy.OperationAuthenticate, final.Stage, final.Effect, final.FSMEventMarker)
 	if !errors.Is(err, policyfsm.ErrRuleMarkerRequired) {
 		t.Fatalf("ValidateRuleMarker() error = %v, want %v", err, policyfsm.ErrRuleMarkerRequired)
+	}
+}
+
+// TestAuthnIntermediatePermitIsRejectedBeforeRuntime pins the runtime failure of a permit selected before the final
+// checkpoint and proves configuration validation excludes that decision at intermediate checkpoints.
+func TestAuthnIntermediatePermitIsRejectedBeforeRuntime(t *testing.T) {
+	_, done, err := resolveAuthnCheckpointResult(
+		string(policy.StageSubjectAnalysis),
+		policy.OperationAuthenticate,
+		nil,
+		authnApplicationResult{},
+		mustAuthnDecisionResponse(t, decision.EffectPermit),
+		false,
+	)
+	if !done || err == nil || !strings.Contains(err.Error(), "unsupported intermediate authn Policy effect") {
+		t.Fatalf("resolveAuthnCheckpointResult() done=%v error=%v, want the intermediate permit failure", done, err)
+	}
+
+	if slices.Contains(policy.AuthnCheckpointDecisions(false), policy.DecisionPermit) {
+		t.Fatal("intermediate checkpoints allow permit")
+	}
+}
+
+// TestAuthnFinalNeutralIsRejectedBeforeRuntime pins the auth FSM failure of a neutral rule selected at the final
+// checkpoint and proves configuration validation excludes that decision there.
+func TestAuthnFinalNeutralIsRejectedBeforeRuntime(t *testing.T) {
+	execution := &authnCandidateExecution{operation: policy.OperationAuthenticate}
+	final := &report.FinalDecision{Stage: policy.StageAuthDecision, Effect: policy.DecisionNeutral}
+
+	_, err := policyfsm.Evaluate(execution.authnCandidateFSMEventMarkers(final))
+	if err == nil || !strings.Contains(err.Error(), "invalid target auth fsm transition: state=auth_checked marker=") {
+		t.Fatalf("Evaluate() error = %v, want the unmarked auth_checked transition failure", err)
+	}
+
+	if slices.Contains(policy.AuthnCheckpointDecisions(true), policy.DecisionNeutral) {
+		t.Fatal("the final checkpoint allows neutral")
 	}
 }
