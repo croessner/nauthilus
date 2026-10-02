@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
+	policyfsm "github.com/croessner/nauthilus/v4/server/policy/fsm"
 	"github.com/croessner/nauthilus/v4/server/policy/report"
 
 	"github.com/gin-gonic/gin"
@@ -991,31 +992,22 @@ func (e *authnCandidateExecution) clearAuthnCandidateTempFailLocalization(
 	}
 }
 
-// authnCandidateFSMEventMarkers projects the captured checkpoint selections without a second evaluator.
+// authnCandidateFSMEventMarkers projects the captured checkpoint selections without a second evaluator. The
+// checkpoint prefix is shared with configuration validation so both agree on the marker entry state.
 func (e *authnCandidateExecution) authnCandidateFSMEventMarkers(final *report.FinalDecision) []string {
-	markers := []string{policy.FSMEventMarkerParseOK}
 	if final == nil {
-		return markers
+		return []string{policy.FSMEventMarkerParseOK}
 	}
 
-	if final.Stage == policy.StagePreAuth {
-		return append(markers, final.FSMEventMarker)
+	preAuthMarker := ""
+
+	if final.Stage != policy.StagePreAuth {
+		if selected := e.selectedDecision(string(policy.StagePreAuth)); selected != nil {
+			preAuthMarker = selected.FSMEventMarker
+		}
 	}
 
-	preAuthMarker := policy.FSMEventMarkerPreAuthOK
-	if selected := e.selectedDecision(string(policy.StagePreAuth)); selected != nil && selected.FSMEventMarker != "" {
-		preAuthMarker = selected.FSMEventMarker
-	}
-
-	markers = append(markers, preAuthMarker)
-
-	if e.operation == policy.OperationListAccounts {
-		markers = append(markers, policy.FSMEventMarkerAccountProviderEvaluated)
-	} else {
-		markers = append(markers, policy.FSMEventMarkerAuthEvaluated)
-	}
-
-	return append(markers, final.FSMEventMarker)
+	return append(policyfsm.CheckpointEventPrefix(e.operation, final.Stage, preAuthMarker), final.FSMEventMarker)
 }
 
 // finalizeUnselected maps a checkpoint result when no application presentation was selected.

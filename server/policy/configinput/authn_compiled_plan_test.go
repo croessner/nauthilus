@@ -81,7 +81,7 @@ const configuredAuthnPlanFixture = `policy:
               actions: [authenticate]
               require_providers: [dependent]
               if: {always: true}
-              then: {decision: deny}
+              then: {decision: deny, fsm_event_marker: auth.fsm.event.pre_auth_deny}
   targets:
     - namespace: authn
       action: authenticate
@@ -361,7 +361,7 @@ func TestPolicyCompiledPlanResolvesBuiltinRequiredProviderWithoutConfiguredDomai
               actions: [authenticate]
               require_providers: [brute_force]
               if: {always: true}
-              then: {decision: deny}
+              then: {decision: deny, fsm_event_marker: auth.fsm.event.pre_auth_deny}
   targets:
     - namespace: authn
       action: authenticate
@@ -408,7 +408,7 @@ func TestPolicyCompiledPlanRejectsMixedConfiguredAndBuiltinRequirementIdentity(t
               actions: [authenticate, lookup_identity]
               require_providers: [rbl]
               if: {always: true}
-              then: {decision: deny}
+              then: {decision: deny, fsm_event_marker: auth.fsm.event.pre_auth_deny}
   targets:
     - namespace: authn
       action: authenticate
@@ -448,7 +448,7 @@ func TestPolicyCompiledPlanRejectsUnavailableBuiltinRequiredProvider(t *testing.
               actions: [authenticate]
               require_providers: [tls_encryption]
               if: {always: true}
-              then: {decision: deny}
+              then: {decision: deny, fsm_event_marker: auth.fsm.event.pre_auth_deny}
   targets:
     - namespace: authn
       action: authenticate

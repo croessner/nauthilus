@@ -48,7 +48,6 @@ const configuredAuthnOperatorDecisionsFixture = `policy:
               then:
                 decision: neutral
                 outcome_marker: auth.outcome.optional_dependency_error
-                fsm_event_marker: auth.fsm.event.auth_ok
   targets:
     - namespace: authn
       action: authenticate

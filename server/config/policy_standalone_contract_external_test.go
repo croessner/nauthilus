@@ -400,6 +400,7 @@ func policyCutoverImplicitBuiltinSource(requirement string) string {
                 always: true
               then:
                 decision: deny
+                fsm_event_marker: auth.fsm.event.pre_auth_deny
   targets:
     - namespace: authn
       action: authenticate
@@ -450,6 +451,7 @@ const policyCutoverLuaCollisionSource = `policy:
                 always: true
               then:
                 decision: deny
+                fsm_event_marker: auth.fsm.event.pre_auth_deny
   targets:
     - namespace: authn
       action: authenticate

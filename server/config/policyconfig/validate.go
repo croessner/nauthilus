@@ -10,6 +10,7 @@ package policyconfig
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"net/netip"
 	"regexp"
 	"sort"
@@ -2296,7 +2297,7 @@ func validateTargetPolicySetReference(
 		return invalid(path, "cross-namespace policy sets must be exported")
 	}
 
-	return validateRequiredProvidersForTarget(
+	if err := validateRequiredProvidersForTarget(
 		policySet,
 		owner,
 		name,
@@ -2304,7 +2305,11 @@ func validateTargetPolicySetReference(
 		checkpoint,
 		instances,
 		hasDomainPlan,
-	)
+	); err != nil {
+		return err
+	}
+
+	return validateAuthnRuleFSMMarkers(policySet, owner, name, target, checkpoint)
 }
 
 // validateRequiredProvidersForTarget resolves rule requirements by instance name and checkpoint action.
@@ -2317,19 +2322,9 @@ func validateRequiredProvidersForTarget(
 	instances map[string]ProviderInstanceConfig,
 	hasDomainPlan bool,
 ) error {
-	for ruleIndex, rule := range policySet.Rules {
-		if rule.Checkpoint != checkpoint || !ruleAppliesToAction(rule, target.Action) {
-			continue
-		}
-
+	for ruleIndex, rule := range boundPolicyRules(policySet, checkpoint, target.Action) {
 		for requirementIndex, requirement := range rule.RequireProviders {
-			path := fmt.Sprintf(
-				"policy.namespaces.%s.policy_sets.%s.rules[%d].require_providers[%d]",
-				setNamespace,
-				setName,
-				ruleIndex,
-				requirementIndex,
-			)
+			path := fmt.Sprintf("%s.require_providers[%d]", policySetRulePath(setNamespace, setName, ruleIndex), requirementIndex)
 
 			provider, exists := instances[requirement]
 			if exists && providerAppliesToAction(provider, target.Action) {
@@ -2356,6 +2351,26 @@ func validateRequiredProvidersForTarget(
 	}
 
 	return nil
+}
+
+// boundPolicyRules yields the source-indexed rules a target binding evaluates at one checkpoint for one action.
+func boundPolicyRules(policySet PolicySetConfig, checkpoint string, action string) iter.Seq2[int, PolicyRuleConfig] {
+	return func(yield func(int, PolicyRuleConfig) bool) {
+		for ruleIndex, rule := range policySet.Rules {
+			if rule.Checkpoint != checkpoint || !ruleAppliesToAction(rule, action) {
+				continue
+			}
+
+			if !yield(ruleIndex, rule) {
+				return
+			}
+		}
+	}
+}
+
+// policySetRulePath returns the canonical configuration path of one policy-set rule.
+func policySetRulePath(setNamespace string, setName string, ruleIndex int) string {
+	return fmt.Sprintf("policy.namespaces.%s.policy_sets.%s.rules[%d]", setNamespace, setName, ruleIndex)
 }
 
 // ruleAppliesToAction reports whether a rule participates in one target action.

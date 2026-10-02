@@ -528,6 +528,7 @@ func cutoverCheckDocument(mapping cutoverCheckMapping) policyconfig.Document {
 					If: policyconfig.ConditionConfig{Always: &always},
 					Then: policyconfig.ThenConfig{
 						Decision: string(decision.EffectDeny), ResponseMarker: policy.ResponseMarkerFail,
+						FSMEventMarker: cutoverDenyFSMEventMarker(mapping),
 					},
 				}},
 			},
@@ -546,6 +547,15 @@ func cutoverCheckDocument(mapping cutoverCheckMapping) policyconfig.Document {
 			},
 		}},
 	}}
+}
+
+// cutoverDenyFSMEventMarker selects the auth FSM deny marker valid at the mapping checkpoint.
+func cutoverDenyFSMEventMarker(mapping cutoverCheckMapping) string {
+	if mapping.checkpoint == policy.StagePreAuth {
+		return policy.FSMEventMarkerPreAuthDeny
+	}
+
+	return policy.FSMEventMarkerAuthDeny
 }
 
 // addCutoverProvider declares only capabilities not owned by the builtin catalog.

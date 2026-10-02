@@ -48,6 +48,7 @@ const productionAuthnLuaActionFixture = `policy:
               if: {always: true}
               then:
                 decision: deny
+                fsm_event_marker: auth.fsm.event.auth_deny
                 obligations: [{id: authn/lua_action_notify}]
   targets:
     - namespace: authn

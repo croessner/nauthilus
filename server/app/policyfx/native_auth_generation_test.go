@@ -91,6 +91,7 @@ const nativeAuthGenerationFixture = `policy:
               if: {always: true}
               then:
                 decision: deny
+                fsm_event_marker: auth.fsm.event.auth_deny
                 obligations: [{id: authn/plugin.example.post_action}]
   targets:
     - namespace: authn
