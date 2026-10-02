@@ -2223,7 +2223,8 @@ FSM migration rules:
 5. target-FSM parity must remain covered by tests;
 6. removed event names and direct adapter call sites must not reappear;
 7. the host, not the selected rule, drives the parser, pre-auth, evaluation, and success events from evidence it freezes when backend verification or the account provider completes; subject sources, plugin patches, cached projections, and policy facts cannot raise that evidence;
-8. a selected `deny` or `tempfail` always applies its tightening event; a selected `permit` applies `auth_permit` only when the frozen host evidence supports it, and is otherwise answered as a temporary failure that records `auth_tempfail`, logs the contradiction at error level, and increments `authn_fsm_guard_violations_total{operation,checkpoint}`.
+8. a selected `deny` or `tempfail` always applies its tightening event; a selected `permit` applies `auth_permit` only when the frozen host evidence supports it, and is otherwise answered as a temporary failure that records `auth_tempfail`, logs the contradiction at error level, and increments `authn_fsm_guard_violations_total{operation,checkpoint}`;
+9. the Decision Service asks the request-local host evidence before it dispatches effects, so a permit without that evidence runs none of its obligations, post-actions, or advice and no replacement temporary-failure effects.
 
 ### 9.8 Brute Force Is First-Class
 

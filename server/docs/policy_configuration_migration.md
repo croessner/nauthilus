@@ -793,9 +793,14 @@ operation, checkpoint, policy rule, and host event, and the counter
 `authn_fsm_guard_violations_total{operation,checkpoint}` is incremented. The
 same applies when a plan ends without a selected rule and the host result would
 answer ok without that evidence. Response, outcome terminal state, and the
-recorded FSM path therefore always agree. Obligations of the rejected permit
-rule have already run when the guard applies, so keep side effects off permit
-rules that do not test the backend result.
+recorded FSM path therefore always agree.
+
+The check runs before any effect is dispatched. A permit without host evidence
+runs none of its obligations, post-actions, or advice, so a Lua action, a
+native post-action such as a login log or learning plugin, or any other effect
+attached to that permit never records the request as a success. No replacement
+tempfail effects run either, as for every other runtime-forced temporary
+failure. Effects of a selected `deny` or `tempfail` run unchanged.
 
 Any increase of the counter means a policy permits without the evidence it
 needs, for example a permit that does not test `backend.authenticated`,
