@@ -195,29 +195,9 @@ func normalizedCheckpointNames(
 		return names
 	}
 
-	slices.SortStableFunc(names, func(left string, right string) int {
-		return authnCheckpointRank(left) - authnCheckpointRank(right)
-	})
+	slices.SortStableFunc(names, policy.CompareAuthnCheckpoints)
 
 	return names
-}
-
-// authnCheckpointRank preserves established authentication checkpoint order before lexical fallback.
-func authnCheckpointRank(checkpoint string) int {
-	switch policy.Stage(checkpoint) {
-	case policy.StagePreAuth:
-		return 0
-	case policy.StageAuthBackend:
-		return 1
-	case policy.StageSubjectAnalysis:
-		return 2
-	case policy.StageAccountProvider:
-		return 3
-	case policy.StageAuthDecision:
-		return 4
-	default:
-		return 5
-	}
 }
 
 // authnFallbackBindings retains immutable standard-auth fallback in configured authn topology.

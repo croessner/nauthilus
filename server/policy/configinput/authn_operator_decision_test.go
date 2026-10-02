@@ -42,7 +42,7 @@ const configuredAuthnOperatorDecisionsFixture = `policy:
                 fsm_event_marker: auth.fsm.event.auth_tempfail
                 response_marker: auth.response.tempfail
             - name: optional_dependency_neutral
-              checkpoint: auth_decision
+              checkpoint: auth_backend
               actions: [authenticate]
               if: {attribute: nauthilus.auth.backend.empty_username, is: true}
               then:
@@ -55,6 +55,8 @@ const configuredAuthnOperatorDecisionsFixture = `policy:
       domain_plan: authn/configured
       default_policy: authn/standard_auth
       plans:
+        auth_backend:
+          policy_sets: [authn/configured]
         auth_decision:
           policy_sets: [authn/configured]
 `
@@ -95,12 +97,17 @@ func TestConfiguredAuthnRulesRetainOperatorTempFailAndNeutralDecisions(t *testin
 		t.Fatalf("configured authn rules = %d, want 2", len(rules))
 	}
 
-	if rules[0].Decision() != decision.EffectIndeterminate {
-		t.Fatalf("tempfail decision = %q, want %q", rules[0].Decision(), decision.EffectIndeterminate)
+	decisions := make(map[string]decision.Effect, len(rules))
+	for _, rule := range rules {
+		decisions[rule.Name()] = rule.Decision()
 	}
 
-	if rules[1].Decision() != decision.EffectNotApplicable {
-		t.Fatalf("neutral decision = %q, want %q", rules[1].Decision(), decision.EffectNotApplicable)
+	if decisions["backend_error_tempfail"] != decision.EffectIndeterminate {
+		t.Fatalf("tempfail decision = %q, want %q", decisions["backend_error_tempfail"], decision.EffectIndeterminate)
+	}
+
+	if decisions["optional_dependency_neutral"] != decision.EffectNotApplicable {
+		t.Fatalf("neutral decision = %q, want %q", decisions["optional_dependency_neutral"], decision.EffectNotApplicable)
 	}
 }
 

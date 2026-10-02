@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"net/netip"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2207,11 +2209,20 @@ func resolveTargetDomainPlan(
 	return plan, true, nil
 }
 
+// targetCheckpointBinding carries one target checkpoint and its resolved plan context into policy-set validation.
+type targetCheckpointBinding struct {
+	instances       map[string]ProviderInstanceConfig
+	target          TargetConfig
+	checkpoint      string
+	finalCheckpoint string
+	hasDomainPlan   bool
+}
+
 // validateTargetCheckpointReferences validates set imports and target-aware provider requirements.
 func validateTargetCheckpointReferences(
 	namespaces map[string]NamespaceConfig,
 	target TargetConfig,
-	binding TargetPlanConfig,
+	plan TargetPlanConfig,
 	domainPlan DomainPlanConfig,
 	hasDomainPlan bool,
 	checkpoint string,
@@ -2222,22 +2233,29 @@ func validateTargetCheckpointReferences(
 		return err
 	}
 
-	for referenceIndex, reference := range binding.PolicySets {
+	binding := targetCheckpointBinding{
+		instances: instances, target: target, checkpoint: checkpoint, hasDomainPlan: hasDomainPlan,
+		finalCheckpoint: finalTargetCheckpoint(domainPlan, hasDomainPlan),
+	}
+
+	for referenceIndex, reference := range plan.PolicySets {
 		referencePath := fmt.Sprintf("%s.policy_sets[%d]", path, referenceIndex)
-		if err := validateTargetPolicySetReference(
-			namespaces,
-			target,
-			reference,
-			checkpoint,
-			instances,
-			hasDomainPlan,
-			referencePath,
-		); err != nil {
+		if err := validateTargetPolicySetReference(namespaces, reference, binding, referencePath); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// finalTargetCheckpoint returns the checkpoint an authn target evaluates last. Targets without a domain plan use
+// the builtin authn plan, which always ends at auth_decision.
+func finalTargetCheckpoint(domainPlan DomainPlanConfig, hasDomainPlan bool) string {
+	if !hasDomainPlan {
+		return string(policy.StageAuthDecision)
+	}
+
+	return policy.FinalAuthnCheckpoint(slices.Collect(maps.Keys(domainPlan.Checkpoints)))
 }
 
 // resolveTargetCheckpointInstances indexes one selected checkpoint's provider instances by local name.
@@ -2267,13 +2285,12 @@ func resolveTargetCheckpointInstances(
 // validateTargetPolicySetReference resolves one import and its target-specific provider requirements.
 func validateTargetPolicySetReference(
 	namespaces map[string]NamespaceConfig,
-	target TargetConfig,
 	reference string,
-	checkpoint string,
-	instances map[string]ProviderInstanceConfig,
-	hasDomainPlan bool,
+	binding targetCheckpointBinding,
 	path string,
 ) error {
+	target := binding.target
+
 	owner, name, ok := strings.Cut(reference, "/")
 	if !ok {
 		return invalid(path, "must use an exact qualified policy-set identity")
@@ -2297,19 +2314,11 @@ func validateTargetPolicySetReference(
 		return invalid(path, "cross-namespace policy sets must be exported")
 	}
 
-	if err := validateRequiredProvidersForTarget(
-		policySet,
-		owner,
-		name,
-		target,
-		checkpoint,
-		instances,
-		hasDomainPlan,
-	); err != nil {
+	if err := validateRequiredProvidersForTarget(policySet, owner, name, binding); err != nil {
 		return err
 	}
 
-	return validateAuthnRuleFSMMarkers(policySet, owner, name, target, checkpoint)
+	return validateAuthnRuleOutcomes(policySet, owner, name, binding)
 }
 
 // validateRequiredProvidersForTarget resolves rule requirements by instance name and checkpoint action.
@@ -2317,32 +2326,31 @@ func validateRequiredProvidersForTarget(
 	policySet PolicySetConfig,
 	setNamespace string,
 	setName string,
-	target TargetConfig,
-	checkpoint string,
-	instances map[string]ProviderInstanceConfig,
-	hasDomainPlan bool,
+	binding targetCheckpointBinding,
 ) error {
-	for ruleIndex, rule := range boundPolicyRules(policySet, checkpoint, target.Action) {
+	target := binding.target
+
+	for ruleIndex, rule := range boundPolicyRules(policySet, binding.checkpoint, target.Action) {
 		for requirementIndex, requirement := range rule.RequireProviders {
 			path := fmt.Sprintf("%s.require_providers[%d]", policySetRulePath(setNamespace, setName, ruleIndex), requirementIndex)
 
-			provider, exists := instances[requirement]
+			provider, exists := binding.instances[requirement]
 			if exists && providerAppliesToAction(provider, target.Action) {
 				continue
 			}
 
-			if !hasDomainPlan && target.Namespace == authnNamespace {
+			if !binding.hasDomainPlan && target.Namespace == authnNamespace {
 				_, available := policy.AuthnBuiltinProviderUse(
 					requirement,
 					policy.Operation(target.Action),
-					policy.Stage(checkpoint),
+					policy.Stage(binding.checkpoint),
 				)
 				if available {
 					continue
 				}
 			}
 
-			if !hasDomainPlan {
+			if !binding.hasDomainPlan {
 				return invalid(path, "requires an explicit domain plan provider instance")
 			}
 
