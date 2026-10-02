@@ -196,6 +196,19 @@ failed` with the exact cause and the request session, and counted by
 `authentication_response_time_seconds`. A rising counter points to an
 overloaded or failing provider or backend; the log cause names it.
 
+### Auth FSM guard violations
+
+The auth FSM is driven by host evidence: a selected authn `permit` answers ok
+only when the backend verified the credential (`authenticate`), found the
+identity (`lookup_identity`), or every account database answered
+(`list_accounts`). A permit without that evidence is answered as a regular
+temporary failure, never as success. Each such request is logged at error
+level as `Policy permit rejected by the auth FSM guard` with the session,
+operation, checkpoint, policy rule, and the host FSM event, and counted by
+`authn_fsm_guard_violations_total{operation,checkpoint}`. The counter should
+stay at zero; any increase points to a policy rule that permits without
+testing the backend result or to a plan without a backend or account provider.
+
 ## Diagnostics and data minimization
 
 Diagnostics are off unless the request opts in, the credential has diagnostics

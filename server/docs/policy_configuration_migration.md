@@ -278,7 +278,7 @@ The owner paths above do not change the following nested semantic contract.
 | rule `operations` | `actions` | Actions are checked against every importing target. |
 | `require_checks` | `require_providers` | Provider names resolve inside the same domain plan and compatible checkpoint. |
 | rule `name` and `if` | unchanged | The complete condition-tree semantics are retained. |
-| decision, reason, markers, response message, and response language | unchanged | Their field names are retained. Authn rules no longer receive an implicit `fsm_event_marker`; see the auth FSM marker rules below. |
+| decision, reason, markers, response message, and response language | unchanged | Their field names are retained. An omitted authn `fsm_event_marker` is still derived from checkpoint and decision; see the auth FSM marker rules below. |
 | `skip_remaining_stage_checks` | `skip_remaining_checkpoint_providers` | Control remains local to the containing checkpoint. |
 | effect `id` | exact qualified effect `id` | Obligation and advice identities must resolve in the target effect registry. |
 | effect `args` | typed `parameters` | Parameters are schema-validated instead of remaining opaque. |
@@ -737,33 +737,70 @@ Policy effect`; both ended as temporary failures.
 
 ### Auth FSM event markers on authn rules
 
-Every rule that an `authn` target binds drives the auth FSM when it is selected.
-The removed `auth.policy` compiler derived an omitted `fsm_event_marker` from
-the stage and decision; the new model does not. Configuration loading and
-`--config-check` therefore reject an authn rule whose marker is missing or
-cannot be applied, and the error names the rule path, the target, the
-checkpoint, and the allowed markers. Before this check existed, such a rule
-loaded successfully and every request that selected it ended as a temporary
-failure with `invalid target auth fsm transition`.
+Every rule that an `authn` target binds selects an auth FSM event when it is
+selected. An omitted `fsm_event_marker` is derived from the checkpoint and the
+decision, as the removed `auth.policy` compiler did, so a rule such as a
+subject reject that only sets `decision: deny` at `auth_decision` loads and
+records `auth.fsm.event.auth_deny`. An explicit marker must be one the auth FSM
+can apply for that decision at that checkpoint. Configuration loading and
+`--config-check` reject an explicit marker that contradicts the decision or the
+checkpoint, and a terminal decision for which no marker exists, naming the rule
+path, the target, the checkpoint, and the allowed markers.
 
-| Checkpoint | Decision | Required `fsm_event_marker` |
-|---|---|---|
-| `pre_auth` | `deny` | `auth.fsm.event.pre_auth_deny` |
-| `pre_auth` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` |
-| `pre_auth` | `neutral` | optional; only `auth.fsm.event.pre_auth_ok` |
-| any later checkpoint | `permit` (final checkpoint only) | `auth.fsm.event.auth_permit` |
-| any later checkpoint | `deny` | `auth.fsm.event.auth_deny`, or `auth.fsm.event.auth_empty_pass` for `authenticate` and `lookup_identity` |
-| any later checkpoint | `tempfail` | `auth.fsm.event.auth_tempfail`, or `auth.fsm.event.auth_empty_user` for `authenticate` and `lookup_identity` |
-| any later checkpoint | `neutral` (earlier checkpoints only) | none |
+| Checkpoint | Decision | Derived `fsm_event_marker` | Other allowed explicit markers |
+|---|---|---|---|
+| `pre_auth` | `deny` | `auth.fsm.event.pre_auth_deny` | none |
+| `pre_auth` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` | none |
+| `pre_auth` | `neutral` | `auth.fsm.event.pre_auth_ok` | none |
+| any later checkpoint | `permit` (final checkpoint only) | `auth.fsm.event.auth_permit` | none |
+| any later checkpoint | `deny` | `auth.fsm.event.auth_deny` | `auth.fsm.event.auth_empty_pass` for `authenticate` and `lookup_identity` |
+| any later checkpoint | `tempfail` | `auth.fsm.event.auth_tempfail` | `auth.fsm.event.auth_empty_user` for `authenticate` and `lookup_identity` |
+| any later checkpoint | `neutral` (earlier checkpoints only) | none | none |
 
 Later checkpoints are `auth_backend`, `subject_analysis`, `account_provider`,
 and `auth_decision`. A rule without `actions` is checked for every authn
-target that binds it, so `auth_empty_user` and `auth_empty_pass` are rejected
-when the rule is also bound to `list_accounts`. When migrating, add the marker
-the removed compiler used to derive: `pre_auth_deny` or `pre_auth_tempfail` at
-`pre_auth`, and `auth_permit`, `auth_deny`, or `auth_tempfail` at
-`auth_decision`. Rules in generic namespaces do not drive the auth FSM, are not
-restricted by checkpoint position, and do not need a marker.
+target that binds it, so an explicit `auth_empty_user` or `auth_empty_pass` is
+rejected when the rule is also bound to `list_accounts`. A `permit` at a plan
+whose only checkpoint is `pre_auth` has no marker and is rejected. Rules in
+generic namespaces do not drive the auth FSM, are not restricted by checkpoint
+position, and do not need a marker.
+
+### Host evidence drives the auth FSM
+
+The auth FSM is a hard guard: Policy can tighten an authn result, but it can
+never loosen one. Nauthilus drives the FSM from evidence the host collects
+itself, not from the selected rule:
+
+| Operation | FSM path the host records for a permit | Host evidence a permit requires |
+|---|---|---|
+| `authenticate` | `parse_ok`, `pre_auth_ok`, `auth_evaluated`, `auth_permit` | the configured backends verified the credential, including a positive in-memory or Redis cache hit and master-user verification |
+| `lookup_identity` | `parse_ok`, `pre_auth_ok`, `auth_evaluated`, `auth_permit` | a backend found the identity |
+| `list_accounts` | `parse_ok`, `pre_auth_ok`, `account_provider_evaluated`, `auth_permit` | every account database answered without error |
+
+The host freezes this verdict when backend verification or the account provider
+completes, before subject providers, Lua or native plugins, cached projections,
+or Policy facts see it. A subject provider may reject a verified credential, but
+it cannot turn a failed or missing verification into a success: a backend
+result patch or subject result that tries is reset to the host verdict, logged
+at warn level, and never stored in the positive password cache.
+
+A selected `deny` or `tempfail`, at `pre_auth` or later, always applies and
+records the rule's marker. A selected `permit` applies only when the frozen
+host evidence supports it. Otherwise the request fails closed: it is answered
+as a temporary failure, the FSM records `auth_tempfail`, the event is logged at
+error level as `Policy permit rejected by the auth FSM guard` with the session,
+operation, checkpoint, policy rule, and host event, and the counter
+`authn_fsm_guard_violations_total{operation,checkpoint}` is incremented. The
+same applies when a plan ends without a selected rule and the host result would
+answer ok without that evidence. Response, outcome terminal state, and the
+recorded FSM path therefore always agree. Obligations of the rejected permit
+rule have already run when the guard applies, so keep side effects off permit
+rules that do not test the backend result.
+
+Any increase of the counter means a policy permits without the evidence it
+needs, for example a permit that does not test `backend.authenticated`,
+`backend.identity_found`, or `backend.account_provider_completed`, or a plan
+without a backend provider.
 
 Before deploying a new configuration, validate exact provider/effect
 resolution, target action and checkpoint compatibility, source fact types,

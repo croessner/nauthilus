@@ -634,7 +634,7 @@ The policy layer supports two runtime modes:
 1. `enforce`;
 2. `observe`.
 
-In `enforce` mode, the active policy result is authoritative. Enforcement applies the selected decision, FSM event marker, response marker, response message, obligations, and advice from that policy evaluation.
+In `enforce` mode, the active policy result is authoritative within the host-evidence auth-FSM. Enforcement applies the selected decision, FSM event marker, response marker, response message, obligations, and advice from that policy evaluation. A selected authn `permit` is applied only when the host-owned verification evidence of the operation supports it; otherwise the request fails closed as a temporary failure (see section 9.7).
 
 In `observe` mode, the built-in `default_policy` remains authoritative. Custom policy evaluation runs in parallel and produces only comparison data.
 
@@ -1482,7 +1482,7 @@ After Go built-ins and Lua registry scripts have populated the effective Policy 
 15. checks required by a policy must be enabled in the explicit stage check plan for the relevant operation;
 16. check names and explicit output names must be unique;
 17. `fsm_event_marker` must resolve to a registered FSM event marker;
-18. `fsm_event_marker` must be valid for the policy stage and must move the auth-FSM to the terminal state of the selected decision; an authn rule with a terminal decision (`permit`, `deny`, or `tempfail`) must set it explicitly because no marker is derived implicitly, while a `neutral` rule may omit it; an authn rule bound at the final checkpoint of its target plan must decide `permit`, `deny`, or `tempfail`, and a rule bound at an earlier checkpoint must decide `deny`, `tempfail`, or `neutral`;
+18. `fsm_event_marker` must be valid for the policy stage and must move the auth-FSM to the terminal state of the selected decision; an omitted authn marker is derived from checkpoint and decision (`pre_auth`: `neutral` to `pre_auth_ok`, `deny` to `pre_auth_deny`, `tempfail` to `pre_auth_tempfail`; later checkpoints: `permit` to `auth_permit`, `deny` to `auth_deny`, `tempfail` to `auth_tempfail`), an explicit marker is validated against decision and checkpoint, and a terminal decision without any applicable marker is rejected; an authn rule bound at the final checkpoint of its target plan must decide `permit`, `deny`, or `tempfail`, and a rule bound at an earlier checkpoint must decide `deny`, `tempfail`, or `neutral`;
 19. `response_marker` must resolve to a registered response definition;
 20. `response_marker` must be compatible with the selected decision effect;
 21. every registered response marker used by policy must have profiles for HTTP JSON, HTTP CBOR, Nginx auth-request, header-style HTTP, plain HTTP, HTTP list-accounts, gRPC AuthService, gRPC ListAccounts, and IdP response surfaces;
@@ -2221,7 +2221,9 @@ FSM migration rules:
 3. policy FSM event markers are applied directly by the target FSM;
 4. adapter-style mappings must not remain as a stable extension point, public contract, or compatibility mode;
 5. target-FSM parity must remain covered by tests;
-6. removed event names and direct adapter call sites must not reappear.
+6. removed event names and direct adapter call sites must not reappear;
+7. the host, not the selected rule, drives the parser, pre-auth, evaluation, and success events from evidence it freezes when backend verification or the account provider completes; subject sources, plugin patches, cached projections, and policy facts cannot raise that evidence;
+8. a selected `deny` or `tempfail` always applies its tightening event; a selected `permit` applies `auth_permit` only when the frozen host evidence supports it, and is otherwise answered as a temporary failure that records `auth_tempfail`, logs the contradiction at error level, and increments `authn_fsm_guard_violations_total{operation,checkpoint}`.
 
 ### 9.8 Brute Force Is First-Class
 
