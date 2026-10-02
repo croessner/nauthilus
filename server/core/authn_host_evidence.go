@@ -16,6 +16,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/policy"
@@ -124,6 +126,13 @@ func (e *authnCandidateExecution) enforceHostCredentialBound() {
 		"operation", string(e.operation),
 		"host_event", e.hostEvidence.hostEvent(e.operation),
 	)
+}
+
+// AuthnPermitBacked reports whether the frozen host evidence backs a permit of this request's operation. The Decision
+// Service consults it before dispatching effects, so an unbacked permit runs no obligation, post-action, or advice;
+// finalize then answers it as a temporary failure and records the violation once.
+func (e *authnCandidateExecution) AuthnPermitBacked(_ context.Context, target decision.Target, _ string) bool {
+	return e != nil && target.Action() == string(e.operation) && e.hostEvidence.permits(e.operation)
 }
 
 // guardAuthnPermit enforces the host-evidence auth FSM on a selected permit. Deny and tempfail only tighten and pass

@@ -924,6 +924,7 @@ type suppliedAuthnDecisionSource struct {
 	facts          decision.FactSet
 	captured       *report.FinalDecision
 	effectsEnabled bool
+	permitUnbacked bool
 	mu             sync.Mutex
 }
 
@@ -976,6 +977,11 @@ func (s *suppliedAuthnDecisionSource) StandardAuthEffectsEnabled(
 	string,
 ) bool {
 	return s.effectsEnabled
+}
+
+// AuthnPermitBacked reports the supplied host-evidence verdict for a selected permit.
+func (s *suppliedAuthnDecisionSource) AuthnPermitBacked(context.Context, decision.Target, string) bool {
+	return !s.permitUnbacked
 }
 
 // CaptureAuthnDecision records the most recent terminal catalog selection.
@@ -1066,6 +1072,11 @@ func (*recordingAuthnDecisionSource) StandardAuthEffectsEnabled(
 	decision.Target,
 	string,
 ) bool {
+	return true
+}
+
+// AuthnPermitBacked keeps the focused standard effect fixture backed by host evidence.
+func (*recordingAuthnDecisionSource) AuthnPermitBacked(context.Context, decision.Target, string) bool {
 	return true
 }
 

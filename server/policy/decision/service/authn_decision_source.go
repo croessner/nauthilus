@@ -30,10 +30,13 @@ type capturedPolicyModeContextKey struct{}
 // AuthnDecisionSource supplies request-local standard-auth facts and receives the unified selection.
 //
 // The source is request-local application state. It cannot evaluate rules, select configured
-// policy sets, or bypass the captured Decision Service generation.
+// policy sets, or bypass the captured Decision Service generation. AuthnPermitBacked reports whether
+// the host-owned verification evidence of the request backs a selected permit; the effects of an
+// unbacked permit never run.
 type AuthnDecisionSource interface {
 	StandardAuthFacts(context.Context, decision.Target, string) (decision.FactSet, error)
 	StandardAuthEffectsEnabled(context.Context, decision.Target, string) bool
+	AuthnPermitBacked(context.Context, decision.Target, string) bool
 	CaptureAuthnDecision(context.Context, decision.Target, string, *report.FinalDecision)
 }
 

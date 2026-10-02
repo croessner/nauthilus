@@ -48,11 +48,8 @@ func resolveAuthnDecisionSelection(
 	final := authnFinalDecisionFromRule(selected.rule, checkpoint, facts, builtinStandard)
 	controls := authnControlDecisions(selected.controls, checkpoint, facts)
 
-	effectsEnabled := standardAuthEffectsEnabled(
-		ctx,
-		target.Target(),
-		checkpoint,
-	)
+	effectsEnabled := standardAuthEffectsEnabled(ctx, target.Target(), checkpoint) &&
+		authnSelectionEffectsBacked(ctx, target.Target(), checkpoint, selection.effect)
 	if !effectsEnabled {
 		selection.obligations = nil
 		selection.advice = nil
@@ -85,6 +82,24 @@ func standardAuthEffectsEnabled(ctx context.Context, target decision.Target, che
 	}
 
 	return source.StandardAuthEffectsEnabled(ctx, target, checkpoint)
+}
+
+// authnSelectionEffectsBacked withholds every effect of a permit the request-local host evidence does not back, so
+// no obligation, post-action, or advice of that permit runs before the application answers it as a temporary
+// failure. Deny, tempfail, and neutral selections only tighten and keep their effects.
+func authnSelectionEffectsBacked(
+	ctx context.Context,
+	target decision.Target,
+	checkpoint string,
+	effect decision.Effect,
+) bool {
+	if effect != decision.EffectPermit {
+		return true
+	}
+
+	source := authnDecisionSourceFromContext(ctx)
+
+	return source != nil && source.AuthnPermitBacked(ctx, target, checkpoint)
 }
 
 // captureAuthnDecisionSelection publishes application metadata before any selected host effect starts.
