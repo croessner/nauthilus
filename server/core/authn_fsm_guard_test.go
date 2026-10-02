@@ -567,6 +567,10 @@ func assertAuthnFSMGuardOutcome(
 	if !slices.Equal(runtime.AuthFSMEventPath, test.wantPath) || !slices.Equal(gotPath, test.wantPath) {
 		t.Fatalf("FSM path recorded=%v outcome=%v, want %v", runtime.AuthFSMEventPath, gotPath, test.wantPath)
 	}
+
+	if aborted := harness.execution.ginCtx.IsAborted(); aborted != (test.wantDecision != AuthDecisionOK) {
+		t.Fatalf("request aborted = %t, want %t for %q", aborted, test.wantDecision != AuthDecisionOK, test.wantDecision)
+	}
 }
 
 // assertAuthnFSMGuardViolation requires exactly one counted and logged violation for each guarded permit.
@@ -733,5 +737,40 @@ func TestAuthnFSMGuardRejectsUnselectedOK(t *testing.T) {
 
 	if got := authnFSMGuardViolations(t, policy.OperationAuthenticate, checkpoint) - before; got != 1 {
 		t.Fatalf("guard violations counted = %v, want 1", got)
+	}
+}
+
+// TestAuthnPermitBackedFollowsFrozenHostEvidence proves the Decision Service effect veto reads the same frozen host
+// evidence the auth FSM guard enforces.
+func TestAuthnPermitBackedFollowsFrozenHostEvidence(t *testing.T) {
+	tests := []struct {
+		verifier PasswordVerifier
+		name     string
+		action   policy.Operation
+		want     bool
+	}{
+		{name: "verified credential backs a permit", verifier: authnFSMGuardVerifier{authenticated: true, userFound: true},
+			action: policy.OperationAuthenticate, want: true},
+		{name: "failed credential does not back a permit", verifier: authnFSMGuardVerifier{userFound: true},
+			action: policy.OperationAuthenticate},
+		{name: "another target action is never backed", verifier: authnFSMGuardVerifier{authenticated: true, userFound: true},
+			action: policy.OperationListAccounts},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newAuthnFSMGuardHarness(t, policy.OperationAuthenticate, test.verifier, testLuaSubject{})
+			harness.runBackend(t)
+			harness.completeSubject()
+
+			target, err := decision.NewTarget(policy.AuthnNamespace, string(test.action))
+			if err != nil {
+				t.Fatalf("NewTarget() error = %v", err)
+			}
+
+			if got := harness.execution.AuthnPermitBacked(context.Background(), target, string(policy.StageAuthDecision)); got != test.want {
+				t.Fatalf("AuthnPermitBacked() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
