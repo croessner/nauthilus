@@ -210,6 +210,32 @@ func authnFSMMarkerAcceptedCases() []authnFSMMarkerCase {
 			then:       `                decision: neutral`,
 		},
 		{
+			name:       "deny without marker at auth_decision derives auth_deny",
+			checkpoint: "auth_decision",
+			actions:    "[authenticate]",
+			then: `                decision: deny
+                outcome_marker: auth.outcome.subject_reject
+                response_marker: auth.response.fail`,
+		},
+		{
+			name:       "tempfail without marker at pre_auth derives pre_auth_tempfail",
+			checkpoint: "pre_auth",
+			actions:    "[authenticate]",
+			then:       `                decision: tempfail`,
+		},
+		{
+			name:       "deny without marker for every authn action derives auth_deny",
+			checkpoint: "auth_decision",
+			actions:    "[]",
+			then:       `                decision: deny`,
+		},
+		{
+			name:       "permit without marker at auth_decision derives auth_permit",
+			checkpoint: "auth_decision",
+			actions:    "[]",
+			then:       `                decision: permit`,
+		},
+		{
 			name:       "rule restricted to an unbound action is not checked for that target",
 			checkpoint: "auth_decision",
 			actions:    "[lookup_identity]",
@@ -224,6 +250,17 @@ func TestAuthnRuleFSMEventMarkerAcceptsValidMarkers(t *testing.T) {
 			requireNoError(t, validateYAMLDocument(t, authnFSMMarkerDocument(test.checkpoint, test.actions, test.then)))
 		})
 	}
+}
+
+// TestAuthnRuleFSMEventMarkerRejectsUnderivableMarker covers a terminal decision whose checkpoint has no auth FSM
+// transition, so neither a derived nor an explicit marker could apply it.
+func TestAuthnRuleFSMEventMarkerRejectsUnderivableMarker(t *testing.T) {
+	err := validateYAMLDocument(t, authnDomainPlanDocument([]string{"pre_auth"}, "pre_auth", `                decision: permit`))
+
+	requireAuthnRuleRejection(t, err, authnFSMMarkerPath, []string{
+		`rule "configured_outcome"`, "target authn/authenticate", "decision permit", "checkpoint pre_auth",
+		"no transition",
+	})
 }
 
 func TestGenericNamespaceTerminalRulesDoNotRequireFSMEventMarker(t *testing.T) {

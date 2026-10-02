@@ -1228,6 +1228,7 @@ type authnCapturedNativeEnvironmentSource struct {
 }
 
 type authnCapturedNativeSubjectSource struct {
+	patch    *pluginapi.BackendResultPatch
 	id       string
 	calls    atomic.Int32
 	rejected bool
@@ -1287,7 +1288,7 @@ func (s *authnCapturedNativeSubjectSource) EvaluateSubject(
 ) (pluginapi.SubjectResult, error) {
 	s.calls.Add(1)
 
-	return pluginapi.SubjectResult{Rejected: s.rejected}, nil
+	return pluginapi.SubjectResult{Rejected: s.rejected, BackendResultPatch: s.patch}, nil
 }
 
 type authnCapturedSubjectRunner struct {

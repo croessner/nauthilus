@@ -140,6 +140,14 @@ func TestValidateRuleMarker(t *testing.T) {
 			checkpoint: policy.StageAuthDecision, decision: policy.DecisionDeny,
 		},
 		{
+			name: "omitted list_accounts marker is derived", operation: policy.OperationListAccounts,
+			checkpoint: policy.StageAuthDecision, decision: policy.DecisionTempFail,
+		},
+		{
+			name: "pre_auth permit has no derivable marker", operation: policy.OperationAuthenticate,
+			checkpoint: policy.StagePreAuth, decision: policy.DecisionPermit, wantErr: ErrRuleMarkerInvalid,
+		},
+		{
 			name: "valid terminal marker", operation: policy.OperationAuthenticate,
 			checkpoint: policy.StageAuthDecision, decision: policy.DecisionDeny, marker: policy.FSMEventMarkerAuthDeny,
 		},
@@ -208,6 +216,69 @@ func TestAllowedRuleMarkersReachDecisionTerminalState(t *testing.T) {
 						t.Fatalf("%s/%s/%s marker %s: terminal state = %s, want %s", operation, checkpoint, decision,
 							marker, result.TerminalState, TerminalStateForDecision(decision))
 					}
+				}
+			}
+		}
+	}
+}
+
+func TestDefaultRuleMarkerDerivesFromCheckpointAndDecision(t *testing.T) {
+	tests := []struct {
+		name       string
+		checkpoint policy.Stage
+		decision   policy.Decision
+		want       string
+	}{
+		{name: "pre_auth neutral", checkpoint: policy.StagePreAuth, decision: policy.DecisionNeutral, want: policy.FSMEventMarkerPreAuthOK},
+		{name: "pre_auth deny", checkpoint: policy.StagePreAuth, decision: policy.DecisionDeny, want: policy.FSMEventMarkerPreAuthDeny},
+		{name: "pre_auth tempfail", checkpoint: policy.StagePreAuth, decision: policy.DecisionTempFail, want: policy.FSMEventMarkerPreAuthTempFail},
+		{name: "pre_auth permit", checkpoint: policy.StagePreAuth, decision: policy.DecisionPermit},
+		{name: "auth_decision permit", checkpoint: policy.StageAuthDecision, decision: policy.DecisionPermit, want: policy.FSMEventMarkerAuthPermit},
+		{name: "auth_decision deny", checkpoint: policy.StageAuthDecision, decision: policy.DecisionDeny, want: policy.FSMEventMarkerAuthDeny},
+		{name: "auth_decision tempfail", checkpoint: policy.StageAuthDecision, decision: policy.DecisionTempFail, want: policy.FSMEventMarkerAuthTempFail},
+		{name: "auth_decision neutral", checkpoint: policy.StageAuthDecision, decision: policy.DecisionNeutral},
+		{name: "intermediate deny", checkpoint: policy.StageSubjectAnalysis, decision: policy.DecisionDeny, want: policy.FSMEventMarkerAuthDeny},
+		{name: "intermediate neutral", checkpoint: policy.StageAuthBackend, decision: policy.DecisionNeutral},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := DefaultRuleMarker(test.checkpoint, test.decision); got != test.want {
+				t.Fatalf("DefaultRuleMarker() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// TestDefaultRuleMarkerIsAlwaysAllowed proves a derived marker never needs the validation an explicit marker gets.
+func TestDefaultRuleMarkerIsAlwaysAllowed(t *testing.T) {
+	operations := []policy.Operation{
+		policy.OperationAuthenticate, policy.OperationLookupIdentity, policy.OperationListAccounts,
+	}
+	checkpoints := []policy.Stage{
+		policy.StagePreAuth, policy.StageAuthBackend, policy.StageSubjectAnalysis, policy.StageAccountProvider,
+		policy.StageAuthDecision,
+	}
+	decisions := []policy.Decision{
+		policy.DecisionPermit, policy.DecisionDeny, policy.DecisionTempFail, policy.DecisionNeutral,
+	}
+
+	for _, operation := range operations {
+		for _, checkpoint := range checkpoints {
+			for _, decision := range decisions {
+				marker := DefaultRuleMarker(checkpoint, decision)
+				allowed := AllowedRuleMarkers(operation, checkpoint, decision)
+
+				if marker == "" {
+					if decision != policy.DecisionNeutral && len(allowed) > 0 {
+						t.Fatalf("%s/%s/%s: no default marker, allowed %v", operation, checkpoint, decision, allowed)
+					}
+
+					continue
+				}
+
+				if !slices.Contains(allowed, marker) {
+					t.Fatalf("%s/%s/%s: default marker %s not in %v", operation, checkpoint, decision, marker, allowed)
 				}
 			}
 		}
