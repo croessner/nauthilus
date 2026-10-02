@@ -713,6 +713,28 @@ mapping them to the policy runtime's `indeterminate` and `not_applicable`
 effects respectively. Configuration must not use those internal effect names
 as authn rule decisions.
 
+### Authn rule decisions per checkpoint
+
+An authn target evaluates its checkpoints in the order `pre_auth`,
+`auth_backend`, `subject_analysis`, `account_provider`, `auth_decision`. The
+final checkpoint is the last one of the target plan: `auth_decision` for
+targets without a domain plan, otherwise the last checkpoint the selected
+domain plan declares. A rule selected at the final checkpoint must decide the
+request; a rule selected earlier can only end it early or let it continue.
+Configuration loading and `--config-check` reject any other combination at
+`then.decision`, naming the rule, the target, the checkpoint, the final
+checkpoint, and the allowed decisions.
+
+| Checkpoint position | Allowed decisions |
+|---|---|
+| final checkpoint | `permit`, `deny`, `tempfail` |
+| any earlier checkpoint | `deny`, `tempfail`, `neutral` |
+
+Before this check existed, a `neutral` rule at the final checkpoint failed every
+selecting request with `invalid target auth fsm transition`, and a `permit`
+rule at an earlier checkpoint failed it with `unsupported intermediate authn
+Policy effect`; both ended as temporary failures.
+
 ### Auth FSM event markers on authn rules
 
 Every rule that an `authn` target binds drives the auth FSM when it is selected.
@@ -729,11 +751,10 @@ failure with `invalid target auth fsm transition`.
 | `pre_auth` | `deny` | `auth.fsm.event.pre_auth_deny` |
 | `pre_auth` | `tempfail` | `auth.fsm.event.pre_auth_tempfail` |
 | `pre_auth` | `neutral` | optional; only `auth.fsm.event.pre_auth_ok` |
-| `pre_auth` | `permit` | not supported |
-| any later checkpoint | `permit` | `auth.fsm.event.auth_permit` |
+| any later checkpoint | `permit` (final checkpoint only) | `auth.fsm.event.auth_permit` |
 | any later checkpoint | `deny` | `auth.fsm.event.auth_deny`, or `auth.fsm.event.auth_empty_pass` for `authenticate` and `lookup_identity` |
 | any later checkpoint | `tempfail` | `auth.fsm.event.auth_tempfail`, or `auth.fsm.event.auth_empty_user` for `authenticate` and `lookup_identity` |
-| any later checkpoint | `neutral` | none |
+| any later checkpoint | `neutral` (earlier checkpoints only) | none |
 
 Later checkpoints are `auth_backend`, `subject_analysis`, `account_provider`,
 and `auth_decision`. A rule without `actions` is checked for every authn
@@ -741,8 +762,8 @@ target that binds it, so `auth_empty_user` and `auth_empty_pass` are rejected
 when the rule is also bound to `list_accounts`. When migrating, add the marker
 the removed compiler used to derive: `pre_auth_deny` or `pre_auth_tempfail` at
 `pre_auth`, and `auth_permit`, `auth_deny`, or `auth_tempfail` at
-`auth_decision`. Rules in generic namespaces do not drive the auth FSM and do
-not need a marker.
+`auth_decision`. Rules in generic namespaces do not drive the auth FSM, are not
+restricted by checkpoint position, and do not need a marker.
 
 Before deploying a new configuration, validate exact provider/effect
 resolution, target action and checkpoint compatibility, source fact types,

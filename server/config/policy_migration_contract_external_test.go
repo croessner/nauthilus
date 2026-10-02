@@ -1021,6 +1021,7 @@ func TestPolicyMigrationNestedRulesAndHardCutAreDocumented(t *testing.T) {
 		"## Paired old and new examples",
 		"### Old `auth.policy` input",
 		"### New production `policy` input",
+		"### Authn rule decisions per checkpoint",
 		"### Auth FSM event markers on authn rules",
 		"Unresolvable old references",
 		"## Production loading and migration evidence",

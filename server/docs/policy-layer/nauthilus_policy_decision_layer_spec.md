@@ -1482,7 +1482,7 @@ After Go built-ins and Lua registry scripts have populated the effective Policy 
 15. checks required by a policy must be enabled in the explicit stage check plan for the relevant operation;
 16. check names and explicit output names must be unique;
 17. `fsm_event_marker` must resolve to a registered FSM event marker;
-18. `fsm_event_marker` must be valid for the policy stage and must move the auth-FSM to the terminal state of the selected decision; an authn rule with a terminal decision (`permit`, `deny`, or `tempfail`) must set it explicitly because no marker is derived implicitly, while a `neutral` rule may omit it;
+18. `fsm_event_marker` must be valid for the policy stage and must move the auth-FSM to the terminal state of the selected decision; an authn rule with a terminal decision (`permit`, `deny`, or `tempfail`) must set it explicitly because no marker is derived implicitly, while a `neutral` rule may omit it; an authn rule bound at the final checkpoint of its target plan must decide `permit`, `deny`, or `tempfail`, and a rule bound at an earlier checkpoint must decide `deny`, `tempfail`, or `neutral`;
 19. `response_marker` must resolve to a registered response definition;
 20. `response_marker` must be compatible with the selected decision effect;
 21. every registered response marker used by policy must have profiles for HTTP JSON, HTTP CBOR, Nginx auth-request, header-style HTTP, plain HTTP, HTTP list-accounts, gRPC AuthService, gRPC ListAccounts, and IdP response surfaces;
