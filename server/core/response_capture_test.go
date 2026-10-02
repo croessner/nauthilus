@@ -150,25 +150,6 @@ func TestCaptureResponseWriter_TempFailCapturesOutcomeWithoutHTTPRendering(t *te
 	}
 }
 
-func TestCaptureResponseWriter_EnvironmentRejectionCapturesFail(t *testing.T) {
-	capture := NewCaptureResponseWriter(slog.New(&countingLogHandler{}))
-	auth, ctx, rec := newCaptureWriterTestState(t, "/api/v1/auth/json?mode=auth", capture)
-
-	handled := auth.applyPreAuthFSMOutcome(ctx, authFSMStateAuthFail, definitions.AuthResultPreAuthRelayDomain)
-	if !handled {
-		t.Fatal("expected auth FSM pre-auth outcome to be handled")
-	}
-
-	if !ctx.IsAborted() {
-		t.Fatal("expected context to be aborted for environment-rejection auth fail")
-	}
-
-	assertNoHTTPRendering(t, rec)
-
-	outcome := capture.Outcome()
-	assertDecisionStatusAndFSMState(t, outcome, CapturedAuthDecisionFail, authFSMStateAuthFail, auth.Runtime.StatusCodeFail)
-}
-
 func TestCaptureResponseWriter_InstancesKeepOutcomesIsolated(t *testing.T) {
 	failCapture := NewCaptureResponseWriter(slog.New(&countingLogHandler{}))
 	okCapture := NewCaptureResponseWriter(slog.New(&countingLogHandler{}))

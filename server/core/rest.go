@@ -433,97 +433,6 @@ func authFSMMetricStage(event authFSMEvent) policy.Stage {
 	}
 }
 
-func mapPreAuthResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
-	switch result {
-	case definitions.AuthResultPreAuthTLS:
-		return authFSMEventPreAuthTempFail, true
-	case definitions.AuthResultPreAuthRelayDomain, definitions.AuthResultPreAuthRBL, definitions.AuthResultLuaEnvironment, definitions.AuthResultFail:
-		return authFSMEventPreAuthDeny, true
-	case definitions.AuthResultUnset:
-		return authFSMEventPreAuthAbort, true
-	case definitions.AuthResultOK:
-		return authFSMEventPreAuthOK, true
-	case definitions.AuthResultTempFail:
-		return authFSMEventPreAuthTempFail, true
-	default:
-		return "", false
-	}
-}
-
-func (a *AuthState) applyPreAuthFSMOutcome(ctx *gin.Context, nextState authFSMState, preAuthResult definitions.AuthResult) bool {
-	if nextState == authFSMStatePreAuthChecked {
-		return false
-	}
-
-	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
-		onAuthFail: func() {
-			a.AuthFail(ctx)
-			ctx.Abort()
-		},
-		onAuthTempFail: func() {
-			if preAuthResult == definitions.AuthResultPreAuthTLS {
-				a.AuthTempFail(ctx, definitions.TempFailNoTLS)
-				ctx.Abort()
-
-				return
-			}
-
-			a.AuthTempFail(ctx, definitions.TempFailDefault)
-			ctx.Abort()
-		},
-		// Keep previous behavior for AuthResultUnset: stop processing without aborting context.
-		onAborted: func() {},
-		onInvalid: func() {
-			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-		},
-	})
-
-	return true
-}
-
-type authFSMTerminalHandlers struct {
-	onAuthOK       func()
-	onAuthFail     func()
-	onAuthTempFail func()
-	onAborted      func()
-	onInvalid      func()
-}
-
-func dispatchAuthFSMTerminalOutcome(nextState authFSMState, handlers authFSMTerminalHandlers) bool {
-	switch nextState {
-	case authFSMStateAuthOK:
-		if handlers.onAuthOK != nil {
-			handlers.onAuthOK()
-		}
-
-		return true
-	case authFSMStateAuthFail:
-		if handlers.onAuthFail != nil {
-			handlers.onAuthFail()
-		}
-
-		return true
-	case authFSMStateAuthTempFail:
-		if handlers.onAuthTempFail != nil {
-			handlers.onAuthTempFail()
-		}
-
-		return true
-	case authFSMStateAborted:
-		if handlers.onAborted != nil {
-			handlers.onAborted()
-		}
-
-		return true
-	default:
-		if handlers.onInvalid != nil {
-			handlers.onInvalid()
-		}
-
-		return false
-	}
-}
-
 func mapAuthPasswordResultToFSMEvent(result definitions.AuthResult) (authFSMEvent, bool) {
 	switch result {
 	case definitions.AuthResultOK:
@@ -539,39 +448,6 @@ func mapAuthPasswordResultToFSMEvent(result definitions.AuthResult) (authFSMEven
 	default:
 		return "", false
 	}
-}
-
-func (a *AuthState) applyPasswordFSMOutcome(ctx *gin.Context, nextState authFSMState, passwordResult definitions.AuthResult) {
-	dispatchAuthFSMTerminalOutcome(nextState, authFSMTerminalHandlers{
-		onAuthOK: func() {
-			if a.deps.Tolerate != nil {
-				a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, true)
-			}
-
-			a.AuthOK(ctx)
-		},
-		onAuthFail: func() {
-			if a.deps.Tolerate != nil {
-				a.deps.Tolerate.SetIPAddress(a.Ctx(), a.Request.ClientIP, a.Request.Username, false)
-			}
-
-			a.AuthFail(ctx)
-			ctx.Abort()
-		},
-		onAuthTempFail: func() {
-			// Preserve legacy behavior: empty-username uses dedicated temp-fail reason.
-			if passwordResult == definitions.AuthResultEmptyUsername {
-				a.AuthTempFail(ctx, definitions.TempFailEmptyUser)
-			} else {
-				a.AuthTempFail(ctx, definitions.TempFailDefault)
-			}
-
-			ctx.Abort()
-		},
-		onInvalid: func() {
-			ctx.AbortWithStatus(a.Runtime.StatusCodeInternalError)
-		},
-	})
 }
 
 // listBlockedIPAddresses retrieves a list of blocked IP addresses from Redis using the
