@@ -665,7 +665,7 @@ func resolveAuthnCheckpointResult(
 		}
 
 		if final {
-			result, err := current.mapEffect(response.Effect())
+			result, err := mapHostlessFinalEffect(current, response.Effect())
 
 			return result, true, err
 		}
@@ -680,6 +680,18 @@ func resolveAuthnCheckpointResult(
 	}
 
 	return current, false, nil
+}
+
+// mapHostlessFinalEffect maps the final effect of an adapter that runs without a candidate host. Such an adapter
+// has no host-owned verification evidence that could back a success, so an ok result fails closed as a temporary
+// failure, exactly like a permit the auth FSM guard rejects.
+func mapHostlessFinalEffect(current authnApplicationResult, effect decision.Effect) (authnApplicationResult, error) {
+	result, err := current.mapEffect(effect)
+	if err != nil || result.currentDecision() != AuthDecisionOK {
+		return result, err
+	}
+
+	return current.mapEffect(decision.EffectIndeterminate)
 }
 
 // checkpointFacts keeps pre-backend checkpoints empty and maps current state only at the final boundary.

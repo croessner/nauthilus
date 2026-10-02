@@ -11,6 +11,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -205,8 +206,11 @@ func runHTTPDecisionRouteTest(t *testing.T, profiles core.AuthnInternalCallerPro
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("HTTP status = %d, want 200; body=%q", recorder.Code, recorder.Body.String())
+	// The recording service is no candidate host, so no verification evidence backs a success and every surface
+	// renders its temporary failure after traversing the decision boundary.
+	rendered := recorder.Body.String() + recorder.Header().Get("Auth-Status")
+	if !strings.Contains(rendered, definitions.TempFailDefault) {
+		t.Fatalf("HTTP status = %d, want the fail-closed temporary failure; body=%q", recorder.Code, recorder.Body.String())
 	}
 
 	call := current.onlyCall(t)

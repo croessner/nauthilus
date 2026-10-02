@@ -143,8 +143,9 @@ func TestAuthnApplicationAdapterMapsEffectsWithoutReplacingOutcomePayloads(t *te
 		wantDecision AuthDecision
 		wantStatus   string
 	}{
-		{name: "neutral", effect: decision.EffectNotApplicable, wantDecision: AuthDecisionOK, wantStatus: "existing-status"},
-		{name: "permit", effect: decision.EffectPermit, wantDecision: AuthDecisionOK, wantStatus: "existing-status"},
+		// Without a candidate host no verification evidence backs a success, so ok results fail closed.
+		{name: "neutral", effect: decision.EffectNotApplicable, wantDecision: AuthDecisionTempFail, wantStatus: definitions.TempFailDefault},
+		{name: "permit", effect: decision.EffectPermit, wantDecision: AuthDecisionTempFail, wantStatus: definitions.TempFailDefault},
 		{name: "deny", effect: decision.EffectDeny, wantDecision: AuthDecisionFail, wantStatus: "existing-status"},
 		{name: "indeterminate", effect: decision.EffectIndeterminate, wantDecision: AuthDecisionTempFail, wantStatus: definitions.TempFailDefault},
 	}
