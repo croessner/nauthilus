@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
@@ -263,5 +264,67 @@ func TestPluginPositiveCacheTypedProviderColdAndWarm(t *testing.T) {
 
 	if manager.calls != 1 {
 		t.Fatalf("two typed-provider logins called plugin %d times, want 1", manager.calls)
+	}
+}
+
+// scopedLocalPluginManager models a plugin's additional identity discriminator.
+type scopedLocalPluginManager struct {
+	cacheablePluginManager
+	expected string
+}
+
+// PasswordCacheScopeMatches rejects foreign identity inputs before restoring request state.
+func (m *scopedLocalPluginManager) PasswordCacheScopeMatches(_ *AuthState, payload string) bool {
+	return payload == m.expected
+}
+
+func TestPluginLocalCacheScope(t *testing.T) {
+	cfg := newCurrentBehaviorConfig(t)
+	cache := NewPositiveBackendAuthenticationCache(time.Now)
+	source, ctx := newRequestOwnedContractAuth(t, cfg, "shortname", "credential", "scope")
+
+	result := newSemanticPassDBResult(ctx, source)
+	defer PutPassDBResultToPool(result)
+
+	result.Backend, result.BackendName, result.PluginCachePayload = definitions.BackendPlugin, "example.identity", "domain-a"
+	if !cache.StoreForRequest(ctx, source, result, time.Minute, source.Request.Username) {
+		t.Fatal("store failed")
+	}
+
+	for _, domain := range []string{"domain-a", "domain-b", "unavailable"} {
+		auth, request := newRequestOwnedContractAuth(t, cfg, "shortname", "credential", "scope")
+		auth.deps.PluginBackendFactory = func(string, AuthDeps) BackendManager {
+			if domain == "unavailable" {
+				return nil
+			}
+
+			return &scopedLocalPluginManager{expected: domain}
+		}
+
+		hit := cache.ApplyForRequest(request, auth)
+		if hit != (domain == "domain-a") {
+			t.Fatalf("scope %s hit=%v", domain, hit)
+		}
+
+		if !hit && (auth.Runtime.Authenticated || auth.GetAccount() != "") {
+			t.Fatal("rejected cache changed request")
+		}
+
+		if hit {
+			restored, found := cachedBackendAuthenticationForRequest(request)
+			if !found {
+				t.Fatal("missing request snapshot")
+			}
+
+			mapped, ok := restored.passDBResult()
+			if !ok {
+				t.Fatal("missing backend result")
+			}
+			defer PutPassDBResultToPool(mapped)
+
+			if mapped.PluginCachePayload != "domain-a" {
+				t.Fatal("scope payload lost on materialization")
+			}
+		}
 	}
 }

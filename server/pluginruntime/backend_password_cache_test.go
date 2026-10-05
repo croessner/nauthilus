@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ type pluginCacheFixture struct {
 }
 
 // newPluginCacheFixture constructs an opted-in module without loading a native binary.
-func newPluginCacheFixture(t *testing.T, enabled bool) *pluginCacheFixture {
+func newPluginCacheFixture(t *testing.T, enabled bool, guards ...func(pluginapi.RequestSnapshot) (string, bool)) *pluginCacheFixture {
 	t.Helper()
 
 	f := &pluginCacheFixture{}
@@ -51,7 +52,13 @@ func newPluginCacheFixture(t *testing.T, enabled bool) *pluginCacheFixture {
 		f.calls++
 		return cacheTestPluginResult(), nil
 	}}}
-	if err := registrar.RegisterBackend(impl); err != nil {
+
+	var registered pluginapi.Backend = impl
+	if len(guards) > 0 {
+		registered = requestGuardedPasswordBackend{impl, guards[0]}
+	}
+
+	if err := registrar.RegisterBackend(registered); err != nil {
 		t.Fatal(err)
 	}
 
@@ -305,5 +312,122 @@ func TestPluginPositiveCachePurge(t *testing.T) {
 
 	if f.calls != 1 {
 		t.Fatalf("calls after purge=%d", f.calls)
+	}
+}
+
+// requestGuardedPasswordBackend models an optional pure request admission guard.
+type requestGuardedPasswordBackend struct {
+	optedInPasswordBackend
+	scope func(pluginapi.RequestSnapshot) (string, bool)
+}
+
+// PositivePasswordCacheableRequest excludes requests whose identity depends on uncached context.
+func (b requestGuardedPasswordBackend) PositivePasswordCacheScope(snapshot pluginapi.RequestSnapshot) (string, bool) {
+	return b.scope(snapshot)
+}
+
+func TestPluginPasswordCacheRequestGuard(t *testing.T) {
+	f := newPluginCacheFixture(t, true, func(pluginapi.RequestSnapshot) (string, bool) { return "", false })
+	manager := &BackendManager{runner: f.runner, qualifiedName: backendTestQualified}
+
+	result, err := manager.PassDB(f.auth(t, backendTestPassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	if result.PluginCachePayload != "" {
+		t.Fatal("request-dependent backend result was admitted to cache")
+	}
+}
+
+func TestPluginPasswordCacheDomainScope(t *testing.T) {
+	f := newPluginCacheFixture(t, true, func(snapshot pluginapi.RequestSnapshot) (string, bool) {
+		return http.Header(snapshot.Headers).Get("X-Tenant"), true
+	})
+	manager := &BackendManager{runner: f.runner, qualifiedName: backendTestQualified}
+
+	first := f.auth(t, backendTestPassword)
+	first.Request.HTTPClientContext.Request.Header.Set("X-Tenant", "first.example")
+
+	result, err := manager.PassDB(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	for _, tc := range []struct {
+		domain string
+		hit    bool
+	}{{"first.example", true}, {"second.example", false}} {
+		request := f.auth(t, backendTestPassword)
+		request.Request.HTTPClientContext.Request.Header.Set("X-Tenant", tc.domain)
+
+		if manager.PasswordCacheScopeMatches(request, result.PluginCachePayload) != tc.hit {
+			t.Fatal("local cache scope mismatch")
+		}
+
+		restored := f.lookup(t, request, f.cacheHash(first, result))
+		if restored.Authenticated != tc.hit {
+			t.Fatalf("domain %s: authenticated=%v", tc.domain, restored.Authenticated)
+		}
+	}
+}
+
+func TestPluginPasswordCacheScopePanic(t *testing.T) {
+	f := newPluginCacheFixture(t, true, func(pluginapi.RequestSnapshot) (string, bool) { panic("scope failure") })
+	manager := &BackendManager{runner: f.runner, qualifiedName: backendTestQualified}
+
+	result, err := manager.PassDB(f.auth(t, backendTestPassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	if result.PluginCachePayload != "" {
+		t.Fatal("panicking scope admitted a result")
+	}
+}
+
+func TestPluginLocalPasswordCacheDomainScope(t *testing.T) {
+	f := newPluginCacheFixture(t, true, func(snapshot pluginapi.RequestSnapshot) (string, bool) {
+		domain := http.Header(snapshot.Headers).Get("X-Tenant")
+		if domain == "panic" {
+			panic("scope unavailable")
+		}
+
+		return domain, domain != "disabled"
+	})
+	manager := &BackendManager{runner: f.runner, qualifiedName: backendTestQualified}
+	first := f.auth(t, backendTestPassword)
+	first.Request.HTTPClientContext.Request.Header.Set("X-Tenant", "first.example")
+
+	result, err := manager.PassDB(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.PutPassDBResultToPool(result)
+
+	cache := core.NewPositiveBackendAuthenticationCache(time.Now)
+	if !cache.StoreForRequest(first.Request.HTTPClientContext, first, result, time.Minute, backendTestAccount) {
+		t.Fatal("local store failed")
+	}
+
+	for _, domain := range []string{"first.example", "second.example", "disabled", "panic"} {
+		request := f.auth(t, backendTestPassword)
+		request.Request.HTTPClientContext.Request.Header.Set("X-Tenant", domain)
+
+		hit := cache.ApplyForRequest(request.Request.HTTPClientContext, request)
+		if hit != (domain == "first.example") {
+			t.Fatalf("domain %s local hit=%v", domain, hit)
+		}
+
+		if !hit && (request.Runtime.Authenticated || request.GetAccount() != "") {
+			t.Fatal("rejected scope applied cache evidence")
+		}
+	}
+
+	if f.calls != 1 {
+		t.Fatalf("warm local cache called backend %d times", f.calls)
 	}
 }
