@@ -1,6 +1,7 @@
 package pluginruntime
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 
@@ -26,6 +27,11 @@ func (m *BackendManager) encodePositivePasswordCache(auth *core.AuthState, resul
 		return ""
 	}
 
+	scope, allowed := m.positivePasswordCacheScope(auth)
+	if !allowed {
+		return ""
+	}
+
 	data, err := json.Marshal(result)
 	if err != nil {
 		return ""
@@ -37,7 +43,7 @@ func (m *BackendManager) encodePositivePasswordCache(auth *core.AuthState, resul
 	}
 
 	envelope, err := json.Marshal(pluginPasswordCacheEnvelope{
-		Version: 1, Username: auth.Request.Username, Protocol: auth.Request.Protocol.Get(), OIDCClientID: auth.Request.OIDCCID, Result: restored,
+		Version: 1, Scope: scope, Username: auth.Request.Username, Protocol: auth.Request.Protocol.Get(), OIDCClientID: auth.Request.OIDCCID, Result: restored,
 	})
 	if err != nil {
 		return ""
@@ -57,7 +63,8 @@ func (m *BackendManager) RestorePositivePasswordCache(auth *core.AuthState, payl
 		return nil, m.temporaryError()
 	}
 
-	if !envelope.matches(auth) {
+	scope, allowed := m.positivePasswordCacheScope(auth)
+	if !allowed || !envelope.matches(auth) || envelope.Scope != scope {
 		return nil, nil
 	}
 
@@ -78,6 +85,7 @@ func (m *BackendManager) RestorePositivePasswordCache(auth *core.AuthState, payl
 
 // pluginPasswordCacheEnvelope binds a stable result to its request identity scope.
 type pluginPasswordCacheEnvelope struct {
+	Scope        string
 	Result       pluginapi.BackendResult
 	Username     string
 	Protocol     string
@@ -88,4 +96,57 @@ type pluginPasswordCacheEnvelope struct {
 // matches prevents reuse across payload versions or request identity scopes.
 func (e pluginPasswordCacheEnvelope) matches(auth *core.AuthState) bool {
 	return e.Version == 1 && e.Username == auth.Request.Username && e.Protocol == auth.Request.Protocol.Get() && e.OIDCClientID == auth.Request.OIDCCID
+}
+
+// positivePasswordCacheScope evaluates optional identity scoping behind the host panic boundary.
+func (m *BackendManager) positivePasswordCacheScope(auth *core.AuthState) (string, bool) {
+	snapshot := NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg()))
+	result, err := invokeTypedComponent(auth.Ctx(), m.runner, m.qualifiedName, pluginregistry.ComponentKindBackend,
+		"PositivePasswordCacheScope", func(_ context.Context, backend pluginapi.Backend) (passwordCacheScope, error) {
+			scoped, ok := backend.(pluginapi.PositivePasswordCacheScopeBackend)
+			if !ok {
+				return passwordCacheScope{allowed: true}, nil
+			}
+
+			scope, allowed := scoped.PositivePasswordCacheScope(snapshot)
+
+			return passwordCacheScope{value: scope, allowed: allowed}, nil
+		})
+
+	return result.value, err == nil && result.allowed
+}
+
+// passwordCacheScope carries one pure identity scope through the invocation boundary.
+type passwordCacheScope struct {
+	value   string
+	allowed bool
+}
+
+// PasswordCacheScopeMatches protects local cache reuse before cached evidence mutates the request.
+func (m *BackendManager) PasswordCacheScopeMatches(auth *core.AuthState, payload string) bool {
+	if m == nil || m.runner == nil || !m.runner.Ready() {
+		return false
+	}
+
+	component, found := m.runner.registry.Lookup(m.qualifiedName)
+	if !found {
+		return false
+	}
+
+	if _, scoped := component.Value.(pluginapi.PositivePasswordCacheScopeBackend); !scoped {
+		return true
+	}
+
+	if !m.PositivePasswordCacheEnabled() {
+		return false
+	}
+
+	var envelope pluginPasswordCacheEnvelope
+	if json.Unmarshal([]byte(payload), &envelope) != nil || !envelope.matches(auth) {
+		return false
+	}
+
+	scope, allowed := m.positivePasswordCacheScope(auth)
+
+	return allowed && envelope.Scope == scope
 }

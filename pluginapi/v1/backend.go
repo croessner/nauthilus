@@ -51,10 +51,21 @@ type Backend interface {
 
 // PositivePasswordCacheBackend declares that successful password results depend only on
 // credential and identity, remain valid for the operator TTL, and may skip VerifyPassword
-// side effects on cache hits. Request-dependent results must not implement this opt-in.
+// side effects on cache hits. Additional identity inputs require PositivePasswordCacheScopeBackend.
 // The operator must also enable plugins.modules[].positive_password_cache.
 type PositivePasswordCacheBackend interface {
 	PositivePasswordCacheable() bool
+}
+
+// PositivePasswordCacheScopeBackend binds cache reuse to additional identity inputs, such
+// as a tenant header used to resolve short usernames. The scope must be deterministic,
+// side-effect-free and contain no secrets. It must include every additional input that
+// can change the result. Returning false bypasses both positive caches for this request.
+// The canonical account remains the Redis key; this scope guards reuse of that account.
+// Implementations must also declare PositivePasswordCacheBackend and require operator
+// opt-in. Live policy, time-dependent decisions and mandatory side effects are not cacheable.
+type PositivePasswordCacheScopeBackend interface {
+	PositivePasswordCacheScope(RequestSnapshot) (scope string, cacheable bool)
 }
 
 // TOTPBeginRequest starts a backend-owned TOTP registration flow.

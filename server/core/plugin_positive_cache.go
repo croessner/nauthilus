@@ -109,3 +109,20 @@ func (p *backendExecutionPlan) scopePluginPasswordCache() {
 		delete(p.positions, definitions.BackendCache)
 	}
 }
+
+// PluginPasswordCacheScopeBackend validates additional plugin identity inputs for local hits.
+type PluginPasswordCacheScopeBackend interface {
+	PasswordCacheScopeMatches(*AuthState, string) bool
+}
+
+// pluginLocalCacheScopeMatches guards plugin evidence before any request state is restored.
+func (a *AuthState) pluginLocalCacheScopeMatches(snapshot *CachedBackendAuthentication) bool {
+	if snapshot.sourceBackend != definitions.BackendPlugin {
+		return true
+	}
+
+	manager := a.GetBackendManager(definitions.BackendPlugin, snapshot.backendName)
+	scoped, ok := manager.(PluginPasswordCacheScopeBackend)
+
+	return ok && scoped.PasswordCacheScopeMatches(a, snapshot.pluginCachePayload)
+}

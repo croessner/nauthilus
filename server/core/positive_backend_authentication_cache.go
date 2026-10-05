@@ -79,6 +79,7 @@ type appliedBackendAuthentication struct {
 	groupDistinguishedNames []string
 	backendRef              RemoteBackendRef
 	backendName             string
+	pluginCachePayload      string
 	accountField            string
 	account                 string
 	totpSecretField         string
@@ -104,6 +105,7 @@ type CachedBackendAuthentication struct {
 	groupDistinguishedNames []string
 	backendRef              RemoteBackendRef
 	backendName             string
+	pluginCachePayload      string
 	accountField            string
 	account                 string
 	totpSecretField         string
@@ -489,7 +491,7 @@ func captureCachedBackendAuthentication(ctx *gin.Context, auth *AuthState, resul
 	return &CachedBackendAuthentication{
 		attributes: attributes, additionalAttributes: additional,
 		groups: slices.Clone(result.Groups), groupDistinguishedNames: slices.Clone(result.GroupDistinguishedNames),
-		backendRef: result.BackendRef, backendName: result.BackendName,
+		backendRef: result.BackendRef, backendName: result.BackendName, pluginCachePayload: result.PluginCachePayload,
 		accountField: result.AccountField, account: result.Account, contextAccount: contextAccount,
 		totpSecretField: result.TOTPSecretField, totpRecoveryField: result.TOTPRecoveryField,
 		uniqueUserIDField: result.UniqueUserIDField, displayNameField: result.DisplayNameField,
@@ -526,7 +528,7 @@ func (d *CachedBackendAuthentication) materialize() (*appliedBackendAuthenticati
 	return &appliedBackendAuthentication{
 		attributes: attributes, additionalAttributes: additional,
 		groups: slices.Clone(d.groups), groupDistinguishedNames: slices.Clone(d.groupDistinguishedNames),
-		backendRef: d.backendRef, backendName: d.backendName,
+		backendRef: d.backendRef, backendName: d.backendName, pluginCachePayload: d.pluginCachePayload,
 		accountField: d.accountField, account: d.account, contextAccount: d.contextAccount,
 		totpSecretField: d.totpSecretField, totpRecoveryField: d.totpRecoveryField,
 		uniqueUserIDField: d.uniqueUserIDField, displayNameField: d.displayNameField,
@@ -580,6 +582,7 @@ func (d *appliedBackendAuthentication) passDBResult() (*PassDBResult, bool) {
 	result.UserFound = d.userFound
 	result.Backend = d.sourceBackend
 	result.BackendName = d.backendName
+	result.PluginCachePayload = d.pluginCachePayload
 	result.BackendRef = d.backendRef
 	result.AccountField = d.accountField
 	result.Account = d.account
@@ -727,7 +730,7 @@ func (c *PositiveBackendAuthenticationCache) applyForRequestMatching(ctx *gin.Co
 	}
 
 	snapshot, found := c.loadSnapshot(key)
-	if !found || (accept != nil && !accept(snapshot.sourceBackend, snapshot.backendName)) {
+	if !found || (accept != nil && !accept(snapshot.sourceBackend, snapshot.backendName)) || !auth.pluginLocalCacheScopeMatches(snapshot) {
 		return false
 	}
 
