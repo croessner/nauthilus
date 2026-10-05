@@ -542,7 +542,7 @@ func (e *authnCandidateExecution) prepareBackendPlan(plan backendExecutionPlan) 
 
 // prepareCachedBackendResult installs a positive hit using its restored canonical identity, including attribute-backed accounts.
 func (e *authnCandidateExecution) prepareCachedBackendResult(plan backendExecutionPlan) bool {
-	result, found := e.auth.takePositiveBackendAuthenticationCache(e.ginCtx)
+	result, found := e.auth.takePositiveBackendAuthenticationCache(e.ginCtx, plan)
 	if !found {
 		return false
 	}

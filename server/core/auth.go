@@ -2925,19 +2925,21 @@ func (a *AuthState) buildAuthnTypedBackendExecutionPlan(providerID string) (back
 	plan := backendExecutionPlan{positions: make(map[definitions.Backend]int)}
 
 	for index, configured := range a.Cfg().GetServer().GetBackends() {
-		if configured == nil || configured.Get() != backendType {
+		if configured == nil || (configured.Get() != backendType && configured.Get() != definitions.BackendCache) {
 			continue
 		}
 
 		before := len(plan.passDBs)
 
 		a.appendConfiguredBackend(&plan, configured)
-		plan.recordPosition(backendType, index, len(plan.passDBs) > before)
+		plan.recordPosition(configured.Get(), index, len(plan.passDBs) > before)
 	}
 
-	if len(plan.passDBs) == 0 {
+	if _, found := plan.positions[backendType]; !found {
 		return backendExecutionPlan{}, fmt.Errorf("typed authn backend provider %q has no executable backend", providerID)
 	}
+
+	plan.scopeTypedPasswordCache(backendType)
 
 	return plan, nil
 }
@@ -3386,8 +3388,8 @@ func (a *AuthState) processFinalAuthCache(ctx *gin.Context, passDBResult *PassDB
 }
 
 // takePositiveBackendAuthenticationCache transfers one request-owned cached backend result to the caller.
-func (a *AuthState) takePositiveBackendAuthenticationCache(ctx *gin.Context) (*PassDBResult, bool) {
-	if !a.GetFromLocalCache(ctx) {
+func (a *AuthState) takePositiveBackendAuthenticationCache(ctx *gin.Context, plan backendExecutionPlan) (*PassDBResult, bool) {
+	if !a.getFromLocalCache(ctx, plan.acceptsCachedBackend) {
 		stats.GetMetrics().GetCacheMisses().Inc()
 
 		return nil, false
@@ -4439,6 +4441,11 @@ func (a *AuthState) generateSingleflightKey() string {
 
 // GetFromLocalCache applies one complete positive backend snapshot to the current request.
 func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
+	return a.getFromLocalCache(ctx, nil)
+}
+
+// getFromLocalCache applies only admitted backend snapshots before publishing any request state.
+func (a *AuthState) getFromLocalCache(ctx *gin.Context, accept func(definitions.Backend, string) bool) bool {
 	tr := monittrace.New("nauthilus/auth")
 	lcCtx, lcSpan := tr.Start(a.Ctx(), "auth.local_cache",
 		attribute.String("service", a.Request.Service),
@@ -4457,7 +4464,7 @@ func (a *AuthState) GetFromLocalCache(ctx *gin.Context) bool {
 		return false
 	}
 
-	if a.backendAuthenticationCache().ApplyForRequest(ctx, a) {
+	if a.backendAuthenticationCache().applyForRequestMatching(ctx, a, accept) {
 		ctx.Set(definitions.CtxLocalCacheAuthKey, true)
 
 		lcSpan.SetAttributes(

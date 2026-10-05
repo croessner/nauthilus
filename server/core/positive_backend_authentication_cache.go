@@ -712,6 +712,11 @@ func backendAuthenticationCacheRequestEligible(ctx *gin.Context, auth *AuthState
 
 // ApplyForRequest loads and installs one request-eligible backend snapshot.
 func (c *PositiveBackendAuthenticationCache) ApplyForRequest(ctx *gin.Context, auth *AuthState) bool {
+	return c.applyForRequestMatching(ctx, auth, nil)
+}
+
+// applyForRequestMatching checks backend admission before materializing or applying cache evidence.
+func (c *PositiveBackendAuthenticationCache) applyForRequestMatching(ctx *gin.Context, auth *AuthState, accept func(definitions.Backend, string) bool) bool {
 	if c == nil || !backendAuthenticationCacheRequestEligible(ctx, auth) {
 		return false
 	}
@@ -722,7 +727,7 @@ func (c *PositiveBackendAuthenticationCache) ApplyForRequest(ctx *gin.Context, a
 	}
 
 	snapshot, found := c.loadSnapshot(key)
-	if !found {
+	if !found || (accept != nil && !accept(snapshot.sourceBackend, snapshot.backendName)) {
 		return false
 	}
 

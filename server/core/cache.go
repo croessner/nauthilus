@@ -39,7 +39,12 @@ func CachePassDB(auth *AuthState) (*PassDBResult, error) {
 }
 
 // cachePassDB restricts typed provider lookups to an explicit cache namespace set when supplied.
-func cachePassDB(auth *AuthState, cacheNames []string) (passDBResult *PassDBResult, err error) {
+func cachePassDB(auth *AuthState, cacheNames []string) (*PassDBResult, error) {
+	return cachePassDBMatching(auth, cacheNames, nil)
+}
+
+// cachePassDBMatching optionally restricts cache evidence before applying any cached result.
+func cachePassDBMatching(auth *AuthState, cacheNames []string, accept func(*bktype.PositivePasswordCache) bool) (passDBResult *PassDBResult, err error) {
 	// Root span for cache backend lookup
 	tr := monittrace.New("nauthilus/cache_backend")
 	ctx, sp := tr.Start(auth.Ctx(), "cache.passdb",
@@ -71,14 +76,14 @@ func cachePassDB(auth *AuthState, cacheNames []string) (passDBResult *PassDBResu
 	}
 
 	if accountName != "" {
-		err = auth.loadPositivePasswordCache(tr, accountName, passDBResult, cacheNames)
+		err = auth.loadPositivePasswordCache(tr, accountName, passDBResult, cacheNames, accept)
 	}
 
 	return
 }
 
 // loadPositivePasswordCache searches configured positive password caches for one account.
-func (auth *AuthState) loadPositivePasswordCache(tr monittrace.Tracer, accountName string, passDBResult *PassDBResult, cacheNames []string) error {
+func (auth *AuthState) loadPositivePasswordCache(tr monittrace.Tracer, accountName string, passDBResult *PassDBResult, cacheNames []string, accept func(*bktype.PositivePasswordCache) bool) error {
 	if cacheNames == nil {
 		names := backend.GetCacheNames(auth.Cfg(), auth.Channel(), auth.Request.Protocol.Get(), definitions.CacheAll)
 		cacheNames = names.GetStringSlice()
@@ -93,7 +98,7 @@ func (auth *AuthState) loadPositivePasswordCache(tr monittrace.Tracer, accountNa
 			return err
 		}
 
-		if !found {
+		if !found || (accept != nil && !accept(ppc)) {
 			continue
 		}
 
