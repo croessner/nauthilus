@@ -82,18 +82,19 @@ type PluginTrustSigner struct {
 
 // PluginModule configures one native plugin module instance.
 type PluginModule struct {
-	Config            map[string]any            `mapstructure:"config" validate:"omitempty" configschema:"opaque"`
-	AllowCapabilities []pluginapi.Capability    `mapstructure:"allow_capabilities" validate:"omitempty,dive"`
-	Hooks             []PluginHookAuthorization `mapstructure:"hooks" validate:"omitempty,dive"`
-	Compatibility     PluginCompatibility       `mapstructure:"compatibility" validate:"omitempty"`
-	Name              string                    `mapstructure:"name" validate:"omitempty"`
-	Type              string                    `mapstructure:"type" validate:"omitempty"`
-	Path              string                    `mapstructure:"path" validate:"omitempty"`
-	Checksum          string                    `mapstructure:"checksum" validate:"omitempty"`
-	Signature         string                    `mapstructure:"signature" validate:"omitempty"`
-	Signer            string                    `mapstructure:"signer" validate:"omitempty"`
-	StopTimeout       time.Duration             `mapstructure:"stop_timeout" validate:"omitempty"`
-	Optional          bool                      `mapstructure:"optional"`
+	Config                map[string]any            `mapstructure:"config" validate:"omitempty" configschema:"opaque"`
+	AllowCapabilities     []pluginapi.Capability    `mapstructure:"allow_capabilities" validate:"omitempty,dive"`
+	Hooks                 []PluginHookAuthorization `mapstructure:"hooks" validate:"omitempty,dive"`
+	Compatibility         PluginCompatibility       `mapstructure:"compatibility" validate:"omitempty"`
+	Name                  string                    `mapstructure:"name" validate:"omitempty"`
+	Type                  string                    `mapstructure:"type" validate:"omitempty"`
+	Path                  string                    `mapstructure:"path" validate:"omitempty"`
+	Checksum              string                    `mapstructure:"checksum" validate:"omitempty"`
+	Signature             string                    `mapstructure:"signature" validate:"omitempty"`
+	Signer                string                    `mapstructure:"signer" validate:"omitempty"`
+	StopTimeout           time.Duration             `mapstructure:"stop_timeout" validate:"omitempty"`
+	PositivePasswordCache bool                      `mapstructure:"positive_password_cache"`
+	Optional              bool                      `mapstructure:"optional"`
 }
 
 // PluginCompatibility contains restart-only, operator-owned legacy observability allowlists.

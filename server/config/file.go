@@ -2566,7 +2566,13 @@ func (f *FileSettings) validatePlugins() error {
 		return nil
 	}
 
-	return ValidatePlugins(f.Plugins)
+	if err := ValidatePlugins(f.Plugins); err != nil {
+		return err
+	}
+
+	f.warnPluginPasswordCache()
+
+	return nil
 }
 
 func (f *FileSettings) validateMetricsEndpointAuth() error {

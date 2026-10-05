@@ -49,6 +49,14 @@ type Backend interface {
 	ListAccounts(context.Context, AccountListRequest) (AccountListResult, error)
 }
 
+// PositivePasswordCacheBackend declares that successful password results depend only on
+// credential and identity, remain valid for the operator TTL, and may skip VerifyPassword
+// side effects on cache hits. Request-dependent results must not implement this opt-in.
+// The operator must also enable plugins.modules[].positive_password_cache.
+type PositivePasswordCacheBackend interface {
+	PositivePasswordCacheable() bool
+}
+
 // TOTPBeginRequest starts a backend-owned TOTP registration flow.
 type TOTPBeginRequest struct {
 	Snapshot       RequestSnapshot

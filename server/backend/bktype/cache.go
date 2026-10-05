@@ -23,6 +23,7 @@ import "github.com/croessner/nauthilus/v4/server/definitions"
 // refreshed upon continuous requests. If the Redis TTL has expired, the object is removed from the cache to force a refresh
 // of the user data from underlying databases.
 type PositivePasswordCache struct {
+	PluginResult            string              `json:"plugin_result,omitempty"`
 	Backend                 definitions.Backend `json:"passdb_backend"`
 	BackendName             string              `json:"backend_name"`
 	Password                string              `json:"password,omitempty"`

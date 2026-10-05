@@ -2411,6 +2411,9 @@ const (
 
 	// CacheLua refers to the enum value for Lua cache backend
 	CacheLua
+
+	// CachePlugin refers to the opted-in native plugin password cache.
+	CachePlugin
 )
 
 const (

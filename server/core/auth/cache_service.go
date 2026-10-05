@@ -16,8 +16,6 @@
 package auth
 
 import (
-	"strings"
-
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
@@ -54,15 +52,7 @@ func (DefaultCacheService) OnSuccess(auth *core.AuthState, accountName string) e
 
 	ppc := auth.CreatePositivePasswordCache()
 
-	var sb strings.Builder
-
-	sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
-	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
-	sb.WriteString(cacheName)
-	sb.WriteByte(':')
-	sb.WriteString(accountName)
-
-	key := sb.String()
+	key := positiveCacheUserKey(auth, cacheName, accountName)
 
 	// Write hash with TTL
 	backend.SaveUserDataToRedis(auth.Ctx(), auth.Cfg(), auth.Logger(), auth.Redis(), auth.Runtime.GUID, key, auth.Cfg().GetServer().GetRedis().GetPosCacheTTL(), ppc)
@@ -92,7 +82,10 @@ func (DefaultCacheService) Purge(auth *core.AuthState, username string) {
 		return
 	}
 
-	protocols := auth.Cfg().GetAllProtocols()
+	protocols := backend.PositiveCacheProtocols(auth.Cfg())
+	if auth.Request.Protocol != nil {
+		protocols = append(protocols, auth.Request.Protocol.Get())
+	}
 	namesToPurge := cachePurgeNames(auth, username, protocols)
 	userKeys := positiveCacheUserKeys(auth, namesToPurge, protocols)
 
@@ -148,15 +141,7 @@ func addPositiveCacheUserKeys(auth *core.AuthState, userKeys *config.StringSet, 
 
 // positiveCacheUserKey builds one Redis positive-cache key.
 func positiveCacheUserKey(auth *core.AuthState, cacheName string, name string) string {
-	var sb strings.Builder
-
-	sb.WriteString(auth.Cfg().GetServer().GetRedis().GetPrefix())
-	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
-	sb.WriteString(cacheName)
-	sb.WriteByte(':')
-	sb.WriteString(name)
-
-	return sb.String()
+	return backend.PositivePasswordCacheKey(auth.Cfg().GetServer().GetRedis().GetPrefix(), cacheName, name)
 }
 
 // deletePositiveCacheUserKeys deletes the selected positive-cache keys best-effort.

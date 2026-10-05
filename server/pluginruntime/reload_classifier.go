@@ -223,6 +223,7 @@ func restartOnlyModuleChange(current config.PluginModule, next config.PluginModu
 		current.Signature != next.Signature ||
 		current.Signer != next.Signer ||
 		current.StopTimeout != next.StopTimeout ||
+		current.PositivePasswordCache != next.PositivePasswordCache ||
 		current.Optional != next.Optional {
 		return true
 	}

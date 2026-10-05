@@ -250,6 +250,9 @@ func loadPositiveCacheBackend(logger *slog.Logger, hashValues map[string]string,
 
 // loadPositiveCacheSimpleFields copies scalar cache fields into the positive cache object.
 func loadPositiveCacheSimpleFields(hashValues map[string]string, sm *rediscli.SecurityManager, ucp *bktype.PositivePasswordCache) {
+	if payload, ok := hashValues["plugin_result"]; ok {
+		ucp.PluginResult, _ = sm.Decrypt(payload)
+	}
 	if password, ok := hashValues["password"]; ok {
 		ucp.Password, _ = sm.Decrypt(password)
 	}
@@ -430,6 +433,9 @@ func buildPositiveCacheHashFields(
 
 // addPositiveCacheSimpleHashFields adds scalar cache values to the Redis hash payload.
 func addPositiveCacheSimpleHashFields(hashFields map[string]any, cache *bktype.PositivePasswordCache, sm *rediscli.SecurityManager) {
+	if cache.PluginResult != "" {
+		hashFields["plugin_result"], _ = sm.Encrypt(cache.PluginResult)
+	}
 	if cache.Password != "" {
 		hashFields["password"], _ = sm.Encrypt(cache.Password)
 	}
@@ -539,7 +545,7 @@ func collectCacheNames(
 	}
 }
 
-// GetCacheNames retrieves cache names for the specified protocol from either LDAP, Lua, or both backends as per the input.
+// GetCacheNames retrieves LDAP/Lua protocol cache names and native plugin instance namespaces.
 // If no cache names are found, a default cache name "__default__" is returned.
 func GetCacheNames(cfg config.File, channel Channel, requestedProtocol string, backends definitions.CacheNameBackend) (cacheNames config.StringSet) {
 	cacheNames = config.NewStringSet()
@@ -564,6 +570,14 @@ func GetCacheNames(cfg config.File, channel Channel, requestedProtocol string, b
 			},
 			cacheNames,
 		)
+	}
+
+	if backends == definitions.CacheAll || backends == definitions.CachePlugin {
+		for _, entry := range cfg.GetServer().GetBackends() {
+			if entry != nil && entry.Get() == definitions.BackendPlugin {
+				cacheNames.Set(PluginPasswordCacheName(entry.GetName()))
+			}
+		}
 	}
 
 	if len(cacheNames) == 0 {

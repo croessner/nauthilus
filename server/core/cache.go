@@ -18,7 +18,6 @@ package core
 import (
 	"crypto/sha256"
 	"slices"
-	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
@@ -35,7 +34,12 @@ import (
 const fullPasswordHashLength = 2 * sha256.Size
 
 // CachePassDB implements the redis password database backend.
-func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+func CachePassDB(auth *AuthState) (*PassDBResult, error) {
+	return cachePassDB(auth, nil)
+}
+
+// cachePassDB restricts typed provider lookups to an explicit cache namespace set when supplied.
+func cachePassDB(auth *AuthState, cacheNames []string) (passDBResult *PassDBResult, err error) {
 	// Root span for cache backend lookup
 	tr := monittrace.New("nauthilus/cache_backend")
 	ctx, sp := tr.Start(auth.Ctx(), "cache.passdb",
@@ -67,17 +71,23 @@ func CachePassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	}
 
 	if accountName != "" {
-		err = auth.loadPositivePasswordCache(tr, accountName, passDBResult)
+		err = auth.loadPositivePasswordCache(tr, accountName, passDBResult, cacheNames)
 	}
 
 	return
 }
 
 // loadPositivePasswordCache searches configured positive password caches for one account.
-func (auth *AuthState) loadPositivePasswordCache(tr monittrace.Tracer, accountName string, passDBResult *PassDBResult) error {
-	cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), auth.Request.Protocol.Get(), definitions.CacheAll)
+func (auth *AuthState) loadPositivePasswordCache(tr monittrace.Tracer, accountName string, passDBResult *PassDBResult, cacheNames []string) error {
+	if cacheNames == nil {
+		names := backend.GetCacheNames(auth.Cfg(), auth.Channel(), auth.Request.Protocol.Get(), definitions.CacheAll)
+		cacheNames = names.GetStringSlice()
+	}
 
-	for _, cacheName := range cacheNames.GetStringSlice() {
+	for _, cacheName := range cacheNames {
+		if backend.IsPluginPasswordCacheName(cacheName) && !auth.pluginCacheNameEnabled(cacheName) {
+			continue
+		}
 		ppc, found, authenticated, err := auth.readPositivePasswordCache(tr, cacheName, accountName)
 		if err != nil {
 			return err
@@ -87,7 +97,14 @@ func (auth *AuthState) loadPositivePasswordCache(tr monittrace.Tracer, accountNa
 			continue
 		}
 
-		applyPositivePasswordCacheResult(passDBResult, ppc, authenticated)
+		applied, err := auth.restorePositivePasswordCacheResult(cacheName, ppc, authenticated, passDBResult)
+		if err != nil {
+			return err
+		}
+
+		if !applied {
+			continue
+		}
 
 		break
 	}
@@ -136,15 +153,7 @@ func (auth *AuthState) readPositivePasswordCache(tr monittrace.Tracer, cacheName
 
 // positivePasswordCacheKey builds the Redis key for a positive password cache entry.
 func (auth *AuthState) positivePasswordCacheKey(cacheName string, accountName string) string {
-	var sb strings.Builder
-
-	sb.WriteString(auth.cfg().GetServer().GetRedis().GetPrefix())
-	sb.WriteString(definitions.RedisUserPositiveCachePrefix)
-	sb.WriteString(cacheName)
-	sb.WriteByte(':')
-	sb.WriteString(accountName)
-
-	return sb.String()
+	return backend.PositivePasswordCacheKey(auth.cfg().GetServer().GetRedis().GetPrefix(), cacheName, accountName)
 }
 
 // applyPositivePasswordCacheResult copies cached user data into the PassDB result.
@@ -192,4 +201,31 @@ func isLowercaseHexHash(value string) bool {
 	}
 
 	return true
+}
+
+// restorePositivePasswordCacheResult enforces namespace ownership before restoring a backend result.
+func (auth *AuthState) restorePositivePasswordCacheResult(cacheName string, cached *bktype.PositivePasswordCache, authenticated bool, target *PassDBResult) (bool, error) {
+	if cached.Backend != definitions.BackendPlugin {
+		if backend.IsPluginPasswordCacheName(cacheName) {
+			return false, nil
+		}
+
+		applyPositivePasswordCacheResult(target, cached, authenticated)
+
+		return true, nil
+	}
+
+	if !authenticated || auth.Request.NoAuth {
+		return false, nil
+	}
+
+	restored, ok, err := auth.restorePluginPositiveCache(cacheName, cached)
+	if err != nil || !ok {
+		return false, err
+	}
+
+	*target = *restored
+	PutPassDBResultToPool(restored)
+
+	return true, nil
 }

@@ -632,6 +632,8 @@ type AuthGroups struct {
 
 // AuthState represents a struct that holds information related to an authentication process.
 type AuthState struct {
+	// pluginPositiveCache freezes the original plugin result before subject processing.
+	pluginPositiveCache *bktype.PositivePasswordCache
 	// deps holds the injected runtime dependencies for this auth request.
 	// It must be initialized by the request-boundary constructor.
 	deps AuthDeps
@@ -892,6 +894,8 @@ var _ State = (*AuthState)(nil)
 
 // PassDBResult is used in all password databases to store final results of an authentication process.
 type PassDBResult struct {
+	// PluginCachePayload is an immutable, losslessly encoded backend result, empty when uncacheable.
+	PluginCachePayload string
 	// BackendName specifies the name of the backend that authenticated or found the user in the password database.
 	BackendName string
 
@@ -942,7 +946,8 @@ type PassDBResult struct {
 // This is used when returning a PassDBResult to the pool
 // It implements the Resettable interface
 func (p *PassDBResult) Reset() {
-	// Reset bool fields
+	// Reset cache payload and bool fields
+	p.PluginCachePayload = ""
 	p.Authenticated = false
 	p.UserFound = false
 
@@ -980,6 +985,7 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	}
 
 	res := GetPassDBResultFromPool()
+	res.PluginCachePayload = p.PluginCachePayload
 	res.Authenticated = p.Authenticated
 	res.UserFound = p.UserFound
 	res.BackendName = p.BackendName
@@ -2094,6 +2100,7 @@ func updateAuthentication(ctx *gin.Context, auth *AuthState, passDBResult *PassD
 		auth.applyFoundPassDBRuntime(passDBResult, passDB)
 	}
 
+	auth.capturePluginPositiveCache(passDBResult)
 	auth.applyPassDBRuntimeFields(passDBResult)
 	auth.applyPassDBAttributes(ctx, passDBResult)
 	auth.syncAccountFromPassDBAttributes(ctx)
@@ -2906,6 +2913,10 @@ func (p *backendExecutionPlan) recordPosition(db definitions.Backend, index int,
 
 // buildAuthnTypedBackendExecutionPlan selects only the backend family named by one captured Policy provider.
 func (a *AuthState) buildAuthnTypedBackendExecutionPlan(providerID string) (backendExecutionPlan, error) {
+	if providerID == policy.AuthnProviderPluginBackendOrder {
+		return a.buildTypedPluginBackendExecutionPlan()
+	}
+
 	backendType, ok := authnTypedBackendForProvider(providerID)
 	if !ok {
 		return backendExecutionPlan{}, fmt.Errorf("unsupported typed authn backend provider %q", providerID)
@@ -3008,6 +3019,13 @@ func (a *AuthState) appendPluginBackend(plan *backendExecutionPlan, name string)
 		return
 	}
 
+	if cache, ok := mgr.(interface{ PositivePasswordCacheEnabled() bool }); ok && cache.PositivePasswordCacheEnabled() && plan.hasPositivePasswordCache {
+		if plan.pluginCacheBackends == nil {
+			plan.pluginCacheBackends = make(map[string]bool)
+		}
+
+		plan.pluginCacheBackends[name] = true
+	}
 	plan.passDBs = a.appendBackend(plan.passDBs, definitions.BackendPlugin, name, mgr.PassDB)
 }
 
@@ -3180,6 +3198,7 @@ type backendExecutionPlan struct {
 	positions map[definitions.Backend]int
 	passDBs   []*PassDBMap
 
+	pluginCacheBackends      map[string]bool
 	hasPositivePasswordCache bool
 }
 
@@ -3187,7 +3206,7 @@ type backendExecutionPlan struct {
 func (p backendExecutionPlan) positivePasswordCacheEnabled(usedBackend definitions.Backend) bool {
 	if !p.hasPositivePasswordCache ||
 		usedBackend == definitions.BackendRemote ||
-		usedBackend == definitions.BackendPlugin ||
+		(usedBackend == definitions.BackendPlugin && len(p.pluginCacheBackends) == 0) ||
 		usedBackend == definitions.BackendTest {
 		return false
 	}
@@ -3195,6 +3214,7 @@ func (p backendExecutionPlan) positivePasswordCacheEnabled(usedBackend definitio
 	return p.cachePrecedes(usedBackend)
 }
 
+// cachePrecedes checks conservative backend-family ordering.
 func (p backendExecutionPlan) cachePrecedes(usedBackend definitions.Backend) bool {
 	cachePosition, hasCache := p.positions[definitions.BackendCache]
 	if !hasCache {
@@ -3218,6 +3238,8 @@ func (a *AuthState) GetUsedCacheBackend() (definitions.CacheNameBackend, error) 
 		usedBackend = definitions.CacheLDAP
 	case definitions.BackendLua:
 		usedBackend = definitions.CacheLua
+	case definitions.BackendPlugin:
+		usedBackend = definitions.CachePlugin
 	case definitions.BackendUnknown:
 	case definitions.BackendCache:
 	case definitions.BackendLocalCache:
@@ -3236,6 +3258,9 @@ func (a *AuthState) GetUsedCacheBackend() (definitions.CacheNameBackend, error) 
 
 // GetCacheNameFor retrieves the cache name associated with the given backend, based on the protocol configured for the AuthState.
 func (a *AuthState) GetCacheNameFor(usedBackend definitions.CacheNameBackend) (cacheName string, err error) {
+	if usedBackend == definitions.CachePlugin && a.pluginPositiveCache != nil {
+		return backend.PluginPasswordCacheName(a.pluginPositiveCache.BackendName), nil
+	}
 	cacheNames := backend.GetCacheNames(a.Cfg(), a.Channel(), a.Request.Protocol.Get(), usedBackend)
 	if len(cacheNames) != 1 {
 		level.Error(a.Logger()).Log(
@@ -3254,6 +3279,12 @@ func (a *AuthState) GetCacheNameFor(usedBackend definitions.CacheNameBackend) (c
 
 // CreatePositivePasswordCache constructs a PositivePasswordCache containing user authentication details.
 func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache {
+	if a.pluginPositiveCache != nil {
+		cached := *a.pluginPositiveCache
+		cached.Password = preparedCredentialDigest(a)
+
+		return &cached
+	}
 	return &bktype.PositivePasswordCache{
 		AccountField:            a.Runtime.AccountField,
 		TOTPSecretField:         a.Runtime.TOTPSecretField,
@@ -3272,6 +3303,9 @@ func (a *AuthState) CreatePositivePasswordCache() *bktype.PositivePasswordCache 
 // processPositivePasswordCache updates Redis positive-cache entries when the configured backend order enables them.
 func (a *AuthState) processPositivePasswordCache(ctx *gin.Context, authenticated bool, accountName string, plan backendExecutionPlan) error {
 	positiveCacheEnabled := plan.positivePasswordCacheEnabled(a.Runtime.UsedPassDBBackend)
+	if a.Runtime.UsedPassDBBackend == definitions.BackendPlugin {
+		positiveCacheEnabled = positiveCacheEnabled && a.pluginPositiveCache != nil && plan.pluginCacheBackends[a.pluginPositiveCache.BackendName]
+	}
 	tr := monittrace.New("nauthilus/auth")
 	cctx, cspan := tr.Start(ctx.Request.Context(), "auth.cache.process",
 		attribute.String("service", a.Request.Service),

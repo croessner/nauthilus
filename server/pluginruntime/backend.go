@@ -502,6 +502,7 @@ func (m *BackendManager) passDBResult(auth *core.AuthState, result pluginapi.Bac
 	}
 
 	passDBResult := core.GetPassDBResultFromPool()
+	passDBResult.PluginCachePayload = m.encodePositivePasswordCache(auth, result)
 	passDBResult.Authenticated = result.Authenticated
 	passDBResult.UserFound = result.UserFound
 	passDBResult.Account = result.Account

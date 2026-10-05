@@ -111,6 +111,7 @@ type Component struct {
 	Kind                             ComponentKind
 	Origin                           ComponentOrigin
 	CallbackAdmissionLimits          pluginapi.CallbackAdmissionLimits
+	PositivePasswordCache            bool
 }
 
 // DebugModule describes one registered plugin debug selector.
@@ -477,12 +478,20 @@ func (r *Registrar) RegisterBackend(backend pluginapi.Backend) error {
 		return ErrNilComponent
 	}
 
+	cacheable, ok := backend.(pluginapi.PositivePasswordCacheBackend)
+
+	enabled := r.module.PositivePasswordCache && ok && cacheable.PositivePasswordCacheable()
+	if r.module.PositivePasswordCache && !enabled {
+		return fmt.Errorf("plugin backend %s.%s does not declare positive password cache safety", r.module.Name, backend.Name())
+	}
+
 	return r.registerComponent(Component{
-		Value:      backend,
-		ModuleName: r.module.Name,
-		LocalName:  backend.Name(),
-		Kind:       ComponentKindBackend,
-		Origin:     ComponentOriginNative,
+		PositivePasswordCache: enabled,
+		Value:                 backend,
+		ModuleName:            r.module.Name,
+		LocalName:             backend.Name(),
+		Kind:                  ComponentKindBackend,
+		Origin:                ComponentOriginNative,
 	})
 }
 

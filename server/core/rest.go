@@ -1614,13 +1614,13 @@ func addIPScopedUserKeys(userKeys config.StringSet, cfg config.File, prefix stri
 
 // addProtocolPositiveCacheKeys adds positive-cache keys for all configured protocols.
 func addProtocolPositiveCacheKeys(userKeys config.StringSet, cfg config.File, deps restAdminDeps, prefix string, accountName string) {
-	protocols := cfg.GetAllProtocols()
+	protocols := backend.PositiveCacheProtocols(cfg)
 	channel := deps.effectiveChannel()
 
 	for index := range protocols {
 		cacheNames := backend.GetCacheNames(cfg, channel, protocols[index], definitions.CacheAll)
 		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + cacheName + ":" + accountName)
+			userKeys.Set(backend.PositivePasswordCacheKey(prefix, cacheName, accountName))
 		}
 	}
 }
