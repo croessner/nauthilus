@@ -1812,3 +1812,23 @@ submitted username, protocol and OIDC client ID. Other request-dependent data is
 A Redis hit enters the normal password pipeline and becomes frozen host credential evidence through `settleCredential`.
 Subject patches cannot raise a failed credential into a permit or a positive cache write. The host's existing process-local
 positive backend cache is separate and already supports plugin results; this new opt-in controls Redis only.
+
+### Additional plugin identity scope
+
+A backend resolving short usernames using a tenant/domain header must also implement
+`pluginapi.PositivePasswordCacheScopeBackend`. Its pure `PositivePasswordCacheScope(RequestSnapshot) (string, bool)`
+method returns the effective domain (or a deterministic discriminator containing every additional identity input).
+Return false when the request cannot be safely cached. The host invokes this method behind the plugin panic boundary;
+panics bypass the cache. Do not perform I/O, emit side effects, or include secrets in the scope.
+
+The canonical account remains the Redis cache key. The envelope additionally binds username, protocol, OIDC client,
+and plugin scope. A different scope requires a new backend lookup before any cached identity is applied. The same
+scope check protects the in-memory cache. Scope-aware plugins without joint operator/plugin opt-in bypass the
+in-memory cache too. Plugins without this optional scope interface retain their existing local-cache behavior.
+The account-mapping index is not domain-scoped: alternating domains for the same short username can cause extra
+misses, but cannot authorize the wrong canonical account. Policy and subject providers still run for each request.
+
+For mail.de, derive this scope with the same domain resolver used by `VerifyPassword`, including `X-MDE-Domain`,
+configured fallback and fully qualified username precedence. This preserves short logins and safely caches repeated
+requests in the same domain. Mutable account restrictions and mandatory per-login operations must remain in subject
+or post-action components. A domain scope does not make time-dependent backend decisions cacheable.

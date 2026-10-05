@@ -204,10 +204,14 @@ For `mailde_auth`, the backend type registered as `passdb` in Pimparoo's `roles/
 `roles/mde_nauthilus/templates/nauthilus.yml.j2`, enable `positive_password_cache: true` on the `mailde_auth` module and
 retain the cache-first order and desired `storage.redis.positive_cache_ttl`/`password_nonce`. These external files are not
 changed by this host feature. Integer-valued or otherwise non-JSON-round-trippable facts currently bypass Redis caching;
-audit actual results before promising a hit rate. The process-local authentication cache is separate and unchanged.
+audit actual results before promising a hit rate. The process-local authentication cache remains separate; additional plugin identity scopes guard both caches.
 
 Typed LDAP and Lua authentication providers also preserve a configured cache-first order. Cache lookups accept only
 entries from that provider's backend family and configured instances. This includes RNS deployments using
 `authn/builtin/ldap_backend` with `order: [cache, ldap, ldap(list-account)]`: `rns_auth` is a subject/environment/post-action
 module, not a password backend, and needs no plugin password-cache declaration. LDAP credentials can be cached while
 RNS account authorization, GeoIP history and post-actions continue on every request.
+
+Plugin backends whose short-login resolution depends on a domain or tenant header must also implement
+`PositivePasswordCacheScopeBackend`. See [additional plugin identity scope](go_plugin_developer_api.md#additional-plugin-identity-scope)
+for the shared Redis/in-memory contract and the mail.de domain-resolution requirements.

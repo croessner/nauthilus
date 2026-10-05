@@ -907,3 +907,7 @@ completeness and values deliberately excluded from Redis caching.
 The typed Policy provider `authn/builtin/plugin_backend_order` admits configured `cache` entries only for opted-in plugin
 instances and restricts lookups to those namespaces. It never imports LDAP/Lua cache authority. Without plugin opt-in,
 the existing typed-provider behavior remains unchanged.
+
+Plugin backends whose short-login resolution depends on a domain or tenant header must also implement
+`PositivePasswordCacheScopeBackend`. See [additional plugin identity scope](go_plugin_developer_api.md#additional-plugin-identity-scope)
+for the shared Redis/in-memory contract and the mail.de domain-resolution requirements.
