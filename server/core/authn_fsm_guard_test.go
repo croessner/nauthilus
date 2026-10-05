@@ -502,7 +502,7 @@ func runAuthnFSMGuardPositiveCacheHit(t *testing.T, h *authnFSMGuardHarness) {
 		t.Fatal("positive backend authentication was not cached")
 	}
 
-	h.runBackend(t)
+	h.runBackendPlan(t, backendExecutionPlan{passDBs: []*PassDBMap{{backend: definitions.BackendLDAP}}})
 
 	if !h.execution.backendCached {
 		t.Fatal("backend checkpoint did not use the positive cache")

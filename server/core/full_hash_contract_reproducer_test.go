@@ -200,6 +200,7 @@ func assertNoFullHashContractSnapshot(t *testing.T, phase string, ctx *gin.Conte
 
 func TestPositiveBackendAuthenticationCacheCredentialDigestSeparatesShortHashCollision(t *testing.T) {
 	cfg := newCurrentBehaviorConfig(t)
+	cfg.Server.Backends = append(cfg.Server.Backends, mustBackendPlanConfig(t, "ldap(ldap-primary)"))
 	cfg.Server.Redis.AccountLocalCache.Enabled = true
 	cfg.Server.Redis.PasswordNonce = secret.Value{}
 

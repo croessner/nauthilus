@@ -40,12 +40,23 @@ func TestBuildAuthnTypedBackendExecutionPlanSelectsOnlyExactProvider(t *testing.
 				t.Fatalf("buildAuthnTypedBackendExecutionPlan(%q) error = %v", test.providerID, err)
 			}
 
-			if len(plan.passDBs) != 1 || plan.passDBs[0].backend != test.backend {
-				t.Fatalf("typed plan %q backends = %#v, want only %s", test.providerID, plan.passDBs, test.backend)
+			entries := plan.passDBs
+
+			wantCache := test.backend != definitions.BackendPlugin
+			if wantCache {
+				if len(entries) != 2 || entries[0].backend != definitions.BackendCache {
+					t.Fatal("typed provider lost its scoped cache")
+				}
+
+				entries = entries[1:]
 			}
 
-			if plan.hasPositivePasswordCache {
-				t.Fatalf("typed plan %q retained ambient positive-cache authority", test.providerID)
+			if len(entries) != 1 || entries[0].backend != test.backend {
+				t.Fatal("typed provider admitted another backend family")
+			}
+
+			if plan.hasPositivePasswordCache != wantCache {
+				t.Fatal("typed provider cache admission mismatch")
 			}
 		})
 	}

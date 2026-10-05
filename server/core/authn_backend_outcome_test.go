@@ -32,7 +32,7 @@ func TestCachedBackendOutcomeRetainsCanonicalAccount(t *testing.T) {
 	auth.deps.BackendAuthenticationCache = cache
 
 	host := &authnCandidateExecution{auth: auth, ginCtx: ginCtx, operation: policy.OperationAuthenticate}
-	if !host.prepareCachedBackendResult(backendExecutionPlan{}) {
+	if !host.prepareCachedBackendResult(backendExecutionPlan{passDBs: []*PassDBMap{{backend: result.Backend, name: result.BackendName}}}) {
 		t.Fatal("expected positive backend cache hit")
 	}
 	defer PutPassDBResultToPool(host.backendResult)
