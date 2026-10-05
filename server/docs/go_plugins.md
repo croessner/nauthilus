@@ -854,3 +854,56 @@ explicitly request previous-version candidates. During rotation, retain both key
 retention and replay windows have elapsed and any operator overrides have been migrated and verified.
 Rollback must retain the complete matching key references and bundle; removing a still-needed previous
 key can make existing state unavailable.
+
+## Redis positive password cache for backend modules
+
+`plugins.modules[].positive_password_cache` is an optional boolean, default `false`, outside the plugin-owned `config`
+block. Both this operator setting and the backend's `PositivePasswordCacheable() bool` declaration must approve caching.
+Changing the setting requires restart, like the other loader-owned module settings. All backend components registered by
+an enabled module must declare cache safety. An enabled module with an undeclared/declining backend fails registration.
+
+```yaml
+auth:
+  backends:
+    order: [cache, plugin(mailde_auth.passdb)]
+plugins:
+  allowed_dirs: [/usr/local/lib/nauthilus/plugins]
+  modules:
+    - name: mailde_auth
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/mailde_auth.so
+      allow_capabilities: [credentials]
+      positive_password_cache: true
+      config: {} # Preserve the plugin's actual database configuration here.
+storage:
+  redis:
+    positive_cache_ttl: 30s
+```
+
+A `cache` preceding a plugin without operator opt-in emits a configuration warning, preserving compatibility with existing
+configurations. Explicit operator opt-in without plugin support is rejected at registration, when the native declaration
+is available. This separates backward-compatible defaults from invalid explicit requests.
+
+Plugin Redis entries use the existing positive-cache prefix and an isolated `\x00plugin.<module>.<backend>:<account>` suffix. Here `\x00` denotes an internal NUL byte,
+not printable text: Redis keys are binary-safe, and LDAP/Lua `cache_name` requires printable ASCII. The internal
+namespace therefore cannot collide with an operator-configured cache name.
+The password is represented by the existing full prepared password digest (including `password_nonce`), never its raw
+value. As with LDAP/Lua, the Redis key identifies the account/cache namespace; the password digest is in the hash value,
+not literally in the key. Payload fields use the existing Redis encryption manager. Configure Redis encryption for
+confidentiality of cached identity data. `positive_cache_ttl` controls expiry; cache hits do not refresh that TTL.
+
+The payload also binds username, protocol and OIDC client ID; a different scope misses and falls back to the plugin.
+Scopes for one account share a key and can replace each other, which can reduce hit rate but cannot grant cross-scope
+access. Wrong passwords miss the plugin positive cache and follow normal backend verification, brute-force accounting
+and password-history/RWP handling. The negative cache service remains a no-op; this opt-in adds no negative caching.
+
+Password changes require the same explicit cache invalidation as other authoritative backends. The host purge path and
+user-cache flush API include plugin namespaces, including plugin-only configurations and disabled opt-ins. An external
+MariaDB password change is not detected automatically: flush affected accounts or wait for TTL expiry. Flush before
+changing backend identity semantics or removing/renaming a module. Subject/post-action work and policy checks remain
+per-request. See [the backend API contract](go_plugin_developer_api.md#opt-in-redis-positive-password-caching) for result
+completeness and values deliberately excluded from Redis caching.
+
+The typed Policy provider `authn/builtin/plugin_backend_order` admits configured `cache` entries only for opted-in plugin
+instances and restricts lookups to those namespaces. It never imports LDAP/Lua cache authority. Without plugin opt-in,
+the existing typed-provider behavior remains unchanged.

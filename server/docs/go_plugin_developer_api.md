@@ -1779,3 +1779,36 @@ The reputation learner is a synchronous obligation so missing Kafka acknowledgem
 becomes Policy Tempfail before the response. It does not mutate the response,
 consume credentials or infer evidence from final authentication flags. Detached
 post-actions retain their existing inability to revise a completed response.
+
+## Opt-in Redis positive password caching
+
+A backend can implement the optional `pluginapi.PositivePasswordCacheBackend` interface:
+
+```go
+// PositivePasswordCacheable declares that successful results are stable for the host cache TTL.
+func (*PassDB) PositivePasswordCacheable() bool { return true }
+```
+
+The host also requires `plugins.modules[].positive_password_cache: true`. Registration rejects that setting if any
+backend in the module lacks the declaration or returns false. Existing backends keep their current Redis behavior.
+The declaration is a semantic promise: successful results depend on credentials and identity, remain valid for the
+configured TTL, and skipping `VerifyPassword` and its side effects is acceptable. Do not opt in for one-time credentials,
+request/IP-dependent verification, or mandatory per-login database writes. Put repeatable per-request work in the subject
+or post-action phase instead. The host cannot prove this promise for trusted in-process plugin code.
+
+The cache stores an immutable JSON snapshot of the original `BackendResult`, before subject processing. It retains
+`Account`, `AccountField`, attributes, all identity field names, groups/group DNs, `BackendServer`, status and facts.
+Restoration uses the live backend adapter, so internal `AdditionalAttributes` (status metadata and typed
+`[]pluginapi.PolicyFact`) and the backend reference are reconstructed identically. The qualified backend name remains
+`module.component`; its selector/diagnostic form is `plugin(module.component)`. Subject providers, policy evaluation and
+post-actions still run for every request. Their modifications and side effects are not persisted in this snapshot.
+
+Only successful, found-user results that survive an exact JSON encode/decode comparison are stored. Facts containing
+integer types, `float32`, typed containers or other values whose Go type/value changes in JSON make the entire result
+uncacheable. Strings, booleans, finite `float64` values and JSON-native containers can round-trip. Unsupported values
+continue through normal authentication; they do not cause a cache write. The payload is versioned and bound to the
+submitted username, protocol and OIDC client ID. Other request-dependent data is outside the cache contract.
+
+A Redis hit enters the normal password pipeline and becomes frozen host credential evidence through `settleCredential`.
+Subject patches cannot raise a failed credential into a permit or a positive cache write. The host's existing process-local
+positive backend cache is separate and already supports plugin results; this new opt-in controls Redis only.

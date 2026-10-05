@@ -189,3 +189,19 @@ the intended first prerelease is `v4.0.0-alpha.1`.
 - An auth request rejected by `auth_rate_limit_per_second` now returns a
   temporary backend failure. The option takes effect with this release, see
   the pool tuning note above.
+
+## Native backend Redis password-cache opt-in
+
+Native backend modules previously bypassed the Redis positive password cache even when `cache` preceded their backend
+selector. The default remains disabled. Such configurations now warn at load time instead of silently suggesting Redis
+password caching is active. To enable it, rebuild the backend with the optional
+`pluginapi.PositivePasswordCacheBackend` declaration and set `plugins.modules[].positive_password_cache: true`, then
+restart the matching host/plugin build and retain `auth.backends.order: [cache, plugin(module.backend)]`.
+
+For `mailde_auth`, the backend type registered as `passdb` in Pimparoo's `roles/mde_nauthilus/files/plugin` must implement
+`PositivePasswordCacheable() bool` and return true only after auditing credential/identity stability and skipped
+`VerifyPassword` side effects (including login logging and POP3 counters). In
+`roles/mde_nauthilus/templates/nauthilus.yml.j2`, enable `positive_password_cache: true` on the `mailde_auth` module and
+retain the cache-first order and desired `storage.redis.positive_cache_ttl`/`password_nonce`. These external files are not
+changed by this host feature. Integer-valued or otherwise non-JSON-round-trippable facts currently bypass Redis caching;
+audit actual results before promising a hit rate. The process-local authentication cache is separate and unchanged.
