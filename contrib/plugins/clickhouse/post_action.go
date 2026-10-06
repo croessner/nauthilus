@@ -68,7 +68,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		return pluginapi.PostActionEnqueueResult{Enqueued: false}, nil
 	}
 
-	allowed, err := allowAuthenticatedWrite(ctx, state, request.Snapshot)
+	allowed, err := allowLoginWrite(ctx, state, request.Snapshot)
 	if err != nil {
 		recordDedupFailOpen(ctx, state, span, err)
 	}
@@ -95,6 +95,15 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 	recordMappingDiagnostics(ctx, state.debugLogger, mappingDiagnostics)
 
 	length := state.queue.pushRows(ctx, string(rowJSON))
+	if length < 0 {
+		span.SetAttributes(pluginapi.TraceAttribute{Key: traceAttrResult, Value: resultDropped})
+
+		// A full analytics buffer must not fail the authentication post-action.
+		t.plugin.flushPending(ctx, "size")
+
+		return pluginapi.PostActionEnqueueResult{Enqueued: false}, nil
+	}
+
 	state.metrics.recordQueueResult(ctx, resultQueued)
 	span.SetAttributes(
 		pluginapi.TraceAttribute{Key: traceAttrResult, Value: resultQueued},
@@ -110,7 +119,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		)
 	}
 
-	if length < state.config.BatchSize {
+	if length < min(state.config.BatchSize, state.config.MaxBufferRows) {
 		return pluginapi.PostActionEnqueueResult{QueuedID: state.config.CacheKey, Enqueued: true}, nil
 	}
 
@@ -174,9 +183,14 @@ func shouldSkipNoAuth(snapshot pluginapi.RequestSnapshot) bool {
 		strings.TrimSpace(snapshot.IDP.GrantType) == ""
 }
 
-// allowAuthenticatedWrite applies Redis SET NX EX deduplication for authenticated requests.
-func allowAuthenticatedWrite(ctx context.Context, state pluginState, snapshot pluginapi.RequestSnapshot) (bool, error) {
-	if !snapshot.Runtime.Authenticated {
+// allowLoginWrite applies optional, outcome-specific Redis SET NX EX deduplication.
+func allowLoginWrite(ctx context.Context, state pluginState, snapshot pluginapi.RequestSnapshot) (bool, error) {
+	enabled := state.config.DedupFailure
+	if snapshot.Runtime.Authenticated {
+		enabled = state.config.DedupSuccess
+	}
+
+	if !enabled {
 		return true, nil
 	}
 
@@ -191,7 +205,7 @@ func allowAuthenticatedWrite(ctx context.Context, state pluginState, snapshot pl
 		return true, fmt.Errorf("redis facade unavailable")
 	}
 
-	key := dedupKeyPrefix + identity + ":" + clientIP
+	key := loginDedupKey(snapshot)
 	if keys := state.redis.Keys(); keys != nil {
 		key = keys.Key(key)
 	}
@@ -215,12 +229,14 @@ func recordDedupFailOpen(ctx context.Context, state pluginState, span pluginapi.
 	}
 }
 
-// flushBatch posts all queued rows and requeues them on failure.
-func flushBatch(ctx context.Context, state pluginState) error {
-	rows := state.cache.PopAll(ctx, state.config.CacheKey)
+// flushBatch claims one eligible insert and requeues failures within the buffer limit.
+func flushBatch(ctx context.Context, state pluginState) (err error) {
+	rows := state.queue.beginFlush(ctx)
 	if len(rows) == 0 {
 		return nil
 	}
+
+	defer func() { state.queue.finishFlush(err != nil || state.config.InsertURL == "") }()
 
 	ctx, span := startPostActionSpan(ctx, state.tracer, operationFlush, len(rows))
 	defer span.End()
@@ -352,13 +368,13 @@ func ndjsonBody(rows []any) []byte {
 	return bytes.Join(lines, []byte("\n"))
 }
 
-// requeueRows restores a flushed batch to the cache after insert failure.
+// requeueRows attempts to restore a failed batch within the current admission limit.
 func requeueRows(ctx context.Context, state pluginState, rows []any) {
 	state.queue.pushRows(ctx, rows...)
 	state.metrics.recordFlushResult(ctx, resultRequeued, 0)
 
 	if state.logger != nil {
-		state.logger.Warn(ctx, "clickhouse batch requeued", pluginapi.LogField{Key: logFieldRows, Value: len(rows)})
+		state.logger.Warn(ctx, "clickhouse batch requeue attempted", pluginapi.LogField{Key: logFieldRows, Value: len(rows)})
 	}
 }
 

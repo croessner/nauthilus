@@ -37,6 +37,7 @@ const (
 	resultHTTPError       = "http_error"
 	resultNoURL           = "no_url"
 	resultQueued          = "queued"
+	resultDropped         = "dropped"
 	resultRequeued        = "requeued"
 	resultSkipped         = "skipped"
 	resultStatusError     = "status_error"
@@ -55,7 +56,7 @@ const (
 )
 
 // queueResults lists every result label recorded on metricQueuedRows.
-var queueResults = []string{resultQueued, resultSkipped, resultDedupSkipped, resultEncodeError}
+var queueResults = []string{resultQueued, resultSkipped, resultDedupSkipped, resultEncodeError, resultDropped}
 
 // flushResults lists every result label recorded on metricFlushBatches.
 var flushResults = []string{resultSuccess, resultHTTPError, resultStatusError, resultNoURL, resultRequeued}

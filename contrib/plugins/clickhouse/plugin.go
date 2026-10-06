@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/contrib/plugins/internal/pluginutil"
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
@@ -61,6 +62,10 @@ type Plugin struct {
 	flushes     flushScheduler
 	metrics     pluginMetrics
 	config      moduleConfig
+	retryAfter  time.Time
+	pendingRows int
+	retryDelay  time.Duration
+	flushing    bool
 	mu          sync.RWMutex
 	lifecycleMu sync.Mutex
 }
@@ -248,33 +253,47 @@ func (p *Plugin) applyFlushWorker(ctx context.Context, host pluginapi.Host, conf
 	}
 }
 
-// movePendingRowsLocked carries rows queued under a replaced cache_key over to the current key.
-//
-// The caller holds the write lock, so no row can be pushed under the previous key concurrently:
-// every push reads the current key under the read lock.
+// movePendingRowsLocked migrates the buffer and applies a reduced limit while holding the write lock.
 func (p *Plugin) movePendingRowsLocked(ctx context.Context, previousKey string) {
-	if p.cache == nil || previousKey == "" || previousKey == p.config.CacheKey {
+	if p.cache == nil || previousKey == "" {
 		return
 	}
 
-	for _, row := range p.cache.PopAll(ctx, previousKey) {
-		p.cache.Push(ctx, p.config.CacheKey, row)
-	}
+	rows := p.cache.PopAll(ctx, previousKey)
+	p.pendingRows = 0
+	p.pushRowsLocked(ctx, rows...)
 }
 
-// pushRows queues rows under the cache key that is current at push time and returns the queue length.
+// pushRows admits rows under the current key up to the buffer limit; -1 means none were admitted.
 func (p *Plugin) pushRows(ctx context.Context, rows ...any) int {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	length := 0
+	return p.pushRowsLocked(ctx, rows...)
+}
+
+// pushRowsLocked applies the shared admission policy while the caller holds the write lock.
+func (p *Plugin) pushRowsLocked(ctx context.Context, rows ...any) int {
+	length := p.pendingRows
+	accepted := 0
 
 	if p.cache == nil {
-		return length
+		return -1
 	}
 
 	for _, row := range rows {
+		if p.pendingRows >= p.config.MaxBufferRows {
+			p.metrics.recordQueueResult(ctx, resultDropped)
+			continue
+		}
+
 		length = p.cache.Push(ctx, p.config.CacheKey, row)
+		p.pendingRows = length
+		accepted++
+	}
+
+	if accepted == 0 {
+		return -1
 	}
 
 	return length
@@ -372,9 +391,11 @@ func (p *Plugin) registerConnectionTarget(ctx context.Context, host pluginapi.Ho
 	}
 }
 
-// rowQueue queues batch rows under the current cache key.
+// rowQueue coordinates bounded admission and exclusive flush attempts under the current cache key.
 type rowQueue interface {
 	pushRows(ctx context.Context, rows ...any) int
+	beginFlush(context.Context) []any
+	finishFlush(bool)
 }
 
 type pluginState struct {

@@ -52,9 +52,8 @@ func newTimeTicker(interval time.Duration) flushTicker {
 //
 // It is not safe for concurrent use; Plugin serializes every call through its lifecycle mutex.
 // At most one worker exists at a time, and a worker handles ticks sequentially, so timer
-// flushes never overlap each other. They may overlap a size-triggered flush from Enqueue;
-// both drain the batch with one atomic Cache.PopAll, so every queued row is taken by exactly
-// one flush.
+// flushes never overlap each other. Size-triggered flushes use the same nonblocking insert gate, so only one
+// insert can run across all triggers.
 type flushScheduler struct {
 	newTicker flushTickerFactory
 	worker    *flushWorker

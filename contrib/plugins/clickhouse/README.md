@@ -22,39 +22,70 @@ plugins:
         user: ""
         password: ""
         batch_size: 100
+        max_buffer_rows: 10000
         flush_interval: 30s
         cache_key: clickhouse:batch:logins
         timeout: 10s
         max_response_bytes: 8192
+        dedup_success: true
+        dedup_failure: false
         auth_dedup_ttl: 300s
 ```
 
 The plugin writes newline-delimited JSONEachRow payloads with the same row field names as the Lua action. It uses the
-module-scoped host cache for batching, the host Redis facade for authenticated request deduplication, and the host HTTP
+module-scoped host cache for batching, the host Redis facade for configurable login-context deduplication, and the host HTTP
 facade for inserts.
+
+## Login Deduplication
+
+`dedup_success` (default `true`) and `dedup_failure` (default `false`) independently enable deduplication for requests
+whose `Runtime.Authenticated` flag is true or false. Set both to `false` to retain every login event, or both to `true`
+to aggregate successes and failures separately. Both settings reload on SIGHUP. The existing `auth_dedup_ttl`
+(default `300s`) applies to either enabled outcome; it is a fixed window starting at the first accepted event, not
+extended by skipped repetitions.
+
+The key combines username, client IP, protocol, service, authentication method, client ID, OIDC client projections,
+SAML entity ID, OIDC grant, MFA method/completion, authentication and authorization outcomes, HTTP status, and status
+message. Different contexts or failure reasons therefore remain separate. Request/session IDs, source ports and timing
+are excluded deliberately: equivalent new requests inside the window still aggregate. Missing username or client IP
+bypasses deduplication. Credentials and password hashes are never part of this key.
+
+The fields are encoded with unambiguous boundaries and SHA-256 hashed under `clickhouse:authdedup:v2:`, with the host
+Redis prefix applied as usual. Older keys are not reused and expire naturally; deployment starts a fresh dedup window.
+Redis errors continue to fail open so analytics can proceed. The reservation still happens before buffer admission and
+HTTP delivery; it is not a delivery acknowledgement or an exactly-once guarantee.
 
 ## Batching and Delivery
 
 The batch lives in the module-scoped host cache, which is process-local memory. It is not stored in Redis and is not
 shared between processes: every Nauthilus process or Kubernetes pod collects and flushes its own batch under
-`cache_key`. With several replicas, each one holds up to `batch_size - 1` rows of its own at any time.
+`cache_key`. Each process buffers at most `max_buffer_rows` rows (default `10000`), plus at most one in-flight batch of
+that size. The limit must be positive; zero selects the default. Lowering it on reload discards excess queued rows.
 
 A batch is flushed when one of the following happens:
 
-- **Size:** the request that makes the local batch reach `batch_size` rows (default `100`) flushes it inline.
+- **Size:** the request that makes the local batch reach `batch_size` rows (default `100`), or the lower buffer limit, attempts an inline flush.
 - **Interval:** when `flush_interval` is a positive duration such as `30s`, one background worker per process flushes
   the local batch at that interval if it holds any rows. The default `0` (or `0s`) disables the worker and keeps
   size-only batching; negative or unparsable values are rejected at startup. Without the worker, a quiet process can
-  hold rows for a long time, so production deployments should set it; the bound for a row's delay is then roughly
+  hold rows for a long time, so production deployments should set it; during healthy delivery, a row's delay is then roughly
   `flush_interval` plus one insert.
-- **Stop:** when the plugin stops, for example during process shutdown or a rollout, it ends the worker and flushes the
-  pending batch once, bounded by `timeout`. A failed final insert is logged with bounded fields (`result`,
+- **Stop:** when the plugin stops, for example during process shutdown or a rollout, it ends the worker and attempts to flush the
+  pending batch once if the insert gate permits, bounded by `timeout`. A failed final insert is logged with bounded fields (`result`,
   `trigger`) and does not block shutdown; those rows are lost with the process.
 
-Size and interval flushes may overlap. Both take the batch with one atomic cache pop, so every row is sent by exactly
-one flush. An interval flush that already started is allowed to finish (bounded by `timeout`) instead of being
-cancelled, because aborting an insert that ClickHouse may already have accepted would requeue and later duplicate its
-rows. A failed insert, or a flush without `insert_url`, puts the rows back into the local batch for the next attempt.
+All flush triggers share a nonblocking insert gate: at most one HTTP insert runs per plugin instance. Other
+post-actions only enqueue and return, without waiting for that insert. The size-triggering post-action still spends
+up to `timeout` on its insert. Failed inserts are requeued subject to the same buffer limit. When the buffer is full,
+new arrivals (including requeued rows) are discarded and counted with `result=dropped`; analytics overflow does not
+return a post-action error. The limit counts rows, not bytes. It is an in-memory best-effort buffer, not a durable queue.
+
+After a failed insert or a missing `insert_url`, every trigger observes an exponential retry pause: 1, 2, 4, 8, 16, 32,
+then at most 60 seconds after completion. Successful delivery resets the pause. Reload preserves the pause. Shutdown
+also respects an active pause or insert; it does not start a competing request. A retry occurs on the next eligible
+size or interval trigger, so configure `flush_interval` to recover without further authentication traffic.
+An interval insert already in progress finishes within `timeout`. Ambiguous transport failures can still cause duplicate
+rows if ClickHouse accepted the original batch before the response was lost.
 
 A SIGHUP reload applies a changed `flush_interval`: the plugin stops the running worker and starts one with the new
 interval, or stops it for `0s`. An unchanged interval keeps the running worker. Each start or stop is logged as
@@ -123,7 +154,7 @@ prefix and the `plugin_scope` label:
 
 | Metric | Type | `result` values |
 |---|---|---|
-| `clickhouse_queued_rows_total` | counter | `queued`, `skipped` (no-auth request), `dedup_skipped` (Redis deduplication), `encode_error` |
+| `clickhouse_queued_rows_total` | counter | `queued`, `skipped` (no-auth request), `dedup_skipped` (Redis deduplication), `encode_error`, `dropped` (buffer full) |
 | `clickhouse_flush_batches_total` | counter | `success`, `http_error`, `status_error`, `no_url`, `requeued` |
 | `clickhouse_flush_duration_seconds` | histogram | same as the flush counter |
 

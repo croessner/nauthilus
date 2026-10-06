@@ -27,6 +27,7 @@ import (
 
 const (
 	defaultBatchSize        = 100
+	defaultMaxBufferRows    = 10000
 	defaultCacheKey         = "clickhouse:batch:logins"
 	defaultTimeout          = 10 * time.Second
 	defaultMaxResponseBytes = int64(8192)
@@ -44,7 +45,10 @@ type moduleConfig struct {
 	AuthDedupTTL     time.Duration `mapstructure:"-"`
 	FlushInterval    time.Duration `mapstructure:"-"`
 	BatchSize        int           `mapstructure:"-"`
+	MaxBufferRows    int           `mapstructure:"-"`
 	MaxResponseBytes int64         `mapstructure:"-"`
+	DedupSuccess     bool          `mapstructure:"-"`
+	DedupFailure     bool          `mapstructure:"-"`
 }
 
 type rawModuleConfig struct {
@@ -58,12 +62,15 @@ type rawModuleConfig struct {
 	AuthDedupTTL     string `mapstructure:"auth_dedup_ttl"`
 	FlushInterval    string `mapstructure:"flush_interval"`
 	BatchSize        int    `mapstructure:"batch_size"`
+	MaxBufferRows    int    `mapstructure:"max_buffer_rows"`
 	MaxResponseBytes int64  `mapstructure:"max_response_bytes"`
+	DedupSuccess     bool   `mapstructure:"dedup_success"`
+	DedupFailure     bool   `mapstructure:"dedup_failure"`
 }
 
 // decodeModuleConfig reads and validates the ClickHouse plugin-owned config.
 func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
-	var raw rawModuleConfig
+	raw := rawModuleConfig{DedupSuccess: true}
 	if view != nil && !view.IsZero() {
 		if err := view.Decode(&raw); err != nil {
 			return moduleConfig{}, fmt.Errorf("decode clickhouse config: %w", err)
@@ -76,6 +83,11 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 	}
 
 	batchSize, err := pluginutil.ParsePositiveDefaultedInt("batch_size", raw.BatchSize, defaultBatchSize)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
+	maxBufferRows, err := pluginutil.ParsePositiveDefaultedInt("max_buffer_rows", raw.MaxBufferRows, defaultMaxBufferRows)
 	if err != nil {
 		return moduleConfig{}, err
 	}
@@ -107,6 +119,9 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 	}
 
 	return moduleConfig{
+		MaxBufferRows:    maxBufferRows,
+		DedupSuccess:     raw.DedupSuccess,
+		DedupFailure:     raw.DedupFailure,
 		Deployment:       strings.TrimSpace(raw.Deployment),
 		Instance:         strings.TrimSpace(raw.Instance),
 		InsertURL:        insertURL,

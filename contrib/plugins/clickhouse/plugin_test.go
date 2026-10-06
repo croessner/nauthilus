@@ -42,13 +42,12 @@ import (
 )
 
 const (
-	testInsertURL     = "http://clickhouse.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow"
-	testCacheKey      = "clickhouse:batch:test"
-	testClientIP      = "203.0.113.10"
-	testUsername      = "alice@example.test"
-	testAccount       = "alice"
-	testSecret        = "top-secret"
-	testDedupRedisKey = "clickhouse:authdedup:" + testUsername + ":" + testClientIP
+	testInsertURL = "http://clickhouse.local:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow"
+	testCacheKey  = "clickhouse:batch:test"
+	testClientIP  = "203.0.113.10"
+	testUsername  = "alice@example.test"
+	testAccount   = "alice"
+	testSecret    = "top-secret"
 )
 
 func TestPluginMetadataAndRegistrationExposePostActionTarget(t *testing.T) {
@@ -452,7 +451,7 @@ func TestFailedInsertRequeuesRows(t *testing.T) {
 
 func TestAuthenticatedRedisDedupSkipsDuplicates(t *testing.T) {
 	db, mock := redismock.NewClientMock()
-	mock.ExpectSetNX(testDedupRedisKey, "1", defaultAuthDedupTTL).SetVal(false)
+	mock.ExpectSetNX(loginDedupKey(testRequest(t, requestOptions{authenticated: true}).Snapshot), "1", defaultAuthDedupTTL).SetVal(false)
 
 	harness := startTestRunner(t, testModule(map[string]any{
 		"insert_url": testInsertURL,
@@ -482,7 +481,7 @@ func TestAuthenticatedRedisDedupSkipsDuplicates(t *testing.T) {
 
 func TestRedisDedupErrorFailsOpen(t *testing.T) {
 	db, mock := redismock.NewClientMock()
-	mock.ExpectSetNX(testDedupRedisKey, "1", defaultAuthDedupTTL).SetErr(errors.New("redis unavailable"))
+	mock.ExpectSetNX(loginDedupKey(testRequest(t, requestOptions{authenticated: true}).Snapshot), "1", defaultAuthDedupTTL).SetErr(errors.New("redis unavailable"))
 
 	harness := startTestRunner(t, testModule(map[string]any{
 		"insert_url": testInsertURL,
