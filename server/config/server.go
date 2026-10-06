@@ -1327,11 +1327,21 @@ func (o *OIDCAuth) IsEnabled() bool {
 
 // Log represents the configuration for logging.
 type Log struct {
-	JSON       bool         `mapstructure:"json"`
-	Color      bool         `mapstructure:"color"`
-	Level      Verbosity    `mapstructure:"level"`
-	AddSource  bool         `mapstructure:"add_source"`
-	DbgModules []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive"`
+	NoticeIgnoreFields []string     `mapstructure:"notice_ignore_fields" validate:"omitempty,dive,required"`
+	DbgModules         []*DbgModule `mapstructure:"debug_modules" validate:"omitempty,dive"`
+	Level              Verbosity    `mapstructure:"level"`
+	JSON               bool         `mapstructure:"json"`
+	Color              bool         `mapstructure:"color"`
+	AddSource          bool         `mapstructure:"add_source"`
+}
+
+// GetNoticeIgnoreFields returns the exact optional field keys omitted from NOTICE records.
+func (l *Log) GetNoticeIgnoreFields() []string {
+	if l == nil {
+		return nil
+	}
+
+	return l.NoticeIgnoreFields
 }
 
 // GetLogLevel returns the name of the current logging level configured in the Log instance.

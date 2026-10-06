@@ -269,6 +269,7 @@ func PrepareConfiguration() (config.File, error) {
 		file.GetServer().GetLog().IsLogUsesColor(),
 		file.GetServer().GetLog().IsAddSourceEnabled(),
 		file.GetServer().GetInstanceName(),
+		file.GetServer().GetLog().GetNoticeIgnoreFields()...,
 	)
 
 	// Sync the addSource configuration with the level package

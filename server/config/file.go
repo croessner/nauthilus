@@ -2487,6 +2487,7 @@ func (f *FileSettings) validateFrontend() error {
 // Returns an error if any validation function fails, otherwise returns nil.
 func (f *FileSettings) validate() (err error) {
 	validators := []func() error{
+		f.validateNoticeIgnoreFields,
 		f.validatePolicySoftAllowlists,
 		f.validateBruteForce,
 		f.validatePassDBBackends,

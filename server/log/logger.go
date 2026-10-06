@@ -215,7 +215,7 @@ func (h *dynamicHandler) current() slog.Handler {
 
 // SetupLogging initializes the global "Logger" object.
 // It is safe to call multiple times; subsequent calls reconfigure the logger.
-func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string) {
+func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource bool, instance string, noticeIgnoreFields ...string) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -228,6 +228,15 @@ func SetupLogging(configLogLevel int, formatJSON bool, useColor bool, addSource 
 
 	handlerOpts := &slog.HandlerOptions{Level: &rootLogger.levelVar, AddSource: addSource, ReplaceAttr: replaceAttr}
 	handler := newConfiguredHandler(configLogLevel, formatJSON, useColor, handlerOpts)
+	if len(noticeIgnoreFields) > 0 {
+		filteredOpts := *handlerOpts
+		filteredOpts.ReplaceAttr = newNoticeFieldFilter(noticeIgnoreFields).replaceAttr
+		handler = &noticeFieldHandler{
+			normal: handler,
+			notice: newConfiguredHandler(configLogLevel, formatJSON, useColor, &filteredOpts),
+		}
+	}
+
 	rootLogger.inner.Store(&handlerHolder{h: handler})
 
 	if Logger == nil {

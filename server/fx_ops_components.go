@@ -172,6 +172,7 @@ func (r *reloadOrchestrator) stopLua(ctx context.Context) {
 	}
 }
 
+// reloadLogging replaces logging configuration for existing and future loggers.
 func (r *reloadOrchestrator) reloadLogging(cfg config.File) {
 	if cfg == nil {
 		return
@@ -183,6 +184,7 @@ func (r *reloadOrchestrator) reloadLogging(cfg config.File) {
 		cfg.GetServer().GetLog().IsLogUsesColor(),
 		cfg.GetServer().GetLog().IsAddSourceEnabled(),
 		cfg.GetServer().GetInstanceName(),
+		cfg.GetServer().GetLog().GetNoticeIgnoreFields()...,
 	)
 }
 
