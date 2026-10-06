@@ -1150,8 +1150,10 @@ func configDumpPolicyDefaults() map[string]configDumpValueProvider {
 	}
 }
 
+// configDumpRedisDefaults supplies runtime defaults for the canonical Redis configuration dump.
 func configDumpRedisDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
+		"storage.redis.identity_cache.ttl":                   func() any { return defaultIdentityCacheTTL },
 		"storage.redis.pool_timeout":                         func() any { return 1 * time.Second },
 		"storage.redis.dial_timeout":                         func() any { return 5 * time.Second },
 		"storage.redis.read_timeout":                         func() any { return 1 * time.Second },

@@ -337,6 +337,7 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 
 	user := "acc1"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
 	// Read user account mappings
@@ -379,6 +380,7 @@ func TestCacheFlushSync_RemoteOnlyBackendFlushesLocalState(t *testing.T) {
 
 	user := "edge-user"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
 	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
@@ -419,6 +421,7 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 	user := "acc1"
 	mappedAccount := "mapped-account"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
@@ -471,6 +474,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesUsernameOnly(t *testing.T) {
 	ctx := newTestGinContext()
 	user := "flush-user-only"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
 	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
@@ -500,6 +504,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesForRedisAlias(t *testing.T) {
 	user := "flush-user"
 	alias := "flush-alias"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
@@ -533,6 +538,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesForLuaAlias(t *testing.T) {
 	deps.CacheFlushRunner = fixedUserCacheFlushScriptRunner{result: &cacheflush.Result{AccountName: alias}}
 	ctx := newTestGinContext()
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
@@ -827,6 +833,7 @@ func TestCacheFlushAsyncExecutedInvalidatesAliasInBothLocalAuthCaches(t *testing
 	user := "async-flush-user"
 	alias := "async-flush-alias"
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
+	expectIdentityCacheFence(mock, prefix)
 
 	fixture := seedAsyncAliasCaches(t, user, alias)
 	defer fixture.userAuth.Close()
@@ -865,13 +872,7 @@ func TestCacheFlushAsyncExecutedInvalidatesAliasInBothLocalAuthCaches(t *testing
 func expectExecutedAsyncAliasUserFlush(mock redismock.ClientMock, jobKey, shardKey, prefix, user, alias string) {
 	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
-	mock.ExpectHSet(jobKey,
-		"status", jobStatusQueued,
-		"type", "CACHE_FLUSH",
-		"createdAt", time.Unix(0, 0).UTC().Format(time.RFC3339Nano),
-		"resultCount", 0,
-	).SetVal(4)
-	mock.ExpectExpire(jobKey, config.GetFile().GetServer().GetRedis().NegCacheTTL).SetVal(true)
+	expectQueuedUserFlushJob(mock, jobKey)
 	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{mappingField: alias})
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
@@ -883,3 +884,19 @@ func expectExecutedAsyncAliasUserFlush(mock redismock.ClientMock, jobKey, shardK
 }
 
 // removed brittle direct startAsync test; covered via HTTP status test above
+
+// expectIdentityCacheFence requires every user flush to invalidate enabled peers' identity snapshots.
+func expectIdentityCacheFence(mock redismock.ClientMock, prefix string) {
+	mock.Regexp().ExpectSet(prefix+"UCI:epoch", ".+", 0).SetVal("OK")
+}
+
+// expectQueuedUserFlushJob shares the persistent job contract across asynchronous flush tests.
+func expectQueuedUserFlushJob(mock redismock.ClientMock, jobKey string) {
+	mock.ExpectHSet(jobKey,
+		"status", jobStatusQueued,
+		"type", "CACHE_FLUSH",
+		"createdAt", time.Unix(0, 0).UTC().Format(time.RFC3339Nano),
+		"resultCount", 0,
+	).SetVal(4)
+	mock.ExpectExpire(jobKey, config.GetFile().GetServer().GetRedis().NegCacheTTL).SetVal(true)
+}

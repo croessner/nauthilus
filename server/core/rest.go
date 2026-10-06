@@ -1198,6 +1198,11 @@ func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
 	}
 
 	removedKeys, noUserAccoundFound := processFlushCache(ctx, deps, userCmd, guid)
+	if len(ctx.Errors) > 0 {
+		ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "Identity cache invalidation failed"})
+
+		return
+	}
 
 	statusMsg := fmt.Sprintf("%d keys flushed", len(removedKeys))
 
@@ -1277,6 +1282,13 @@ type userCacheFlushScope struct {
 
 // processUserCmd flushes cache state, brute-force state, and identity tokens for one user command.
 func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, guid string) (removedKeys []string, noUserAccountFound bool) {
+	if err := backend.NewIdentityCache(deps.effectiveCfg(), deps.effectiveRedis()).Invalidate(ctx.Request.Context()); err != nil {
+		_ = ctx.Error(err)
+		level.Error(deps.effectiveLogger()).Log(definitions.LogKeyMsg, "Identity cache invalidation failed", definitions.LogKeyError, err)
+
+		return nil, false
+	}
+
 	luaResult, luaAdditionalKeys := runUserCacheFlushScript(ctx.Request.Context(), deps, userCmd.User, guid)
 	scope := resolveUserCacheFlushScope(ctx.Request.Context(), deps, userCmd.User, guid, luaResult)
 	localRemoved := deps.effectiveAuthCacheInvalidator().InvalidateIdentities(scope.cleanupAccountNames...)
@@ -1614,14 +1626,9 @@ func addIPScopedUserKeys(userKeys config.StringSet, cfg config.File, prefix stri
 
 // addProtocolPositiveCacheKeys adds positive-cache keys for all configured protocols.
 func addProtocolPositiveCacheKeys(userKeys config.StringSet, cfg config.File, deps restAdminDeps, prefix string, accountName string) {
-	protocols := backend.PositiveCacheProtocols(cfg)
-	channel := deps.effectiveChannel()
-
-	for index := range protocols {
-		cacheNames := backend.GetCacheNames(cfg, channel, protocols[index], definitions.CacheAll)
-		for _, cacheName := range cacheNames.GetStringSlice() {
-			userKeys.Set(backend.PositivePasswordCacheKey(prefix, cacheName, accountName))
-		}
+	keys := backend.PositiveCacheKeys(cfg, deps.effectiveChannel(), prefix, backend.PositiveCacheProtocols(cfg), []string{accountName})
+	for _, key := range keys.GetStringSlice() {
+		userKeys.Set(key)
 	}
 }
 
@@ -2193,6 +2200,9 @@ func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 		gctx := &gin.Context{}
 		gctx.Request = ctx.Request.Clone(base)
 		removedKeys, _ := processFlushCache(gctx, deps, userCmd, guid)
+		if len(gctx.Errors) > 0 {
+			return len(removedKeys), removedKeys, gctx.Errors.Last().Err
+		}
 
 		return len(removedKeys), removedKeys, nil
 	})

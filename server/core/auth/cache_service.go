@@ -78,7 +78,11 @@ func (DefaultCacheService) Purge(auth *core.AuthState, username string) {
 		return
 	}
 
-	if !cacheBackendEnabled(auth) {
+	if err := backend.NewIdentityCache(auth.Cfg(), auth.Redis()).Invalidate(auth.Ctx()); err != nil {
+		level.Error(auth.Logger()).Log(definitions.LogKeyMsg, "Identity cache invalidation failed", definitions.LogKeyError, err)
+	}
+
+	if !cacheBackendEnabled(auth) && !auth.Cfg().GetServer().GetRedis().GetIdentityCacheEnabled() {
 		return
 	}
 
@@ -120,23 +124,7 @@ func cachePurgeNames(auth *core.AuthState, username string, protocols []string) 
 
 // positiveCacheUserKeys builds all positive cache keys to purge.
 func positiveCacheUserKeys(auth *core.AuthState, namesToPurge config.StringSet, protocols []string) config.StringSet {
-	userKeys := config.NewStringSet()
-
-	for _, protocol := range protocols {
-		cacheNames := backend.GetCacheNames(auth.Cfg(), auth.Channel(), protocol, definitions.CacheAll)
-		for _, cacheName := range (&cacheNames).GetStringSlice() {
-			addPositiveCacheUserKeys(auth, &userKeys, cacheName, namesToPurge)
-		}
-	}
-
-	return userKeys
-}
-
-// addPositiveCacheUserKeys adds all user keys for one cache name.
-func addPositiveCacheUserKeys(auth *core.AuthState, userKeys *config.StringSet, cacheName string, namesToPurge config.StringSet) {
-	for _, name := range (&namesToPurge).GetStringSlice() {
-		userKeys.Set(positiveCacheUserKey(auth, cacheName, name))
-	}
+	return backend.PositiveCacheKeys(auth.Cfg(), auth.Channel(), auth.Cfg().GetServer().GetRedis().GetPrefix(), protocols, (&namesToPurge).GetStringSlice())
 }
 
 // positiveCacheUserKey builds one Redis positive-cache key.

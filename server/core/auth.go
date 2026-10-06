@@ -894,6 +894,8 @@ var _ State = (*AuthState)(nil)
 
 // PassDBResult is used in all password databases to store final results of an authentication process.
 type PassDBResult struct {
+	// IdentityCacheHit marks a restored identity snapshot without password evidence.
+	IdentityCacheHit bool
 	// PluginCachePayload is an immutable, losslessly encoded backend result, empty when uncacheable.
 	PluginCachePayload string
 	// BackendName specifies the name of the backend that authenticated or found the user in the password database.
@@ -947,6 +949,7 @@ type PassDBResult struct {
 // It implements the Resettable interface
 func (p *PassDBResult) Reset() {
 	// Reset cache payload and bool fields
+	p.IdentityCacheHit = false
 	p.PluginCachePayload = ""
 	p.Authenticated = false
 	p.UserFound = false
@@ -985,6 +988,7 @@ func (p *PassDBResult) Clone() *PassDBResult {
 	}
 
 	res := GetPassDBResultFromPool()
+	res.IdentityCacheHit = p.IdentityCacheHit
 	res.PluginCachePayload = p.PluginCachePayload
 	res.Authenticated = p.Authenticated
 	res.UserFound = p.UserFound
@@ -2114,6 +2118,13 @@ func (a *AuthState) applyFoundPassDBRuntime(passDBResult *PassDBResult, passDB *
 
 	if !passDBResult.BackendRef.IsZero() {
 		a.Runtime.RemoteBackendRef = passDBResult.BackendRef
+	}
+
+	if passDBResult.IdentityCacheHit {
+		a.Runtime.UsedPassDBBackend = definitions.BackendCache
+		a.Runtime.AdditionalLogs = append(a.Runtime.AdditionalLogs, "cache_kind", "identity")
+
+		return
 	}
 
 	if passDB != nil {

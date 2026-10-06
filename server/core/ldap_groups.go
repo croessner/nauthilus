@@ -336,7 +336,7 @@ func (lm *ldapManagerImpl) legacyLDAPGroups(attributes bktype.AttributeMapping) 
 	), legacyGroupDistinguishedNames
 }
 
-// groupResolutionCacheSettings returns the cache key and TTL for the current group lookup.
+// groupResolutionCacheSettings keeps UCI as the sole membership cache for eligible identity lookups.
 func (lm *ldapManagerImpl) groupResolutionCacheSettings(auth *AuthState, protocol *config.LDAPSearchProtocol, groupsCfg *config.LDAPGroups, attributes bktype.AttributeMapping, accountField string) (string, string, string, time.Duration) {
 	userDN := getSingleStringAttribute(attributes, definitions.DistinguishedName)
 	account := getSingleStringAttribute(attributes, accountField)
@@ -353,6 +353,11 @@ func (lm *ldapManagerImpl) groupResolutionCacheSettings(auth *AuthState, protoco
 		userDN,
 		account,
 	)
+
+	// Reusing or refreshing local memberships would extend stale groups beyond the UCI TTL or a flush.
+	if identityCacheEligible(auth) {
+		return userDN, account, cacheKey, 0
+	}
 
 	cacheTTL := time.Duration(0)
 	if poolCfg := lm.getPoolLDAPConf(); poolCfg != nil {

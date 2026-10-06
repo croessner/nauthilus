@@ -1599,6 +1599,9 @@ func (d *DNS) GetResolveClientIP() bool {
 
 // Redis represents the configuration settings for a Redis instance, including master, replica, sentinel, and cluster setups.
 type Redis struct {
+	// IdentityCache controls positive LDAP identity lookups independently of password caching.
+	IdentityCache *IdentityCache `mapstructure:"identity_cache" validate:"omitempty"`
+
 	DatabaseNmuber   int           `mapstructure:"database_number" validate:"omitempty,gte=0,lte=15"`
 	Prefix           string        `mapstructure:"prefix" validate:"omitempty,printascii,excludesall= "`
 	PasswordNonce    secret.Value  `mapstructure:"password_nonce" validate:"secret_required,secret_min=16,alphanumsymbol,secret_excludesall= "`

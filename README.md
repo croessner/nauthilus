@@ -99,6 +99,8 @@ make guardrails
 
 ## Documentation
 
+- [LDAP identity lookup cache](server/docs/identity_cache.md): optional caching for passwordless identity requests.
+
 - Project website: [https://nauthilus.org](https://nauthilus.org)
 - Website/documentation repository: [https://github.com/croessner/nauthilus-website](https://github.com/croessner/nauthilus-website)
 - Integrated IdP manual: [IDP.md](IDP.md)

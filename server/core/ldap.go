@@ -525,8 +525,8 @@ func (lm *ldapManagerImpl) effectiveLogger() *slog.Logger {
 	return lm.deps.Logger
 }
 
-// PassDB implements the LDAP password database backend.
-func (lm *ldapManagerImpl) PassDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
+// passDB obtains a fresh LDAP result without consulting the identity cache.
+func (lm *ldapManagerImpl) passDB(auth *AuthState) (passDBResult *PassDBResult, err error) {
 	tr := monittrace.New("nauthilus/ldap")
 	lctx, lspan := tr.Start(auth.Ctx(), "ldap.passdb",
 		attribute.String("pool_name", lm.poolName),
