@@ -21,5 +21,7 @@ services:
     healthcheck:
       test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9094", "--list"]
       interval: 5s
-      timeout: 5s
+      # JVM startup can exceed five seconds on a loaded development host.
+      # The release wrapper still bounds overall readiness to two minutes.
+      timeout: 30s
       retries: 24
