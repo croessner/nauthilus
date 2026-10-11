@@ -74,7 +74,7 @@ create additional Policy authority or observation signals.
 
 ## Build and validation
 
-Use the repository's coherent native artifact toolchain with exact Go 1.27.1
+Use the repository's coherent native artifact toolchain with exact Go 1.27.2
 and `GOEXPERIMENT=runtimesecret`. Host and plugin artifacts must share one
 unchanged source snapshot and be restarted together after contract changes.
 

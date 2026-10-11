@@ -39,6 +39,20 @@ Release tags must use the same major version as the module path. The release
 metadata guard rejects a tag whose major differs from `go.mod`; for this module
 the intended first prerelease is `v4.0.0-alpha.1`.
 
+## Stable v4.0.0 Security Baseline
+
+The stable release requires Go 1.27.2 and `golang.org/x/net` v0.60.0,
+including their matching vendored dependencies. These upstream updates fix
+the HTTP, TLS, MIME, and template vulnerabilities reported by the release
+vulnerability gate for the previous Go 1.27.1 build. The failing vulnerability
+scan is the dependency regression evidence; application-level workarounds
+are not used in place of the upstream fixes.
+
+Rebuild all private native plugins, including `rns_auth` and `mailde_auth`,
+against the stable release source and exact toolchain. Earlier prerelease
+plugin binaries must not be reused. Deploy the host image, plugin checksum
+and signature, and immutable plugin directory as one compatible release.
+
 ## Changes Between v4 Prereleases
 
 - `nauthilus -d` prints a dump of the built-in defaults, not a loadable

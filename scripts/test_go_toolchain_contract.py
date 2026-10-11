@@ -19,10 +19,11 @@ class ToolchainContractTest(unittest.TestCase):
         """Run the same gate against good input and independent contract drift."""
         cases = (
             (None, None, None, True),
-            ("go.mod", "toolchain go1.27.1", "toolchain go1.27.2", False),
-            ("Dockerfile", "golang:1.27.1", "golang:1.27.2", False),
-            (".github/workflows/unit_tests.yaml", "go-version: 1.27.1", "go-version: 1.27.2", False),
-            ("README.md", "Go 1.27.1", "Go 1.26.6", False),
+            ("go.mod", "toolchain go1.27.2", "toolchain go1.27.1", False),
+            ("go.mod", "toolchain go1.27.2", "toolchain go1.27.3", False),
+            ("Dockerfile", "golang:1.27.2", "golang:1.27.3", False),
+            (".github/workflows/unit_tests.yaml", "go-version: 1.27.2", "go-version: 1.27.3", False),
+            ("README.md", "Go 1.27.2", "Go 1.26.6", False),
             ("Makefile", "export GOEXPERIMENT := runtimesecret", "export GOEXPERIMENT :=", False),
             ("scripts/run-go-fuzz.sh", "GOEXPERIMENT=runtimesecret go test", "go test", False),
         )
@@ -48,7 +49,7 @@ class ToolchainContractTest(unittest.TestCase):
         """Reject a later resolved patch even when module declarations are correct."""
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory) / "go"
-            fake.write_text('#!/bin/sh\necho "go version go1.27.2 darwin/amd64"\n')
+            fake.write_text('#!/bin/sh\necho "go version go1.27.3 darwin/amd64"\n')
             fake.chmod(0o755)
             result = subprocess.run(
                 ["sh", str(ROOT / "scripts/check-go-toolchain-contract.sh")],

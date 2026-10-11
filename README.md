@@ -75,7 +75,7 @@ Typical use cases include:
 
 ## Build and Test
 
-Requirement: Go 1.27.1 and golangci-lint 2.13.2 for local guardrails
+Requirement: Go 1.27.2 and golangci-lint 2.14.0 for local guardrails
 
 Build the main binaries:
 
