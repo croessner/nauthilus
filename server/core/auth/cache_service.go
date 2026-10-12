@@ -135,6 +135,8 @@ func positiveCacheUserKey(auth *core.AuthState, cacheName string, name string) s
 // deletePositiveCacheUserKeys deletes the selected positive-cache keys best-effort.
 func deletePositiveCacheUserKeys(auth *core.AuthState, userKeys config.StringSet) {
 	for _, userKey := range (&userKeys).GetStringSlice() {
-		_, _ = auth.Redis().GetWriteHandle().Del(auth.Ctx(), userKey).Result()
+		if err := auth.Redis().GetWriteHandle().Del(auth.Ctx(), userKey).Err(); err != nil {
+			level.Error(auth.Logger()).Log(definitions.LogKeyMsg, "Account cache invalidation failed", definitions.LogKeyError, err)
+		}
 	}
 }

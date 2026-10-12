@@ -40,8 +40,9 @@ import (
 )
 
 const (
-	ldapMissingTOTPSecretFieldDetail   = "Missing LDAP TOTP secret field"
-	ldapMissingTOTPRecoveryFieldDetail = "Missing LDAP TOTP recovery field"
+	ldapMissingTOTPSecretFieldDetail      = "Missing LDAP TOTP secret field"
+	ldapMissingTOTPRecoveryProtocolDetail = "Missing LDAP search protocol for TOTP recovery; protocol=%s"
+	ldapMissingTOTPRecoveryFieldDetail    = "Missing LDAP TOTP recovery field"
 )
 
 // ldapManagerImpl provides an implementation for managing LDAP connections and operations using a specific connection pool.
@@ -1410,7 +1411,7 @@ func (lm *ldapManagerImpl) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.T
 
 	plan, endPrepare, err := lm.prepareLDAPAttributeReplace(mctx, auth, msp, tr, ldapAttributeReplaceParams{
 		prepareSpan:           "ldap.add_totp_recovery.prepare",
-		missingProtocolDetail: "Missing LDAP search protocol for TOTP recovery; protocol=%s",
+		missingProtocolDetail: ldapMissingTOTPRecoveryProtocolDetail,
 		missingFieldDetail:    ldapMissingTOTPRecoveryFieldDetail,
 		fieldGetter:           (*config.LDAPSearchProtocol).GetTotpRecoveryField,
 	})

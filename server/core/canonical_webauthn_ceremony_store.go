@@ -290,11 +290,8 @@ func CompleteCanonicalWebAuthnRegistration(
 		return fmt.Errorf("canonical webauthn registration: persist credential")
 	}
 
-	if !updateRegistrationUserCache(ctx, deps, authState, user) {
-		return fmt.Errorf("canonical webauthn registration: update cache")
-	}
-
 	authState.PurgeCacheFor(user.Name)
+	updateRegistrationUserCache(ctx, deps, authState, user)
 
 	return nil
 }

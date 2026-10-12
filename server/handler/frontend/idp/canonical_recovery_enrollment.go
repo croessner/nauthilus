@@ -109,11 +109,12 @@ func (h *FrontendHandler) renderCanonicalRecoveryEnrollmentPage(
 	ctx.HTML(http.StatusOK, "idp_recovery_codes_register.html", data)
 }
 
+// generateCanonicalRecoveryEnrollment persists recovery state and invalidates the canonical account after success.
 func (h *FrontendHandler) generateCanonicalRecoveryEnrollment(
 	ctx *gin.Context,
 	selection canonicalEnrollmentSelectionState,
 	operation sessionstate.Handle,
-) ([]string, error) {
+) (codes []string, err error) {
 	data, err := h.canonicalEnrollmentBackendData(ctx, selection)
 	if err != nil {
 		return nil, err
@@ -124,6 +125,8 @@ func (h *FrontendHandler) generateCanonicalRecoveryEnrollment(
 		data.AuthState.Runtime.BackendName,
 	)
 	if operations, ok := manager.(core.RemoteMFAOperations); ok {
+		defer data.purgeMFACacheOnSuccess(&err)
+
 		return operations.GenerateRecoveryCodes(
 			data.AuthState,
 			0,
@@ -224,12 +227,13 @@ func (h *FrontendHandler) canonicalRecoverySaveRequest(
 	return selection, operation, loaded, append([]string(nil), loaded.Value.RecoveryCodes...), true
 }
 
+// persistCanonicalRecoveryEnrollment persists recovery state and invalidates the canonical account after success.
 func (h *FrontendHandler) persistCanonicalRecoveryEnrollment(
 	ctx *gin.Context,
 	selection canonicalEnrollmentSelectionState,
 	_ sessionstate.Handle,
 	codes []string,
-) error {
+) (err error) {
 	if selection.session != nil {
 		if affinity, ok := selection.session.BackendAffinity(); ok && affinity.Authority != "" {
 			// Authority generation already persisted the codes atomically; the browser save only acknowledges receipt.
@@ -241,6 +245,8 @@ func (h *FrontendHandler) persistCanonicalRecoveryEnrollment(
 	if err != nil {
 		return err
 	}
+
+	defer data.purgeMFACacheOnSuccess(&err)
 
 	manager := data.AuthState.GetBackendManager(
 		data.AuthState.Runtime.UsedPassDBBackend,

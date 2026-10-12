@@ -414,11 +414,13 @@ func (h *FrontendHandler) resolveCanonicalSelfServiceBackend(
 func (h *FrontendHandler) deleteCanonicalSelfServiceTOTP(
 	_ *gin.Context,
 	data *UserBackendData,
-) error {
+) (err error) {
 	manager, err := canonicalSelfServiceMFABackend(data)
 	if err != nil {
 		return err
 	}
+
+	defer data.purgeMFACacheOnSuccess(&err)
 
 	if operations, ok := manager.(core.RemoteMFAOperations); ok {
 		operation, operationErr := canonicalSelfServiceOperationID("totp-delete")
@@ -436,11 +438,13 @@ func (h *FrontendHandler) deleteCanonicalSelfServiceTOTP(
 func (h *FrontendHandler) generateCanonicalSelfServiceRecoveryCodes(
 	_ *gin.Context,
 	data *UserBackendData,
-) ([]string, error) {
+) (codes []string, err error) {
 	manager, err := canonicalSelfServiceMFABackend(data)
 	if err != nil {
 		return nil, err
 	}
+
+	defer data.purgeMFACacheOnSuccess(&err)
 
 	if operations, ok := manager.(core.RemoteMFAOperations); ok {
 		operation, operationErr := canonicalSelfServiceOperationID("recovery-generate")

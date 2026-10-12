@@ -407,3 +407,10 @@ func (h *FrontendHandler) cacheWebAuthnUser(ctx *gin.Context, user *backend.User
 		)
 	}
 }
+
+// purgeMFACacheOnSuccess invalidates the canonical lookup account after a successful MFA write.
+func (d *UserBackendData) purgeMFACacheOnSuccess(err *error) {
+	if *err == nil {
+		d.AuthState.PurgeCacheFor(d.Username)
+	}
+}

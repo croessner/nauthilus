@@ -373,11 +373,17 @@ func (h *FrontendHandler) finishCanonicalTOTPEnrollment(
 	pending canonicalTOTPEnrollmentPending,
 	operation sessionstate.Handle,
 	code string,
-) (bool, error) {
+) (valid bool, err error) {
 	data, err := h.canonicalEnrollmentBackendData(ctx, selection)
 	if err != nil {
 		return false, err
 	}
+
+	defer func() {
+		if valid && err == nil {
+			data.AuthState.PurgeCacheFor(data.Username)
+		}
+	}()
 
 	manager := data.AuthState.GetBackendManager(
 		data.AuthState.Runtime.UsedPassDBBackend,

@@ -39,6 +39,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/idp"
 	flowdomain "github.com/croessner/nauthilus/v4/server/idp/flow"
 	"github.com/croessner/nauthilus/v4/server/idp/mfastate"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/middleware/csrf"
 	"github.com/croessner/nauthilus/v4/server/middleware/i18n"
 	mdlua "github.com/croessner/nauthilus/v4/server/middleware/lua"
@@ -2035,8 +2036,8 @@ func (h *FrontendHandler) DeleteTOTP(ctx *gin.Context) {
 	ctx.Status(http.StatusOK)
 }
 
-// deleteWebAuthnCredentials removes every stored WebAuthn credential from the backend.
-func (h *FrontendHandler) deleteCanonicalWebAuthnCredentials(userData *UserBackendData) error {
+// deleteCanonicalWebAuthnCredentials invalidates caches after each persisted deletion, including partial success.
+func (h *FrontendHandler) deleteCanonicalWebAuthnCredentials(ctx *gin.Context, userData *UserBackendData) error {
 	if userData.WebAuthnUser == nil || len(userData.WebAuthnUser.Credentials) == 0 {
 		return nil
 	}
@@ -2047,6 +2048,8 @@ func (h *FrontendHandler) deleteCanonicalWebAuthnCredentials(userData *UserBacke
 		if err := h.deleteCanonicalWebAuthnCredential(userData.AuthState, &credential); err != nil {
 			return err
 		}
+
+		h.finishRemoteWebAuthnAuthorityChange(ctx, userData)
 	}
 
 	return nil
@@ -2095,7 +2098,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
-	_, identity, userData, _, err := h.canonicalSelfServiceBackend(ctx)
+	_, _, userData, _, err := h.canonicalSelfServiceBackend(ctx)
 	if err != nil || userData == nil || userData.AuthState == nil {
 		if err != nil {
 			sp.RecordError(err)
@@ -2107,7 +2110,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
-	if err := h.deleteCanonicalWebAuthnCredentials(userData); err != nil {
+	if err := h.deleteCanonicalWebAuthnCredentials(ctx, userData); err != nil {
 		sp.RecordError(err)
 		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
 		h.renderErrorModalWithErr(ctx, "Failed to delete WebAuthn credential", err)
@@ -2115,19 +2118,7 @@ func (h *FrontendHandler) DeleteWebAuthn(ctx *gin.Context) {
 		return
 	}
 
-	// First, clear the Redis cache
-	key := h.deps.Cfg.GetServer().GetRedis().GetPrefix() + "webauthn:user:" + identity.Reference
-	if err := h.deps.Redis.GetWriteHandle().Del(ctx.Request.Context(), key).Err(); err != nil {
-		sp.RecordError(err)
-		stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "fail").Inc()
-		h.renderErrorModalWithErr(ctx, "Failed to delete WebAuthn from Redis", err)
-
-		return
-	}
-
 	stats.GetMetrics().GetIdpMfaOperationsTotal().WithLabelValues("delete", "webauthn", "success").Inc()
-
-	userData.AuthState.PurgeCacheFor(identity.Account)
 
 	ctx.Header("HX-Redirect", definitions.MFARoot+"/register/home")
 	ctx.Status(http.StatusOK)
@@ -2489,7 +2480,10 @@ func (h *FrontendHandler) finishLocalWebAuthnDeviceNameUpdate(
 
 // finishRemoteWebAuthnAuthorityChange invalidates local cache after an authority-owned mutation.
 func (h *FrontendHandler) finishRemoteWebAuthnAuthorityChange(ctx *gin.Context, userData *UserBackendData) {
-	_ = backend.DeleteWebAuthnFromRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.UniqueUserID)
+	if err := backend.DeleteWebAuthnFromRedis(ctx.Request.Context(), h.deps.Logger, h.deps.Cfg, h.deps.Redis, userData.UniqueUserID); err != nil {
+		level.Error(h.deps.Logger).Log(definitions.LogKeyMsg, "WebAuthn cache invalidation failed", definitions.LogKeyError, err)
+	}
+
 	userData.AuthState.PurgeCacheFor(userData.Username)
 }
 

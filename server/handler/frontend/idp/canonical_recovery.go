@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/frontend"
 	"github.com/croessner/nauthilus/v4/server/middleware/csrf"
-	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"github.com/croessner/nauthilus/v4/server/sessionstate"
 	"github.com/gin-gonic/gin"
 )
@@ -144,7 +142,7 @@ func (h *FrontendHandler) canonicalRecoverySelection(ctx *gin.Context) (canonica
 	return selection, nil
 }
 
-//nolint:gocyclo // Verification supports the bounded remote, atomic local, and replacement-code backends.
+// verifyCanonicalRecovery binds the identity before consuming fresh backend-owned recovery state.
 func (h *FrontendHandler) verifyCanonicalRecovery(
 	ctx *gin.Context,
 	selection canonicalMFASelectionState,
@@ -176,36 +174,21 @@ func (h *FrontendHandler) verifyCanonicalRecovery(
 	}
 
 	if operations, ok := manager.(core.RemoteMFAOperations); ok {
-		return operations.UseRecoveryCode(
+		valid, consumeErr := operations.UseRecoveryCode(
 			data.AuthState,
 			code,
 			"recovery-use:"+string(selection.stepUp.Value.Handle),
 		)
-	}
-
-	if consumer, ok := manager.(core.TOTPRecoveryCodeConsumer); ok {
-		valid, _, consumeErr := consumer.ConsumeTOTPRecoveryCode(data.AuthState, code)
+		if valid && consumeErr == nil {
+			data.AuthState.PurgeCacheFor(selection.identity.Account)
+		}
 
 		return valid, consumeErr
 	}
 
-	recoveryCodes := data.AuthState.GetTOTPRecoveryCodes()
-	if !slices.Contains(recoveryCodes, code) {
-		return false, nil
-	}
+	valid, _, err := core.ConsumeRecoveryCode(data.AuthState, manager, code)
 
-	remaining := make([]string, 0, len(recoveryCodes)-1)
-	for _, candidate := range recoveryCodes {
-		if candidate != code {
-			remaining = append(remaining, candidate)
-		}
-	}
-
-	if err = manager.AddTOTPRecoveryCodes(data.AuthState, mfa.NewTOTPRecovery(remaining)); err != nil {
-		return true, err
-	}
-
-	return true, nil
+	return valid, err
 }
 
 func (h *FrontendHandler) observeCanonicalRecovery(

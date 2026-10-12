@@ -521,6 +521,9 @@ func TestCanonicalSelfServiceMFAMutationsUseOnlySelectedBackend(t *testing.T) {
 	t.Parallel()
 
 	handler, _ := newMFASelfServiceTestHandler()
+	db, _ := redismock.NewClientMock()
+	handler.deps.Redis = rediscli.NewTestClient(db)
+
 	ctx, _ := newMFASelfServiceContext(http.MethodPost, definitions.MFARoot+"/recovery/generate", map[string]any{
 		definitions.SessionKeyUserBackend:     uint8(definitions.BackendRemote),
 		definitions.SessionKeyUserBackendName: "legacy-remote-backend",

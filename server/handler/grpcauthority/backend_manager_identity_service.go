@@ -374,6 +374,7 @@ func (s *backendManagerIdentityService) BeginTOTPRegistration(ctx context.Contex
 	}, nil
 }
 
+// FinishTOTPRegistration applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) FinishTOTPRegistration(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationFinishTOTPRegistration
 
@@ -407,6 +408,8 @@ func (s *backendManagerIdentityService) FinishTOTPRegistration(ctx context.Conte
 	if err = manager.AddTOTPSecret(auth, core.NewTOTPSecret(secret)); err != nil {
 		return nil, err
 	}
+
+	auth.PurgeCacheFor(auth.GetAccount())
 
 	return changedMFAResult(input.Backend), nil
 }
@@ -458,6 +461,7 @@ func (s *backendManagerIdentityService) VerifyTOTP(ctx context.Context, input Au
 	return result, nil
 }
 
+// DeleteTOTP applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) DeleteTOTP(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationDeleteTOTP
 
@@ -470,9 +474,12 @@ func (s *backendManagerIdentityService) DeleteTOTP(ctx context.Context, input Au
 		return nil, err
 	}
 
+	auth.PurgeCacheFor(auth.GetAccount())
+
 	return changedMFAResult(input.Backend), nil
 }
 
+// GenerateRecoveryCodes applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) GenerateRecoveryCodes(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationGenerateRecoveryCodes
 
@@ -496,6 +503,8 @@ func (s *backendManagerIdentityService) GenerateRecoveryCodes(ctx context.Contex
 		return nil, err
 	}
 
+	auth.PurgeCacheFor(auth.GetAccount())
+
 	return &AuthorityIdentityResult{
 		Status:            okOperationStatus(),
 		Backend:           input.Backend,
@@ -505,6 +514,7 @@ func (s *backendManagerIdentityService) GenerateRecoveryCodes(ctx context.Contex
 	}, nil
 }
 
+// UseRecoveryCode applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) UseRecoveryCode(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationUseRecoveryCode
 
@@ -517,59 +527,12 @@ func (s *backendManagerIdentityService) UseRecoveryCode(ctx context.Context, inp
 		return nil, err
 	}
 
-	if consumer, ok := manager.(core.TOTPRecoveryCodeConsumer); ok {
-		valid, remaining, consumeErr := consumer.ConsumeTOTPRecoveryCode(auth, input.Code)
-		if consumeErr != nil {
-			return nil, consumeErr
-		}
-
-		return recoveryUseResult(input.Backend, valid, remaining), nil
-	}
-
-	passDBResult, passErr := manager.PassDB(auth)
-	if passErr != nil {
-		return nil, passErr
-	}
-
-	if passDBResult != nil {
-		applyPassDBResult(auth, passDBResult)
-	}
-
-	valid, remaining, err := consumeRecoveryCodeFallback(auth, manager, input.Code)
+	valid, remaining, err := core.ConsumeRecoveryCode(auth, manager, input.Code)
 	if err != nil {
 		return nil, err
 	}
 
 	return recoveryUseResult(input.Backend, valid, remaining), nil
-}
-
-func consumeRecoveryCodeFallback(auth *core.AuthState, manager core.BackendManager, code string) (bool, int, error) {
-	recoveryCodes := auth.GetTOTPRecoveryCodes()
-
-	for index, recoveryCode := range recoveryCodes {
-		if recoveryCode != code {
-			continue
-		}
-
-		remainingCodes := append([]string(nil), recoveryCodes[:index]...)
-		remainingCodes = append(remainingCodes, recoveryCodes[index+1:]...)
-
-		if len(remainingCodes) == 0 {
-			if err := manager.DeleteTOTPRecoveryCodes(auth); err != nil {
-				return true, len(recoveryCodes), err
-			}
-
-			return true, 0, nil
-		}
-
-		if err := manager.AddTOTPRecoveryCodes(auth, mfa.NewTOTPRecovery(remainingCodes)); err != nil {
-			return true, len(recoveryCodes), err
-		}
-
-		return true, len(remainingCodes), nil
-	}
-
-	return false, len(recoveryCodes), nil
 }
 
 func recoveryUseResult(backend BackendRefPayload, valid bool, remaining int) *AuthorityIdentityResult {
@@ -585,6 +548,7 @@ func recoveryUseResult(backend BackendRefPayload, valid bool, remaining int) *Au
 	}
 }
 
+// DeleteRecoveryCodes applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) DeleteRecoveryCodes(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationDeleteRecoveryCodes
 
@@ -596,6 +560,8 @@ func (s *backendManagerIdentityService) DeleteRecoveryCodes(ctx context.Context,
 	if err = manager.DeleteTOTPRecoveryCodes(auth); err != nil {
 		return nil, err
 	}
+
+	auth.PurgeCacheFor(auth.GetAccount())
 
 	return changedMFAResult(input.Backend), nil
 }
@@ -624,6 +590,7 @@ func (s *backendManagerIdentityService) GetWebAuthnCredentials(ctx context.Conte
 	}, nil
 }
 
+// SaveWebAuthnCredential applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) SaveWebAuthnCredential(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationSaveWebAuthnCredential
 
@@ -636,9 +603,12 @@ func (s *backendManagerIdentityService) SaveWebAuthnCredential(ctx context.Conte
 		return nil, err
 	}
 
+	auth.PurgeCacheFor(auth.GetAccount())
+
 	return changedMFAResult(input.Backend), nil
 }
 
+// UpdateWebAuthnCredential applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) UpdateWebAuthnCredential(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationUpdateWebAuthnCredential
 
@@ -655,9 +625,12 @@ func (s *backendManagerIdentityService) UpdateWebAuthnCredential(ctx context.Con
 		return nil, err
 	}
 
+	auth.PurgeCacheFor(auth.GetAccount())
+
 	return changedMFAResult(input.Backend), nil
 }
 
+// DeleteWebAuthnCredential applies the authority-owned MFA operation and invalidates cached identity state after writes.
 func (s *backendManagerIdentityService) DeleteWebAuthnCredential(ctx context.Context, input AuthorityIdentityInput) (*AuthorityIdentityResult, error) {
 	input.Operation = AuthorityOperationDeleteWebAuthnCredential
 
@@ -671,6 +644,8 @@ func (s *backendManagerIdentityService) DeleteWebAuthnCredential(ctx context.Con
 	}); err != nil {
 		return nil, err
 	}
+
+	auth.PurgeCacheFor(auth.GetAccount())
 
 	return changedMFAResult(input.Backend), nil
 }

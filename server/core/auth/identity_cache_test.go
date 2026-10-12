@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"bytes"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -32,4 +34,22 @@ func TestIdentityCachePurgeInvalidatesAliasAndCanonicalAccount(t *testing.T) {
 
 	DefaultCacheService{}.Purge(auth, "alias")
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestAccountCachePurgeLogsDeleteFailure keeps cache outages observable without failing completed writes.
+func TestAccountCachePurgeLogsDeleteFailure(t *testing.T) {
+	var output bytes.Buffer
+
+	cfg := &config.FileSettings{Server: &config.ServerSection{}}
+	db, mock := redismock.NewClientMock()
+	auth := core.NewAuthStateFromContextWithDeps(nil, core.AuthDeps{
+		Cfg: cfg, Redis: rediscli.NewTestClient(db), Logger: slog.New(slog.NewTextHandler(&output, nil)),
+	}).(*core.AuthState)
+	mock.ExpectDel("cache-key").SetErr(errors.New("redis unavailable"))
+
+	names := config.NewStringSet()
+	(&names).Set("cache-key")
+	deletePositiveCacheUserKeys(auth, names)
+	assert.NoError(t, mock.ExpectationsWereMet())
+	assert.Contains(t, output.String(), "Account cache invalidation failed")
 }

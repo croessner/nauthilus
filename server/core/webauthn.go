@@ -148,9 +148,9 @@ func persistRegistrationCredential(ctx *gin.Context, deps AuthDeps, authState *A
 }
 
 // updateRegistrationUserCache refreshes the Redis WebAuthn user cache when needed.
-func updateRegistrationUserCache(ctx *gin.Context, deps AuthDeps, authState *AuthState, user *backend.User) bool {
+func updateRegistrationUserCache(ctx *gin.Context, deps AuthDeps, authState *AuthState, user *backend.User) {
 	if !shouldPersistWebAuthnCache(authState) {
-		return true
+		return
 	}
 
 	if err := authState.updateUser(user); err != nil {
@@ -159,12 +159,7 @@ func updateRegistrationUserCache(ctx *gin.Context, deps AuthDeps, authState *Aut
 			definitions.LogKeyMsg, "Failed to update WebAuthn user cache",
 			definitions.LogKeyError, err,
 		)
-		ctx.JSON(http.StatusInternalServerError, err.Error())
-
-		return false
 	}
-
-	return true
 }
 
 // finishWebAuthnLoginAssertion validates the assertion and rejects sign-count rollbacks.
