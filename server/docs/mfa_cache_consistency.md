@@ -12,9 +12,10 @@ reported write failure.
 
 Recovery verification never authorizes consumption from cached recovery values.
 The frontend (including recovery codes submitted on the TOTP step) and gRPC
-authority share `ConsumeRecoveryCode`. Cached membership on the TOTP step only
-selects the recovery path; it never establishes validity. The selected backend
-name is retained when resolving the manager:
+authority share `ConsumeRecoveryCode`. The TOTP step attempts recovery consumption
+after unsuccessful TOTP validation, even when the code is absent from the cached
+snapshot. A valid TOTP returns without consuming a recovery code. The selected
+backend name is retained when resolving the manager:
 
 - LDAP reads the current stored attribute values, decrypts them for comparison,
   compares plaintext using `subtle.ConstantTimeCompare`, and deletes all exact

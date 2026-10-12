@@ -79,9 +79,18 @@ func TestTotpValidation(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("RecoveryCode", func(t *testing.T) {
-		fixture.assertRecoveryCode(t)
-	})
+	for _, tc := range []struct {
+		name        string
+		cachedCodes []any
+	}{
+		{name: "RecoveryCode", cachedCodes: []any{"recovery1", "recovery2"}},
+		{name: "RecoveryCodeAbsentFromCache", cachedCodes: []any{"recovery2"}},
+		{name: "RecoveryCodeEmptyCache"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture.assertRecoveryCode(t, tc.cachedCodes)
+		})
+	}
 }
 
 type totpValidationFixture struct {
@@ -131,15 +140,15 @@ func (f totpValidationFixture) newAuthState() *AuthState {
 	return auth
 }
 
-// assertRecoveryCode verifies successful recovery-code consumption.
-func (f totpValidationFixture) assertRecoveryCode(t *testing.T) {
+// assertRecoveryCode verifies backend consumption and replay rejection regardless of cached membership.
+func (f totpValidationFixture) assertRecoveryCode(t *testing.T, cachedCodes []any) {
 	t.Helper()
 
 	mBackend := &replacementRecoveryBackend{codes: []string{"recovery1", "recovery2"}}
 	auth := f.newAuthState()
 	auth.SetTOTPSecret(f.generatedSecret)
 	auth.Attributes.Attributes = bktype.AttributeMapping{
-		"totp_recovery": {"recovery1", "recovery2"},
+		"totp_recovery": cachedCodes,
 	}
 	auth.Runtime.TOTPRecoveryField = "totp_recovery"
 

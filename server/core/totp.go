@@ -16,7 +16,6 @@
 package core
 
 import (
-	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -139,32 +138,30 @@ func removeTOTPSeparators(value string) string {
 
 // TotpValidation validates a TOTP code for a given account. It also checks for backup/recovery codes.
 func TotpValidation(_ *gin.Context, auth *AuthState, code string, deps AuthDeps) error {
-	totpSecret := auth.GetTOTPSecret()
-
-	// Cached membership only selects the recovery path; the backend decides validity.
-	if slices.Contains(auth.GetTOTPRecoveryCodes(), code) {
-		backend := deps.Backend
-		if backend == nil {
-			backend = auth.GetBackendManager(auth.GetUsedPassDBBackend(), auth.Runtime.BackendName)
-		}
-
-		if backend == nil {
-			return errors.ErrUnknownDatabaseBackend
-		}
-
-		valid, _, err := ConsumeRecoveryCode(auth, backend, code)
-		if err != nil {
-			return err
-		}
-
-		if !valid {
-			return errors.ErrTOTPCodeInvalid
-		}
-
+	if err := ValidateTOTPCode(code, auth.GetTOTPSecret(), deps); err == nil {
 		return nil
 	}
 
-	return ValidateTOTPCode(code, totpSecret, deps)
+	// Recovery availability and validity are decided by the backend, never by cached membership.
+	backend := deps.Backend
+	if backend == nil {
+		backend = auth.GetBackendManager(auth.GetUsedPassDBBackend(), auth.Runtime.BackendName)
+	}
+
+	if backend == nil {
+		return errors.ErrUnknownDatabaseBackend
+	}
+
+	valid, _, err := ConsumeRecoveryCode(auth, backend, code)
+	if err != nil {
+		return err
+	}
+
+	if !valid {
+		return errors.ErrTOTPCodeInvalid
+	}
+
+	return nil
 }
 
 // ValidateTOTPCode validates the time-based one-time password (TOTP) code against the provided secret.
