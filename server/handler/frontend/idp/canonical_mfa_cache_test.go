@@ -191,18 +191,19 @@ func TestCanonicalEnrollmentInvalidatesCachedFactors(t *testing.T) {
 
 // TestCanonicalRecoveryRejectsCachedReplay consumes a code in separate verification attempts.
 func TestCanonicalRecoveryRejectsCachedReplay(t *testing.T) {
-	for _, duplicate := range []bool{false, true} {
-		name := "encrypted"
-		if duplicate {
-			name = "duplicate_ciphertexts"
-		}
+	for _, variant := range []string{"encrypted", "duplicate_ciphertexts", "totp_step", "corrupt_value"} {
+		name := variant
 
 		t.Run(name, func(t *testing.T) {
 			h, ctx, enrollment, f := newCanonicalMFACacheFixture(t)
 
 			f.stored[backendDataAttrRecoveryCode] = encryptedRecoveryFixtureValues(t, h, "single-use-code", "other-code")
-			if duplicate {
+			if variant == "duplicate_ciphertexts" {
 				f.stored[backendDataAttrRecoveryCode] = append(f.stored[backendDataAttrRecoveryCode], encryptedRecoveryFixtureValues(t, h, "single-use-code")...)
+			}
+
+			if variant == "corrupt_value" {
+				f.stored[backendDataAttrRecoveryCode] = append([]any{"{ENC}broken"}, f.stored[backendDataAttrRecoveryCode]...)
 			}
 			// The passdb snapshot is already decrypted by the identity application.
 			snapshot := *f.outcome
@@ -211,7 +212,13 @@ func TestCanonicalRecoveryRejectsCachedReplay(t *testing.T) {
 			f.cached = &snapshot
 
 			selection := canonicalMFASelectionState{identity: enrollment.identity, parent: enrollment.parent, session: enrollment.session}
-			valid, err := h.verifyCanonicalRecovery(ctx, selection, "single-use-code")
+
+			verify := h.verifyCanonicalRecovery
+			if variant == "totp_step" {
+				verify = h.verifyCanonicalTOTP
+			}
+
+			valid, err := verify(ctx, selection, "single-use-code")
 			assert.NoError(t, err)
 			assert.True(t, valid)
 			// Restore a stale snapshot even after purge: replay safety must not depend on cache availability.
@@ -219,7 +226,7 @@ func TestCanonicalRecoveryRejectsCachedReplay(t *testing.T) {
 			f.cached = &snapshot
 			f.mu.Unlock()
 
-			valid, err = h.verifyCanonicalRecovery(ctx, selection, "single-use-code")
+			valid, err = verify(ctx, selection, "single-use-code")
 			assert.NoError(t, err)
 			assert.False(t, valid, "consumed recovery code must not be accepted from a stale cache")
 			assert.Contains(t, f.purged, enrollment.identity.Account)
@@ -229,6 +236,19 @@ func TestCanonicalRecoveryRejectsCachedReplay(t *testing.T) {
 
 // TestCanonicalRecoveryConcurrentConsumeAllowsOneWinner exercises exact-value LDAP deletion.
 func TestCanonicalRecoveryConcurrentConsumeAllowsOneWinner(t *testing.T) {
+	for _, totpStep := range []bool{false, true} {
+		name := "recovery"
+		if totpStep {
+			name = "totp"
+		}
+
+		t.Run(name, func(t *testing.T) { assertConcurrentRecoverySingleUse(t, totpStep) })
+	}
+}
+
+// assertConcurrentRecoverySingleUse exercises both entry points against the same LDAP atomic delete.
+func assertConcurrentRecoverySingleUse(t *testing.T, totpStep bool) {
+	t.Helper()
 	h, ctx, enrollment, f := newCanonicalMFACacheFixture(t)
 	f.stored[backendDataAttrRecoveryCode] = encryptedRecoveryFixtureValues(t, h, "single-use-code", "other-code")
 	other := f.stored[backendDataAttrRecoveryCode][1]
@@ -242,6 +262,10 @@ func TestCanonicalRecoveryConcurrentConsumeAllowsOneWinner(t *testing.T) {
 		return
 	}
 
+	data.AuthState.ReplaceAllAttributes(maps.Clone(f.stored))
+	data.AuthState.Attributes.Attributes[backendDataAttrRecoveryCode] = []any{"single-use-code", "other-code"}
+	consume := recoveryTestConsumer(ctx, data.AuthState, h.deps.Auth(), consumer, totpStep)
+
 	start := make(chan struct{})
 	results := make(chan bool, 2)
 	errors := make(chan error, 2)
@@ -250,7 +274,7 @@ func TestCanonicalRecoveryConcurrentConsumeAllowsOneWinner(t *testing.T) {
 		go func() {
 			<-start
 
-			valid, _, consumeErr := consumer.ConsumeTOTPRecoveryCode(data.AuthState, "single-use-code")
+			valid, consumeErr := consume()
 			results <- valid
 
 			errors <- consumeErr
@@ -274,6 +298,23 @@ func TestCanonicalRecoveryConcurrentConsumeAllowsOneWinner(t *testing.T) {
 	defer f.mu.Unlock()
 
 	assert.Equal(t, []any{other}, f.stored[backendDataAttrRecoveryCode])
+}
+
+// recoveryTestConsumer selects the public TOTP step or the backend atomic consumer.
+func recoveryTestConsumer(ctx *gin.Context, auth *core.AuthState, deps core.AuthDeps, consumer core.TOTPRecoveryCodeConsumer, totpStep bool) func() (bool, error) {
+	if totpStep {
+		return func() (bool, error) {
+			err := core.TotpValidation(ctx, auth, "single-use-code", deps)
+
+			return err == nil, nil
+		}
+	}
+
+	return func() (bool, error) {
+		valid, _, err := consumer.ConsumeTOTPRecoveryCode(auth, "single-use-code")
+
+		return valid, err
+	}
 }
 
 // encryptedRecoveryFixtureValues encodes backend values separately from decrypted cache snapshots.

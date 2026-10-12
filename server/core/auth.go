@@ -1829,6 +1829,7 @@ func (a *AuthState) PurgeCacheFor(username string) {
 		return
 	}
 
+	a.backendAuthenticationCache().InvalidateIdentities(username)
 	a.AccountCache().Purge(username)
 
 	if cs := a.deps.HostServices.cache; cs != nil {

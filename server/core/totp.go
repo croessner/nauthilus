@@ -16,13 +16,13 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/errors"
-	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -141,40 +141,27 @@ func removeTOTPSeparators(value string) string {
 func TotpValidation(_ *gin.Context, auth *AuthState, code string, deps AuthDeps) error {
 	totpSecret := auth.GetTOTPSecret()
 
-	// Check for backup/recovery codes first
-	recoveryCodes := auth.GetTOTPRecoveryCodes()
-	for i, rc := range recoveryCodes {
-		if rc == code {
-			// Code matches. Remove it from the list.
-			newCodes := append(recoveryCodes[:i], recoveryCodes[i+1:]...)
-
-			// Update backend
-			backend := deps.Backend
-			if backend == nil {
-				backend = auth.GetBackendManager(auth.GetUsedPassDBBackend(), "")
-			}
-
-			if backend == nil {
-				return errors.ErrUnknownDatabaseBackend
-			}
-
-			err := backend.DeleteTOTPRecoveryCodes(auth)
-			if err != nil {
-				return err
-			}
-
-			if len(newCodes) > 0 {
-				err = backend.AddTOTPRecoveryCodes(auth, mfa.NewTOTPRecovery(newCodes))
-				if err != nil {
-					return err
-				}
-			}
-
-			// Invalidate cache since we changed the backend data
-			auth.PurgeCache()
-
-			return nil
+	// Cached membership only selects the recovery path; the backend decides validity.
+	if slices.Contains(auth.GetTOTPRecoveryCodes(), code) {
+		backend := deps.Backend
+		if backend == nil {
+			backend = auth.GetBackendManager(auth.GetUsedPassDBBackend(), auth.Runtime.BackendName)
 		}
+
+		if backend == nil {
+			return errors.ErrUnknownDatabaseBackend
+		}
+
+		valid, _, err := ConsumeRecoveryCode(auth, backend, code)
+		if err != nil {
+			return err
+		}
+
+		if !valid {
+			return errors.ErrTOTPCodeInvalid
+		}
+
+		return nil
 	}
 
 	return ValidateTOTPCode(code, totpSecret, deps)

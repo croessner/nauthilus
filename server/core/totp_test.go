@@ -26,32 +26,10 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib"
-	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
-
-type mockBackend struct {
-	mock.Mock
-	BackendManager
-}
-
-func (m *mockBackend) AddTOTPRecoveryCodes(auth *AuthState, recovery *mfa.TOTPRecovery) error {
-	args := m.Called(auth, recovery)
-	return args.Error(0)
-}
-
-func (m *mockBackend) DeleteTOTPRecoveryCodes(auth *AuthState) error {
-	args := m.Called(auth)
-	return args.Error(0)
-}
-
-func (m *mockBackend) AccountDB(auth *AuthState) (AccountList, error) {
-	args := m.Called(auth)
-	return args.Get(0).(AccountList), args.Error(1)
-}
 
 type mockTotpConfig struct {
 	config.File
@@ -157,7 +135,7 @@ func (f totpValidationFixture) newAuthState() *AuthState {
 func (f totpValidationFixture) assertRecoveryCode(t *testing.T) {
 	t.Helper()
 
-	mBackend := new(mockBackend)
+	mBackend := &replacementRecoveryBackend{codes: []string{"recovery1", "recovery2"}}
 	auth := f.newAuthState()
 	auth.SetTOTPSecret(f.generatedSecret)
 	auth.Attributes.Attributes = bktype.AttributeMapping{
@@ -165,17 +143,14 @@ func (f totpValidationFixture) assertRecoveryCode(t *testing.T) {
 	}
 	auth.Runtime.TOTPRecoveryField = "totp_recovery"
 
-	mBackend.On("DeleteTOTPRecoveryCodes", auth).Return(nil)
-	mBackend.On("AddTOTPRecoveryCodes", auth, mock.MatchedBy(func(r *mfa.TOTPRecovery) bool {
-		return len(r.GetCodes()) == 1 && r.GetCodes()[0] == "recovery2"
-	})).Return(nil)
-
 	deps := f.deps
 	deps.Backend = mBackend
 
 	err := TotpValidation(f.ctx, auth, "recovery1", deps)
 	assert.NoError(t, err)
-	mBackend.AssertExpectations(t)
+	assert.Equal(t, []string{"recovery2"}, mBackend.codes)
+	assert.Equal(t, 1, mBackend.writes)
+	assert.Error(t, TotpValidation(f.ctx, auth, "recovery1", deps))
 }
 
 func TestValidateTOTPCodeNormalizesAuthenticatorInput(t *testing.T) {

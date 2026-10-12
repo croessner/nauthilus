@@ -71,3 +71,29 @@ func TestCompositeAuthCacheInvalidatorRemovesSeparatedCaches(t *testing.T) {
 		t.Fatal("user-auth hint survived alias invalidation")
 	}
 }
+
+// TestPurgeCacheForInvalidatesPositiveBackendSnapshot covers canonical account and login alias eviction.
+func TestPurgeCacheForInvalidatesPositiveBackendSnapshot(t *testing.T) {
+	for _, identity := range []string{"login@example.test", "canonical@example.test"} {
+		t.Run(identity, func(t *testing.T) {
+			cache := NewPositiveBackendAuthenticationCache(time.Now)
+			cfg := newCurrentBehaviorConfig(t)
+			auth, ctx := newRequestOwnedContractAuth(t, cfg, "login@example.test", "credential", "purge")
+			auth.deps.BackendAuthenticationCache = cache
+
+			result := newSemanticPassDBResult(ctx, auth)
+			defer PutPassDBResultToPool(result)
+
+			key := mustBuildBackendAuthenticationCacheKey(t, auth)
+			if !cache.StoreForRequest(ctx, auth, result, time.Minute, "login@example.test", "canonical@example.test") {
+				t.Fatal("snapshot store failed")
+			}
+
+			auth.PurgeCacheFor(identity)
+
+			if _, found := cache.load(key); found {
+				t.Fatal("MFA snapshot survived account purge")
+			}
+		})
+	}
+}

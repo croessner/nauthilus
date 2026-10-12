@@ -4,11 +4,13 @@
 package core
 
 import (
+	"crypto/subtle"
 	"fmt"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/log/level"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/security"
 )
@@ -114,10 +116,12 @@ func (lm *ldapManagerImpl) matchStoredRecoveryCodes(values []any, code string) (
 
 		decoded, _, err := decryptLDAPScalarAttribute(manager, raw)
 		if err != nil {
-			return nil, fmt.Errorf("recovery consume: cannot decrypt stored value")
+			level.Warn(lm.effectiveLogger()).Log(definitions.LogKeyMsg, "Recovery consume: skipping undecryptable stored value")
+
+			continue
 		}
 
-		if decoded == code {
+		if plaintext, ok := decoded.(string); ok && subtle.ConstantTimeCompare([]byte(plaintext), []byte(code)) == 1 {
 			matched = append(matched, raw)
 		}
 	}
