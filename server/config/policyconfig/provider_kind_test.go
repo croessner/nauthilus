@@ -15,7 +15,7 @@ import (
 func TestPolicyProviderKindUsesClosedVocabulary(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:
           kind: arbitrary_provider
@@ -28,5 +28,5 @@ func TestPolicyProviderKindUsesClosedVocabulary(t *testing.T) {
 
 	var pathError *PathError
 	requireErrorAs(t, err, &pathError)
-	requireEqual(t, "policy.namespaces.dkim2.providers.risk.kind", pathError.Path)
+	requireEqual(t, "policy.namespaces.delivery.providers.risk.kind", pathError.Path)
 }

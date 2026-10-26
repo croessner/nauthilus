@@ -89,7 +89,7 @@ func TestTargetCatalogRejectsDirectDescriptorCollisionsAndUnknownReferences(t *t
 func TestTargetCatalogRejectsDirectRuleSchemaMismatch(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
 
-	setID, err := registry.NewPolicySetID("dkim2", "default")
+	setID, err := registry.NewPolicySetID("delivery", "default")
 	if err != nil {
 		t.Fatalf("NewPolicySetID() error = %v", err)
 	}
@@ -151,7 +151,7 @@ func TestTargetCatalogRejectsTypedNilDirectPostActionCapability(t *testing.T) {
 
 	provider, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
 		PostActionAcceptance: capability,
-		ID:                   "dkim2/post",
+		ID:                   "delivery/post",
 		Targets:              []decision.Target{target},
 		Executions:           []registry.ExecutionClass{registry.ExecutionHostPostAction},
 	})
@@ -160,7 +160,7 @@ func TestTargetCatalogRejectsTypedNilDirectPostActionCapability(t *testing.T) {
 	}
 
 	effect, err := registry.NewEffectDefinition(registry.EffectDefinitionInput{
-		ID: "dkim2/post", Kind: registry.EffectKindObligation, Execution: registry.ExecutionHostPostAction,
+		ID: "delivery/post", Kind: registry.EffectKindObligation, Execution: registry.ExecutionHostPostAction,
 		Targets: []decision.Target{target}, Provider: provider.ID(),
 	})
 	if err != nil {
@@ -183,7 +183,7 @@ func TestTargetCatalogRejectsTypedNilDirectPostActionCapability(t *testing.T) {
 func TestTargetCatalogRejectsDuplicateDirectDiagnosticAliases(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
 
-	setID, err := registry.NewPolicySetID("dkim2", "default")
+	setID, err := registry.NewPolicySetID("delivery", "default")
 	if err != nil {
 		t.Fatalf("NewPolicySetID() error = %v", err)
 	}
@@ -196,7 +196,7 @@ func TestTargetCatalogRejectsDuplicateDirectDiagnosticAliases(t *testing.T) {
 	}
 
 	provider, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
-		ID: "dkim2/provider", Targets: []decision.Target{target},
+		ID: "delivery/provider", Targets: []decision.Target{target},
 		Executions: []registry.ExecutionClass{registry.ExecutionHostSync}, DiagnosticID: "shared_component",
 	})
 	if err != nil {
@@ -274,7 +274,7 @@ func TestTargetCatalogRejectsDirectStandardAuthBindingOutsideAuthn(t *testing.T)
 
 func TestTargetCatalogRejectsIncompleteOrDuplicateDirectRuleProjection(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
-	setID := completionRuntimeSetID(t, "dkim2", "configured")
+	setID := completionRuntimeSetID(t, "delivery", "configured")
 
 	expression, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{Operator: registry.ExpressionOperatorAlways})
 	if err != nil {
@@ -328,8 +328,8 @@ func TestTargetCatalogRejectsIncompleteOrDuplicateDirectRuleProjection(t *testin
 
 func TestTargetCatalogRejectsPolicySetClosureMismatch(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
-	rootID := completionRuntimeSetID(t, "dkim2", "root")
-	nestedID := completionRuntimeSetID(t, "dkim2", "nested")
+	rootID := completionRuntimeSetID(t, "delivery", "root")
+	nestedID := completionRuntimeSetID(t, "delivery", "nested")
 	nestedBinding := completionRuntimeImport(t, nestedID, target, "final_decision", registry.ExportContract{})
 	root := completionRuntimePolicySet(t, registry.PolicySetDefinitionInput{ID: rootID, Imports: []registry.PolicySetImport{nestedBinding}})
 	nested := completionRuntimePolicySet(t, registry.PolicySetDefinitionInput{ID: nestedID})
@@ -428,8 +428,8 @@ func TestTargetCatalogRejectsDeclaredExportOutsideActualSourceCapability(t *test
 
 func TestTargetCatalogRejectsDirectCyclicSourceImports(t *testing.T) {
 	target, _ := completionRuntimeTargetAndSchema(t)
-	leftID := completionRuntimeSetID(t, "dkim2", "left")
-	rightID := completionRuntimeSetID(t, "dkim2", "right")
+	leftID := completionRuntimeSetID(t, "delivery", "left")
+	rightID := completionRuntimeSetID(t, "delivery", "right")
 	leftImport := completionRuntimeImport(t, rightID, target, "final_decision", registry.ExportContract{})
 	rightImport := completionRuntimeImport(t, leftID, target, "final_decision", registry.ExportContract{})
 	left := completionRuntimePolicySet(t, registry.PolicySetDefinitionInput{ID: leftID, Imports: []registry.PolicySetImport{leftImport}})
@@ -444,7 +444,7 @@ func TestTargetCatalogRejectsDirectCyclicSourceImports(t *testing.T) {
 func TestTargetCatalogRejectsInactiveImportAtIncompatibleCheckpoint(t *testing.T) {
 	target, _ := completionRuntimeTargetAndSchema(t)
 	sharedID := completionRuntimeSetID(t, "common", "shared")
-	rootID := completionRuntimeSetID(t, "dkim2", "root")
+	rootID := completionRuntimeSetID(t, "delivery", "root")
 
 	expression, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{Operator: registry.ExpressionOperatorAlways})
 	if err != nil {
@@ -699,7 +699,7 @@ func TestGenericDomainPlanRejectsAuthnCheckpoint(t *testing.T) {
 
 func TestTargetCatalogRejectsDirectUnscheduledRequiredProvider(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
-	setID := completionRuntimeSetID(t, "dkim2", "configured")
+	setID := completionRuntimeSetID(t, "delivery", "configured")
 
 	expression, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{Operator: registry.ExpressionOperatorAlways})
 	if err != nil {
@@ -707,7 +707,7 @@ func TestTargetCatalogRejectsDirectUnscheduledRequiredProvider(t *testing.T) {
 	}
 
 	rule, err := registry.NewPolicyRule(registry.PolicyRuleInput{
-		Name: "deny", Checkpoint: "final_decision", RequiredProviders: []string{"dkim2/provider"},
+		Name: "deny", Checkpoint: "final_decision", RequiredProviders: []string{"delivery/provider"},
 		Expression: expression, Decision: decision.EffectDeny,
 	})
 	if err != nil {
@@ -726,7 +726,7 @@ func TestTargetCatalogRejectsDirectUnscheduledRequiredProvider(t *testing.T) {
 
 func TestTargetCatalogRejectsDirectResponseFactSchemaMismatch(t *testing.T) {
 	target, schema := completionRuntimeTargetAndSchema(t)
-	setID := completionRuntimeSetID(t, "dkim2", "configured")
+	setID := completionRuntimeSetID(t, "delivery", "configured")
 
 	expression, err := registry.NewPolicyExpression(registry.PolicyExpressionInput{Operator: registry.ExpressionOperatorAlways})
 	if err != nil {
@@ -765,7 +765,7 @@ func TestNewEffectUseSelectsDeterministicFirstInvalidParameter(t *testing.T) {
 	}
 
 	for range 100 {
-		_, err := registry.NewEffectUse("dkim2/notice", parameters)
+		_, err := registry.NewEffectUse("delivery/notice", parameters)
 		if err == nil || !strings.Contains(err.Error(), "map key") {
 			t.Fatalf("NewEffectUse(two invalid parameters) error = %v, want deterministic empty-key failure", err)
 		}
@@ -820,7 +820,7 @@ func completionDirectRuntimeRecordCases(
 			name: "unknown provider",
 			record: TargetCatalogRecord{
 				Target: target, Schema: schema,
-				Checkpoints: []CheckpointRecord{{Name: "final_decision", ProviderIDs: []string{"dkim2/missing"}}},
+				Checkpoints: []CheckpointRecord{{Name: "final_decision", ProviderIDs: []string{"delivery/missing"}}},
 				NoMatch:     registry.NoMatchDeny, AuthorityMode: registry.AuthorityModeEnforce,
 			},
 			want: ErrInvalidCompiledTarget,
@@ -842,7 +842,7 @@ func completionRuntimeDescriptors(
 	t.Helper()
 
 	provider, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
-		ID:         "dkim2/sync",
+		ID:         "delivery/sync",
 		Targets:    []decision.Target{target},
 		Executions: []registry.ExecutionClass{registry.ExecutionHostSync},
 	})
@@ -851,7 +851,7 @@ func completionRuntimeDescriptors(
 	}
 
 	effect, err := registry.NewEffectDefinition(registry.EffectDefinitionInput{
-		ID:        "dkim2/notice",
+		ID:        "delivery/notice",
 		Kind:      registry.EffectKindObligation,
 		Execution: registry.ExecutionReturnOnly,
 		Targets:   []decision.Target{target},
@@ -860,7 +860,7 @@ func completionRuntimeDescriptors(
 		t.Fatalf("NewEffectDefinition() error = %v", err)
 	}
 
-	unknownSet, err := registry.NewPolicySetID("dkim2", "missing")
+	unknownSet, err := registry.NewPolicySetID("delivery", "missing")
 	if err != nil {
 		t.Fatalf("NewPolicySetID() error = %v", err)
 	}
@@ -872,12 +872,12 @@ func completionRuntimeDescriptors(
 func completionRuntimeTargetAndSchema(t *testing.T) (decision.Target, registry.SchemaDefinition) {
 	t.Helper()
 
-	target, err := decision.NewTarget("dkim2", "sign")
+	target, err := decision.NewTarget("delivery", "sign")
 	if err != nil {
 		t.Fatalf("NewTarget() error = %v", err)
 	}
 
-	identity, err := registry.NewSchemaIdentity("dkim2", "sign", "v1")
+	identity, err := registry.NewSchemaIdentity("delivery", "sign", "v1")
 	if err != nil {
 		t.Fatalf("NewSchemaIdentity() error = %v", err)
 	}

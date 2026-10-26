@@ -21,7 +21,7 @@ var invalidGenericLuaProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.module",
+		path: "policy.namespaces.delivery.providers.risk.module",
 	},
 	{
 		name: "noncanonical module",
@@ -32,7 +32,7 @@ var invalidGenericLuaProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.module",
+		path: "policy.namespaces.delivery.providers.risk.module",
 	},
 	{
 		name: "missing script",
@@ -42,7 +42,7 @@ var invalidGenericLuaProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.script_path",
+		path: "policy.namespaces.delivery.providers.risk.script_path",
 	},
 	{
 		name: "foreign Lua authority",
@@ -54,7 +54,7 @@ var invalidGenericLuaProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.produced_facts[0]",
+		path: "policy.namespaces.delivery.providers.risk.produced_facts[0]",
 	},
 	{
 		name: "foreign source",
@@ -66,7 +66,7 @@ var invalidGenericLuaProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.produced_facts[0]",
+		path: "policy.namespaces.delivery.providers.risk.produced_facts[0]",
 	},
 	{
 		name: "duplicate output",
@@ -78,7 +78,7 @@ var invalidGenericLuaProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.produced_facts[1]",
+		path: "policy.namespaces.delivery.providers.risk.produced_facts[1]",
 	},
 }
 
@@ -123,7 +123,7 @@ func TestLegacyLuaProviderKindsRemainAuthnOnly(t *testing.T) {
 
 			var pathError *PathError
 			requireErrorAs(t, err, &pathError)
-			requireEqual(t, "policy.namespaces.dkim2.providers.risk.kind", pathError.Path)
+			requireEqual(t, "policy.namespaces.delivery.providers.risk.kind", pathError.Path)
 		})
 	}
 
@@ -145,7 +145,7 @@ func decodeGenericLuaProvider(t *testing.T, provider string) Document {
 
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:`+provider))
 	requireNoError(t, err)

@@ -32,14 +32,14 @@ func TestCatalogIdentitiesRejectInvalidOrImplicitValues(t *testing.T) {
 		wantError error
 		wantPath  string
 	}{
-		{name: "uppercase namespace", namespace: "DKIM2", action: "sign", schema: "dkim2/sign/v1", wantError: ErrInvalidNamespace, wantPath: "policy.targets[0].namespace"},
-		{name: "normalized action", namespace: "dkim2", action: "Sign", schema: "dkim2/sign/v1", wantError: ErrInvalidAction, wantPath: "policy.targets[0].action"},
-		{name: "missing schema", namespace: "dkim2", action: "sign", wantError: ErrInvalidSchemaIdentity, wantPath: "policy.targets[0].schema"},
-		{name: "missing version", namespace: "dkim2", action: "sign", schema: "dkim2/sign", wantError: ErrInvalidSchemaIdentity, wantPath: "policy.targets[0].schema"},
-		{name: "implicit latest", namespace: "dkim2", action: "sign", schema: "dkim2/sign/latest", wantError: ErrInvalidSchemaVersion, wantPath: "policy.targets[0].schema"},
-		{name: "version range", namespace: "dkim2", action: "sign", schema: "dkim2/sign/v1-v2", wantError: ErrInvalidSchemaVersion, wantPath: "policy.targets[0].schema"},
-		{name: "surprising leading zero", namespace: "dkim2", action: "sign", schema: "dkim2/sign/v01", wantError: ErrInvalidSchemaVersion, wantPath: "policy.targets[0].schema"},
-		{name: "foreign schema", namespace: "dkim2", action: "sign", schema: "mcp/sign/v1", wantError: ErrTargetSchemaMismatch, wantPath: "policy.targets[0].schema"},
+		{name: "uppercase namespace", namespace: "DELIVERY", action: "sign", schema: "delivery/sign/v1", wantError: ErrInvalidNamespace, wantPath: "policy.targets[0].namespace"},
+		{name: "normalized action", namespace: "delivery", action: "Sign", schema: "delivery/sign/v1", wantError: ErrInvalidAction, wantPath: "policy.targets[0].action"},
+		{name: "missing schema", namespace: "delivery", action: "sign", wantError: ErrInvalidSchemaIdentity, wantPath: "policy.targets[0].schema"},
+		{name: "missing version", namespace: "delivery", action: "sign", schema: "delivery/sign", wantError: ErrInvalidSchemaIdentity, wantPath: "policy.targets[0].schema"},
+		{name: "implicit latest", namespace: "delivery", action: "sign", schema: "delivery/sign/latest", wantError: ErrInvalidSchemaVersion, wantPath: "policy.targets[0].schema"},
+		{name: "version range", namespace: "delivery", action: "sign", schema: "delivery/sign/v1-v2", wantError: ErrInvalidSchemaVersion, wantPath: "policy.targets[0].schema"},
+		{name: "surprising leading zero", namespace: "delivery", action: "sign", schema: "delivery/sign/v01", wantError: ErrInvalidSchemaVersion, wantPath: "policy.targets[0].schema"},
+		{name: "foreign schema", namespace: "delivery", action: "sign", schema: "mcp/sign/v1", wantError: ErrTargetSchemaMismatch, wantPath: "policy.targets[0].schema"},
 	}
 
 	for _, test := range tests {
@@ -57,11 +57,11 @@ func TestCatalogIdentitiesRejectInvalidOrImplicitValues(t *testing.T) {
 }
 
 func TestContributionRejectsDuplicateOwnershipAndForeignDefinitions(t *testing.T) {
-	if _, err := NewNamespaceOwnership("test.catalog", []string{"dkim2", "dkim2"}); !errors.Is(err, ErrDuplicateNamespace) {
+	if _, err := NewNamespaceOwnership("test.catalog", []string{"delivery", "delivery"}); !errors.Is(err, ErrDuplicateNamespace) {
 		t.Fatalf("NewNamespaceOwnership() error = %v, want duplicate namespace", err)
 	}
 
-	ownership := mustOwnership(t, "test.catalog", "dkim2")
+	ownership := mustOwnership(t, "test.catalog", "delivery")
 	target := mustTargetDefinition(t, "mcp", "invoke", "v1")
 	schema := mustSchemaDefinition(t, "mcp", "invoke", "v1", nil)
 
@@ -76,12 +76,12 @@ func TestContributionRejectsDuplicateOwnershipAndForeignDefinitions(t *testing.T
 }
 
 func TestTargetDefinitionRejectsDuplicateExactSchemaVersion(t *testing.T) {
-	target, err := decision.NewTarget("dkim2", "sign")
+	target, err := decision.NewTarget("delivery", "sign")
 	if err != nil {
 		t.Fatalf("decision.NewTarget() error = %v", err)
 	}
 
-	schema, err := NewSchemaIdentity("dkim2", "sign", "v1")
+	schema, err := NewSchemaIdentity("delivery", "sign", "v1")
 	if err != nil {
 		t.Fatalf("NewSchemaIdentity() error = %v", err)
 	}
@@ -103,11 +103,11 @@ func TestContributionAndGateModelsOwnTheirInputs(t *testing.T) {
 		MaxLength:      64,
 	})
 
-	schema := mustSchemaDefinition(t, "dkim2", "sign-message", "v1", []FactSchema{fact})
-	target := mustTargetDefinition(t, "dkim2", "sign-message", "v1")
+	schema := mustSchemaDefinition(t, "delivery", "sign-message", "v1", []FactSchema{fact})
+	target := mustTargetDefinition(t, "delivery", "sign-message", "v1")
 
 	contribution, err := NewDefinitionContribution(
-		mustOwnership(t, "test.catalog", "dkim2"),
+		mustOwnership(t, "test.catalog", "delivery"),
 		[]TargetDefinition{target},
 		[]SchemaDefinition{schema},
 	)
@@ -126,9 +126,9 @@ func TestContributionAndGateModelsOwnTheirInputs(t *testing.T) {
 		t.Fatalf("contribution sources = %v, want immutable caller source", gotSources)
 	}
 
-	activation := mustActivation(t, "policy.targets[0]", "dkim2", "sign-message", "dkim2/sign-message/v1")
+	activation := mustActivation(t, "policy.targets[0]", "delivery", "sign-message", "delivery/sign-message/v1")
 
-	admission, err := NewClientAdmissionReference("clients[0].targets[0]", "dkim2", "sign-message", "dkim2/sign-message/v1")
+	admission, err := NewClientAdmissionReference("clients[0].targets[0]", "delivery", "sign-message", "delivery/sign-message/v1")
 	if err != nil {
 		t.Fatalf("NewClientAdmissionReference() error = %v", err)
 	}

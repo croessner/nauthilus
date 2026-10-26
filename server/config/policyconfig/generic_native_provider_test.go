@@ -20,7 +20,7 @@ var invalidGenericNativeProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.module",
+		path: "policy.namespaces.delivery.providers.risk.module",
 	},
 	{
 		name: "noncanonical module",
@@ -30,7 +30,7 @@ var invalidGenericNativeProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.module",
+		path: "policy.namespaces.delivery.providers.risk.module",
 	},
 	{
 		name: "script path",
@@ -41,7 +41,7 @@ var invalidGenericNativeProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.script_path",
+		path: "policy.namespaces.delivery.providers.risk.script_path",
 	},
 	{
 		name: "foreign native authority",
@@ -52,7 +52,7 @@ var invalidGenericNativeProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.produced_facts[0]",
+		path: "policy.namespaces.delivery.providers.risk.produced_facts[0]",
 	},
 	{
 		name: "foreign source",
@@ -63,7 +63,7 @@ var invalidGenericNativeProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.produced_facts[0]",
+		path: "policy.namespaces.delivery.providers.risk.produced_facts[0]",
 	},
 	{
 		name: "duplicate output",
@@ -74,7 +74,7 @@ var invalidGenericNativeProviders = []policyValidationPathCase{
           failure: indeterminate
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.produced_facts[1]",
+		path: "policy.namespaces.delivery.providers.risk.produced_facts[1]",
 	},
 }
 
@@ -89,9 +89,9 @@ func TestGenericNativeProviderOwnsPluginAuthorityBoundConfiguration(t *testing.T
 
 	requireNoError(t, Validate(document))
 
-	provider := document.Policy.Namespaces["dkim2"].Providers["risk"]
+	provider := document.Policy.Namespaces["delivery"].Providers["risk"]
 	requireEqual(t, ProviderKindNative, provider.Kind)
-	requireEqual(t, "dkim2/plugin.reputation.risk", provider.CanonicalID("dkim2", "risk"))
+	requireEqual(t, "delivery/plugin.reputation.risk", provider.CanonicalID("delivery", "risk"))
 }
 
 func TestGenericNativeFactProviderDoesNotGainImplicitHostExecution(t *testing.T) {
@@ -104,7 +104,7 @@ func TestGenericNativeFactProviderDoesNotGainImplicitHostExecution(t *testing.T)
 `)
 
 	normalized := Normalize(document)
-	provider := normalized.Policy.Namespaces["dkim2"].Providers["risk"]
+	provider := normalized.Policy.Namespaces["delivery"].Providers["risk"]
 
 	requireNoError(t, Validate(normalized))
 
@@ -152,7 +152,7 @@ func TestGenericNativeProviderRejectsOversizedDerivedIdentity(t *testing.T) {
 func TestGenericNativeProviderRejectsLocalNameOutsidePublicComponentGrammar(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk-score:
           kind: native
@@ -166,24 +166,24 @@ func TestGenericNativeProviderRejectsLocalNameOutsidePublicComponentGrammar(t *t
 
 	var pathError *PathError
 	requireErrorAs(t, err, &pathError)
-	requireEqual(t, "policy.namespaces.dkim2.providers.risk-score", pathError.Path)
+	requireEqual(t, "policy.namespaces.delivery.providers.risk-score", pathError.Path)
 }
 
 func TestGenericNativeProviderAcceptsExactCanonicalProviderReferences(t *testing.T) {
-	document := decodeGenericNativeProviderReferences(t, "dkim2/plugin.reputation.risk")
+	document := decodeGenericNativeProviderReferences(t, "delivery/plugin.reputation.risk")
 
 	requireNoError(t, Validate(document))
 }
 
 func TestGenericNativeProviderRejectsForeignAndMalformedProviderReferences(t *testing.T) {
 	tests := []string{
-		"dkim2/plugin.reputation.risk.extra",
-		"dkim2/plugin.foreign.risk",
-		"dkim2/plugin.reputation.other",
+		"delivery/plugin.reputation.risk.extra",
+		"delivery/plugin.foreign.risk",
+		"delivery/plugin.reputation.other",
 		"mail/plugin.reputation.risk",
-		"dkim2/plugin.reputation-provider.risk",
-		"dkim2/plugin.reputation",
-		"dkim2/plugin.reputation.Risk",
+		"delivery/plugin.reputation-provider.risk",
+		"delivery/plugin.reputation",
+		"delivery/plugin.reputation.Risk",
 	}
 
 	for _, providerUse := range tests {
@@ -196,7 +196,7 @@ func TestGenericNativeProviderRejectsForeignAndMalformedProviderReferences(t *te
 			requireErrorAs(t, err, &pathError)
 			requireEqual(
 				t,
-				"policy.namespaces.dkim2.domain_plans.configured.checkpoints.final_decision.providers[0].use",
+				"policy.namespaces.delivery.domain_plans.configured.checkpoints.final_decision.providers[0].use",
 				pathError.Path,
 			)
 		})
@@ -229,7 +229,7 @@ func decodeGenericNativeProviderReferences(t *testing.T, providerUse string) Doc
 
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:
           kind: native
@@ -240,7 +240,7 @@ func decodeGenericNativeProviderReferences(t *testing.T, providerUse string) Doc
         notify:
           kind: obligation
           execution: host_sync
-          provider: dkim2/plugin.reputation.risk
+          provider: delivery/plugin.reputation.risk
       domain_plans:
         configured:
           checkpoints:
@@ -260,7 +260,7 @@ func decodeGenericNativeProvider(t *testing.T, provider string) Document {
 
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:`+provider))
 	requireNoError(t, err)

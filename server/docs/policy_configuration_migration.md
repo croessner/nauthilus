@@ -84,7 +84,7 @@ existing implicit `authn` behavior only.
 ```yaml
 policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message:
@@ -110,7 +110,7 @@ policy:
       effects:
         record-audit:
           kind: obligation
-          provider: dkim2/risk
+          provider: delivery/risk
           targets: [{action: sign-message}]
           execution: host_sync
           parameters:
@@ -122,7 +122,7 @@ policy:
 ```
 
 `module` is the canonical lowercase Lua authority. The example's authored provider key resolves to the immutable
-internal identity `dkim2/lua.reputation.risk`, and the callback returns local `risk_score` for the host-qualified fact
+internal identity `delivery/lua.reputation.risk`, and the callback returns local `risk_score` for the host-qualified fact
 `lua.reputation.risk_score`. Every produced fact must exist with identical category, type, and bounds in every exact
 target schema and must allow source `lua`. Explicit targets are used as written; when omitted, target-aware preparation
 derives them only from exact plan and effect bindings.
@@ -144,7 +144,7 @@ replay, idempotency, or deduplication fields. The exact Lua tables and strict ty
 ```yaml
 policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message:
@@ -177,7 +177,7 @@ policy:
       effects:
         record-audit:
           kind: obligation
-          provider: dkim2/plugin.reputation.notifier
+          provider: delivery/plugin.reputation.notifier
           targets: [{action: sign-message}]
           execution: host_sync
           parameters:
@@ -193,7 +193,7 @@ policy:
             final_decision:
               providers:
                 - name: risk
-                  use: dkim2/plugin.reputation.risk
+                  use: delivery/plugin.reputation.risk
                   actions: [sign-message]
       policy_sets:
         default:
@@ -208,26 +208,26 @@ policy:
               then:
                 decision: permit
                 obligations:
-                  - id: dkim2/record-audit
+                  - id: delivery/record-audit
                     parameters: {channel: security}
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message
-      schema: dkim2/sign-message/v1
-      domain_plan: dkim2/default
-      default_policy: dkim2/default
+      schema: delivery/sign-message/v1
+      domain_plan: delivery/default
+      default_policy: delivery/default
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 ```
 
 This production example has no removed `auth.policy` source and does not add a
 mapping row. `kind: native`, `module: reputation`, and the local key `risk`
-derive the exact fact-provider identity `dkim2/plugin.reputation.risk`; they do
+derive the exact fact-provider identity `delivery/plugin.reputation.risk`; they do
 not name or load a shared object. The separate local key `notifier` derives the
-effect-provider identity `dkim2/plugin.reputation.notifier`, because one
+effect-provider identity `delivery/plugin.reputation.notifier`, because one
 registered native component has one local identity and implements one generic
 provider boundary. The schema permits the `plugin` source, while
 `plugin.reputation.risk_score` fixes the module-owned fact authority and exact
@@ -250,7 +250,7 @@ continuation safe; contract violations remain `indeterminate`. Dependencies of a
 by the shared scheduler. Synchronous effects inherit the Decision evaluation context, while accepted post-actions use
 the supervisor plan deadline; effect-only providers are not scheduled as fact collectors.
 
-Only an obligation selected by the compiled decision, such as `dkim2/record-audit` above, can invoke its native
+Only an obligation selected by the compiled decision, such as `delivery/record-audit` above, can invoke its native
 provider. Unselected obligations, advice, and `return_only` effects never call a host provider. `host_sync` execution
 finishes before response finalization. `host_post_action` work must be resolved and accepted by the internal effect
 supervisor synchronously before finalization, then waits for the response gate; a later failure is observable but

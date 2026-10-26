@@ -83,7 +83,7 @@ func TestDecisionReportRedactionExcludesSensitiveDetails(t *testing.T) {
 	}
 }
 
-func TestDKIM2DecisionReportRedactionExcludesRequestIdentities(t *testing.T) {
+func TestTargetDecisionReportRedactionExcludesRequestIdentities(t *testing.T) {
 	const (
 		smtpPeerIP   = "203.0.113.77"
 		signerDomain = "sensitive-signer.example"
@@ -92,8 +92,8 @@ func TestDKIM2DecisionReportRedactionExcludesRequestIdentities(t *testing.T) {
 	for _, outcome := range []string{"permit", "provider_failure"} {
 		t.Run(outcome, func(t *testing.T) {
 			report := NewDecisionReport()
-			report.Attributes["dkim2.assessment"] = AttributeValue{
-				ID: "dkim2.assessment", Stage: policy.StageAuthDecision, Value: outcome,
+			report.Attributes["delivery.assessment"] = AttributeValue{
+				ID: "delivery.assessment", Stage: policy.StageAuthDecision, Value: outcome,
 				Details: map[string]DetailValue{
 					"smtp_peer_ip":  {Value: smtpPeerIP, Sensitivity: SensitivitySecret},
 					"signer_domain": {Value: signerDomain, Sensitivity: SensitivityInternal},

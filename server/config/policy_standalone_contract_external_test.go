@@ -171,7 +171,7 @@ func policyCutoverRemovedShapeCases() []policyCutoverPathCase {
 		{name: "global policy sets", source: "policy:\n  policy_sets: {}\n", path: "policy.policy_sets"},
 		{
 			name:   "target inline sets",
-			source: "policy:\n  targets:\n    - namespace: dkim2\n      action: sign-message-instance\n      policy_sets: {}\n",
+			source: "policy:\n  targets:\n    - namespace: delivery\n      action: sign-message-instance\n      policy_sets: {}\n",
 			path:   "policy.targets[0].policy_sets",
 		},
 		{

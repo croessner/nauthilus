@@ -85,7 +85,7 @@ func TestClientProfileAllowedSchemasRequireUniqueExactReferences(t *testing.T) {
 
 func TestClientProfileAllowedSchemasAcceptExactReferences(t *testing.T) {
 	client := validClientProfile()
-	client.AllowedSchemas = []string{"authn/password/v1", "dkim2/sign-message/v2"}
+	client.AllowedSchemas = []string{"authn/password/v1", "delivery/sign-message/v2"}
 
 	requireNoError(t, Validate(clientProfileDocument(client, APILimitsConfig{})))
 }
@@ -199,7 +199,7 @@ func TestClientProfileTargetsAllowSameActionInDifferentNamespaces(t *testing.T) 
 	client := validClientProfile()
 	client.Targets = []ClientTargetConfig{
 		{Namespace: "authn", Actions: []string{"evaluate"}},
-		{Namespace: "dkim2", Actions: []string{"evaluate"}},
+		{Namespace: "delivery", Actions: []string{"evaluate"}},
 	}
 
 	requireNoError(t, Validate(clientProfileDocument(client, APILimitsConfig{})))

@@ -336,7 +336,7 @@ func TestDecisionSessionRequiresAdmittedBuiltinInternalAuthnCaller(t *testing.T)
 		action    string
 	}{
 		{name: "external caller", namespace: "authn", action: "authenticate"},
-		{name: "non-authn target", internal: true, namespace: "dkim2", action: "sign-message-instance"},
+		{name: "non-authn target", internal: true, namespace: "delivery", action: "sign-message-instance"},
 		{name: "unsupported authn action", internal: true, namespace: "authn", action: "custom"},
 	}
 
@@ -734,7 +734,7 @@ func mustDecisionService(t *testing.T, source GenerationSource) *DecisionService
 func mustAuthorityInvocation(t *testing.T, authn bool) Invocation {
 	t.Helper()
 
-	namespace := "dkim2"
+	namespace := "delivery"
 	action := "sign-message-instance"
 
 	if authn {

@@ -60,7 +60,7 @@ func TestDecisionResponseDeeplyOwnsEffectsStatusAndDiagnostics(t *testing.T) {
 	diagnosticValues := response.Diagnostics().Entries().Values()
 	delete(diagnosticValues, "reason")
 
-	if response.Obligations()[0].ID() != "dkim2/quarantine" {
+	if response.Obligations()[0].ID() != "delivery/quarantine" {
 		t.Fatal("DecisionResponse exposed mutable obligation storage")
 	}
 
@@ -117,7 +117,7 @@ func mustEffectRequest(t *testing.T, parameters map[string]decision.Value) decis
 	t.Helper()
 
 	request, err := decision.NewEffectRequest(decision.EffectRequestInput{
-		ID:         "dkim2/quarantine",
+		ID:         "delivery/quarantine",
 		Parameters: parameters,
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func mustStatus(t *testing.T, details []decision.ValidationDetail) decision.Stat
 func mustPolicyMetadata(t *testing.T) decision.PolicyMetadata {
 	t.Helper()
 
-	metadata, err := decision.NewPolicyMetadata("dkim2/default", "v1", "deny-message", 42)
+	metadata, err := decision.NewPolicyMetadata("delivery/default", "v1", "deny-message", 42)
 	if err != nil {
 		t.Fatalf("NewPolicyMetadata() error = %v", err)
 	}

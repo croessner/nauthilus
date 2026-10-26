@@ -37,20 +37,20 @@ var policyValidationPathCases = []policyValidationPathCase{
 		name: "effect execution is mandatory",
 		source: `policy:
   namespaces:
-    dkim2:
+    delivery:
       effects:
         return_reason:
           kind: obligation
           targets:
             - action: sign-message-instance
 `,
-		path: "policy.namespaces.dkim2.effects.return_reason.execution",
+		path: "policy.namespaces.delivery.effects.return_reason.execution",
 	},
 	{
 		name: "generic provider failure is mandatory",
 		source: `policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:
           kind: lua_environment
@@ -59,15 +59,15 @@ var policyValidationPathCases = []policyValidationPathCase{
           executions: [host_sync]
           timeout: 100ms
 `,
-		path: "policy.namespaces.dkim2.providers.risk.failure",
+		path: "policy.namespaces.delivery.providers.risk.failure",
 	},
 	{
 		name: "generic target no match is mandatory",
 		source: `policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       timeouts:
         evaluation: 2s
         provider_default: 500ms
@@ -78,9 +78,9 @@ var policyValidationPathCases = []policyValidationPathCase{
 		name: "schema version is exact",
 		source: `policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/latest
+      schema: delivery/sign-message-instance/latest
       no_match: deny
       timeouts:
         evaluation: 2s
@@ -107,39 +107,39 @@ var providerAndEffectValidationPathCases = []policyValidationPathCase{
 		name: "invalid provider failure",
 		source: `policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:
           kind: native
           module: risk
           failure: abort
 `,
-		path: "policy.namespaces.dkim2.providers.risk.failure",
+		path: "policy.namespaces.delivery.providers.risk.failure",
 	},
 	{
 		name: "host effect requires provider",
 		source: `policy:
   namespaces:
-    dkim2:
+    delivery:
       effects:
         notify:
           kind: obligation
           execution: host_sync
 `,
-		path: "policy.namespaces.dkim2.effects.notify.provider",
+		path: "policy.namespaces.delivery.effects.notify.provider",
 	},
 	{
 		name: "return effect forbids provider",
 		source: `policy:
   namespaces:
-    dkim2:
+    delivery:
       effects:
         reason:
           kind: advice
           execution: return_only
-          provider: dkim2/dispatch
+          provider: delivery/dispatch
 `,
-		path: "policy.namespaces.dkim2.effects.reason.provider",
+		path: "policy.namespaces.delivery.effects.reason.provider",
 	},
 	{
 		name: "post action requires post execution",
@@ -236,12 +236,12 @@ func TestPolicyUnknownAndForbiddenFields(t *testing.T) {
 
 	for _, field := range fields {
 		t.Run(field, func(t *testing.T) {
-			input := "policy:\n  namespaces:\n    dkim2:\n      providers:\n        risk:\n          kind: lua_environment\n          " + field + ": rejected\n"
+			input := "policy:\n  namespaces:\n    delivery:\n      providers:\n        risk:\n          kind: lua_environment\n          " + field + ": rejected\n"
 			_, err := Decode("yaml", strings.NewReader(input))
 
 			var pathError *PathError
 			requireErrorAs(t, err, &pathError)
-			requireEqual(t, "policy.namespaces.dkim2.providers.risk."+field, pathError.Path)
+			requireEqual(t, "policy.namespaces.delivery.providers.risk."+field, pathError.Path)
 		})
 	}
 }
@@ -251,10 +251,10 @@ func TestPolicyCanonicalRedactsSecretsAndSharesPaths(t *testing.T) {
 policy:
   api:
     clients:
-      - principal: local-dkim2
+      - principal: local-delivery
         authentication:
           basic:
-            username: dkim2
+            username: delivery
             password: top-secret
         authentication_kinds: [basic]
 `))
@@ -277,7 +277,7 @@ func TestPolicyCanonicalRedactsEveryDeclaredSecretOwner(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`
 policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         signer:
           kind: native
@@ -301,8 +301,8 @@ policy:
 	requireNoError(t, err)
 
 	paths := []string{
-		"policy.namespaces.dkim2.providers.signer.secrets.token",
-		"policy.namespaces.dkim2.effects.notify.secrets.webhook",
+		"policy.namespaces.delivery.providers.signer.secrets.token",
+		"policy.namespaces.delivery.effects.notify.secrets.webhook",
 	}
 	for _, path := range paths {
 		requireEqual(t, RedactedValue, canonical.Value(path))
@@ -369,9 +369,9 @@ func TestPolicyGenericObserveModeFailsAtTargetPath(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`
 policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       mode: observe
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
@@ -389,7 +389,7 @@ func TestPolicyRejectsUnregisteredEffectKindAtExactPath(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`
 policy:
   namespaces:
-    dkim2:
+    delivery:
       effects:
         notify:
           kind: arbitrary_action
@@ -401,14 +401,14 @@ policy:
 
 	var pathError *PathError
 	requireErrorAs(t, err, &pathError)
-	requireEqual(t, "policy.namespaces.dkim2.effects.notify.kind", pathError.Path)
+	requireEqual(t, "policy.namespaces.delivery.effects.notify.kind", pathError.Path)
 }
 
 func TestPolicyRejectsDuplicateTargetDiagnosticAliasAtSecondPath(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`
 policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:
           kind: native
@@ -424,9 +424,9 @@ policy:
           execution: return_only
           diagnostics: {public_id: risk}
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
 `))
@@ -436,7 +436,7 @@ policy:
 
 	var pathError *PathError
 	requireErrorAs(t, err, &pathError)
-	requireEqual(t, "policy.namespaces.dkim2.effects.risk_advice.diagnostics.public_id", pathError.Path)
+	requireEqual(t, "policy.namespaces.delivery.effects.risk_advice.diagnostics.public_id", pathError.Path)
 }
 
 func TestPolicyRejectsProviderTimeoutBeyondTargetBudget(t *testing.T) {
@@ -453,7 +453,7 @@ func TestPolicyRejectsProviderTimeoutBeyondTargetBudget(t *testing.T) {
 			document, err := Decode("yaml", strings.NewReader(`
 policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         risk:
           kind: native
@@ -462,9 +462,9 @@ policy:
           failure: indeterminate
           timeout: `+test.timeout+`
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
 `))
@@ -474,7 +474,7 @@ policy:
 
 			var pathError *PathError
 			requireErrorAs(t, err, &pathError)
-			requireEqual(t, "policy.namespaces.dkim2.providers.risk.timeout", pathError.Path)
+			requireEqual(t, "policy.namespaces.delivery.providers.risk.timeout", pathError.Path)
 		})
 	}
 }
@@ -493,9 +493,9 @@ func TestPolicyNoMatchAndTimeoutValidationPaths(t *testing.T) {
 			name: "invalid generic no match",
 			yaml: `policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       no_match: permit
       timeouts: {evaluation: 2s, provider_default: 500ms}
 `,
@@ -505,9 +505,9 @@ func TestPolicyNoMatchAndTimeoutValidationPaths(t *testing.T) {
 			name: "missing evaluation timeout",
 			yaml: `policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       no_match: deny
       timeouts: {provider_default: 500ms}
 `,

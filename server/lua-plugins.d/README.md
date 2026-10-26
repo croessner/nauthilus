@@ -63,7 +63,7 @@ attribute.
 
 These environment, subject, action, and post-action callbacks are legacy authentication extensions. Their names,
 ordering, request shape, and implicit `authn` binding remain unchanged; they are never reused for a generic target such
-as `dkim2` or `mcp`.
+as `delivery` or `mcp`.
 
 ## Generic target-aware policy providers
 

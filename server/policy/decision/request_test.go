@@ -28,7 +28,7 @@ import (
 func TestDecisionRequestContainsExactlyOneInvocation(t *testing.T) {
 	request := mustDecisionRequest(t)
 
-	if request.Target().String() != "dkim2/sign-message-instance" {
+	if request.Target().String() != "delivery/sign-message-instance" {
 		t.Fatalf("DecisionRequest.Target() = %q", request.Target().String())
 	}
 
@@ -80,7 +80,7 @@ func TestDecisionRequestInputCannotSetTrustedCallerState(t *testing.T) {
 	assertNoExportedFieldMatching(t, reflect.TypeOf(decision.DecisionRequestInput{}), forbidden)
 
 	request := mustDecisionRequest(t)
-	if request.Caller().Principal() != "dkim2d@mx01" {
+	if request.Caller().Principal() != "relay@mx01" {
 		t.Fatalf("DecisionRequest.Caller().Principal() = %q", request.Caller().Principal())
 	}
 }
@@ -235,14 +235,14 @@ func mustDecisionRequestWithAttributes(
 ) decision.DecisionRequest {
 	t.Helper()
 
-	target, err := decision.NewTarget("dkim2", "sign-message-instance")
+	target, err := decision.NewTarget("delivery", "sign-message-instance")
 	if err != nil {
 		t.Fatalf("NewTarget() error = %v", err)
 	}
 
 	caller, err := decision.NewCallerContext(decision.TrustedCallerInput{
-		Principal:          "dkim2d@mx01",
-		ClientID:           "nauthilus-dkim2",
+		Principal:          "relay@mx01",
+		ClientID:           "nauthilus-delivery",
 		Scopes:             []string{"nauthilus:policy"},
 		AuthenticationKind: "bearer",
 		SourceIP:           netip.MustParseAddr("192.0.2.10"),

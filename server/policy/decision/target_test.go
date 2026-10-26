@@ -30,11 +30,11 @@ func TestTargetRequiresExactBoundedIdentifiers(t *testing.T) {
 		ok        bool
 	}{
 		{name: "auth builtin", namespace: "authn", action: "lookup_identity", ok: true},
-		{name: "nested namespace", namespace: "mail.dkim2", action: "sign-message-instance", ok: true},
-		{name: "uppercase namespace", namespace: "DKIM2", action: "sign"},
-		{name: "empty namespace segment", namespace: "mail..dkim2", action: "sign"},
-		{name: "uppercase action", namespace: "dkim2", action: "Sign"},
-		{name: "adjacent action separators", namespace: "dkim2", action: "sign-_message"},
+		{name: "nested namespace", namespace: "mail.delivery", action: "sign-message-instance", ok: true},
+		{name: "uppercase namespace", namespace: "DELIVERY", action: "sign"},
+		{name: "empty namespace segment", namespace: "mail..delivery", action: "sign"},
+		{name: "uppercase action", namespace: "delivery", action: "Sign"},
+		{name: "adjacent action separators", namespace: "delivery", action: "sign-_message"},
 	}
 
 	for _, test := range tests {
@@ -60,7 +60,7 @@ func TestTargetRequiresExactBoundedIdentifiers(t *testing.T) {
 }
 
 func TestContractErrorsExposeStableCodeAndSafeField(t *testing.T) {
-	_, err := decision.NewTarget("DKIM2", "sign")
+	_, err := decision.NewTarget("DELIVERY", "sign")
 
 	contractError := new(decision.ContractError)
 	if !errors.As(err, &contractError) {

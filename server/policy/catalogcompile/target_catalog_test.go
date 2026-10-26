@@ -71,9 +71,9 @@ func TestTargetCatalogRequiresExplicitActivationAndSeparateAdmission(t *testing.
 }
 
 func TestTargetCatalogRejectsCollisionsWithoutPrecedence(t *testing.T) {
-	first := mustCompilerContribution(t, "test.first", "dkim2", "sign", "v1", decision.ValueKindString)
-	second := mustCompilerContribution(t, "test.second", "dkim2", "sign", "v1", decision.ValueKindInteger)
-	activation := mustCompilerActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1")
+	first := mustCompilerContribution(t, "test.first", "delivery", "sign", "v1", decision.ValueKindString)
+	second := mustCompilerContribution(t, "test.second", "delivery", "sign", "v1", decision.ValueKindInteger)
+	activation := mustCompilerActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1")
 
 	_, err := NewTargetCatalogCompiler(
 		testCatalogContributor{contribution: first},
@@ -83,7 +83,7 @@ func TestTargetCatalogRejectsCollisionsWithoutPrecedence(t *testing.T) {
 		t.Fatalf("Compile() error = %v, want definition collision", err)
 	}
 
-	if !strings.Contains(err.Error(), "dkim2/sign") || !strings.Contains(err.Error(), "test.first") || !strings.Contains(err.Error(), "test.second") {
+	if !strings.Contains(err.Error(), "delivery/sign") || !strings.Contains(err.Error(), "test.first") || !strings.Contains(err.Error(), "test.second") {
 		t.Fatalf("Compile() error = %q, want identity and both owners", err)
 	}
 }
@@ -96,10 +96,10 @@ func TestTargetCatalogRejectsUnconstructedContribution(t *testing.T) {
 }
 
 func TestTargetCatalogRejectsSchemaCollisionWithoutTargetCollision(t *testing.T) {
-	firstSchema := mustCompilerSchema(t, "dkim2", "sign", "v1", decision.ValueKindString)
-	secondSchema := mustCompilerSchema(t, "dkim2", "sign", "v1", decision.ValueKindInteger)
-	first := mustCompilerDefinitionContribution(t, "test.first", "dkim2", nil, []registry.SchemaDefinition{firstSchema})
-	second := mustCompilerDefinitionContribution(t, "test.second", "dkim2", nil, []registry.SchemaDefinition{secondSchema})
+	firstSchema := mustCompilerSchema(t, "delivery", "sign", "v1", decision.ValueKindString)
+	secondSchema := mustCompilerSchema(t, "delivery", "sign", "v1", decision.ValueKindInteger)
+	first := mustCompilerDefinitionContribution(t, "test.first", "delivery", nil, []registry.SchemaDefinition{firstSchema})
+	second := mustCompilerDefinitionContribution(t, "test.second", "delivery", nil, []registry.SchemaDefinition{secondSchema})
 
 	_, err := NewTargetCatalogCompiler(
 		testCatalogContributor{contribution: first},
@@ -109,26 +109,26 @@ func TestTargetCatalogRejectsSchemaCollisionWithoutTargetCollision(t *testing.T)
 		t.Fatalf("Compile() error = %v, want schema definition collision", err)
 	}
 
-	if !strings.Contains(err.Error(), "schema dkim2/sign/v1") {
+	if !strings.Contains(err.Error(), "schema delivery/sign/v1") {
 		t.Fatalf("Compile() error = %q, want exact schema collision identity", err)
 	}
 }
 
 func TestTargetCatalogRejectsTargetCollisionWithoutSchemaCollision(t *testing.T) {
-	firstSchema, err := registry.NewSchemaIdentity("dkim2", "sign", "v1")
+	firstSchema, err := registry.NewSchemaIdentity("delivery", "sign", "v1")
 	if err != nil {
 		t.Fatalf("registry.NewSchemaIdentity() error = %v", err)
 	}
 
-	secondSchema, err := registry.NewSchemaIdentity("dkim2", "sign", "v2")
+	secondSchema, err := registry.NewSchemaIdentity("delivery", "sign", "v2")
 	if err != nil {
 		t.Fatalf("registry.NewSchemaIdentity() error = %v", err)
 	}
 
-	firstTarget := mustCompilerTargetDefinition(t, "dkim2", "sign", firstSchema)
-	secondTarget := mustCompilerTargetDefinition(t, "dkim2", "sign", secondSchema)
-	first := mustCompilerDefinitionContribution(t, "test.first", "dkim2", []registry.TargetDefinition{firstTarget}, nil)
-	second := mustCompilerDefinitionContribution(t, "test.second", "dkim2", []registry.TargetDefinition{secondTarget}, nil)
+	firstTarget := mustCompilerTargetDefinition(t, "delivery", "sign", firstSchema)
+	secondTarget := mustCompilerTargetDefinition(t, "delivery", "sign", secondSchema)
+	first := mustCompilerDefinitionContribution(t, "test.first", "delivery", []registry.TargetDefinition{firstTarget}, nil)
+	second := mustCompilerDefinitionContribution(t, "test.second", "delivery", []registry.TargetDefinition{secondTarget}, nil)
 
 	_, err = NewTargetCatalogCompiler(
 		testCatalogContributor{contribution: first},
@@ -138,13 +138,13 @@ func TestTargetCatalogRejectsTargetCollisionWithoutSchemaCollision(t *testing.T)
 		t.Fatalf("Compile() error = %v, want target definition collision", err)
 	}
 
-	if !strings.Contains(err.Error(), "target dkim2/sign") {
+	if !strings.Contains(err.Error(), "target delivery/sign") {
 		t.Fatalf("Compile() error = %q, want exact target collision identity", err)
 	}
 }
 
 func TestTargetCatalogRejectsUnknownAndDuplicateActivations(t *testing.T) {
-	contribution := mustCompilerContribution(t, "test.catalog", "dkim2", "sign", "v1", decision.ValueKindString)
+	contribution := mustCompilerContribution(t, "test.catalog", "delivery", "sign", "v1", decision.ValueKindString)
 	compiler := NewTargetCatalogCompiler(testCatalogContributor{contribution: contribution})
 
 	tests := []struct {
@@ -159,14 +159,14 @@ func TestTargetCatalogRejectsUnknownAndDuplicateActivations(t *testing.T) {
 		},
 		{
 			name:        "unknown exact schema",
-			activations: []registry.TargetActivation{mustCompilerActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v2")},
+			activations: []registry.TargetActivation{mustCompilerActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v2")},
 			wantError:   ErrUnknownSchemaDefinition,
 		},
 		{
 			name: "duplicate target activation",
 			activations: []registry.TargetActivation{
-				mustCompilerActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1"),
-				mustCompilerActivation(t, "policy.targets[1]", "dkim2", "sign", "dkim2/sign/v1"),
+				mustCompilerActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1"),
+				mustCompilerActivation(t, "policy.targets[1]", "delivery", "sign", "delivery/sign/v1"),
 			},
 			wantError: ErrDuplicateTargetActivation,
 		},
@@ -183,13 +183,13 @@ func TestTargetCatalogRejectsUnknownAndDuplicateActivations(t *testing.T) {
 }
 
 func TestTargetCatalogValidatesFactsAgainstSelectedExactSchema(t *testing.T) {
-	v1 := mustCompilerSchema(t, "dkim2", "sign", "v1", decision.ValueKindString)
-	v2 := mustCompilerSchema(t, "dkim2", "sign", "v2", decision.ValueKindInteger)
-	target := mustCompilerTargetDefinition(t, "dkim2", "sign", v1.Identity(), v2.Identity())
-	contribution := mustCompilerCompleteDefinitionContribution(t, "test.catalog", "dkim2", target, []registry.SchemaDefinition{v1, v2})
+	v1 := mustCompilerSchema(t, "delivery", "sign", "v1", decision.ValueKindString)
+	v2 := mustCompilerSchema(t, "delivery", "sign", "v2", decision.ValueKindInteger)
+	target := mustCompilerTargetDefinition(t, "delivery", "sign", v1.Identity(), v2.Identity())
+	contribution := mustCompilerCompleteDefinitionContribution(t, "test.catalog", "delivery", target, []registry.SchemaDefinition{v1, v2})
 	compiler := NewTargetCatalogCompiler(testCatalogContributor{contribution: contribution})
 
-	activation := mustCompilerActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1")
+	activation := mustCompilerActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1")
 
 	catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{activation})
 	if err != nil {
@@ -198,23 +198,23 @@ func TestTargetCatalogValidatesFactsAgainstSelectedExactSchema(t *testing.T) {
 
 	facts := mustCompilerFactSet(t, decision.ValueInput{Integer: pointerTo(int64(7))})
 
-	err = catalog.ValidateFacts(mustCompilerTarget(t, "dkim2", "sign"), facts)
+	err = catalog.ValidateFacts(mustCompilerTarget(t, "delivery", "sign"), facts)
 	if !errors.Is(err, registry.ErrFactSchemaMismatch) {
 		t.Fatalf("ValidateFacts() error = %v, want exact schema mismatch", err)
 	}
 
-	if !strings.Contains(err.Error(), "dkim2/sign/v1") {
+	if !strings.Contains(err.Error(), "delivery/sign/v1") {
 		t.Fatalf("ValidateFacts() error = %q, want selected schema identity", err)
 	}
 
-	v2Activation := mustCompilerActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v2")
+	v2Activation := mustCompilerActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v2")
 
 	v2Catalog, err := compiler.Compile(context.Background(), []registry.TargetActivation{v2Activation})
 	if err != nil {
 		t.Fatalf("Compile() v2 error = %v", err)
 	}
 
-	if err := v2Catalog.ValidateFacts(mustCompilerTarget(t, "dkim2", "sign"), facts); err != nil {
+	if err := v2Catalog.ValidateFacts(mustCompilerTarget(t, "delivery", "sign"), facts); err != nil {
 		t.Fatalf("ValidateFacts() v2 error = %v", err)
 	}
 }

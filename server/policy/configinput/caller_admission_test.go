@@ -33,11 +33,11 @@ const callerAdmissionProjectionFixture = `policy:
             username: Policy.Admission.User
             password: private-basic-secret
         targets:
-          - namespace: dkim2
+          - namespace: delivery
             actions: [sign-message-instance]
           - namespace: authn
             actions: [authenticate]
-        allowed_schemas: [dkim2/sign-message-instance/v1, authn/authenticate/v1]
+        allowed_schemas: [delivery/sign-message-instance/v1, authn/authenticate/v1]
         allowed_subject_attributes: [account, groups]
         allowed_resource_attributes: [mail_from]
         allowed_environment_attributes: [network.risk]
@@ -48,7 +48,7 @@ const callerAdmissionProjectionFixture = `policy:
         requests_per_second: 7
         diagnostics: true
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -59,15 +59,15 @@ const callerAdmissionProjectionFixture = `policy:
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      default_policy: delivery/default
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `
 
 func TestPolicyCallerAdmissionProjectionCapturesNormalizedProfiles(t *testing.T) {
@@ -133,7 +133,7 @@ func TestPolicyCallerAdmissionOmittedLimitsRemainPreparable(t *testing.T) {
 	catalog, err := input.Compile(context.Background(), testAcceptanceCapability{})
 	requireNoError(t, err)
 
-	credentials, err := policyruntime.NewCredentialProfiles([]string{"dkim2-client"})
+	credentials, err := policyruntime.NewCredentialProfiles([]string{"delivery-client"})
 	requireNoError(t, err)
 
 	prepared, err := admission.Prepare(input.CallerAdmission(), catalog, credentials)
@@ -213,8 +213,8 @@ func requireAdmissionReferences(t *testing.T, references []registry.ClientAdmiss
 		path   string
 	}{
 		{
-			target: "dkim2/sign-message-instance",
-			schema: "dkim2/sign-message-instance/v1",
+			target: "delivery/sign-message-instance",
+			schema: "delivery/sign-message-instance/v1",
 			path:   "policy.api.clients[0].targets[0].actions[0]",
 		},
 		{

@@ -19,7 +19,7 @@ import (
 
 const genericLuaProviderFixture = `policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -54,7 +54,7 @@ const genericLuaProviderFixture = `policy:
       effects:
         audit:
           kind: obligation
-          provider: dkim2/risk
+          provider: delivery/risk
           targets: [{action: sign-message-instance}]
           execution: host_sync
       domain_plans:
@@ -63,24 +63,24 @@ const genericLuaProviderFixture = `policy:
             final_decision:
               providers:
                 - name: base
-                  use: dkim2/base
+                  use: delivery/base
                 - name: risk
-                  use: dkim2/risk
+                  use: delivery/risk
                   after: [base]
       policy_sets:
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      domain_plan: dkim2/default
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      domain_plan: delivery/default
+      default_policy: delivery/default
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `
 
 const genericLuaInconsistentSchemaFixture = `policy:
@@ -140,8 +140,8 @@ func TestGenericLuaProviderReferencesResolveToAuthorityOwnedIdentities(t *testin
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	base, _ := findProviderAndEffectOptional(input, "dkim2/lua.reputation.base", "")
-	risk, effect := findProviderAndEffect(t, input, "dkim2/lua.reputation.risk", "dkim2/audit")
+	base, _ := findProviderAndEffectOptional(input, "delivery/lua.reputation.base", "")
+	risk, effect := findProviderAndEffect(t, input, "delivery/lua.reputation.risk", "delivery/audit")
 
 	if got := risk.Requires(); !slices.Equal(got, []string{base.ID()}) {
 		t.Fatalf("risk requires = %v, want [%s]", got, base.ID())
@@ -158,7 +158,7 @@ func TestGenericLuaProviderReferencesResolveToAuthorityOwnedIdentities(t *testin
 		t.Fatalf("fact-only base executions = %v, want none", base.Executions())
 	}
 
-	projected, err := LuaProviderOutputs(input.Policy, "dkim2", "risk")
+	projected, err := LuaProviderOutputs(input.Policy, "delivery", "risk")
 	requireNoError(t, err)
 
 	if len(projected) != 1 || projected[0].ID != "lua.reputation.risk_score" {
@@ -168,7 +168,7 @@ func TestGenericLuaProviderReferencesResolveToAuthorityOwnedIdentities(t *testin
 	catalog, err := input.Compile(context.Background(), testAcceptanceCapability{})
 	requireNoError(t, err)
 
-	target := lookupCompiledTarget(t, catalog, "dkim2", "sign-message-instance")
+	target := lookupCompiledTarget(t, catalog, "delivery", "sign-message-instance")
 
 	checkpoint, ok := target.DomainPlan().Checkpoint("final_decision")
 	if !ok {
@@ -222,7 +222,7 @@ func TestGenericLuaProviderOutputProjectionRequiresLuaCompatibleExactSchemas(t *
 func assertGenericLuaProviderShape(t *testing.T, provider registry.ProviderDefinition) {
 	t.Helper()
 
-	if got := targetStrings(provider.Targets()); !slices.Equal(got, []string{"dkim2/sign-message-instance"}) {
+	if got := targetStrings(provider.Targets()); !slices.Equal(got, []string{"delivery/sign-message-instance"}) {
 		t.Fatalf("%s targets = %v, want derived exact target", provider.ID(), got)
 	}
 

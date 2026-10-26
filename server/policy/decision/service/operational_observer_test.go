@@ -194,7 +194,7 @@ func runDecisionObservationCase(t *testing.T, test decisionObservationCase) {
 	}
 
 	if test.wantAdmitted && (result.RequestID.String() != "request-authority" ||
-		result.Target.Namespace() != "dkim2" || result.Target.Action() != "sign-message-instance") {
+		result.Target.Namespace() != "delivery" || result.Target.Action() != "sign-message-instance") {
 		t.Fatalf("admitted correlation = %#v", result)
 	}
 

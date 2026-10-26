@@ -136,7 +136,7 @@ func newTargetCatalogRecord(t *testing.T) (TargetCatalogRecord, []decision.FactS
 		t.Fatalf("registry.NewFactSchema() error = %v", err)
 	}
 
-	identity, err := registry.NewSchemaIdentity("dkim2", "sign", "v1")
+	identity, err := registry.NewSchemaIdentity("delivery", "sign", "v1")
 	if err != nil {
 		t.Fatalf("registry.NewSchemaIdentity() error = %v", err)
 	}
@@ -146,7 +146,7 @@ func newTargetCatalogRecord(t *testing.T) (TargetCatalogRecord, []decision.FactS
 		t.Fatalf("registry.NewSchemaDefinition() error = %v", err)
 	}
 
-	target, err := decision.NewTarget("dkim2", "sign")
+	target, err := decision.NewTarget("delivery", "sign")
 	if err != nil {
 		t.Fatalf("decision.NewTarget() error = %v", err)
 	}

@@ -26,9 +26,9 @@ policy:
       - principal: policy-bearer-evaluator
         authentication_kinds: [oidc_bearer]
         targets:
-          - namespace: dkim2
+          - namespace: delivery
             actions: [sign-message]
-        allowed_schemas: [dkim2/sign-message/v1]
+        allowed_schemas: [delivery/sign-message/v1]
         allowed_subject_attributes: [account, groups]
         allowed_resource_attributes: [mail_from]
         allowed_environment_attributes: [network.risk]
@@ -47,9 +47,9 @@ policy:
             username: policy-automation
             password: ${POLICY_BASIC_PASSWORD}
         targets:
-          - namespace: dkim2
+          - namespace: delivery
             actions: [sign-message]
-        allowed_schemas: [dkim2/sign-message/v1]
+        allowed_schemas: [delivery/sign-message/v1]
         allowed_subject_attributes: [account]
         allowed_resource_attributes: [mail_from]
         allowed_environment_attributes: [network.risk]
@@ -61,7 +61,7 @@ policy:
         diagnostics: false
         require_mtls: false
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message:
@@ -73,15 +73,15 @@ policy:
           visibility: private
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message
-      schema: dkim2/sign-message/v1
+      schema: delivery/sign-message/v1
       mode: enforce
-      default_policy: dkim2/default
+      default_policy: delivery/default
       no_match: deny
       timeouts:
         evaluation: 2s
         provider_default: 500ms
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]

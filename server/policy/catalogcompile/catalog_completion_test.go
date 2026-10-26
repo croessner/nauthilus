@@ -30,7 +30,7 @@ import (
 
 const (
 	testSharedSetID = "common/shared"
-	testRootSetID   = "dkim2/root"
+	testRootSetID   = "delivery/root"
 	testEffectID    = "common/notice"
 	decisionPoint   = "final_decision"
 )
@@ -43,7 +43,7 @@ func (catalogAcceptanceCapability) Accept(context.Context, effectsupervisor.Plan
 }
 
 func TestPolicySetIdentitiesAreQualifiedAndPrivateByDefault(t *testing.T) {
-	identity, err := registry.NewPolicySetID("dkim2", "root")
+	identity, err := registry.NewPolicySetID("delivery", "root")
 	if err != nil {
 		t.Fatalf("NewPolicySetID() error = %v", err)
 	}
@@ -86,7 +86,7 @@ func TestCatalogCompilesExactExportedImportAndOnlyReferencedSets(t *testing.T) {
 		t.Fatalf("checkpoint policy sets = %v, want exact root/import order", got)
 	}
 
-	if checkpoint.ContainsPolicySet("dkim2/unreferenced") {
+	if checkpoint.ContainsPolicySet("delivery/unreferenced") {
 		t.Fatal("unreferenced namespace set became executable")
 	}
 
@@ -217,7 +217,7 @@ func TestCatalogRequiresPostActionAcceptanceCapability(t *testing.T) {
 
 func TestCatalogValidatesEffectTargetAndTypedParameterSchema(t *testing.T) {
 	fixture := newCatalogCompletionFixture(t, registry.PolicySetVisibilityExported, false)
-	otherTarget := mustCatalogTarget(t, "dkim2", "verify")
+	otherTarget := mustCatalogTarget(t, "delivery", "verify")
 	fixture.effects = []registry.EffectDefinition{mustCatalogEffect(t, registry.EffectDefinitionInput{
 		ID:        testEffectID,
 		Kind:      registry.EffectKindObligation,
@@ -316,13 +316,13 @@ func TestCatalogRejectsInvalidAndDuplicateTargetDiagnosticAliases(t *testing.T) 
 
 func TestCatalogRequiresExplicitGenericNoMatchAndRejectsAuthnNoMatch(t *testing.T) {
 	fixture := newCatalogCompletionFixture(t, registry.PolicySetVisibilityExported, false)
-	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", "", "")
+	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", "", "")
 
 	if _, err := fixture.tryCompile(); !errors.Is(err, ErrMissingNoMatchBehavior) {
 		t.Fatalf("Compile() missing no_match error = %v, want missing behavior", err)
 	}
 
-	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", "", "permit")
+	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", "", "permit")
 	if _, err := fixture.tryCompile(); !errors.Is(err, ErrInvalidNoMatchBehavior) {
 		t.Fatalf("Compile() permit no_match error = %v, want invalid behavior", err)
 	}
@@ -338,9 +338,9 @@ func TestCatalogAcceptsGenericNotApplicableNoMatch(t *testing.T) {
 	fixture.activation = mustCatalogActivation(
 		t,
 		"policy.targets[0]",
-		"dkim2",
+		"delivery",
 		"sign",
-		"dkim2/sign/v1",
+		"delivery/sign/v1",
 		"",
 		"not_applicable",
 	)
@@ -355,13 +355,13 @@ func TestCatalogAcceptsGenericNotApplicableNoMatch(t *testing.T) {
 
 func TestCatalogRequiresDefaultPolicySetToUseAnExactCheckpointBinding(t *testing.T) {
 	fixture := newCatalogCompletionFixture(t, registry.PolicySetVisibilityExported, false)
-	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", "dkim2/unreferenced", "deny")
+	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", "delivery/unreferenced", "deny")
 
 	if _, err := fixture.tryCompile(); !errors.Is(err, ErrDefaultPolicySetUnbound) {
 		t.Fatalf("Compile() unbound default error = %v, want exact checkpoint binding", err)
 	}
 
-	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", testSharedSetID, "deny")
+	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", testSharedSetID, "deny")
 	if _, err := fixture.tryCompile(); !errors.Is(err, ErrDefaultPolicySetNamespaceMismatch) {
 		t.Fatalf("Compile() cross-namespace default error = %v, want explicit import boundary", err)
 	}
@@ -401,12 +401,12 @@ func TestStandardAuthCannotBeExportedCrossImportedOrAssignedOutsideAuthn(t *test
 
 	fixture := newCatalogCompletionFixture(t, registry.PolicySetVisibilityExported, false)
 
-	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", registry.BuiltinStandardAuthPolicySet, "deny")
+	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", registry.BuiltinStandardAuthPolicySet, "deny")
 	if _, err := fixture.tryCompile(); !errors.Is(err, ErrStandardAuthTargetMismatch) {
 		t.Fatalf("Compile() standard_auth non-authn error = %v, want target mismatch", err)
 	}
 
-	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", "", "deny")
+	fixture.activation = mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", "", "deny")
 	fixture.rootSet = mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{
 		ID:      testRootSetIDValue(t),
 		Imports: []registry.PolicySetImport{mustCatalogImport(t, registry.BuiltinStandardAuthPolicySet, fixture.target, decisionPoint, fixture.contract)},
@@ -501,8 +501,8 @@ func policySetBindingGraphCases(t *testing.T) []policySetBindingCase {
 
 	return []policySetBindingCase{
 		{name: "cycle", mutate: func(fixture *catalogCompletionFixture) {
-			firstID := mustCatalogSetID(t, "dkim2/first")
-			secondID := mustCatalogSetID(t, "dkim2/second")
+			firstID := mustCatalogSetID(t, "delivery/first")
+			secondID := mustCatalogSetID(t, "delivery/second")
 			fixture.rootSet = mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{
 				ID:      firstID,
 				Imports: []registry.PolicySetImport{mustCatalogImport(t, secondID.String(), fixture.target, decisionPoint, registry.ExportContract{})},
@@ -579,7 +579,7 @@ type catalogCompletionFixture struct {
 func newCatalogCompletionFixture(t *testing.T, visibility registry.PolicySetVisibility, postAction bool) *catalogCompletionFixture {
 	t.Helper()
 
-	target := mustCatalogTarget(t, "dkim2", "sign")
+	target := mustCatalogTarget(t, "delivery", "sign")
 	factContract := mustCatalogFactContract(t, "input.domain", decision.ValueKindString)
 	contract := mustCatalogContract(t, decisionPoint, []registry.FactContract{factContract}, []decision.Effect{decision.EffectDeny}, []string{testEffectID})
 	sharedRule := mustCatalogRule(t, "shared_deny", target, decisionPoint, factContract)
@@ -598,7 +598,7 @@ func newCatalogCompletionFixture(t *testing.T, visibility registry.PolicySetVisi
 		ID:      testRootSetIDValue(t),
 		Imports: []registry.PolicySetImport{mustCatalogImport(t, testSharedSetID, target, decisionPoint, contract)},
 	})
-	unreferenced := mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{ID: mustCatalogSetID(t, "dkim2/unreferenced")})
+	unreferenced := mustCatalogPolicySet(t, registry.PolicySetDefinitionInput{ID: mustCatalogSetID(t, "delivery/unreferenced")})
 	plan := mustCatalogPlan(t, target, []registry.CheckpointDefinition{
 		mustCatalogCheckpoint(t, decisionPoint, []registry.PolicySetImport{
 			mustCatalogImport(t, testRootSetID, target, decisionPoint, registry.ExportContract{}),
@@ -622,7 +622,7 @@ func newCatalogCompletionFixture(t *testing.T, visibility registry.PolicySetVisi
 	}
 
 	targetDefinition, schema := mustCatalogTargetAndSchema(t, target)
-	activation := mustCatalogActivation(t, "policy.targets[0]", "dkim2", "sign", "dkim2/sign/v1", "", "deny")
+	activation := mustCatalogActivation(t, "policy.targets[0]", "delivery", "sign", "delivery/sign/v1", "", "deny")
 
 	return &catalogCompletionFixture{
 		target:       target,
@@ -643,7 +643,7 @@ func newCatalogCompletionFixture(t *testing.T, visibility registry.PolicySetVisi
 func (f *catalogCompletionFixture) tryCompile() (*policyruntime.TargetCatalog, error) {
 	sets := append([]registry.PolicySetDefinition{f.sharedSet, f.rootSet}, f.extraSets...)
 
-	ownership, err := registry.NewNamespaceOwnership("test.catalog", []string{"common", "dkim2"})
+	ownership, err := registry.NewNamespaceOwnership("test.catalog", []string{"common", "delivery"})
 	if err != nil {
 		return nil, err
 	}

@@ -43,13 +43,13 @@ func TestPolicyHTTPRejectsStrictJSONBeforeService(t *testing.T) {
 
 	for name, body := range map[string]string{
 		"array":                `[]`,
-		"duplicate":            `{"version":"1","version":"1","target":{"namespace":"dkim2","action":"sign-message"}}`,
-		"unknown":              `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"unknown":true}`,
-		"nested value unknown": `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"string":"a","extra":true}}}`,
-		"plus integer":         `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"integer":"+1"}}}`,
-		"leading zero integer": `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"integer":"01"}}}`,
-		"null optional object": `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"options":null}`,
-		"multiple kind":        `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"string":"a","boolean":true}}}`,
+		"duplicate":            `{"version":"1","version":"1","target":{"namespace":"delivery","action":"sign-message"}}`,
+		"unknown":              `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"unknown":true}`,
+		"nested value unknown": `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"string":"a","extra":true}}}`,
+		"plus integer":         `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"integer":"+1"}}}`,
+		"leading zero integer": `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"integer":"01"}}}`,
+		"null optional object": `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"options":null}`,
+		"multiple kind":        `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"string":"a","boolean":true}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := servePolicyRequest(engine, body, "Bearer opaque")
@@ -69,7 +69,7 @@ func TestPolicyHTTPRejectsStrictJSONBeforeService(t *testing.T) {
 }
 
 func TestPolicyHTTPPreservesDoublePrecision(t *testing.T) {
-	request, err := decodeRequest([]byte(`{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"double":16777217}}}`))
+	request, err := decodeRequest([]byte(`{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"double":16777217}}}`))
 	if err != nil {
 		t.Fatalf("decode precise double: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestPolicyHTTPPreservesDoublePrecision(t *testing.T) {
 }
 
 func TestPolicyHTTPAcceptsSchemaValidNegativeZeroInteger(t *testing.T) {
-	request, err := decodeRequest([]byte(`{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"integer":"-0"}}}`))
+	request, err := decodeRequest([]byte(`{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"integer":"-0"}}}`))
 	if err != nil {
 		t.Fatalf("decode schema-valid negative zero: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestPolicyHTTPCoversEveryEffectDiagnosticsAndBodyLimit(t *testing.T) {
 		})
 	}
 
-	response := servePolicyRequest(policyEngine(&recordingService{response: testResponse(t)}), `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"},"attributes":{"x":{"string":"`+strings.Repeat("a", decision.MaximumOpaqueCredentialBytes)+`"}}}`, "Bearer opaque")
+	response := servePolicyRequest(policyEngine(&recordingService{response: testResponse(t)}), `{"version":"1","target":{"namespace":"delivery","action":"sign-message"},"attributes":{"x":{"string":"`+strings.Repeat("a", decision.MaximumOpaqueCredentialBytes)+`"}}}`, "Bearer opaque")
 	if response.Code != http.StatusRequestEntityTooLarge || response.Header().Get("Cache-Control") != noStore {
 		t.Fatalf("oversized status/cache = %d/%q", response.Code, response.Header().Get("Cache-Control"))
 	}
@@ -362,7 +362,7 @@ func TestPolicyHTTPDerivesTrustedProxyEvidenceFromCapturedConfig(t *testing.T) {
 	}
 }
 
-const validRequestJSON = `{"version":"1","target":{"namespace":"dkim2","action":"sign-message"}}`
+const validRequestJSON = `{"version":"1","target":{"namespace":"delivery","action":"sign-message"}}`
 
 type recordingService struct {
 	response                    decision.DecisionResponse
@@ -469,7 +469,7 @@ func testResponseWithEffect(t *testing.T, effect decision.Effect, diagnostics bo
 		t.Fatalf("new status: %v", err)
 	}
 
-	metadata, err := decision.NewPolicyMetadata("dkim2/default", "v1", "permit", 1)
+	metadata, err := decision.NewPolicyMetadata("delivery/default", "v1", "permit", 1)
 	if err != nil {
 		t.Fatalf("new metadata: %v", err)
 	}

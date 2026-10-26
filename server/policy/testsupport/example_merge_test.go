@@ -16,10 +16,10 @@ func TestMergeExamplePreservesComponentBindings(t *testing.T) {
 		{
 			name:     "distinct geographic components",
 			base:     []any{map[string]any{"component": "observation", "targets": []any{"reputation/observe"}}},
-			addition: []any{map[string]any{"component": "smtp_peer", "targets": []any{"dkim2/accept-message-instance"}}},
+			addition: []any{map[string]any{"component": "smtp_peer", "targets": []any{"delivery/accept-message-instance"}}},
 			want: []any{
 				map[string]any{"component": "observation", "targets": []any{"reputation/observe"}},
-				map[string]any{"component": "smtp_peer", "targets": []any{"dkim2/accept-message-instance"}},
+				map[string]any{"component": "smtp_peer", "targets": []any{"delivery/accept-message-instance"}},
 			},
 		},
 		{
@@ -32,11 +32,11 @@ func TestMergeExamplePreservesComponentBindings(t *testing.T) {
 		},
 		{
 			name:     "distinct components on one target",
-			base:     []any{map[string]any{"component": "assessment", "target": "dkim2/accept-message-instance"}},
-			addition: []any{map[string]any{"component": "audit", "target": "dkim2/accept-message-instance"}},
+			base:     []any{map[string]any{"component": "assessment", "target": "delivery/accept-message-instance"}},
+			addition: []any{map[string]any{"component": "audit", "target": "delivery/accept-message-instance"}},
 			want: []any{
-				map[string]any{"component": "assessment", "target": "dkim2/accept-message-instance"},
-				map[string]any{"component": "audit", "target": "dkim2/accept-message-instance"},
+				map[string]any{"component": "assessment", "target": "delivery/accept-message-instance"},
+				map[string]any{"component": "audit", "target": "delivery/accept-message-instance"},
 			},
 		},
 	}

@@ -43,7 +43,7 @@ func TestPolicyRecursiveCodecsCapNestingDepth(t *testing.T) {
 }
 
 func TestPolicyFlatFormatsRejectSparseArrayIndices(t *testing.T) {
-	input := fmt.Sprintf("policy.targets[%d].namespace=dkim2\n", maximumFlatCollectionItems)
+	input := fmt.Sprintf("policy.targets[%d].namespace=delivery\n", maximumFlatCollectionItems)
 
 	for _, format := range flatFormatAliases() {
 		t.Run(format, func(t *testing.T) {

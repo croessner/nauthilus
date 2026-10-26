@@ -15,9 +15,9 @@ import (
 func TestPolicyProviderDefaultFitsEvaluationBudget(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 3s}
 `))

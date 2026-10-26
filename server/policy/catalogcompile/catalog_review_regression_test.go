@@ -883,8 +883,8 @@ func mustCatalogExpressionDecisionRule(
 }
 
 func TestPlanBindingsRejectTargetAndCheckpointMismatch(t *testing.T) {
-	target := mustCatalogTarget(t, "dkim2", "sign")
-	other := mustCatalogTarget(t, "dkim2", "verify")
+	target := mustCatalogTarget(t, "delivery", "sign")
+	other := mustCatalogTarget(t, "delivery", "verify")
 	setID := testRootSetIDValue(t)
 
 	wrongCheckpoint := mustCatalogImport(t, setID.String(), target, "preflight", registry.ExportContract{})
@@ -1002,7 +1002,7 @@ func TestEffectDescriptorsRejectUnboundedParameterCatalogs(t *testing.T) {
 		ID:         "common/oversized",
 		Kind:       registry.EffectKindObligation,
 		Execution:  registry.ExecutionReturnOnly,
-		Targets:    []decision.Target{mustCatalogTarget(t, "dkim2", "sign")},
+		Targets:    []decision.Target{mustCatalogTarget(t, "delivery", "sign")},
 		Parameters: parameters,
 	})
 	if !errors.Is(err, registry.ErrInvalidEffectDefinition) {
@@ -1011,7 +1011,7 @@ func TestEffectDescriptorsRejectUnboundedParameterCatalogs(t *testing.T) {
 }
 
 func TestEffectDescriptorsRejectAggregateParameterSizeOverflow(t *testing.T) {
-	target := mustCatalogTarget(t, "dkim2", "sign")
+	target := mustCatalogTarget(t, "delivery", "sign")
 	parameters := make([]registry.ParameterSchema, 0, 2)
 	values := make(map[string]decision.Value, 2)
 
@@ -1028,7 +1028,7 @@ func TestEffectDescriptorsRejectAggregateParameterSizeOverflow(t *testing.T) {
 	}
 
 	effect := mustCatalogEffect(t, registry.EffectDefinitionInput{
-		ID:         "dkim2/large",
+		ID:         "delivery/large",
 		Kind:       registry.EffectKindObligation,
 		Execution:  registry.ExecutionReturnOnly,
 		Targets:    []decision.Target{target},
@@ -1090,10 +1090,10 @@ func makeCatalogEnumValues(count int, length int) []string {
 
 func TestEffectUseValidationSelectsDeterministicFirstUnknownParameter(t *testing.T) {
 	effect := mustCatalogEffect(t, registry.EffectDefinitionInput{
-		ID:        "dkim2/notice",
+		ID:        "delivery/notice",
 		Kind:      registry.EffectKindObligation,
 		Execution: registry.ExecutionReturnOnly,
-		Targets:   []decision.Target{mustCatalogTarget(t, "dkim2", "sign")},
+		Targets:   []decision.Target{mustCatalogTarget(t, "delivery", "sign")},
 	})
 
 	use, err := registry.NewEffectUse(effect.ID(), map[string]decision.Value{
@@ -1114,10 +1114,10 @@ func TestEffectUseValidationSelectsDeterministicFirstUnknownParameter(t *testing
 
 func TestEffectUseValidationRejectsOversizedArgumentMaps(t *testing.T) {
 	effect := mustCatalogEffect(t, registry.EffectDefinitionInput{
-		ID:        "dkim2/notice",
+		ID:        "delivery/notice",
 		Kind:      registry.EffectKindObligation,
 		Execution: registry.ExecutionReturnOnly,
-		Targets:   []decision.Target{mustCatalogTarget(t, "dkim2", "sign")},
+		Targets:   []decision.Target{mustCatalogTarget(t, "delivery", "sign")},
 	})
 	values := make(map[string]decision.Value, 65)
 
@@ -1137,7 +1137,7 @@ func TestEffectUseValidationRejectsOversizedArgumentMaps(t *testing.T) {
 
 func TestPolicySetRejectsUnconstructedRule(t *testing.T) {
 	_, err := registry.NewPolicySetDefinition(registry.PolicySetDefinitionInput{
-		ID:    mustCatalogSetID(t, "dkim2/invalid"),
+		ID:    mustCatalogSetID(t, "delivery/invalid"),
 		Rules: []registry.PolicyRule{{}},
 	})
 	if !errors.Is(err, registry.ErrInvalidPolicySetDefinition) {

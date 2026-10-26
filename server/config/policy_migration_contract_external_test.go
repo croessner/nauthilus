@@ -931,7 +931,7 @@ func (mutation migrationInvalidMutation) applyBindingAndSourceMutation(document 
 // invalidGenericReportTarget isolates the authn-only report validation rule.
 func invalidGenericReportTarget() policyconfig.TargetConfig {
 	return policyconfig.TargetConfig{
-		Namespace: "dkim2", Action: "sign-message-instance", Schema: "dkim2/sign-message-instance/v1",
+		Namespace: "delivery", Action: "sign-message-instance", Schema: "delivery/sign-message-instance/v1",
 		Mode: "enforce", NoMatch: "deny",
 		Timeouts: policyconfig.TargetTimeoutsConfig{Evaluation: 2 * time.Second, ProviderDefault: time.Second},
 		Report:   policyconfig.ReportConfig{IncludeFSM: true},

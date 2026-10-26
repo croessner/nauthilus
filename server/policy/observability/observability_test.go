@@ -95,7 +95,7 @@ func TestDecisionLogFieldsUseSafeKeysOnly(t *testing.T) {
 	}
 }
 
-func TestDKIM2DecisionLogFieldsDoNotLeakRequestIdentities(t *testing.T) {
+func TestTargetDecisionLogFieldsDoNotLeakRequestIdentities(t *testing.T) {
 	const (
 		smtpPeerIP   = "203.0.113.77"
 		signerDomain = "sensitive-signer.example"
@@ -103,7 +103,7 @@ func TestDKIM2DecisionLogFieldsDoNotLeakRequestIdentities(t *testing.T) {
 
 	for _, outcome := range []policy.Decision{policy.DecisionPermit, policy.DecisionDeny} {
 		fields := DecisionLogFields(DecisionLogEntry{
-			Mode: "enforce", Set: "dkim2_verifier", Name: "final_decision",
+			Mode: "enforce", Set: "delivery_verifier", Name: "final_decision",
 			Operation: policy.OperationAuthenticate, Stage: policy.StageAuthDecision, Decision: outcome,
 		})
 		serialized := fmt.Sprint(fields)
@@ -211,7 +211,7 @@ func TestPrometheusRecorderUsesBoundedLabels(t *testing.T) {
 	}
 }
 
-func TestDKIM2DecisionMetricsDoNotLeakRequestIdentities(t *testing.T) {
+func TestTargetDecisionMetricsDoNotLeakRequestIdentities(t *testing.T) {
 	const (
 		smtpPeerIP   = "203.0.113.77"
 		signerDomain = "sensitive-signer.example"
@@ -227,8 +227,8 @@ func TestDKIM2DecisionMetricsDoNotLeakRequestIdentities(t *testing.T) {
 	for _, outcome := range []policy.Decision{policy.DecisionPermit, policy.DecisionDeny} {
 		recorder.RecordDecision(context.Background(), DecisionMeasurement{
 			Mode: "enforce", Operation: policy.OperationAuthenticate, Stage: policy.StageAuthDecision,
-			Decision: outcome, PolicyName: "dkim2_verifier", ResponseMarker: "dkim2.response",
-			FSMEventMarker: "dkim2.final",
+			Decision: outcome, PolicyName: "delivery_verifier", ResponseMarker: "delivery.response",
+			FSMEventMarker: "delivery.final",
 		})
 	}
 

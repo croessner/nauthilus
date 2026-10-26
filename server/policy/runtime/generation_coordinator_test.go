@@ -521,7 +521,7 @@ func newGenerationTargetCatalogRecord(t *testing.T) TargetCatalogRecord {
 	record, _ := newTargetCatalogRecord(t)
 
 	provider, err := registry.NewProviderDefinition(registry.ProviderDefinitionInput{
-		ID:         "dkim2/test_provider",
+		ID:         "delivery/test_provider",
 		Targets:    []decision.Target{record.Target},
 		Executions: []registry.ExecutionClass{registry.ExecutionHostSync},
 	})
@@ -532,7 +532,7 @@ func newGenerationTargetCatalogRecord(t *testing.T) TargetCatalogRecord {
 	record.Providers = append(record.Providers, provider)
 
 	effect, err := registry.NewEffectDefinition(registry.EffectDefinitionInput{
-		ID:        "dkim2/test_effect",
+		ID:        "delivery/test_effect",
 		Provider:  provider.ID(),
 		Targets:   []decision.Target{record.Target},
 		Kind:      registry.EffectKindObligation,

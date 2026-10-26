@@ -18,7 +18,7 @@ import (
 
 const genericNativeProviderFixture = `policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -43,31 +43,31 @@ const genericNativeProviderFixture = `policy:
             final_decision:
               providers:
                 - name: risk
-                  use: dkim2/risk
+                  use: delivery/risk
       policy_sets:
         default: {rules: []}
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      domain_plan: dkim2/default
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      domain_plan: delivery/default
+      default_policy: delivery/default
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
       plans:
-        final_decision: {policy_sets: [dkim2/default]}
+        final_decision: {policy_sets: [delivery/default]}
 `
 
 func TestGenericNativeProviderProjectsPluginFactsWithoutImplicitEffectExecution(t *testing.T) {
 	input, err := Normalize(context.Background(), decodePolicy(t, genericNativeProviderFixture))
 	requireNoError(t, err)
 
-	provider, _ := findProviderAndEffectOptional(input, "dkim2/plugin.reputation.risk", "")
+	provider, _ := findProviderAndEffectOptional(input, "delivery/plugin.reputation.risk", "")
 	if got := provider.Executions(); len(got) != 0 {
 		t.Fatalf("fact-only native provider executions = %v, want none", got)
 	}
 
-	if got := targetStrings(provider.Targets()); !slices.Equal(got, []string{"dkim2/sign-message-instance"}) {
+	if got := targetStrings(provider.Targets()); !slices.Equal(got, []string{"delivery/sign-message-instance"}) {
 		t.Fatalf("native provider targets = %v, want configured target", got)
 	}
 
@@ -94,8 +94,8 @@ func TestNativeProviderAliasKeepsModuleLocalComponentIdentity(t *testing.T) {
 	input, err := Normalize(context.Background(), decodePolicy(t, source))
 	requireNoError(t, err)
 
-	provider, _ := findProviderAndEffectOptional(input, "dkim2/plugin.reputation.assessment", "")
-	if provider.ID() != "dkim2/plugin.reputation.assessment" {
+	provider, _ := findProviderAndEffectOptional(input, "delivery/plugin.reputation.assessment", "")
+	if provider.ID() != "delivery/plugin.reputation.assessment" {
 		t.Fatal("authored alias replaced native component identity")
 	}
 }
@@ -104,7 +104,7 @@ func TestNativeProviderAliasKeepsModuleLocalComponentIdentity(t *testing.T) {
 func TestNativeProviderAliasesRejectDuplicateComponentAndWrongKind(t *testing.T) {
 	for _, wrongKind := range []bool{false, true} {
 		document := decodePolicy(t, genericNativeProviderFixture)
-		namespace := document.Policy.Namespaces["dkim2"]
+		namespace := document.Policy.Namespaces["delivery"]
 		provider := namespace.Providers["risk"]
 
 		provider.Component = "assessment"
@@ -116,7 +116,7 @@ func TestNativeProviderAliasesRejectDuplicateComponentAndWrongKind(t *testing.T)
 			namespace.Providers["second_alias"] = provider
 		}
 
-		document.Policy.Namespaces["dkim2"] = namespace
+		document.Policy.Namespaces["delivery"] = namespace
 		if _, err := Normalize(context.Background(), document); err == nil {
 			t.Fatal("ambiguous or unsupported component alias accepted")
 		}

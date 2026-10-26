@@ -57,7 +57,7 @@ provider. The request table is:
 
 ```lua
 {
-    target = { namespace = "dkim2", action = "sign-message" },
+    target = { namespace = "delivery", action = "sign-message" },
     caller = {
         principal = "mail-gateway",
         client_id = "smtp-edge",
@@ -123,11 +123,11 @@ and typed effect schema:
 
 ```lua
 {
-    target = { namespace = "dkim2", action = "sign-message" },
+    target = { namespace = "delivery", action = "sign-message" },
     caller = { principal = "mail-gateway", client_id = "smtp-edge",
                authentication_kind = "private_key_jwt", scopes = { "policy.evaluate" } },
     facts = { -- the same strict admitted-fact view as fact collection },
-    effect = "dkim2/record-audit",
+    effect = "delivery/record-audit",
     parameters = {
         { name = "message", value = { kind = "string", value = "accepted" } },
     },
@@ -160,7 +160,7 @@ Generic Lua providers are authored under the namespace that owns their provider 
 ```yaml
 policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message:
@@ -185,7 +185,7 @@ policy:
       effects:
         record-audit:
           kind: obligation
-          provider: dkim2/risk
+          provider: delivery/risk
           targets: [{action: sign-message}]
           execution: host_sync
           parameters:
@@ -197,7 +197,7 @@ policy:
 ```
 
 `module` is a canonical lowercase Lua authority. The provider above becomes
-`dkim2/lua.reputation.risk`. Targets may be explicit or derived from exact plan/effect bindings; declared facts require at
+`delivery/lua.reputation.risk`. Targets may be explicit or derived from exact plan/effect bindings; declared facts require at
 least one target, one identical schema shape across all targets, and `allowed_sources: [lua]` (possibly alongside other
 allowed sources).
 

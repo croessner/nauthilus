@@ -42,7 +42,7 @@ const crossNamespacePolicyFixture = `policy:
                 in: [high, critical]
               then:
                 decision: deny
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -57,29 +57,29 @@ const crossNamespacePolicyFixture = `policy:
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      default_policy: delivery/default
       no_match: not_applicable
       timeouts:
         evaluation: 2s
         provider_default: 500ms
       plans:
         final_decision:
-          policy_sets: [shared/deny-risk, dkim2/default]
+          policy_sets: [shared/deny-risk, delivery/default]
 `
 
 const exactGenericTargetFixture = `policy:
   api:
     clients:
-      - principal: dkim2-client
+      - principal: delivery-client
         authentication_kinds: [oidc_bearer]
         targets:
-          - namespace: dkim2
+          - namespace: delivery
             actions: [sign-message-instance]
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -90,17 +90,17 @@ const exactGenericTargetFixture = `policy:
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      default_policy: delivery/default
       no_match: deny
       timeouts:
         evaluation: 2s
         provider_default: 500ms
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `
 
 // Accept proves that the standalone catalog harness receives host capability by injection.
@@ -202,7 +202,7 @@ func TestUnifiedPolicyInputConfiguredAuthnUsesQualifiedBuiltinDefault(t *testing
 func TestUnifiedPolicyInputLeavesUnactivatedGenericDefinitionsInert(t *testing.T) {
 	document := decodePolicy(t, `policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -232,8 +232,8 @@ func TestUnifiedPolicyInputNormalizesExactGenericTargetAndAdmission(t *testing.T
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	activation := findActivation(t, input, "dkim2/sign-message-instance")
-	if got := activation.Schema().String(); got != "dkim2/sign-message-instance/v1" {
+	activation := findActivation(t, input, "delivery/sign-message-instance")
+	if got := activation.Schema().String(); got != "delivery/sign-message-instance/v1" {
 		t.Fatalf("schema = %q, want exact v1", got)
 	}
 
@@ -264,22 +264,22 @@ func TestUnifiedPolicyInputNormalizesExactGenericTargetAndAdmission(t *testing.T
 func TestUnifiedPolicyInputRejectsUndeclaredExactSchema(t *testing.T) {
 	document := decodePolicy(t, `policy:
   namespaces:
-    dkim2:
+    delivery:
       policy_sets:
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      default_policy: delivery/default
       no_match: deny
       timeouts:
         evaluation: 2s
         provider_default: 500ms
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `)
 
 	_, err := Normalize(context.Background(), document)
@@ -298,7 +298,7 @@ func TestUnifiedPolicyInputRejectsUndeclaredExactSchema(t *testing.T) {
 func TestUnifiedPolicyInputRejectsCrossTargetDefault(t *testing.T) {
 	document := decodePolicy(t, `policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -306,9 +306,9 @@ func TestUnifiedPolicyInputRejectsCrossTargetDefault(t *testing.T) {
               v1:
                 facts: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       default_policy: authn/standard_auth
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
@@ -336,7 +336,7 @@ func TestUnifiedPolicyInputNormalizesCrossNamespaceExportBinding(t *testing.T) {
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	activation := findActivation(t, input, "dkim2/sign-message-instance")
+	activation := findActivation(t, input, "delivery/sign-message-instance")
 
 	bindings := activation.PolicySetBindings()
 	if len(bindings) != 2 {
@@ -373,7 +373,7 @@ func TestUnifiedPolicyInputNormalizesCrossNamespaceExportBinding(t *testing.T) {
 func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testing.T) {
 	document := decodePolicy(t, `policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -392,7 +392,7 @@ func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testin
       effects:
         notify:
           kind: obligation
-          provider: dkim2/dispatch
+          provider: delivery/dispatch
           targets:
             - action: sign-message-instance
           execution: host_sync
@@ -400,23 +400,23 @@ func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testin
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      default_policy: delivery/default
       no_match: deny
       timeouts:
         evaluation: 2s
         provider_default: 500ms
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `)
 
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	provider, effect := findProviderAndEffect(t, input, "dkim2/plugin.test.dispatch", "dkim2/notify")
+	provider, effect := findProviderAndEffect(t, input, "delivery/plugin.test.dispatch", "delivery/notify")
 	if provider.Failure() != registry.ProviderFailureContinue {
 		t.Fatalf("provider failure = %q, want continue", provider.Failure())
 	}
@@ -425,7 +425,7 @@ func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testin
 		t.Fatalf("effect binding = %q/%q, want host_sync/%q", effect.Execution(), effect.Provider(), provider.ID())
 	}
 
-	if len(input.Policy.Namespaces["dkim2"].Providers) != 1 || len(input.Policy.Namespaces["dkim2"].Effects) != 1 {
+	if len(input.Policy.Namespaces["delivery"].Providers) != 1 || len(input.Policy.Namespaces["delivery"].Effects) != 1 {
 		t.Fatal("typed provider/effect auxiliary configuration was discarded")
 	}
 }
@@ -433,7 +433,7 @@ func TestUnifiedPolicyInputNormalizesProviderFailureAndEffectExecution(t *testin
 func TestUnifiedPolicyInputAppliesTargetProviderDefaultTimeout(t *testing.T) {
 	document := decodePolicy(t, `policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           sign-message-instance:
@@ -453,27 +453,27 @@ func TestUnifiedPolicyInputAppliesTargetProviderDefaultTimeout(t *testing.T) {
             final_decision:
               providers:
                 - name: risk
-                  use: dkim2/risk
+                  use: delivery/risk
       policy_sets:
         default:
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      domain_plan: dkim2/default
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      domain_plan: delivery/default
+      default_policy: delivery/default
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `)
 
 	input, err := Normalize(context.Background(), document)
 	requireNoError(t, err)
 
-	provider, _ := findProviderAndEffectOptional(input, "dkim2/plugin.test.risk", "")
+	provider, _ := findProviderAndEffectOptional(input, "delivery/plugin.test.risk", "")
 	if provider.Timeout() != 500*time.Millisecond {
 		t.Fatalf("provider timeout = %s, want target default 500ms", provider.Timeout())
 	}

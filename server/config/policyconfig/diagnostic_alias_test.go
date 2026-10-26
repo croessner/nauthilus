@@ -15,21 +15,21 @@ import (
 func TestPolicyDiagnosticAliasCountsOneBoundDefinitionOnce(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       policy_sets:
         default:
           diagnostics: {public_id: default}
           rules: []
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
-      default_policy: dkim2/default
+      schema: delivery/sign-message-instance/v1
+      default_policy: delivery/default
       no_match: deny
       timeouts: {evaluation: 2s, provider_default: 500ms}
       plans:
         final_decision:
-          policy_sets: [dkim2/default]
+          policy_sets: [delivery/default]
 `))
 	requireNoError(t, err)
 	requireNoError(t, Validate(document))

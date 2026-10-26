@@ -25,7 +25,7 @@ func TestPolicyStaticSchemaValidationPaths(t *testing.T) {
             versions:
               latest:
                 facts: []`,
-			path: "policy.namespaces.dkim2.schema_contributions.static.sign-message-instance.versions.latest",
+			path: "policy.namespaces.delivery.schema_contributions.static.sign-message-instance.versions.latest",
 		},
 		{
 			name: "fact attribute",
@@ -39,7 +39,7 @@ func TestPolicyStaticSchemaValidationPaths(t *testing.T) {
                     type: string
                     allowed_sources: [caller]
                     max_length: 64`,
-			path: "policy.namespaces.dkim2.schema_contributions.static.sign-message-instance.versions.v1.facts[0].attribute",
+			path: "policy.namespaces.delivery.schema_contributions.static.sign-message-instance.versions.v1.facts[0].attribute",
 		},
 		{
 			name: "fact source",
@@ -53,13 +53,13 @@ func TestPolicyStaticSchemaValidationPaths(t *testing.T) {
                     type: string
                     allowed_sources: [unknown]
                     max_length: 64`,
-			path: "policy.namespaces.dkim2.schema_contributions.static.sign-message-instance.versions.v1.facts[0].allowed_sources[0]",
+			path: "policy.namespaces.delivery.schema_contributions.static.sign-message-instance.versions.v1.facts[0].allowed_sources[0]",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			document, err := Decode("yaml", strings.NewReader("policy:\n  namespaces:\n    dkim2:\n      schema_contributions:\n        "+test.schema+"\n"))
+			document, err := Decode("yaml", strings.NewReader("policy:\n  namespaces:\n    delivery:\n      schema_contributions:\n        "+test.schema+"\n"))
 			requireNoError(t, err)
 
 			err = Validate(document)

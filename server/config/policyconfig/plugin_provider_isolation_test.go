@@ -15,7 +15,7 @@ import (
 func TestLegacyPluginProviderRejectsGenericNamespaceBinding(t *testing.T) {
 	document, err := Decode("yaml", strings.NewReader(`policy:
   namespaces:
-    dkim2:
+    delivery:
       providers:
         legacy:
           kind: plugin
@@ -28,7 +28,7 @@ func TestLegacyPluginProviderRejectsGenericNamespaceBinding(t *testing.T) {
 
 	var pathError *PathError
 	requireErrorAs(t, err, &pathError)
-	requireEqual(t, "policy.namespaces.dkim2.providers.legacy.kind", pathError.Path)
+	requireEqual(t, "policy.namespaces.delivery.providers.legacy.kind", pathError.Path)
 }
 
 func TestLegacyPluginProviderPreservesCanonicalAuthnBindings(t *testing.T) {

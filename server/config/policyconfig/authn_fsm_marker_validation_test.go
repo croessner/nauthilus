@@ -267,7 +267,7 @@ func TestGenericNamespaceTerminalRulesDoNotRequireFSMEventMarker(t *testing.T) {
 	const content = `
 policy:
   namespaces:
-    dkim2:
+    delivery:
       schema_contributions:
         static:
           verify-message:
@@ -292,18 +292,18 @@ policy:
               then:
                 decision: permit
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: verify-message
-      schema: dkim2/verify-message/v1
+      schema: delivery/verify-message/v1
       mode: enforce
-      default_policy: dkim2/verifier
+      default_policy: delivery/verifier
       no_match: deny
       timeouts:
         evaluation: 2s
         provider_default: 500ms
       plans:
         final_decision:
-          policy_sets: [dkim2/verifier]
+          policy_sets: [delivery/verifier]
 `
 
 	requireNoError(t, validateYAMLDocument(t, content))

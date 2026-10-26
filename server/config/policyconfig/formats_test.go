@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	canonicalRoundTripJSON = `{"policy":{"targets":[{"namespace":"dkim2","action":"sign-message-instance","schema":"dkim2/sign-message-instance/v1","no_match":"deny","timeouts":{"evaluation":"2s","provider_default":"500ms"}}]}}`
+	canonicalRoundTripJSON = `{"policy":{"targets":[{"namespace":"delivery","action":"sign-message-instance","schema":"delivery/sign-message-instance/v1","no_match":"deny","timeouts":{"evaluation":"2s","provider_default":"500ms"}}]}}`
 	canonicalRoundTripTOML = `[[policy.targets]]
-namespace = "dkim2"
+namespace = "delivery"
 action = "sign-message-instance"
-schema = "dkim2/sign-message-instance/v1"
+schema = "delivery/sign-message-instance/v1"
 no_match = "deny"
 [policy.targets.timeouts]
 evaluation = "2s"
@@ -28,9 +28,9 @@ provider_default = "500ms"
 `
 	canonicalRoundTripYAML = `policy:
   targets:
-    - namespace: dkim2
+    - namespace: delivery
       action: sign-message-instance
-      schema: dkim2/sign-message-instance/v1
+      schema: delivery/sign-message-instance/v1
       no_match: deny
       timeouts:
         evaluation: 2s
@@ -38,9 +38,9 @@ provider_default = "500ms"
 `
 	canonicalRoundTripHCL = `policy {
   targets = [{
-    namespace = "dkim2"
+    namespace = "delivery"
     action = "sign-message-instance"
-    schema = "dkim2/sign-message-instance/v1"
+    schema = "delivery/sign-message-instance/v1"
     no_match = "deny"
     timeouts = { evaluation = "2s", provider_default = "500ms" }
   }]
@@ -48,25 +48,25 @@ provider_default = "500ms"
 `
 	canonicalRoundTripTFVars = `policy = {
   targets = [{
-    namespace = "dkim2"
+    namespace = "delivery"
     action = "sign-message-instance"
-    schema = "dkim2/sign-message-instance/v1"
+    schema = "delivery/sign-message-instance/v1"
     no_match = "deny"
     timeouts = { evaluation = "2s", provider_default = "500ms" }
   }]
 }
 `
-	canonicalRoundTripFlat = `policy.targets[0].namespace=dkim2
+	canonicalRoundTripFlat = `policy.targets[0].namespace=delivery
 policy.targets[0].action=sign-message-instance
-policy.targets[0].schema=dkim2/sign-message-instance/v1
+policy.targets[0].schema=delivery/sign-message-instance/v1
 policy.targets[0].no_match=deny
 policy.targets[0].timeouts.evaluation=2s
 policy.targets[0].timeouts.provider_default=500ms
 `
 	canonicalRoundTripINI = `[policy.targets[0]]
-namespace=dkim2
+namespace=delivery
 action=sign-message-instance
-schema=dkim2/sign-message-instance/v1
+schema=delivery/sign-message-instance/v1
 no_match=deny
 [policy.targets[0].timeouts]
 evaluation=2s
@@ -116,16 +116,16 @@ func TestPolicySupportedFormatsDecodeSameContract(t *testing.T) {
 
 func TestPolicyFlatFormatDecodesIndexedTargets(t *testing.T) {
 	document, err := Decode("properties", strings.NewReader(`
-policy.targets[0].namespace=dkim2
+policy.targets[0].namespace=delivery
 policy.targets[0].action=sign-message-instance
-policy.targets[0].schema=dkim2/sign-message-instance/v1
+policy.targets[0].schema=delivery/sign-message-instance/v1
 policy.targets[0].no_match=deny
 policy.targets[0].timeouts.evaluation=2s
 policy.targets[0].timeouts.provider_default=500ms
 `))
 	requireNoError(t, err)
 	requireEqual(t, 1, len(document.Policy.Targets))
-	requireEqual(t, "dkim2", document.Policy.Targets[0].Namespace)
+	requireEqual(t, "delivery", document.Policy.Targets[0].Namespace)
 	requireNoError(t, Validate(Normalize(document)))
 }
 

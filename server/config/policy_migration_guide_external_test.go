@@ -642,9 +642,9 @@ func assertPolicyAPITargetGrants(t *testing.T, clients []policyconfig.ClientProf
 	t.Helper()
 
 	for index, client := range clients {
-		if len(client.Targets) != 1 || client.Targets[0].Namespace != "dkim2" ||
+		if len(client.Targets) != 1 || client.Targets[0].Namespace != "delivery" ||
 			len(client.Targets[0].Actions) != 1 || client.Targets[0].Actions[0] != "sign-message" {
-			t.Fatalf("Policy API client %d target grants = %+v, want exact dkim2/sign-message", index, client.Targets)
+			t.Fatalf("Policy API client %d target grants = %+v, want exact delivery/sign-message", index, client.Targets)
 		}
 	}
 }
@@ -770,7 +770,7 @@ func TestPolicyMigrationGuideGenericNativeExampleValidates(t *testing.T) {
 func assertPolicyMigrationGuideNativeDocument(t *testing.T, document policyconfig.Document) {
 	t.Helper()
 
-	namespace := document.Policy.Namespaces["dkim2"]
+	namespace := document.Policy.Namespaces["delivery"]
 
 	assertPolicyMigrationGuideNativeFactProvider(t, namespace)
 	assertPolicyMigrationGuideNativeFactSchema(t, namespace)
@@ -784,8 +784,8 @@ func assertPolicyMigrationGuideNativeFactProvider(t *testing.T, namespace policy
 
 	provider := namespace.Providers["risk"]
 
-	if got := provider.CanonicalID("dkim2", "risk"); got != "dkim2/plugin.reputation.risk" {
-		t.Fatalf("documented native provider identity = %q, want dkim2/plugin.reputation.risk", got)
+	if got := provider.CanonicalID("delivery", "risk"); got != "delivery/plugin.reputation.risk" {
+		t.Fatalf("documented native provider identity = %q, want delivery/plugin.reputation.risk", got)
 	}
 
 	if provider.Module != "reputation" || len(provider.Targets) != 1 || provider.Targets[0].Action != "sign-message" {
@@ -816,8 +816,8 @@ func assertPolicyMigrationGuideNativeEffectProvider(t *testing.T, namespace poli
 	notifier := namespace.Providers["notifier"]
 	effect := namespace.Effects["record-audit"]
 
-	if effect.Provider != "dkim2/plugin.reputation.notifier" ||
-		effect.Provider != notifier.CanonicalID("dkim2", "notifier") ||
+	if effect.Provider != "delivery/plugin.reputation.notifier" ||
+		effect.Provider != notifier.CanonicalID("delivery", "notifier") ||
 		effect.Execution != "host_sync" {
 		t.Fatalf("documented native effect binding = %q/%q", effect.Provider, effect.Execution)
 	}
@@ -839,7 +839,7 @@ func assertPolicyMigrationGuideNativeEffectSelection(t *testing.T, namespace pol
 
 	selection := rules[0].Then.Obligations[0]
 
-	if selection.ID != "dkim2/record-audit" || selection.Parameters["channel"] != "security" {
+	if selection.ID != "delivery/record-audit" || selection.Parameters["channel"] != "security" {
 		t.Fatalf("documented native effect selection = %q/%v", selection.ID, selection.Parameters)
 	}
 }
@@ -848,7 +848,7 @@ func assertPolicyMigrationGuideNativeEffectSelection(t *testing.T, namespace pol
 func assertPolicyMigrationGuideNativeCatalog(t *testing.T, catalog *policyruntime.TargetCatalog) {
 	t.Helper()
 
-	target, err := decision.NewTarget("dkim2", "sign-message")
+	target, err := decision.NewTarget("delivery", "sign-message")
 	if err != nil {
 		t.Fatalf("construct documented generic native target: %v", err)
 	}
@@ -858,21 +858,21 @@ func assertPolicyMigrationGuideNativeCatalog(t *testing.T, catalog *policyruntim
 		t.Fatal("documented generic native target is absent from compiled catalog")
 	}
 
-	if got := compiled.Schema().Identity().String(); got != "dkim2/sign-message/v1" {
-		t.Fatalf("documented generic native schema = %q, want dkim2/sign-message/v1", got)
+	if got := compiled.Schema().Identity().String(); got != "delivery/sign-message/v1" {
+		t.Fatalf("documented generic native schema = %q, want delivery/sign-message/v1", got)
 	}
 
-	factProvider, exists := compiled.LookupProvider("dkim2/plugin.reputation.risk")
-	if !exists || factProvider.ID() != "dkim2/plugin.reputation.risk" {
+	factProvider, exists := compiled.LookupProvider("delivery/plugin.reputation.risk")
+	if !exists || factProvider.ID() != "delivery/plugin.reputation.risk" {
 		t.Fatalf("documented native fact provider = %q, exists %t", factProvider.ID(), exists)
 	}
 
-	effectProvider, exists := compiled.LookupProvider("dkim2/plugin.reputation.notifier")
-	if !exists || effectProvider.ID() != "dkim2/plugin.reputation.notifier" {
+	effectProvider, exists := compiled.LookupProvider("delivery/plugin.reputation.notifier")
+	if !exists || effectProvider.ID() != "delivery/plugin.reputation.notifier" {
 		t.Fatalf("documented native effect provider = %q, exists %t", effectProvider.ID(), exists)
 	}
 
-	effect, exists := compiled.LookupEffect("dkim2/record-audit")
+	effect, exists := compiled.LookupEffect("delivery/record-audit")
 	if !exists || effect.Provider() != effectProvider.ID() {
 		t.Fatalf("documented selected effect provider = %q, exists %t", effect.Provider(), exists)
 	}
