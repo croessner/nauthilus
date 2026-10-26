@@ -53,6 +53,35 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.2: DKIM2 Intelligence Plugin Moved Out Of The Core
+
+The DKIM2 intelligence plugin (`dkim2-intelligence`, module
+`dkim2_intelligence`) is no longer part of this repository or of the stable
+and debug images. It is maintained as an external native plugin, like
+`rns_auth`, and it also owns the DKIM2 Policy integration: its verifier
+contract, wire example, and reference Policy configuration. Future DKIM2
+protocol changes are released with that plugin and need no core change.
+
+- The images bundle `geoip`, `clickhouse`, `haveibeenpwnd`, and `reputation`
+  only. `/usr/local/lib/nauthilus/plugins/dkim2-intelligence.so` and its
+  `.minisig` are no longer shipped.
+- Operators who load `dkim2_intelligence` must supply the external artifact
+  built from the exact v4.0.2 release source tree, toolchain, and build tags,
+  with its checksum and detached signature, in the immutable plugin directory.
+  An artifact built for an earlier release, including the one bundled with
+  v4.0.1, is rejected before `plugin.Open` because its native artifact
+  identity no longer matches the host.
+- The generic Policy layer, the native plugin loader, and the `reputation`
+  and `geoip` plugins are unchanged. Existing `policy` targets, providers, and
+  plugin bindings that reference the DKIM2 namespace keep working once the
+  external artifact is installed. `pluginapi/v1` is unchanged.
+- `scripts/convert-static-reputation.py` now converts only reputation
+  overrides and `ip_override_networks`. It rejects `contracts` input, because
+  signer contracts and their Policy guards belong to the external plugin. New
+  overrides record origin `cutover.static_reputation_v4`. The admin client
+  still accepts artifacts written by earlier converter versions and ignores
+  their `identity_contracts` and `policy_rules` sections.
+
 ## Changes Between v4 Prereleases
 
 - `nauthilus -d` prints a dump of the built-in defaults, not a loadable
