@@ -62,6 +62,11 @@ and debug images. It is maintained as an external native plugin, like
 contract, wire example, and reference Policy configuration. Future DKIM2
 protocol changes are released with that plugin and need no core change.
 
+- The toolchain moves to Go 1.27.3. Go 1.27.2 carries a `crypto/x509`
+  vulnerability that the release vulnerability gate reports as reachable
+  through JWT verification. `github.com/getkin/kin-openapi` moves to v0.149.0
+  for two published OpenAPI parser issues. Rebuild every private native
+  plugin, including `rns_auth`, with Go 1.27.3 against the v4.0.2 source.
 - The images bundle `geoip`, `clickhouse`, `haveibeenpwnd`, and `reputation`
   only. `/usr/local/lib/nauthilus/plugins/dkim2-intelligence.so` and its
   `.minisig` are no longer shipped.
