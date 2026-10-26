@@ -17,11 +17,11 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy/testsupport"
 )
 
-func TestTrackedDKIM2RspamdHTTPParityWithDirectDecisionFixture(t *testing.T) {
-	payload := testsupport.TrackedDKIM2RequestBytes(t)
+func TestTrackedRecordHTTPParityWithDirectDecisionFixture(t *testing.T) {
+	payload := testsupport.TrackedRecordRequestBytes(t)
 	service := &recordingService{response: testsupport.DirectPermitResponse(t)}
 
-	wireResponse := servePolicyRequest(policyEngine(service), string(payload), "Basic cnNwYW1kLXZlcmlmaWVyOnRlc3Q=")
+	wireResponse := servePolicyRequest(policyEngine(service), string(payload), "Basic aW52ZW50b3J5LXNjYW5uZXI6dGVzdA==")
 	if wireResponse.Code != http.StatusOK || service.calls != 1 {
 		t.Fatalf("HTTP route status/service calls = %d/%d, want 200/1", wireResponse.Code, service.calls)
 	}
@@ -32,7 +32,7 @@ func TestTrackedDKIM2RspamdHTTPParityWithDirectDecisionFixture(t *testing.T) {
 	}
 
 	testsupport.AssertManagementPermitResponse(t, response)
-	testsupport.AssertTrackedDKIM2RequestInput(t, service.invocation.Request)
+	testsupport.AssertTrackedRecordRequestInput(t, service.invocation.Request)
 }
 
 func TestPolicyHTTPResponseReturnsInternalRequestCorrelation(t *testing.T) {
@@ -108,21 +108,21 @@ func assertHTTPPresentEmptyBytes(t *testing.T, value decision.Value, exists bool
 	}
 }
 
-func TestDKIM2RspamdHTTPWirePreservesLocalNestedAttributeKeys(t *testing.T) {
+func TestRecordHTTPWirePreservesLocalNestedAttributeKeys(t *testing.T) {
 	t.Parallel()
 
 	body := `{
   "version":"1",
-  "target":{"namespace":"dkim2","action":"accept-message-instance"},
-  "resource":{"type":"dkim2-message-instance","attributes":{
-    "dkim2.projection_schema":{"string":"dkim2.verifier-projection.v1"},
-    "dkim2.chain":{"records":[{"fields":[
+  "target":{"namespace":"inventory","action":"inspect-shipment"},
+  "resource":{"type":"inventory-shipment","attributes":{
+    "inventory.manifest_schema":{"string":"inventory.manifest.v1"},
+    "inventory.legs":{"records":[{"fields":[
       {"name":"sequence","value":{"integer":"1"}},
-      {"name":"signer_domain","value":{"string":"origin.example"}}
+      {"name":"carrier","value":{"string":"carrier.example"}}
     ]}]}
   }},
-  "environment":{"service":"rspamd","instance":"mx01.example.net","protocol":"milter","attributes":{
-    "rspamd.smtp_client_ip":{"string":"2001:db8::25"}
+  "environment":{"service":"warehouse","instance":"wh01.example.net","protocol":"http","attributes":{
+    "warehouse.dock_ip":{"string":"2001:db8::25"}
   }},
   "options":{"include_diagnostics":false}
 }`
@@ -132,29 +132,29 @@ func TestDKIM2RspamdHTTPWirePreservesLocalNestedAttributeKeys(t *testing.T) {
 		t.Fatalf("decodeRequest() error = %v", err)
 	}
 
-	if request.Target.String() != "dkim2/accept-message-instance" {
+	if request.Target.String() != "inventory/inspect-shipment" {
 		t.Fatalf("target = %q", request.Target.String())
 	}
 
 	resource := request.Resource.Attributes().Values()
-	if _, ok := resource["dkim2.chain"]; !ok {
-		t.Fatalf("resource attributes = %v, want local dkim2.chain", resource)
+	if _, ok := resource["inventory.legs"]; !ok {
+		t.Fatalf("resource attributes = %v, want local inventory.legs", resource)
 	}
 
-	if _, ok := resource["resource.dkim2.chain"]; ok {
+	if _, ok := resource["resource.inventory.legs"]; ok {
 		t.Fatal("HTTP wire retained an incorrectly pre-prefixed resource key")
 	}
 
 	environment := request.Environment.Attributes().Values()
 
-	ip, ok := environment["rspamd.smtp_client_ip"]
+	ip, ok := environment["warehouse.dock_ip"]
 	if !ok {
-		t.Fatalf("environment attributes = %v, want local rspamd.smtp_client_ip", environment)
+		t.Fatalf("environment attributes = %v, want local warehouse.dock_ip", environment)
 	}
 
 	address, _ := ip.StringValue()
 	if address != "2001:db8::25" {
-		t.Fatalf("SMTP peer = %q", address)
+		t.Fatalf("dock address = %q", address)
 	}
 }
 

@@ -15,7 +15,7 @@ func TestReputationRedisNetworkOverridePreservesSpecificityAndExactIdentity(t *t
 	requireNoError(t, owner.start(t.Context()))
 
 	for _, entry := range []struct{ value, band, audit string }{{"192.0.2.0/24", "blocked", "broad"}, {"192.0.2.16/28", "neutral", "specific"}} {
-		_, err = owner.putOverride(t.Context(), subjectInput{kind: kindNetwork, value: entry.value}, overrideInput{Band: entry.band, Reason: "static.classification", Creator: "migration-fixture", AuditID: entry.audit, Origin: "cutover.static_dkim2_v4"})
+		_, err = owner.putOverride(t.Context(), subjectInput{kind: kindNetwork, value: entry.value}, overrideInput{Band: entry.band, Reason: "static.classification", Creator: "migration-fixture", AuditID: entry.audit, Origin: "cutover.static_reputation_v4"})
 		requireNoError(t, err)
 	}
 

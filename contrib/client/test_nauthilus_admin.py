@@ -117,7 +117,7 @@ class ReputationImportTest(unittest.TestCase):
         self.assertEqual([body["subject"] for body in bodies], ["a.example", "b.example", "192.0.2.16/28"])
         self.assertEqual([body["ttl_seconds"] for body in bodies], [3590, 0, 3570])
         self.assertEqual(bodies[0], {"kind": "dns_domain", "subject": "a.example", "band": "blocked", "reason": "static.classification",
-                                     "origin": "cutover.static_dkim2_v4", "audit_id": bodies[0]["audit_id"], "slot": "active", "ttl_seconds": 3590})
+                                     "origin": "cutover.static_reputation_v4", "audit_id": bodies[0]["audit_id"], "slot": "active", "ttl_seconds": 3590})
         for call in send.call_args_list:
             self.assertEqual(call.args, ("PUT", ADMIN.DEFAULT_URL + "/api/v1/custom/reputation/override"))
             self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer synthetic")

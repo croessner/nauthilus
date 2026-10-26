@@ -45,29 +45,19 @@ func TestAssessmentOptionalPeerInputProducesUnavailableWithoutDroppingOtherSubje
 
 // TestAssessmentExtractorDeclaresExactUpstreamOwnerAndInputKind fixes scheduling authority before requests.
 func TestAssessmentExtractorDeclaresExactUpstreamOwnerAndInputKind(t *testing.T) {
-	binding := targetBindingConfig{Subjects: []extractorConfig{{Attribute: "plugin.geoip.asn", Provider: "dkim2/plugin.geoip.smtp_peer", Category: pluginapi.DecisionFactCategoryEnvironment, InputKind: pluginapi.DecisionValueKindInteger, Role: "smtp_peer_asn", Kind: kindASN, Optional: true}}}
+	binding := targetBindingConfig{Subjects: []extractorConfig{{Attribute: "plugin.geoip.asn", Provider: "mail/plugin.geoip.smtp_peer", Category: pluginapi.DecisionFactCategoryEnvironment, InputKind: pluginapi.DecisionValueKindInteger, Role: "smtp_peer_asn", Kind: kindASN, Optional: true}}}
 	inputs, err := assessmentInputs(binding.Subjects)
 	requireNoError(t, err)
 
-	if len(inputs) != 1 || inputs[0].Provider != "dkim2/plugin.geoip.smtp_peer" || inputs[0].Kind != pluginapi.DecisionValueKindInteger {
+	if len(inputs) != 1 || inputs[0].Provider != "mail/plugin.geoip.smtp_peer" || inputs[0].Kind != pluginapi.DecisionValueKindInteger {
 		t.Fatal("exact ASN provider contract lost")
 	}
 }
 
-// TestAssessmentCombinesAuthenticationAndDKIM2WithoutComponentCollision compiles the actual operator fragments together.
-func TestAssessmentCombinesAuthenticationAndDKIM2WithoutComponentCollision(t *testing.T) {
+// TestAssessmentCombinesAuthenticationAndRecordBindingWithoutComponentCollision composes namespace-bound bindings.
+func TestAssessmentCombinesAuthenticationAndRecordBindingWithoutComponentCollision(t *testing.T) {
 	raw := learningConfigMap(t)
-
-	fragment := testYAMLMap(t, "../../../server/docs/examples/go_plugin_dkim2_intelligence.yml")
-	for _, value := range fragment["plugins"].(map[string]any)["modules"].([]any) {
-		module := value.(map[string]any)
-		if module["name"] != "reputation" {
-			continue
-		}
-
-		addition := module["config"].(map[string]any)["target_bindings"].([]any)
-		raw["target_bindings"] = append(raw["target_bindings"].([]any), addition...)
-	}
+	raw["target_bindings"] = append(raw["target_bindings"].([]any), recordTargetBinding())
 
 	cfg, err := decodeConfig(pluginregistry.NewConfigView(raw))
 	requireNoError(t, err)
@@ -78,8 +68,32 @@ func TestAssessmentCombinesAuthenticationAndDKIM2WithoutComponentCollision(t *te
 
 	auth := cfg.bindings[pluginapi.DecisionTargetSelector{Namespace: "authn", Action: "authenticate"}]
 
-	mail := cfg.bindings[pluginapi.DecisionTargetSelector{Namespace: "dkim2", Action: "accept-message-instance"}]
-	if auth.Component == mail.Component || auth.Component != "authentication" || mail.Component != "assessment" {
+	inventory := cfg.bindings[pluginapi.DecisionTargetSelector{Namespace: "inventory", Action: "inspect-shipment"}]
+	if auth.Component == inventory.Component || auth.Component != "authentication" || inventory.Component != "assessment" {
 		t.Fatal("namespace-bound component collision")
+	}
+}
+
+// recordTargetBinding returns an operator binding with correlated record, current-peer and upstream ASN subjects.
+func recordTargetBinding() map[string]any {
+	return map[string]any{
+		"component": "assessment", "decision_profile": "operational", "output_fact": "inventory_subjects",
+		"target": "inventory/inspect-shipment",
+		"subjects": []any{
+			map[string]any{
+				"attribute": "resource.inventory.legs", "category": "resource", "field": "carrier", "kind": "dns_domain", "role": "carrier",
+				"correlation_fields": []any{"sequence", "leg_binding", "carrier"},
+				"correlation_types":  map[string]any{"sequence": "integer", "leg_binding": "bytes", "carrier": "string"},
+			},
+			map[string]any{"attribute": "environment.warehouse.dock_ip", "category": "environment", "kind": "ip", "role": "dock_ip"},
+			map[string]any{
+				"attribute": "environment.warehouse.dock_ip", "category": "environment", "derive": "network_from_ip",
+				"kind": "network", "role": "dock_network",
+			},
+			map[string]any{
+				"attribute": "plugin.geoip.asn", "category": "environment", "input_kind": "integer", "kind": "asn",
+				"optional": true, "provider": "inventory/plugin.geoip.dock_peer", "role": "dock_asn",
+			},
+		},
 	}
 }

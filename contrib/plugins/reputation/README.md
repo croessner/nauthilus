@@ -459,8 +459,8 @@ Record extraction declares `correlation_types` for every configured
 `correlation_fields` entry. The host checks each field's kind and provider
 visibility before activation. Correlation values remain attached to the exact
 source row. Read-only assessment fanout is bounded at 160 subjects separately
-from write fanout; the DKIM2 example admits up to 128 signer rows and three
-current-peer subjects. The common closed tuple codec is shared with consumers
+from write fanout, for example up to 128 record rows plus three current-peer
+subjects. The common closed tuple codec is shared with consumers
 in `internal/reputationview`.
 
 ### Explicit IP overrides from operator networks
@@ -475,16 +475,15 @@ a failed required lookup yields unavailable, never an implicit static trust.
 The emitted tuple retains the IP's actual evidence state and measurements.
 
 The offline `scripts/convert-static-reputation.py` converts an exported JSON
-snapshot into exact same-band override import records, this CIDR catalog,
-explicit identity contracts and same-hop Recipe deny guards. It records origin
-`cutover.static_dkim2_v4` and deterministic audit correlation. Absent entries
-produce no override. The tool creates a new mode-0600 file and never accesses
-Redis or credentials. Apply the overrides with
+snapshot into exact same-band override import records and this CIDR catalog. It
+records origin `cutover.static_reputation_v4` and deterministic audit
+correlation. Absent entries produce no override. Signer contracts are rejected:
+they belong to the external plugin that consumes them. The tool creates a new
+mode-0600 file and never accesses Redis or credentials. Apply the overrides with
 `contrib/client/nauthilus-admin.py reputation override import <artifact>`,
 which validates the artifact, converts each absolute expiry into `ttl_seconds`
 at request time and skips already expired entries (see the
-[admin client](../../client/README.md#reputation-administration)), and
-merge all generated guards after invariant denies and before permits; the
-converter never grants a permit or bypasses freshness, identity or integrity
+[admin client](../../client/README.md#reputation-administration)). The
+converter never grants trust beyond the exported band or bypasses freshness
 requirements. Absolute expiry is preserved in the import artifact, including
 explicit non-expiring entries. It is not a server configuration reader.

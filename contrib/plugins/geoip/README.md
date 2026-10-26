@@ -259,8 +259,8 @@ A request without any parseable client address, for example over a Unix socket, 
 reports `invalid_input`, and the configured provider `failure` mode applies, so a required GeoIP provider fails
 closed. A plan that treats such requests as not applicable skips the provider explicitly with a scheduler guard such as
 `{attribute: nauthilus.request.client.ip.present, is: false}` in `skip_if`.
-A DKIM2 current-peer binding instead selects `environment.rspamd.smtp_client_ip` for
-`dkim2/accept-message-instance`. Neither identity is embedded in lookup code. Current-peer output is never attached
+A mail-flow current-peer binding can instead select a caller environment fact such as
+`environment.rspamd.smtp_client_ip` for an operator-declared target. Neither identity is embedded in lookup code. Current-peer output is never attached
 to a historical hop. The optional [observation fragment](../../../server/docs/examples/reputation_geoip_observation.yml)
 selects only IP records from admitted `resource.reputation.subjects` and retains their role alongside the canonical IP.
 

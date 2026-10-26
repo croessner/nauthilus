@@ -22,13 +22,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestTrackedDKIM2RspamdGRPCParityWithDirectDecisionFixture(t *testing.T) {
+func TestTrackedRecordGRPCParityWithDirectDecisionFixture(t *testing.T) {
 	wire := &policyv1.DecisionRequest{}
-	if err := protojson.Unmarshal(testsupport.TrackedDKIM2ProtoJSON(t), wire); err != nil {
-		t.Fatalf("protojson.Unmarshal(tracked DKIM2 fixture) error = %v", err)
+	if err := protojson.Unmarshal(testsupport.TrackedRecordProtoJSON(t), wire); err != nil {
+		t.Fatalf("protojson.Unmarshal(tracked record fixture) error = %v", err)
 	}
 
-	service := &trackedDKIM2GRPCService{response: testsupport.DirectPermitResponse(t)}
+	service := &trackedRecordGRPCService{response: testsupport.DirectPermitResponse(t)}
 	handler := New(service, contextAuthenticationEvidence)
 	ctx, gate := core.ContextWithPostActionExecutionGate(context.Background())
 
@@ -41,7 +41,7 @@ func TestTrackedDKIM2RspamdGRPCParityWithDirectDecisionFixture(t *testing.T) {
 
 	response, err := handler.Evaluate(ContextWithAuthentication(ctx, authentication), wire)
 	if err != nil {
-		t.Fatalf("Evaluate(tracked DKIM2 fixture) error = %v", err)
+		t.Fatalf("Evaluate(tracked record fixture) error = %v", err)
 	}
 	defer gate.Complete()
 
@@ -49,10 +49,10 @@ func TestTrackedDKIM2RspamdGRPCParityWithDirectDecisionFixture(t *testing.T) {
 		t.Fatalf("gRPC DecisionService calls = %d, want 1", service.calls)
 	}
 
-	testsupport.AssertTrackedDKIM2RequestInput(t, service.invocation.Request)
+	testsupport.AssertTrackedRecordRequestInput(t, service.invocation.Request)
 
 	resourceRoundTrip, err := valueMapProto(service.invocation.Request.Resource.Attributes().Values())
-	if err != nil || len(resourceRoundTrip) != 24 {
+	if err != nil || len(resourceRoundTrip) != 5 {
 		t.Fatalf("gRPC tracked resource round trip = %d attributes, error %v", len(resourceRoundTrip), err)
 	}
 
@@ -72,7 +72,7 @@ func TestPolicyGRPCResponseReturnsInternalRequestCorrelation(t *testing.T) {
 		{name: "omitted request ID", requestID: "generated-request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			service := &trackedDKIM2GRPCService{response: testsupport.PermitResponseWithRequestID(t, test.requestID)}
+			service := &trackedRecordGRPCService{response: testsupport.PermitResponseWithRequestID(t, test.requestID)}
 			handler := New(service, contextAuthenticationEvidence)
 
 			ctx, gate := core.ContextWithPostActionExecutionGate(context.Background())
@@ -100,14 +100,14 @@ func TestPolicyGRPCResponseReturnsInternalRequestCorrelation(t *testing.T) {
 	}
 }
 
-type trackedDKIM2GRPCService struct {
+type trackedRecordGRPCService struct {
 	response   decision.DecisionResponse
 	invocation decision.Invocation
 	calls      int
 }
 
 // Evaluate captures the exact invocation delivered by the real gRPC handler boundary.
-func (s *trackedDKIM2GRPCService) Evaluate(_ context.Context, invocation decision.Invocation) (decision.DecisionResponse, error) {
+func (s *trackedRecordGRPCService) Evaluate(_ context.Context, invocation decision.Invocation) (decision.DecisionResponse, error) {
 	s.calls++
 	s.invocation = invocation
 
@@ -115,7 +115,7 @@ func (s *trackedDKIM2GRPCService) Evaluate(_ context.Context, invocation decisio
 }
 
 // EvaluatePrepared executes transport preparation with the enabled gRPC generation snapshot.
-func (s *trackedDKIM2GRPCService) EvaluatePrepared(
+func (s *trackedRecordGRPCService) EvaluatePrepared(
 	ctx context.Context,
 	_ string,
 	prepare func(config.File) (decision.Invocation, error),
@@ -231,23 +231,23 @@ func TestPolicyGRPCRecordRoundTripPreservesRepeatedOrder(t *testing.T) {
 	}
 }
 
-func TestDKIM2RspamdGRPCWirePreservesLocalNestedAttributeKeys(t *testing.T) {
+func TestRecordGRPCWirePreservesLocalNestedAttributeKeys(t *testing.T) {
 	t.Parallel()
 
 	request := &policyv1.DecisionRequest{
 		Version: "1",
-		Target:  &policyv1.Target{Namespace: "dkim2", Action: "accept-message-instance"},
-		Resource: &policyv1.Entity{Type: "dkim2-message-instance", Attributes: map[string]*policyv1.Value{
-			"dkim2.projection_schema": {Kind: &policyv1.Value_String_{String_: "dkim2.verifier-projection.v1"}},
-			"dkim2.chain": recordListValue(&policyv1.RecordList{Records: []*policyv1.Record{{Fields: []*policyv1.RecordField{
+		Target:  &policyv1.Target{Namespace: "inventory", Action: "inspect-shipment"},
+		Resource: &policyv1.Entity{Type: "inventory-shipment", Attributes: map[string]*policyv1.Value{
+			"inventory.manifest_schema": {Kind: &policyv1.Value_String_{String_: "inventory.manifest.v1"}},
+			"inventory.legs": recordListValue(&policyv1.RecordList{Records: []*policyv1.Record{{Fields: []*policyv1.RecordField{
 				{Name: "sequence", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_Integer{Integer: 1}}},
-				{Name: "signer_domain", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_String_{String_: "origin.example"}}},
+				{Name: "carrier", Value: &policyv1.RecordFieldValue{Kind: &policyv1.RecordFieldValue_String_{String_: "carrier.example"}}},
 			}}}}),
 		}},
 		Environment: &policyv1.Environment{
-			Service: "rspamd", Instance: "mx01.example.net", Protocol: "milter",
+			Service: "warehouse", Instance: "wh01.example.net", Protocol: "http",
 			Attributes: map[string]*policyv1.Value{
-				"rspamd.smtp_client_ip": {Kind: &policyv1.Value_String_{String_: "192.0.2.25"}},
+				"warehouse.dock_ip": {Kind: &policyv1.Value_String_{String_: "192.0.2.25"}},
 			},
 		},
 	}
@@ -258,24 +258,24 @@ func TestDKIM2RspamdGRPCWirePreservesLocalNestedAttributeKeys(t *testing.T) {
 	}
 
 	resource := converted.Resource.Attributes().Values()
-	if _, ok := resource["dkim2.chain"]; !ok {
-		t.Fatalf("resource attributes = %v, want local dkim2.chain", resource)
+	if _, ok := resource["inventory.legs"]; !ok {
+		t.Fatalf("resource attributes = %v, want local inventory.legs", resource)
 	}
 
-	if _, ok := resource["resource.dkim2.chain"]; ok {
+	if _, ok := resource["resource.inventory.legs"]; ok {
 		t.Fatal("gRPC wire retained an incorrectly pre-prefixed resource key")
 	}
 
 	environment := converted.Environment.Attributes().Values()
 
-	ip, ok := environment["rspamd.smtp_client_ip"]
+	ip, ok := environment["warehouse.dock_ip"]
 	if !ok {
-		t.Fatalf("environment attributes = %v, want local rspamd.smtp_client_ip", environment)
+		t.Fatalf("environment attributes = %v, want local warehouse.dock_ip", environment)
 	}
 
 	address, _ := ip.StringValue()
 	if address != "192.0.2.25" {
-		t.Fatalf("SMTP peer = %q", address)
+		t.Fatalf("dock address = %q", address)
 	}
 }
 

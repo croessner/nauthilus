@@ -76,9 +76,10 @@ one `override put` to the active slot: `ttl_seconds` is computed as
 skipped and reported as `skipped-expired`. The artifact `creator` is ignored
 because the server records the authenticated token identity. The import does
 not send `previous_audit`, so replacing an existing override still requires an
-explicit `override put --previous-audit`. The other artifact sections
-(`ip_override_networks`, `identity_contracts`, `policy_rules`) are
-configuration and Policy input and are not applied by the client.
+explicit `override put --previous-audit`. The `ip_override_networks` section
+is reputation configuration input and is not applied by the client. Artifacts
+written by earlier converter versions may also carry `identity_contracts` and
+`policy_rules`; the client accepts and ignores them.
 
 Entries are applied sequentially without retries. Each entry produces a result
 line on stderr (`applied`, `skipped-expired`, `failed` with the reason, or

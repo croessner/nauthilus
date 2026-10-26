@@ -114,7 +114,7 @@ func TestDecisionBindingCannotChangeDuringReconfigure(t *testing.T) {
 }
 
 func TestDecisionBindingCurrentPeerDoesNotAttributeHistoricalHops(t *testing.T) {
-	for _, target := range []string{"inventory/inspect", "dkim2/accept-message-instance"} {
+	for _, target := range []string{"inventory/inspect", "mail/accept-message"} {
 		t.Run(target, func(t *testing.T) {
 			namespace, action, _ := strings.Cut(target, "/")
 			module := testModule(testDatabasePath(t, "geoip.json"))
@@ -132,7 +132,7 @@ func TestDecisionBindingCurrentPeerDoesNotAttributeHistoricalHops(t *testing.T) 
 
 			provider := registry.DecisionFactProviders()[0].Value.(pluginapi.DecisionFactProvider)
 			admitted := decisionFactView(t, "environment.rspamd.smtp_client_ip", pluginapi.DecisionFactCategoryEnvironment, decisionStringValue(t, testClientIP))
-			historical := decisionFactView(t, "resource.dkim2.historical_ip", pluginapi.DecisionFactCategoryResource, decisionStringValue(t, "198.51.100.8"))
+			historical := decisionFactView(t, "resource.mail.historical_ip", pluginapi.DecisionFactCategoryResource, decisionStringValue(t, "198.51.100.8"))
 			forged := decisionFactView(t, "plugin.geoip.asn", pluginapi.DecisionFactCategoryEnvironment, decisionStringValue(t, "12345"))
 
 			result, err := provider.Collect(t.Context(), newDecisionFactRequest(t, pluginapi.DecisionTargetSelector{Namespace: namespace, Action: action}, []pluginapi.DecisionFactView{*admitted, *historical, *forged}))

@@ -3,7 +3,7 @@
 
 This offline tool is never linked into the server. It does not open Redis or
 load production credentials. Its output is a proposal for authenticated override
-import and ordered Policy/config integration, not an automatic deployment.
+import and IP override network configuration, not an automatic deployment.
 Apply the overrides with `contrib/client/nauthilus-admin.py reputation override
 import <artifact>`.
 """
@@ -17,9 +17,7 @@ import re
 import sys
 
 BANDS = {"trusted", "neutral", "blocked"}
-CHANGES = {"body.rewrite", "header.rewrite"}
-ORIGIN = "cutover.static_dkim2_v4"
-CHAIN = "plugin.dkim2_intelligence.assessed_chain"
+ORIGIN = "cutover.static_reputation_v4"
 
 
 def exact_keys(value, required, optional=()):
@@ -29,7 +27,7 @@ def exact_keys(value, required, optional=()):
 
 
 def domain(value):
-    """Accept only the canonical ASCII signer identities used by the source snapshot."""
+    """Accept only the canonical ASCII domain identities used by the source snapshot."""
     if not isinstance(value, str) or len(value) > 253 or not value or any(
         not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
         for label in value.split(".")
@@ -59,13 +57,13 @@ def stable_suffix(kind, value):
 
 
 def convert(snapshot, creator, audit_prefix, expires_at=0):
-    """Produce exact overrides, longest-prefix lookup configuration, identity contracts and Recipe deny guards."""
-    exact_keys(snapshot, (), ("domains", "client_networks", "contracts"))
+    """Produce exact overrides and the longest-prefix IP override network catalog."""
+    exact_keys(snapshot, (), ("domains", "client_networks"))
     audit_text(creator)
     audit_text(audit_prefix)
     if isinstance(expires_at, bool) or not isinstance(expires_at, int) or not 0 <= expires_at <= 100_000_000_000:
         raise ValueError("invalid absolute expiry")
-    result = {"schema": "reputation-static-import.v1", "overrides": [], "ip_override_networks": [], "identity_contracts": [], "policy_rules": []}
+    result = {"schema": "reputation-static-import.v1", "overrides": [], "ip_override_networks": []}
     seen = set()
     for key, field, kind, validate in (("domains", "domain", "dns_domain", domain), ("client_networks", "cidr", "network", network)):
         entries = snapshot.get(key, [])
@@ -82,36 +80,9 @@ def convert(snapshot, creator, audit_prefix, expires_at=0):
             result["overrides"].append({"kind": kind, "subject": subject, "band": entry["reputation"], "reason": "static.classification", "creator": creator, "audit_id": correlation, "origin": ORIGIN, "expires_at": expires_at})
             if kind == "network":
                 result["ip_override_networks"].append(subject)
-    contracts = snapshot.get("contracts", [])
-    if not isinstance(contracts, list) or len(contracts) > 256:
-        raise ValueError("contract cardinality exceeded")
-    owners = set()
-    for entry in contracts:
-        exact_keys(entry, ("signer_domain", "allowed_client_cidrs", "permitted_change_classes"))
-        signer = domain(entry["signer_domain"])
-        if signer in owners:
-            raise ValueError("duplicate contract owner")
-        owners.add(signer)
-        peers, changes = entry["allowed_client_cidrs"], entry["permitted_change_classes"]
-        if not isinstance(peers, list) or not 1 <= len(peers) <= 128 or len(set(peers)) != len(peers):
-            raise ValueError("invalid contract networks")
-        if not isinstance(changes, list) or changes != sorted(set(changes)) or not set(changes) <= CHANGES:
-            raise ValueError("invalid Recipe authorization vocabulary")
-        result["identity_contracts"].append({"name": "static-" + stable_suffix("dns_domain", signer), "signer_domains": [signer], "current_peer_cidrs": [network(x) for x in peers]})
-        forbidden = sorted(CHANGES - set(changes))
-        if forbidden:
-            result["policy_rules"].append(deny_rule("static-recipe-" + stable_suffix("dns_domain", signer), {"all": [{"field": "signer_domain", "eq": signer}, {"field": "change_classes", "contains_any": forbidden}]}))
-    if owners:
-        result["policy_rules"].insert(0, deny_rule("static-uncontracted-signer", {"field": "signer_domain", "not_in": sorted(owners)}))
     result["overrides"].sort(key=lambda x: (x["kind"], x["subject"]))
     result["ip_override_networks"].sort(key=lambda x: (-ipaddress.ip_network(x).prefixlen, x))
-    result["identity_contracts"].sort(key=lambda x: x["name"])
     return result
-
-
-def deny_rule(name, condition):
-    """Emit same-hop Recipe restrictions to place after invariants and before every discretionary permit."""
-    return {"name": name, "checkpoint": "final_decision", "require_providers": ["intelligence_assessment"], "if": {"records": {"attribute": CHAIN, "quantifier": "any", "where": condition}}, "then": {"decision": "deny", "reason": "dkim2_static_recipe_contract"}}
 
 
 def unique_object(pairs):

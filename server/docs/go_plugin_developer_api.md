@@ -1755,11 +1755,11 @@ requirements declare no additional schema contract; they never bypass normal adm
 
 A generic Policy `providers` entry may set `component` to select a registered
 native component independently of the map key. For example, authored names
-`reputation_assessment` and `intelligence_assessment` can select
-`reputation/assessment` and `dkim2_intelligence/assessment` respectively within
+`reputation_assessment` and `inspector_assessment` can select
+`reputation/assessment` and `inspector/assessment` respectively within
 one target namespace. Their canonical IDs remain
-`dkim2/plugin.reputation.assessment` and
-`dkim2/plugin.dkim2_intelligence.assessment`; exact dependencies use those IDs.
+`inventory/plugin.reputation.assessment` and
+`inventory/plugin.inspector.assessment`; exact dependencies use those IDs.
 Without `component`, the map key remains the component name. The selector is
 valid only for generic native entries. Two aliases cannot register the same
 canonical identity, and both configured and descriptor-owned generation

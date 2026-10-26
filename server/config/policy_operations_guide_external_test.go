@@ -31,8 +31,6 @@ func TestPolicyOperationsGuideTracksRuntimeAndPrivacyContracts(t *testing.T) {
 		"nauthilus.policy.decision_id",
 		"nauthilus_policy_service_decisions_total",
 		"Cache-Control: no-store",
-		"dkim2/plugin.dkim2_intelligence.assessment",
-		"Outbound signing remains deferred",
 	} {
 		if !strings.Contains(guide, required) {
 			t.Fatalf("Policy operations guide lacks %q", required)

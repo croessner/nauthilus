@@ -320,34 +320,3 @@ Troubleshooting order:
 5. Inspect sanitized diagnostics only when authorized; use controlled audit and
    provider telemetry for protected details.
 6. Reconcile external side effects before submitting a new domain operation.
-
-## DKIM2 Rspamd verifier
-
-The versioned contract is
-[DKIM2 Rspamd verifier Policy contract](policy-layer/dkim2_rspamd_policy_contract.md),
-with a tracked wire example and an executable operator configuration beside it.
-The Rspamd normal filter owns DKIM2 verification and invokes Policy only for a
-validated applicable PASS/current or PASS/chain result whose existing local
-disposition is `accept` or `continue`. Existing reject or temporary-failure
-results never enter Policy and cannot be widened.
-
-Rspamd sends local nested keys (`dkim2.*` resource attributes and `rspamd.*`
-environment attributes); admission normalizes them to qualified facts. The
-canonical SMTP peer IP is mandatory input because peer reputation and contract
-binding are policy material. It remains protected data and must not appear in
-diagnostics, reports, normal logs, traces, metrics, or error bodies.
-
-The complete bounded hop list, immutable verifier result, normalized Recipe
-descriptors, flags, change classes, recipient classes, and correlation bindings
-are input. Exact Recipe payload and raw message or envelope content are
-excluded. The native `dkim2/plugin.dkim2_intelligence.assessment` provider owns
-semantic validation and emits `plugin.dkim2_intelligence.assessed_chain`. Policy
-controls every hop: PASS can still be denied, and incomplete, reordered,
-mismatched, or non-permittable chains fail closed.
-
-Rspamd maps the final Policy result to the documented permanent or temporary
-SMTP action. It owns the external projection, immediate Redis result cache,
-greylist replay behavior, post-filter, and final Milter handoff. This cache is
-not a Nauthilus Decision cache. Operators must monitor the crash window between
-an external side effect and recorded completion and reconcile it explicitly.
-Outbound signing remains deferred and is not part of this verifier contract.

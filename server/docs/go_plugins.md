@@ -33,7 +33,7 @@ dependency locks, and Go-embedded resources. Unmarked host/plugin builds cannot 
 A plugin with a different or mixed build identity is rejected before `plugin.Open`; Go subsequently
 checks its own package ABI hashes. Detached signatures authenticate artifact provenance separately,
 and configured SHA-256 checksums still bind exact bytes. Keep `signature_required` for production.
-The disposable bundle check builds a probe plus sample, GeoIP, and DKIM2 fixtures without publishing
+The disposable bundle check builds a probe plus sample, GeoIP, and reputation fixtures without publishing
 or starting plugin services.
 
 Build the server and every plugin from one unchanged source snapshot with the same toolchain and tags.
@@ -157,10 +157,15 @@ as the server binary:
 - `clickhouse.so`
 - `haveibeenpwnd.so`
 - `reputation.so`
-- `dkim2-intelligence.so`
 
 The debug image contains the server, these plugins and the fake SMTP/IMAP test servers only. The `reputation-worker`
 executable and the client tools are intentionally shipped in the stable image alone.
+
+Other native plugins are maintained outside this repository and are not part of the images. The DKIM2 intelligence
+plugin (module `dkim2_intelligence`) is such an external plugin since v4.0.2; it also provides the DKIM2 Policy
+integration. Build every external plugin against the exact Nauthilus release source tree, toolchain, and build tags of
+the host, then deploy its artifact with checksum and detached signature into the immutable plugin directory. An
+artifact built for a different release is rejected by the native artifact identity check.
 
 The "debug Docker image" wording describes the image build track. Runtime plugin debug output is controlled separately
 through `server.log.level` and `server.log.debug_modules`.
@@ -674,7 +679,7 @@ Each reload logs one record per module (`plugin_module`, `plugin_reload_result`)
 was valid but the reload was rejected elsewhere). A change outside the modules, such as `plugins.trust`, is recorded once
 with an empty module label. Neither log nor metric contains config values or error text.
 
-Bundled plugins that reload their config: `clickhouse`, `geoip`, `haveibeenpwnd`, and `dkim2-intelligence`. Their
+Bundled plugins that reload their config: `clickhouse`, `geoip`, and `haveibeenpwnd`. Their
 READMEs list the keys that stay restart-bound.
 
 Generic policy deactivation is generation-bound. A successfully prepared reload can omit a previously configured native

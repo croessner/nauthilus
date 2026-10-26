@@ -1,0 +1,94 @@
+{
+  "version": "1",
+  "request_id": "019d10c4-3858-7c2a-a5d1-2b3d57e641f2",
+  "target": {
+    "namespace": "inventory",
+    "action": "inspect-shipment"
+  },
+  "resource": {
+    "type": "inventory-shipment",
+    "attributes": {
+      "inventory.manifest_schema": {
+        "string": "inventory.manifest.v1"
+      },
+      "inventory.manifest_digest": {
+        "bytes": "BbOr8leaXrZkA814vlV/2GBjOh/iEDx2QgMN7+MsZX8="
+      },
+      "inventory.verification_state": {
+        "string": "verified"
+      },
+      "inventory.leg_count": {
+        "integer": "1"
+      },
+      "inventory.legs": {
+        "records": [
+          {
+            "fields": [
+              {
+                "name": "sequence",
+                "value": {
+                  "integer": "1"
+                }
+              },
+              {
+                "name": "leg_binding",
+                "value": {
+                  "bytes": "Suk6ojVGKcIFYbPoOrrEr2zEt3RVHCazgC8slTQ6nJw="
+                }
+              },
+              {
+                "name": "carrier",
+                "value": {
+                  "string": "carrier.example"
+                }
+              },
+              {
+                "name": "change_classes",
+                "value": {
+                  "strings": [
+                    "content.repack",
+                    "label.rewrite"
+                  ]
+                }
+              },
+              {
+                "name": "sealed",
+                "value": {
+                  "boolean": true
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "environment": {
+    "service": "warehouse",
+    "instance": "wh01.example.net",
+    "protocol": "http",
+    "attributes": {
+      "warehouse.dock_ip": {
+        "string": "203.0.113.7"
+      },
+      "warehouse.risk_score": {
+        "double": 6.2
+      },
+      "warehouse.signals": {
+        "strings": [
+          "label.mismatch",
+          "weight.drift"
+        ]
+      },
+      "warehouse.handheld": {
+        "boolean": false
+      },
+      "warehouse.parcel_count": {
+        "integer": "3"
+      }
+    }
+  },
+  "options": {
+    "include_diagnostics": false
+  }
+}

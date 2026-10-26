@@ -1,0 +1,360 @@
+# Neutral executable Policy fixture for generic record-collection behavior.
+# It exercises an operator-declared target, caller and plugin record facts,
+# native provider scheduling with dependencies and scheduler guards, ordered
+# record-quantifier rules, and wire-local caller allowlists. The namespace,
+# modules and attribute names are illustrative and carry no product contract.
+policy:
+    api:
+        clients:
+            - allowed_environment_attributes:
+                - warehouse.dock_ip
+                - warehouse.risk_score
+                - warehouse.signals
+                - warehouse.handheld
+                - warehouse.parcel_count
+              allowed_input_attributes: []
+              allowed_resource_attributes:
+                - inventory.manifest_schema
+                - inventory.manifest_digest
+                - inventory.verification_state
+                - inventory.leg_count
+                - inventory.legs
+              allowed_schemas:
+                - inventory/inspect-shipment/v1
+              allowed_subject_attributes: []
+              authentication:
+                basic:
+                    password: ${POLICY_INVENTORY_SCANNER_PASSWORD}
+                    username: inventory-scanner
+              authentication_kinds:
+                - basic
+              diagnostics: false
+              max_concurrency: 16
+              max_facts: 16
+              max_request_bytes: 65536
+              principal: inventory-scanner
+              requests_per_second: 50
+              require_mtls: false
+              targets:
+                - actions:
+                    - inspect-shipment
+                  namespace: inventory
+        enabled: true
+        grpc:
+            enabled: true
+            require_mtls: true
+        http:
+            enabled: true
+        limits:
+            evaluation_timeout: 2s
+            max_advice: 0
+            max_facts: 32
+            max_list_items: 16
+            max_obligations: 0
+            max_parameter_bytes: 0
+            max_request_bytes: 65536
+            max_string_bytes: 1024
+            max_value_bytes: 32768
+            per_client_concurrency: 16
+            per_client_requests_per_second: 50
+            provider_timeout: 500ms
+    namespaces:
+        inventory:
+            domain_plans:
+                inspection:
+                    checkpoints:
+                        final_decision:
+                            providers:
+                                - name: origin_locator
+                                  skip_if:
+                                    - unverified_shipment
+                                  use: inventory/plugin.locator.origin
+                                - name: leg_assessment
+                                  skip_if:
+                                    - unverified_shipment
+                                  use: inventory/plugin.inspector.assessment
+                    scheduler_guards:
+                        unverified_shipment:
+                            if:
+                                attribute: resource.inventory.verification_state
+                                not_in:
+                                    - verified
+                            on_missing_attribute: run
+            policy_sets:
+                inspection:
+                    rules:
+                        - checkpoint: final_decision
+                          if:
+                            attribute: resource.inventory.verification_state
+                            not_in:
+                                - verified
+                          name: deny_unverified_shipment
+                          then:
+                            decision: deny
+                            reason: inventory_deny_unverified_shipment
+                        - checkpoint: final_decision
+                          if:
+                            not:
+                                attribute: plugin.inspector.assessment_complete
+                                eq: true
+                          name: deny_incomplete_assessment
+                          require_providers:
+                            - leg_assessment
+                          then:
+                            decision: deny
+                            reason: inventory_deny_incomplete_assessment
+                        - checkpoint: final_decision
+                          if:
+                            records:
+                                attribute: plugin.inspector.assessed_legs
+                                quantifier: any
+                                where:
+                                    field: seal_state
+                                    not_in:
+                                        - intact
+                          name: deny_broken_seal
+                          require_providers:
+                            - leg_assessment
+                          then:
+                            decision: deny
+                            reason: inventory_deny_broken_seal
+                        - checkpoint: final_decision
+                          if:
+                            records:
+                                attribute: plugin.inspector.assessed_legs
+                                quantifier: any
+                                where:
+                                    all:
+                                        - field: carrier_band
+                                          eq: suspicious
+                                        - field: change_classes
+                                          contains_any:
+                                            - content.repack
+                          name: deny_suspicious_carrier_repack
+                          require_providers:
+                            - leg_assessment
+                          then:
+                            decision: deny
+                            reason: inventory_deny_suspicious_carrier_repack
+                        - checkpoint: final_decision
+                          if:
+                            records:
+                                attribute: plugin.inspector.assessed_legs
+                                quantifier: any
+                                where:
+                                    all:
+                                        - field: is_current
+                                          eq: true
+                                        - field: carrier
+                                          in:
+                                            - trusted-carrier.example
+                          name: permit_current_trusted_carrier
+                          require_providers:
+                            - leg_assessment
+                          then:
+                            decision: permit
+                            reason: inventory_permit_current_trusted_carrier
+            providers:
+                leg_assessment:
+                    component: assessment
+                    failure: indeterminate
+                    kind: native
+                    module: inspector
+                    produced_facts:
+                        - plugin.inspector.assessed_legs
+                        - plugin.inspector.assessment_complete
+                    requires:
+                        - inventory/plugin.locator.origin
+                    targets:
+                        - action: inspect-shipment
+                    timeout: 400ms
+                origin_locator:
+                    component: origin
+                    failure: indeterminate
+                    kind: native
+                    module: locator
+                    produced_facts:
+                        - plugin.locator.region
+                    targets:
+                        - action: inspect-shipment
+                    timeout: 400ms
+            schema_contributions:
+                static:
+                    inspect-shipment:
+                        versions:
+                            v1:
+                                facts:
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: resource.inventory.manifest_schema
+                                      category: resource
+                                      max_length: 64
+                                      required: true
+                                      type: string
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: resource.inventory.manifest_digest
+                                      category: resource
+                                      max_bytes: 32
+                                      required: true
+                                      type: bytes
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: resource.inventory.verification_state
+                                      category: resource
+                                      max_length: 16
+                                      required: true
+                                      type: string
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: resource.inventory.leg_count
+                                      category: resource
+                                      required: true
+                                      type: integer
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: resource.inventory.legs
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: true
+                                              name: sequence
+                                              required: true
+                                              type: integer
+                                            - max_bytes: 32
+                                              name: leg_binding
+                                              provider_visibility:
+                                                - inventory/plugin.inspector.assessment
+                                              required: true
+                                              type: bytes
+                                            - expression_visible: true
+                                              max_length: 253
+                                              name: carrier
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_items: 2
+                                              max_length: 32
+                                              name: change_classes
+                                              required: true
+                                              type: strings
+                                            - expression_visible: true
+                                              name: sealed
+                                              required: true
+                                              type: boolean
+                                        id: inventory_legs
+                                        max_aggregate_bytes: 16384
+                                        max_fields: 5
+                                        max_records: 8
+                                        min_records: 1
+                                        version: v1
+                                      required: true
+                                      type: records
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: environment.warehouse.dock_ip
+                                      category: environment
+                                      max_length: 45
+                                      required: true
+                                      type: string
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: environment.warehouse.risk_score
+                                      category: environment
+                                      required: true
+                                      type: double
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: environment.warehouse.signals
+                                      category: environment
+                                      max_items: 4
+                                      max_length: 32
+                                      required: true
+                                      type: strings
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: environment.warehouse.handheld
+                                      category: environment
+                                      required: true
+                                      type: boolean
+                                    - allowed_sources:
+                                        - caller
+                                      attribute: environment.warehouse.parcel_count
+                                      category: environment
+                                      required: true
+                                      type: integer
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.locator.region
+                                      category: environment
+                                      max_length: 16
+                                      required: false
+                                      type: string
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.inspector.assessed_legs
+                                      category: resource
+                                      record_schema:
+                                        fields:
+                                            - expression_visible: true
+                                              name: sequence
+                                              required: true
+                                              type: integer
+                                            - expression_visible: true
+                                              max_length: 253
+                                              name: carrier
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              name: is_current
+                                              required: true
+                                              type: boolean
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: seal_state
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_length: 16
+                                              name: carrier_band
+                                              required: true
+                                              type: string
+                                            - expression_visible: true
+                                              max_items: 2
+                                              max_length: 32
+                                              name: change_classes
+                                              required: true
+                                              type: strings
+                                            - expression_visible: true
+                                              name: carrier_confidence
+                                              required: false
+                                              type: double
+                                        id: inspector_assessed_legs
+                                        max_aggregate_bytes: 16384
+                                        max_fields: 7
+                                        max_records: 8
+                                        min_records: 1
+                                        version: v1
+                                      required: false
+                                      type: records
+                                    - allowed_sources:
+                                        - plugin
+                                      attribute: plugin.inspector.assessment_complete
+                                      category: resource
+                                      required: false
+                                      type: boolean
+    targets:
+        - action: inspect-shipment
+          default_policy: inventory/inspection
+          domain_plan: inventory/inspection
+          mode: enforce
+          namespace: inventory
+          no_match: deny
+          plans:
+            final_decision:
+                policy_sets:
+                    - inventory/inspection
+          schema: inventory/inspect-shipment/v1
+          timeouts:
+            evaluation: 2s
+            provider_default: 500ms

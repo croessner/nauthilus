@@ -15,11 +15,3 @@ the [Policy HTTP client guide](../../openapi/client/README.md), and the
 In particular, the former configuration converter and the nested policy root
 described by these archives are no longer supported. Migration is manual and
 the production server accepts only the top-level `policy` root.
-
-## Current domain contracts
-
-The following files are current versioned integration contracts rather than
-historical configuration guidance:
-
-- [DKIM2 Rspamd verifier Policy contract](dkim2_rspamd_policy_contract.md)
-- [DKIM2 Rspamd verifier Policy v1 wire example](dkim2_rspamd_policy_request_v1.example.json)

@@ -102,7 +102,7 @@ func TestSupportedManagementClientRejectsMissingBackchannelAuth(t *testing.T) {
 func TestSupportedPolicyClientUsesDedicatedCredentials(t *testing.T) {
 	request := management.EvaluatePolicyDecisionJSONRequestBody{
 		Version: management.N1,
-		Target:  management.PolicyTarget{Namespace: "dkim2", Action: "sign-message"},
+		Target:  management.PolicyTarget{Namespace: "delivery", Action: "sign-message"},
 	}
 	responseBody := management.PolicyDecisionResponse{
 		RequestId:  "request-client",
@@ -167,38 +167,38 @@ func TestSupportedPolicyClientPreservesOrderedRecords(t *testing.T) {
 	}
 }
 
-func TestSupportedPolicyClientCarriesDKIM2RspamdProjectionAndSMTPPeer(t *testing.T) {
+func TestSupportedPolicyClientCarriesRecordResourceAndEnvironment(t *testing.T) {
 	t.Parallel()
 
-	projection := "dkim2.verifier-projection.v1"
+	manifestSchema := "inventory.manifest.v1"
 	sequence := "1"
-	signer := "origin.example"
-	smtpIP := "2001:db8::25"
-	resourceType := "dkim2-message-instance"
-	service := "rspamd"
-	instance := "mx01.example.net"
-	protocol := "milter"
+	carrier := "carrier.example"
+	dockIP := "2001:db8::25"
+	resourceType := "inventory-shipment"
+	service := "warehouse"
+	instance := "wh01.example.net"
+	protocol := "http"
 	resourceAttributes := management.PolicyValueMap{
-		"dkim2.projection_schema": {String: &projection},
-		"dkim2.chain": {Records: &[]management.PolicyRecord{{Fields: []management.PolicyRecordField{
+		"inventory.manifest_schema": {String: &manifestSchema},
+		"inventory.legs": {Records: &[]management.PolicyRecord{{Fields: []management.PolicyRecordField{
 			{Name: "sequence", Value: management.PolicyRecordFieldValue{Integer: &sequence}},
-			{Name: "signer_domain", Value: management.PolicyRecordFieldValue{String: &signer}},
+			{Name: "carrier", Value: management.PolicyRecordFieldValue{String: &carrier}},
 		}}}},
 	}
 	environmentAttributes := management.PolicyValueMap{
-		"rspamd.smtp_client_ip": {String: &smtpIP},
+		"warehouse.dock_ip": {String: &dockIP},
 	}
 	request := management.EvaluatePolicyDecisionJSONRequestBody{
 		Version:  management.N1,
-		Target:   management.PolicyTarget{Namespace: "dkim2", Action: "accept-message-instance"},
+		Target:   management.PolicyTarget{Namespace: "inventory", Action: "inspect-shipment"},
 		Resource: &management.PolicyEntity{Type: &resourceType, Attributes: &resourceAttributes},
 		Environment: &management.PolicyEnvironment{
 			Service: &service, Instance: &instance, Protocol: &protocol, Attributes: &environmentAttributes,
 		},
 	}
 	responseBody := management.PolicyDecisionResponse{
-		RequestId:  "request-dkim2-rspamd",
-		DecisionId: "decision-dkim2-rspamd", Effect: management.Permit,
+		RequestId:  "request-inventory-inspection",
+		DecisionId: "decision-inventory-inspection", Effect: management.Permit,
 		Status: management.PolicyStatus{Code: "permit", Message: "permitted"},
 	}
 	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
@@ -212,23 +212,23 @@ func TestSupportedPolicyClientCarriesDKIM2RspamdProjectionAndSMTPPeer(t *testing
 		management.WithHTTPClient(doer),
 	)
 	if err != nil {
-		t.Fatalf("new DKIM2 Policy client: %v", err)
+		t.Fatalf("new record Policy client: %v", err)
 	}
 
 	response, err := client.Evaluate(context.Background(), request)
 	if err != nil {
-		t.Fatalf("evaluate DKIM2 Policy request: %v", err)
+		t.Fatalf("evaluate record Policy request: %v", err)
 	}
 
 	if response.StatusCode() != http.StatusOK || response.JSON200 == nil || response.JSON200.Effect != management.Permit {
-		t.Fatalf("DKIM2 Policy response = %#v", response)
+		t.Fatalf("record Policy response = %#v", response)
 	}
 }
 
-func TestSupportedPolicyClientCarriesCompleteTrackedDKIM2RequestAndDirectResponse(t *testing.T) {
-	request := testsupport.TrackedDKIM2ManagementRequest(t)
+func TestSupportedPolicyClientCarriesCompleteTrackedRecordRequestAndDirectResponse(t *testing.T) {
+	request := testsupport.TrackedRecordManagementRequest(t)
 	want := testsupport.ManagementPermitResponse()
-	header := "Basic " + base64.StdEncoding.EncodeToString([]byte("rspamd-verifier:"+supportedClientBasicPassword))
+	header := "Basic " + base64.StdEncoding.EncodeToString([]byte("inventory-scanner:"+supportedClientBasicPassword))
 	doer := requesttest.NewClientSmokeDoer(t, requesttest.ClientSmokeRoute{
 		Request: request, Response: want, Method: http.MethodPost, Path: "/api/v1/policy/decisions", Status: http.StatusOK,
 		Headers: map[string]string{authorizationHeader: header},
@@ -236,20 +236,20 @@ func TestSupportedPolicyClientCarriesCompleteTrackedDKIM2RequestAndDirectRespons
 
 	client, err := NewPolicyClient(
 		supportedClientBaseURL,
-		PolicyBasicCredentials("rspamd-verifier", supportedClientBasicPassword),
+		PolicyBasicCredentials("inventory-scanner", supportedClientBasicPassword),
 		management.WithHTTPClient(doer),
 	)
 	if err != nil {
-		t.Fatalf("new tracked DKIM2 Policy client: %v", err)
+		t.Fatalf("new tracked record Policy client: %v", err)
 	}
 
 	response, err := client.Evaluate(context.Background(), request)
 	if err != nil {
-		t.Fatalf("evaluate tracked DKIM2 Policy request: %v", err)
+		t.Fatalf("evaluate tracked record Policy request: %v", err)
 	}
 
 	if response.StatusCode() != http.StatusOK || response.JSON200 == nil {
-		t.Fatalf("tracked DKIM2 Policy response = %#v, want %#v", response, want)
+		t.Fatalf("tracked record Policy response = %#v, want %#v", response, want)
 	}
 
 	testsupport.AssertManagementPermitResponse(t, *response.JSON200)
@@ -305,7 +305,7 @@ func TestSupportedPolicyClientReturnsEffectiveRequestCorrelation(t *testing.T) {
 func TestSupportedPolicyClientUsesDedicatedBasicCredentials(t *testing.T) {
 	request := management.EvaluatePolicyDecisionJSONRequestBody{
 		Version: management.N1,
-		Target:  management.PolicyTarget{Namespace: "dkim2", Action: "sign-message"},
+		Target:  management.PolicyTarget{Namespace: "delivery", Action: "sign-message"},
 	}
 	responseBody := management.PolicyDecisionResponse{
 		RequestId:  "request-basic-client",
