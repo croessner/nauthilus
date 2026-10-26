@@ -2,7 +2,7 @@ module github.com/croessner/nauthilus/v4
 
 go 1.27
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -19,7 +19,7 @@ require (
 	github.com/emersion/go-smtp v0.25.0
 	github.com/fatih/color v1.19.0
 	github.com/fxamacker/cbor/v2 v2.9.3
-	github.com/getkin/kin-openapi v0.148.0
+	github.com/getkin/kin-openapi v0.149.0
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-contrib/pprof v1.5.4
 	github.com/gin-gonic/gin v1.12.0
