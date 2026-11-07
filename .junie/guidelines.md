@@ -241,3 +241,25 @@ We verified this flow by temporarily adding a trivial test under server/util and
 - Single test: go test -run TestName ./server/util -v
 
 If you modify dependencies or add new modules, run go mod tidy && go mod vendor and ensure make build still succeeds.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. It is the default navigation layer for every agent (Claude Code via `CLAUDE.md` -> `AGENTS.md`, Codex via `AGENTS.md`).
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Setup (local, per checkout; graphify-out/ is git-ignored and never committed):
+- Install the CLI once: `pipx install graphifyy` (provides `graphify`).
+- Build the graph: run `/graphify .` in Claude Code, or `graphify update .` for a code-only (AST, no LLM) rebuild.
+- Install the auto-rebuild Git hooks once per clone: `graphify hook install` (post-commit, post-checkout, post-merge, post-rewrite; existing `make install-hooks` hooks are left untouched).
+- Corpus scope is controlled by `.graphifyignore` (excludes `vendor/`, `.codex/` mirror, and build/scratch output).
+
+Rules:
+- When graphify-out/graph.json exists, run `graphify query "<question>"` before your first grep, search or source-file read for a codebase question, and put this rule in every subagent prompt that explores code. Read raw files only for lines the graph or an earlier read already located. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost). The Git hooks also rebuild after each commit.
+- After changing Markdown docs, HTML templates, or images, run `/graphify . --update` so only the changed files are re-extracted semantically.
+- Treat graph answers as navigation hints, not proof: confirm behavior in the cited source lines before changing code or making claims.
+- `AGENTS.md` is generated from `.junie/guidelines.md` (`make sync-prompts`); edit agent rules in `.junie/guidelines.md` only.

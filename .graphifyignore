@@ -1,0 +1,17 @@
+# graphify knowledge-graph exclusions (gitignore syntax).
+# Keeps the graph focused on first-party Nauthilus code and docs.
+
+# Third-party dependencies (go mod vendor output)
+vendor/
+
+# Duplicate assistant skill mirror; .claude/skills is the indexed copy
+.codex/
+
+# Local scratch, build and generated output
+temp/
+sbom/
+bin/
+nauthilus/bin/
+graphify-out/
+contrib/identity-proxy-e2e/.work/
+node_modules/

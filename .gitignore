@@ -119,5 +119,8 @@ scripts/__pycache__/
 sbom/
 client/logins.local.csv
 client/result.ldif
+
+# graphify knowledge graph (local build output, rebuilt by Git hooks)
+graphify-out/
 !/contrib/pam_nauthilus/idp-signing-key.pem
 !/contrib/pam_nauthilus/nauthilus.yml
