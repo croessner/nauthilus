@@ -3,6 +3,7 @@ scenarios:
   - grpc-lookup-identity
   - grpc-list-accounts
   - grpc-resolve-user
+  - grpc-authenticate-empty-credentials
   - openapi-management-cache-flush-async-status
   - oidc-authorization-code
   - oidc-device-code

@@ -184,6 +184,7 @@ func grpcSmokePlanScenarios() []string {
 		"grpc-lookup-identity",
 		"grpc-list-accounts",
 		"grpc-resolve-user",
+		"grpc-authenticate-empty-credentials",
 		openAPIManagementScenario,
 	}
 }

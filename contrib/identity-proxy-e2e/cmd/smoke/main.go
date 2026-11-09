@@ -68,6 +68,7 @@ const (
 	smokeAuthority      = "authority"
 
 	openAPIManagementScenario     = "openapi-management-cache-flush-async-status"
+	emptyCredentialsScenario      = "grpc-authenticate-empty-credentials"
 	openAPIManagementUserSuffix   = ".openapi-management"
 	openAPIManagementPollInterval = 100 * time.Millisecond
 	openAPIManagementPollTimeout  = 10 * time.Second
@@ -310,6 +311,12 @@ func (r *runner) runPreBrowserMFAChecks(parent context.Context, token string, au
 }
 
 func (r *runner) runPreBrowserNegativeChecks(parent context.Context, token string, lookupRef *commonv1.BackendRef) error {
+	if err := r.expectEmptyCredentialsDenied(parent, token); err != nil {
+		return err
+	}
+
+	ok(emptyCredentialsScenario)
+
 	if err := r.expectMissingCallerAuth(parent); err != nil {
 		return err
 	}
@@ -426,6 +433,43 @@ func (r *runner) clientAssertion() (string, error) {
 		"exp": now.Add(5 * time.Minute).Unix(),
 		"jti": jti,
 	})
+}
+
+// expectEmptyCredentialsDenied checks that empty username or password values end as an ordinary failed login with the
+// regular invalid-login text instead of an InvalidArgument input error.
+func (r *runner) expectEmptyCredentialsDenied(parent context.Context, token string) error {
+	cases := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{name: "empty username", password: r.opts.password},
+		{name: "empty password", username: r.opts.username},
+	}
+
+	for _, test := range cases {
+		ctx, cancel := r.rpcContext(parent, token)
+		response, err := r.auth.Authenticate(ctx, &authv1.AuthRequest{
+			Username: test.username,
+			Password: test.password,
+			ClientIp: smokeClientIP,
+			Protocol: smokeProtocol,
+			Method:   smokeMethod,
+		})
+
+		cancel()
+
+		if err != nil {
+			return fmt.Errorf("%s authenticate RPC failed instead of denying: %w", test.name, err)
+		}
+
+		if response.GetOk() || response.GetStatusMessage() != definitions.PasswordFail {
+			return fmt.Errorf("%s authenticate returned ok=%v status=%q, want a %q denial", test.name,
+				response.GetOk(), response.GetStatusMessage(), definitions.PasswordFail)
+		}
+	}
+
+	return nil
 }
 
 func (r *runner) authenticate(parent context.Context, token string, username string, password string) (*authv1.AuthResponse, error) {
