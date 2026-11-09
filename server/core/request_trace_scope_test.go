@@ -16,7 +16,6 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -25,7 +24,6 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/testing/tracetest"
 
 	"github.com/gin-gonic/gin"
@@ -37,36 +35,6 @@ const (
 	requestOwnedTraceAttribute = "request_owned"
 	requestOwnedTraceStatus    = "request-owned"
 )
-
-func TestNewAuthStateWithSetup_RestoresRequestParentContext(t *testing.T) {
-	setupMinimalTestConfig(t)
-	gin.SetMode(gin.TestMode)
-
-	collector := tracetest.Setup(t)
-
-	parentCtx, requestSpan := otel.Tracer("nauthilus/core/request_trace_scope_test").Start(context.Background(), "request.parent")
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/auth/json",
-		bytes.NewBufferString(`{"username":"user1","password":"secret"}`),
-	).WithContext(parentCtx)
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Set(definitions.CtxServiceKey, definitions.ServJSON)
-	ctx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
-
-	state := NewAuthStateWithSetupWithDeps(ctx, setupAuthDeps())
-	if state == nil {
-		t.Fatal("NewAuthStateWithSetupWithDeps() returned nil")
-	}
-
-	auth := state.(*AuthState)
-	requireRequestContextsSpanID(t, ctx, auth, requestSpan.SpanContext().SpanID())
-	requestSpan.End()
-
-	setupSpan := requireTraceSpan(t, collector.Spans(), "auth.setup")
-	requireParentSpanID(t, setupSpan, requestSpan.SpanContext().SpanID())
-}
 
 func TestAuthApplicationServiceSetup_RestoresRequestParentContext(t *testing.T) {
 	deps, _ := setupPhase4AuthApplicationServiceTest(t, "test(trace_setup)")

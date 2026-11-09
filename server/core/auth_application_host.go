@@ -80,15 +80,7 @@ func (s *authApplicationService) newAuthState(
 	defer span.End()
 
 	auth.SetProtocol(&config.Protocol{})
-	auth.ApplyCredentials(input.Credentials)
-	auth.ApplyContextData(input.Context)
-	applyAuthIDPContext(auth, input.IDP)
-
-	if input.AuthLoginAttempt > 0 {
-		auth.Request.AuthLoginAttempt = input.AuthLoginAttempt
-		auth.SyncLoginAttemptsFromAttemptOrdinal(input.AuthLoginAttempt)
-	}
-
+	auth.applyAuthInput(input)
 	auth.postResolvDNS(ginCtx.Request.Context())
 	auth.InitMethodAndUserAgent()
 	auth.WithDefaults(ginCtx)
@@ -98,6 +90,19 @@ func (s *authApplicationService) newAuthState(
 	logProcessingRequest(ginCtx, auth)
 
 	return auth, ginCtx, capture, nil
+}
+
+// applyAuthInput copies transport-neutral credentials, request context, IdP context, and the caller-supplied login
+// attempt ordinal onto the request-owned auth state.
+func (a *AuthState) applyAuthInput(input AuthInput) {
+	a.ApplyCredentials(input.Credentials)
+	a.ApplyContextData(input.Context)
+	applyAuthIDPContext(a, input.IDP)
+
+	if input.AuthLoginAttempt > 0 {
+		a.Request.AuthLoginAttempt = input.AuthLoginAttempt
+		a.SyncLoginAttemptsFromAttemptOrdinal(input.AuthLoginAttempt)
+	}
 }
 
 // applyAuthIDPContext installs detached protocol, attribute-release, and affinity values on the compatibility host.

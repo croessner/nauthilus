@@ -114,14 +114,6 @@ var (
 	ErrBackendHealthChecksDisabled = errors.New("backend_health_checks not enabled")
 	// ErrMonitoringBackendServersEmpty reports that backend monitoring has no configured targets.
 	ErrMonitoringBackendServersEmpty = errors.New("no monitoring backend servers configured")
-	// ErrInvalidUsername reports a syntactically invalid username.
-	ErrInvalidUsername = errors.New("invalid username")
-	// ErrEmptyUsername reports an empty username.
-	ErrEmptyUsername = errors.New("empty_username")
-	// ErrEmptyPassword reports an empty password.
-	ErrEmptyPassword = errors.New("empty_password")
-	// ErrPasswordEncoding reports a password encoding failure.
-	ErrPasswordEncoding = errors.New("password encoding error")
 	// ErrIncorrectCache reports an unexpected cache backend state.
 	ErrIncorrectCache = errors.New("incorrect cache")
 	// ErrUnregisteredComponent reports an unknown application component.

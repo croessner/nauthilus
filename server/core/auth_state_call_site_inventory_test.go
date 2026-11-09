@@ -75,14 +75,6 @@ var authStateConstructionDispositions = []authStateDispositionEntry{
 		count:       1,
 	},
 	{
-		routeFamily: "AuthState setup constructor",
-		callSite:    "server/core/auth.go|NewAuthStateWithSetupWithDeps|NewAuthStateFromContextWithDeps",
-		owner:       "constructor implementation",
-		disposition: authStateDispositionRetained,
-		rationale:   "The setup constructor delegates to the single dependency-injected AuthState constructor.",
-		count:       1,
-	},
-	{
 		routeFamily: "AuthState base constructor",
 		callSite:    "server/core/auth.go|NewAuthStateFromContextWithDeps|AuthState literal",
 		owner:       "constructor implementation",

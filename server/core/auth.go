@@ -19,12 +19,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
-	"encoding/base64"
 	"encoding/hex"
-	stdjson "encoding/json"
 	stderrors "errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -43,7 +40,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib"
@@ -59,7 +55,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -110,9 +105,6 @@ type State interface {
 
 	// GetWebAuthnCredentials retrieves WebAuthn credentials for the user in the backend.
 	GetWebAuthnCredentials() (credentials []mfa.PersistentCredential, err error)
-
-	// FinishSetup completes the initialization of the state and logs the incoming request.
-	FinishSetup(ctx *gin.Context)
 
 	// SetUsername sets the username for the current authentication state.
 	SetUsername(username string)
@@ -1338,24 +1330,6 @@ func (a *AuthState) SetNoAuth(noAuth bool) {
 // SetProtocol sets the protocol for the AuthState using the given Protocol configuration.
 func (a *AuthState) SetProtocol(protocol *config.Protocol) {
 	a.Request.Protocol = protocol
-}
-
-// FinishSetup completes the initialization of the state and logs the incoming request.
-func (a *AuthState) FinishSetup(ctx *gin.Context) {
-	if a == nil || ctx == nil {
-		return
-	}
-
-	svc := ctx.GetString(definitions.CtxServiceKey)
-	if svc == "" {
-		// Fallback for native-idp if not set
-		svc = definitions.CatAuth
-	}
-
-	a.SetStatusCodes(svc)
-	setupAuth(ctx, a)
-
-	logProcessingRequest(ctx, a)
 }
 
 // FinishLogging logs the authentication result and updates metrics.
@@ -3763,224 +3737,6 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	}
 }
 
-// setupHeaderBasedAuth decodes configured transport headers through the request-owned configuration.
-func setupHeaderBasedAuth(ctx *gin.Context, auth State) {
-	a, ok := auth.(*AuthState)
-	if !ok || a.Cfg() == nil {
-		_ = ctx.Error(fmt.Errorf("%w: request-owned header configuration", ErrAuthApplicationDependencyMissing))
-		ctx.Abort()
-
-		return
-	}
-
-	cfg := a.Cfg()
-	if stop := stats.PrometheusTimer(cfg, definitions.PromRequest, "request_headers_parse_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
-		defer stop()
-	}
-
-	// Nginx header, see: https://nginx.org/en/docs/mail/ngx_mail_auth_http_module.html#protocol
-	usernameValue := getDecodedHeader(ctx, cfg.GetUsername())
-
-	passwordValue := getDecodedHeader(ctx, cfg.GetPassword())
-	if passwordValue != "" {
-		ctx.Request.Header.Del(cfg.GetPassword())
-	}
-
-	encoded := getDecodedHeader(ctx, cfg.GetPasswordEncoded())
-	if encoded != "" {
-		ctx.Request.Header.Del(cfg.GetPasswordEncoded())
-	}
-
-	passwordBytes := []byte(passwordValue)
-	if encoded == "1" {
-		// Decode password locally before applying
-		padding := len(passwordValue) % 4
-		if padding > 0 {
-			passwordValue += string(bytes.Repeat([]byte("="), 4-padding))
-		}
-
-		if decodedPassword, err := base64.URLEncoding.DecodeString(passwordValue); err != nil {
-			clear(passwordBytes)
-			passwordBytes = nil
-
-			_ = ctx.Error(errors.ErrPasswordEncoding)
-		} else {
-			clear(passwordBytes)
-			passwordBytes = decodedPassword
-		}
-	}
-
-	// Apply credentials and header-derived context in a consolidated manner.
-	a.ApplyCredentials(NewCredentials(
-		WithUsername(usernameValue),
-		WithPassword(secret.FromBytes(passwordBytes)),
-	))
-
-	a.ApplyContextData(NewAuthContext(
-		WithProtocol(getDecodedHeader(ctx, cfg.GetProtocol())),
-		WithMethod(getDecodedHeader(ctx, cfg.GetAuthMethod())),
-	))
-
-	clear(passwordBytes)
-
-	// Initialize login attempts from header using the centralized manager.
-	a.SyncLoginAttemptsFromHeader(getDecodedHeader(ctx, cfg.GetLoginAttempt()))
-}
-
-// processApplicationXWWWFormUrlencoded processes the application/x-www-form-urlencoded data from the request context and updates the AuthState object.
-// It extracts the values for the fields method, realm, user_agent, username, password, protocol, port, tls, and security from the request form.
-// If the realm field is not empty, it appends "@" + realm to the username field in the AuthState object.
-// It sets the method, user_agent, username, usernameOrig, password, protocol, xLocalIP, xPort, xSSL, and xSSLProtocol fields in the AuthState object.
-func processApplicationXWWWFormUrlencoded(ctx *gin.Context, auth State) {
-	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_form_decode_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
-			defer stop()
-		}
-	}
-
-	// Build username incorporating optional realm suffix
-	username := ctx.PostForm("username")
-	realm := ctx.PostForm("realm")
-	passwordValue := ctx.PostForm("password")
-
-	if len(realm) > 0 {
-		username = username + "@" + realm
-	}
-
-	passwordBytes := []byte(passwordValue)
-
-	// Apply credentials via builder
-	if a, ok := auth.(*AuthState); ok {
-		a.ApplyCredentials(NewCredentials(
-			WithUsername(username),
-			WithPassword(secret.FromBytes(passwordBytes)),
-		))
-	}
-
-	clear(passwordBytes)
-
-	if ctx.Request.PostForm != nil {
-		ctx.Request.PostForm.Del("password")
-	}
-
-	if ctx.Request.Form != nil {
-		ctx.Request.Form.Del("password")
-	}
-
-	// Build and apply context metadata
-	x := NewAuthContext(
-		WithMethod(ctx.PostForm("method")),
-		WithUserAgent(ctx.PostForm("user_agent")),
-		WithProtocol(ctx.PostForm("protocol")),
-		WithLocalIP(definitions.Localhost4),
-		WithLocalPort(ctx.PostForm("port")),
-		WithXSSL(ctx.PostForm("tls")),
-		WithXSSLProtocol(ctx.PostForm("security")),
-	)
-
-	if a, ok := auth.(*AuthState); ok {
-		a.ApplyContextData(x)
-	}
-}
-
-type authRequestDecoder func(ctx *gin.Context, request *authdto.Request) error
-
-func processStructuredAuthRequest(ctx *gin.Context, auth State, metricName string, decoder authRequestDecoder) {
-	if a, ok := auth.(*AuthState); ok {
-		if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, metricName, util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
-			defer stop()
-		}
-	}
-
-	var request authdto.Request
-
-	if err := decoder(ctx, &request); err != nil {
-		HandleJSONError(ctx, err)
-
-		return
-	}
-
-	if request.Password == "" && ctx.Query("mode") != authModeNoAuth && ctx.Query("mode") != string(AuthModeListAccounts) {
-		HandleJSONValidationError(ctx, "Password", "This field is required")
-
-		return
-	}
-
-	ApplyStructuredAuthRequest(auth, &request)
-
-	// If no user_agent was provided in the request body, fall back to the HTTP header.
-	if request.UserAgent == "" {
-		auth.WithUserAgent(ctx)
-	}
-
-	request = authdto.Request{}
-	ctx.Request.Body = http.NoBody
-	ctx.Request.ContentLength = 0
-
-	// Apply DNS resolution logic after setting client IP
-	if authState, ok := auth.(*AuthState); ok {
-		authState.postResolvDNS(ctx)
-	}
-}
-
-// processApplicationJSON decodes application/json authentication requests.
-func processApplicationJSON(ctx *gin.Context, auth State) {
-	processStructuredAuthRequest(ctx, auth, "request_json_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
-		return decodeStrictJSONRequest(ctx, request)
-	})
-}
-
-// processApplicationCBOR decodes application/cbor authentication requests.
-func processApplicationCBOR(ctx *gin.Context, auth State) {
-	processStructuredAuthRequest(ctx, auth, "request_cbor_decode_total", func(ctx *gin.Context, request *authdto.Request) error {
-		return cborcodec.DecodeReader(ctx.Request.Body, request)
-	})
-}
-
-func decodeStrictJSONRequest(ctx *gin.Context, request *authdto.Request) error {
-	decoder := stdjson.NewDecoder(ctx.Request.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(request); err != nil {
-		return err
-	}
-
-	var trailing struct{}
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return stderrors.New("request body must contain a single JSON value")
-		}
-
-		return err
-	}
-
-	if binding.Validator == nil {
-		return nil
-	}
-
-	return binding.Validator.ValidateStruct(request)
-}
-
-// ApplyStructuredAuthRequest updates the provided authentication state with
-// data from the structured request payload, if available.
-func ApplyStructuredAuthRequest(auth State, request *authdto.Request) {
-	authState, ok := auth.(*AuthState)
-	if !ok {
-		return
-	}
-
-	creds := NewCredentials(buildCredentialOptions(request)...)
-	authState.ApplyCredentials(creds)
-
-	ctxData := NewAuthContext(buildAuthContextOptions(request)...)
-	authState.ApplyContextData(ctxData)
-
-	if request.AuthLoginAttempt > 0 {
-		authState.Request.AuthLoginAttempt = request.AuthLoginAttempt
-		authState.SyncLoginAttemptsFromAttemptOrdinal(request.AuthLoginAttempt)
-	}
-}
-
 // buildCredentialOptions creates credential options from the request.
 func buildCredentialOptions(request *authdto.Request) []CredentialOption {
 	var opts []CredentialOption
@@ -4047,38 +3803,6 @@ func buildAuthContextOptions(request *authdto.Request) []AuthContextOption {
 	return opts
 }
 
-// setupBodyBasedAuth takes a Context and an AuthState object as input.
-// It retrieves the "Content-Type" header from the Context.
-// If the "Content-Type" starts with "application/x-www-form-urlencoded",
-// it calls the processApplicationXWWWFormUrlencoded function passing the Context and AuthState object.
-// If the "Content-Type" is "application/json" or "application/cbor",
-// it decodes the body with the corresponding structured decoder.
-// If neither of the above conditions match, it sets the error associated with unsupported media type
-// and sets the error type to gin.ErrorTypeBind on the Context.
-func setupBodyBasedAuth(ctx *gin.Context, auth State) {
-	if ctx.Request.Method == "POST" {
-		contentType := ctx.GetHeader("Content-Type")
-
-		if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
-			processApplicationXWWWFormUrlencoded(ctx, auth)
-		} else if strings.HasPrefix(contentType, "application/json") {
-			processApplicationJSON(ctx, auth)
-		} else if strings.HasPrefix(contentType, "application/cbor") {
-			processApplicationCBOR(ctx, auth)
-		} else {
-			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{policyAttributeSuffixError: "Unsupported media type"})
-			_ = ctx.Error(errors.ErrUnsupportedMediaType).SetType(gin.ErrorTypeBind)
-		}
-	}
-}
-
-// setupHTTPBasicAuth sets up basic authentication for HTTP requests.
-// It takes in a gin.Context object and a pointer to an AuthState object.
-// It calls the withClientInfo, withLocalInfo, withUserAgent, and withXSSL methods of the AuthState object to set client, local, user-agent, and X-SSL information, respectively
-func setupHTTPBasicAuth(_ *gin.Context, _ State) {
-	// NOTE: We must get username and password later!
-}
-
 // InitMethodAndUserAgent initializes the authentication method and user agent fields if they are not already set.
 func (a *AuthState) InitMethodAndUserAgent() State {
 	if a.Request.Method == "" {
@@ -4098,146 +3822,6 @@ func getDecodedHeader(ctx *gin.Context, headerName string) string {
 	}
 
 	return util.URLPartialDecode(ctx.GetHeader(headerName))
-}
-
-// setupAuth sets up the authentication based on the service parameter in the gin context.
-// It takes the gin context and an AuthState struct as input.
-//
-// If the service parameter is "nginx" or "header", it calls the setupHeaderBasedAuth function.
-// If the service parameter is "json" or "idp", it calls the setupBodyBasedAuth function.
-// If the service parameter is "basic", it calls the setupHTTPBasicAuth function.
-//
-// After setting up the authentication, it calls the withDefaults method on the AuthState struct.
-//
-// Example usage:
-//
-//	auth := &AuthState{}
-//	ctx := gin.Context{}
-//	ctx.SetParam("service", "nginx")
-//	setupAuth(&ctx, auth)
-func setupAuth(ctx *gin.Context, auth State) {
-	if stop := setupAuthTimer(ctx, auth); stop != nil {
-		defer stop()
-	}
-
-	ensureAuthProtocol(auth)
-
-	auth.WithClientInfo(ctx)
-	auth.WithLocalInfo(ctx)
-	auth.WithUserAgent(ctx)
-	auth.WithXSSL(ctx)
-
-	svc := ctx.GetString(definitions.CtxServiceKey)
-	setupAuthByService(ctx, auth, svc)
-
-	if ctx.IsAborted() {
-		return
-	}
-
-	if !validateSetupAuthCredentials(ctx, auth, svc) {
-		return
-	}
-
-	auth.InitMethodAndUserAgent()
-	auth.WithDefaults(ctx)
-	auth.SetOperationMode(ctx)
-}
-
-// setupAuthTimer starts the request setup metric for AuthState-backed requests.
-func setupAuthTimer(ctx *gin.Context, auth State) func() {
-	a, ok := auth.(*AuthState)
-	if !ok {
-		return nil
-	}
-
-	return stats.PrometheusTimer(a.Cfg(), definitions.PromRequest, "request_setup_total", util.RequestResource(ctx, ctx.Request, a.Request.Service))
-}
-
-// ensureAuthProtocol initializes an empty protocol holder when none exists.
-func ensureAuthProtocol(auth State) {
-	if auth.GetProtocol() == nil || auth.GetProtocol().Get() == "" {
-		auth.SetProtocol(&config.Protocol{})
-	}
-}
-
-// setupAuthByService dispatches request decoding based on the configured service.
-func setupAuthByService(ctx *gin.Context, auth State, svc string) {
-	switch svc {
-	case definitions.ServNginx, definitions.ServHeader:
-		setupHeaderBasedAuth(ctx, auth)
-	case definitions.ServJSON, definitions.ServCBOR, definitions.ServIDP:
-		setupBodyBasedAuth(ctx, auth)
-	case definitions.ServBasic:
-		setupHTTPBasicAuth(ctx, auth)
-	}
-}
-
-// validateSetupAuthCredentials rejects missing or invalid credentials for direct auth endpoints.
-func validateSetupAuthCredentials(ctx *gin.Context, auth State, svc string) bool {
-	if !shouldValidateSetupAuthCredentials(ctx, svc) {
-		return true
-	}
-
-	username := auth.GetUsername()
-	if username == "" {
-		_ = ctx.Error(errors.ErrEmptyUsername)
-
-		return false
-	}
-
-	if !util.ValidateUsername(username) {
-		auth.SetUsername("")
-
-		_ = ctx.Error(errors.ErrInvalidUsername)
-
-		return false
-	}
-
-	if auth.GetPassword().IsZero() {
-		_ = ctx.Error(errors.ErrEmptyPassword)
-
-		return false
-	}
-
-	return true
-}
-
-// shouldValidateSetupAuthCredentials reports whether setup must enforce username/password fields.
-func shouldValidateSetupAuthCredentials(ctx *gin.Context, svc string) bool {
-	return ctx.Query("mode") != string(AuthModeListAccounts) &&
-		ctx.Query("mode") != authModeNoAuth &&
-		svc != definitions.ServBasic &&
-		svc != definitions.ServIDP
-}
-
-// NewAuthStateWithSetupWithDeps is the dependency-injected variant of NewAuthStateWithSetup.
-// Call this from request boundaries that already have explicit deps available.
-func NewAuthStateWithSetupWithDeps(ctx *gin.Context, deps AuthDeps) State {
-	// Setup tracing
-	tr := monittrace.New("nauthilus/auth")
-	tctx, tsp := tr.Start(ctx.Request.Context(), "auth.setup",
-		attribute.String("service", ctx.GetString(definitions.CtxServiceKey)),
-		attribute.String("method", ctx.Request.Method),
-	)
-
-	defer tsp.End()
-
-	auth := NewAuthStateFromContextWithDeps(ctx, deps)
-
-	if a, ok := auth.(*AuthState); ok {
-		requestScope := a.scopeRequestContext(tctx, ctx)
-
-		defer requestScope.Restore()
-
-		a.traceSetupDetails(tsp)
-		a.FinishSetup(ctx)
-	}
-
-	if ctx.Errors.Last() != nil || ctx.IsAborted() {
-		return nil
-	}
-
-	return auth
 }
 
 // NewAuthStateFromContextWithDeps initializes and returns an AuthState using the provided gin.Context and explicit deps.

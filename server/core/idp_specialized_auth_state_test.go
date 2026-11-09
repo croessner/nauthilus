@@ -124,7 +124,7 @@ func TestIDPSpecializedAuthStateCannotInvokeAuthenticationOrPolicy(t *testing.T)
 	}
 
 	forbiddenCalls := map[string]struct{}{
-		"FinishSetup": {}, "HandlePassword": {}, "HandleAuthentication": {}, "PreproccessAuthRequest": {},
+		"HandlePassword": {}, "HandleAuthentication": {}, "PreproccessAuthRequest": {},
 		"ApplyConfiguredPreAuthDecision": {}, "ApplyConfiguredPreAuthControl": {}, "Evaluate": {},
 		"AuthOK": {}, "AuthFail": {}, "AuthTempFail": {},
 	}

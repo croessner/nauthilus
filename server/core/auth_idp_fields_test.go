@@ -185,10 +185,10 @@ func TestSetAuthenticationFieldsMapsExternalSessionFromJSONRequest(t *testing.T)
 		},
 	}
 
-	ApplyStructuredAuthRequest(auth, &authdto.Request{
+	auth.applyAuthInput(NewAuthInputFromStructuredRequest(definitions.ServJSON, AuthModeAuthenticate, authdto.Request{
 		Username:          "user@example.test",
 		ExternalSessionID: testExternalSessionID,
-	})
+	}))
 
 	assert.Equal(t, testExternalSessionID, auth.Request.ExternalSessionID)
 	assert.Equal(t, testExternalSessionID, ctx.GetString(definitions.CtxExternalSessionKey))
@@ -199,10 +199,10 @@ func TestSetAuthenticationFieldsMapsLoginAttemptFromJSONRequest(t *testing.T) {
 
 	auth := &AuthState{deps: setupAuthDeps()}
 
-	ApplyStructuredAuthRequest(auth, &authdto.Request{
+	auth.applyAuthInput(NewAuthInputFromStructuredRequest(definitions.ServJSON, AuthModeAuthenticate, authdto.Request{
 		Username:         "user@example.test",
 		AuthLoginAttempt: 3,
-	})
+	}))
 
 	assert.Equal(t, uint(2), auth.Security.LoginAttempts)
 	assert.Equal(t, uint(2), auth.GetFailCount())
