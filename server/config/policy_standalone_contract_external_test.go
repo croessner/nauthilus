@@ -724,7 +724,8 @@ func walkPolicyRepositoryTextFiles(
 	})
 }
 
-// policyRepositoryDirectoryExcluded classifies non-production and historical trees.
+// policyRepositoryDirectoryExcluded classifies non-production, historical, and generated local trees such as the
+// git-ignored graphify knowledge graph.
 func policyRepositoryDirectoryExcluded(relativePath string) bool {
 	if relativePath == "server/docs/policy-layer" {
 		return true
@@ -734,6 +735,7 @@ func policyRepositoryDirectoryExcluded(relativePath string) bool {
 		".agents",
 		".codex",
 		".git",
+		"graphify-out",
 		"node_modules",
 		"temp",
 		"vendor",
