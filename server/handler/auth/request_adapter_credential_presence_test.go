@@ -151,6 +151,19 @@ func structuredCredentialPresenceCases(t *testing.T) []credentialPresenceCase {
 			body: credentialPresenceCBORBody(t, map[string]string{"password": credentialPresenceSecret}), wantField: "Username"},
 		{name: "cbor missing password", service: definitions.ServCBOR, contentType: credentialPresenceCBOR,
 			body: credentialPresenceCBORBody(t, map[string]string{"username": credentialPresenceUsername}), wantField: "Password"},
+		{name: "cbor null username", service: definitions.ServCBOR, contentType: credentialPresenceCBOR,
+			body:      credentialPresenceCBORBody(t, map[string]any{"username": nil, "password": credentialPresenceSecret}),
+			wantField: "Username"},
+		{name: "cbor null password", service: definitions.ServCBOR, contentType: credentialPresenceCBOR,
+			body:      credentialPresenceCBORBody(t, map[string]any{"username": credentialPresenceUsername, "password": nil}),
+			wantField: "Password"},
+		{name: "json duplicate username ending in null", service: definitions.ServJSON, contentType: credentialPresenceJSON,
+			body:      `{"username":"` + credentialPresenceUsername + `","password":"` + credentialPresenceSecret + `","username":null}`,
+			wantField: "Username"},
+		{name: "json duplicate username ending in a value", service: definitions.ServJSON,
+			contentType: credentialPresenceJSON,
+			body:        `{"username":null,"password":"` + credentialPresenceSecret + `","username":"` + credentialPresenceUsername + `"}`,
+			wantOK:      true, wantUsername: credentialPresenceUsername, wantPassword: true},
 		{name: "json GET without body has no credential keys", service: definitions.ServJSON, method: http.MethodGet},
 	}
 }
@@ -199,8 +212,8 @@ func credentialPresenceBasicHeader(presentation string) map[string]string {
 	return map[string]string{"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte(presentation))}
 }
 
-// credentialPresenceCBORBody encodes one CBOR map so tests can omit individual keys.
-func credentialPresenceCBORBody(t *testing.T, fields map[string]string) string {
+// credentialPresenceCBORBody encodes one CBOR map so tests can omit individual keys or send null values.
+func credentialPresenceCBORBody[V any](t *testing.T, fields map[string]V) string {
 	t.Helper()
 
 	payload, err := cborcodec.Marshal(fields)

@@ -29,6 +29,7 @@ import (
 const (
 	builtinStandardOutcomeDefaultDeny = "auth.outcome.default_deny"
 	builtinStandardOutcomePreAuthOK   = "auth.outcome.pre_auth_ok"
+	builtinOutcomeEmptyUsername       = "auth.outcome.empty_username"
 	builtinStatusMessageDetail        = "status_message"
 	builtinGeneratedFamilyLua         = "lua"
 	builtinGeneratedFamilyPlugin      = "plugin"
@@ -465,8 +466,11 @@ func builtinFixedBackendRuleInputs(
 			authLookup, policy.AuthnFactBackendTempFail, true, decision.EffectIndeterminate,
 			"auth.outcome.backend_tempfail", policy.FSMEventMarkerAuthTempFail, policy.ResponseMarkerTempFail, nil),
 		builtinBooleanRule("standard_empty_username", builtinCheckpointDecision, policy.StageAuthDecision,
-			authLookup, policy.AuthnFactBackendEmptyUsername, true, decision.EffectIndeterminate,
-			"auth.outcome.empty_username", policy.FSMEventMarkerAuthEmptyUser, policy.ResponseMarkerTempFail, nil),
+			authenticate, policy.AuthnFactBackendEmptyUsername, true, decision.EffectDeny,
+			builtinOutcomeEmptyUsername, policy.FSMEventMarkerAuthDeny, policy.ResponseMarkerFail, nil),
+		builtinBooleanRule("standard_lookup_identity_empty_username", builtinCheckpointDecision, policy.StageAuthDecision,
+			lookup, policy.AuthnFactBackendEmptyUsername, true, decision.EffectIndeterminate,
+			builtinOutcomeEmptyUsername, policy.FSMEventMarkerAuthEmptyUser, policy.ResponseMarkerTempFail, nil),
 		builtinBooleanRule("standard_empty_password", builtinCheckpointDecision, policy.StageAuthDecision,
 			authenticate, policy.AuthnFactBackendEmptyPassword, true, decision.EffectDeny,
 			"auth.outcome.empty_password", policy.FSMEventMarkerAuthEmptyPass, policy.ResponseMarkerFail, nil),

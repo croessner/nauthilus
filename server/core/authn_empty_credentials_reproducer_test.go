@@ -32,23 +32,28 @@ import (
 
 // authnEmptyCredentialCase describes one empty-credential authenticate request through the builtin authn catalog.
 type authnEmptyCredentialCase struct {
-	prepare func(*AuthInput)
-	name    string
+	prepare     func(*AuthInput)
+	name        string
+	wantRule    string
+	wantOutcome string
 }
 
 // TestAuthnEmptyCredentialsSettleAsInvalidLogin pins that an empty username or password value is no input error but
-// an ordinary failed login: the builtin auth_failure rule denies it with the regular invalid-login message.
+// an ordinary failed login: the builtin empty-credential rules deny it with the regular invalid-login message while
+// keeping their observable outcome markers.
 func TestAuthnEmptyCredentialsSettleAsInvalidLogin(t *testing.T) {
 	clearUsername := func(input *AuthInput) { input.Credentials.Username = "" }
 	clearPassword := func(input *AuthInput) { input.Credentials.Password = secret.Value{} }
 
 	cases := []authnEmptyCredentialCase{
-		{name: "authenticate empty username", prepare: clearUsername},
-		{name: "authenticate empty password", prepare: clearPassword},
+		{name: "authenticate empty username", prepare: clearUsername, wantRule: "standard_empty_username",
+			wantOutcome: "auth.outcome.empty_username"},
+		{name: "authenticate empty password", prepare: clearPassword, wantRule: "standard_empty_password",
+			wantOutcome: "auth.outcome.empty_password"},
 		{name: "authenticate empty username and password", prepare: func(input *AuthInput) {
 			clearUsername(input)
 			clearPassword(input)
-		}},
+		}, wantRule: "standard_empty_username", wantOutcome: "auth.outcome.empty_username"},
 	}
 
 	for _, test := range cases {
@@ -133,8 +138,8 @@ func assertAuthnEmptyCredentialOutcome(
 	}
 
 	selected := captured.selectedDecision(string(policy.StageAuthDecision))
-	if selected == nil || selected.Effect != policy.DecisionDeny || selected.OutcomeMarker != policy.OutcomeMarkerAuthFailure ||
-		selected.ResponseMarker != policy.ResponseMarkerFail {
-		t.Fatalf("%s selected decision = %#v, want the ordinary auth_failure deny", test.name, selected)
+	if selected == nil || selected.Effect != policy.DecisionDeny || selected.PolicyName != test.wantRule ||
+		selected.OutcomeMarker != test.wantOutcome || selected.ResponseMarker != policy.ResponseMarkerFail {
+		t.Fatalf("%s selected decision = %#v, want %s deny with %s", test.name, selected, test.wantRule, test.wantOutcome)
 	}
 }

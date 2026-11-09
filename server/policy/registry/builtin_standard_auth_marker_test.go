@@ -34,7 +34,10 @@ func TestBuiltinStandardAuthEmptyCredentialRulesKeepTheirFSMEvents(t *testing.T)
 		marker   string
 		decision decision.Effect
 	}{
-		"standard_empty_username": {marker: policy.FSMEventMarkerAuthEmptyUser, decision: decision.EffectIndeterminate},
+		"standard_empty_username": {marker: policy.FSMEventMarkerAuthDeny, decision: decision.EffectDeny},
+		"standard_lookup_identity_empty_username": {
+			marker: policy.FSMEventMarkerAuthEmptyUser, decision: decision.EffectIndeterminate,
+		},
 		"standard_empty_password": {marker: policy.FSMEventMarkerAuthEmptyPass, decision: decision.EffectDeny},
 	}
 

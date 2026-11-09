@@ -528,6 +528,7 @@ func (e *authnCandidateExecution) prepareBackendPlan(plan backendExecutionPlan) 
 	}
 
 	if result := e.auth.usernamePasswordChecks(); result != definitions.AuthResultUnset {
+		e.auth.recordPolicyBackendResult(e.ginCtx, result, nil, nil)
 		e.settleCredential(result, false)
 
 		return true, nil
@@ -777,7 +778,7 @@ func authnCandidateOutcomeFromRuntime(auth *AuthState, result definitions.AuthRe
 		return nil
 	}
 
-	decision := authnCandidateDecisionFromResult(result)
+	decision := authnCandidateDecisionFromResult(auth.policyOperation(), result)
 	status := auth.Runtime.StatusCodeOK
 
 	switch decision {
@@ -801,17 +802,29 @@ func authnCandidateOutcomeFromRuntime(auth *AuthState, result definitions.AuthRe
 }
 
 // authnCandidateDecisionFromResult maps the existing backend result before policy selection.
-func authnCandidateDecisionFromResult(result definitions.AuthResult) AuthDecision {
+func authnCandidateDecisionFromResult(operation policy.Operation, result definitions.AuthResult) AuthDecision {
 	switch result {
 	case definitions.AuthResultOK:
 		return AuthDecisionOK
 	case definitions.AuthResultFail, definitions.AuthResultEmptyPassword:
 		return AuthDecisionFail
-	case definitions.AuthResultTempFail, definitions.AuthResultEmptyUsername:
+	case definitions.AuthResultEmptyUsername:
+		if emptyUsernameDenied(operation) {
+			return AuthDecisionFail
+		}
+
+		return AuthDecisionTempFail
+	case definitions.AuthResultTempFail:
 		return AuthDecisionTempFail
 	default:
 		return AuthDecisionUnset
 	}
+}
+
+// emptyUsernameDenied reports whether an empty username settles as an ordinary failed login: authenticate denies it
+// like a wrong password, while identity lookups keep the temporary failure.
+func emptyUsernameDenied(operation policy.Operation) bool {
+	return operation == policy.OperationAuthenticate
 }
 
 // StandardAuthEffectsEnabled reports the established request-local obligation gate.

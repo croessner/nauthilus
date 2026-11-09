@@ -2384,7 +2384,8 @@ Current, externally visible behavior that must be reproduced by the built-in def
 | auth success | `permit` | `auth.fsm.event.auth_permit` | `AuthResultOK` / `auth_permit` |
 | auth reject | `deny` | `auth.fsm.event.auth_deny` | `AuthResultFail` / `auth_deny` |
 | auth tempfail | `tempfail` | `auth.fsm.event.auth_tempfail` | `AuthResultTempFail` / `auth_tempfail` |
-| empty username | `tempfail` | `auth.fsm.event.auth_empty_user` | `AuthResultEmptyUsername` / `auth_empty_user` |
+| empty username (`authenticate`) | `deny` | `auth.fsm.event.auth_deny` | `AuthResultEmptyUsername` / `auth_deny` |
+| empty username (`lookup_identity`) | `tempfail` | `auth.fsm.event.auth_empty_user` | `AuthResultEmptyUsername` / `auth_empty_user` |
 | empty password | `deny` | `auth.fsm.event.auth_empty_pass` | `AuthResultEmptyPassword` / `auth_empty_pass` |
 | no final auth decision applies | `deny` | `auth.fsm.event.auth_deny` | default deny |
 

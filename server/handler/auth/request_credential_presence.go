@@ -16,24 +16,15 @@
 package auth
 
 import (
-	"bytes"
-	stdjson "encoding/json"
 	"net/http"
 
-	"github.com/croessner/nauthilus/v4/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
 )
 
 const (
 	httpAuthUsernameKey = "username"
 	httpAuthPasswordKey = "password"
-
-	// cborSimpleNull and cborSimpleUndefined are the initial bytes of the CBOR null and undefined simple values.
-	cborSimpleNull      = 0xf6
-	cborSimpleUndefined = 0xf7
 )
-
-var jsonNullLiteral = []byte("null")
 
 // httpAuthCredentialPresence records which credential keys one HTTP auth request carried, independent of their
 // values. A missing key makes the request malformed, while an empty value is ordinary authentication input that the
@@ -66,72 +57,37 @@ func httpAuthHeaderPresent(header http.Header, name string) bool {
 	return len(header.Values(name)) > 0
 }
 
-// httpAuthPresenceMarker records whether a structured body carried a non-null value for one key without retaining
-// the value, so a password never gets copied by the presence probe.
-type httpAuthPresenceMarker bool
-
-// UnmarshalJSON marks every JSON value except null as present.
-func (m *httpAuthPresenceMarker) UnmarshalJSON(data []byte) error {
-	*m = httpAuthPresenceMarker(!bytes.Equal(bytes.TrimSpace(data), jsonNullLiteral))
-
-	return nil
-}
-
-// UnmarshalCBOR marks every CBOR data item except null and undefined as present.
-func (m *httpAuthPresenceMarker) UnmarshalCBOR(data []byte) error {
-	*m = httpAuthPresenceMarker(len(data) > 0 && data[0] != cborSimpleNull && data[0] != cborSimpleUndefined)
-
-	return nil
-}
-
-// httpAuthCredentialProbe indexes the keys of one structured body by presence marker.
-type httpAuthCredentialProbe map[string]httpAuthPresenceMarker
-
-// presence converts the probed keys into credential presence.
-func (p httpAuthCredentialProbe) presence() httpAuthCredentialPresence {
-	return httpAuthCredentialPresence{
-		username: bool(p[httpAuthUsernameKey]),
-		password: bool(p[httpAuthPasswordKey]),
-	}
-}
-
-// httpAuthStructuredRequest decodes one JSON or CBOR auth body together with the credential keys it carried.
+// httpAuthStructuredRequest is the JSON and CBOR decoding target of one structured auth body.
+//
+// The shallower pointer fields shadow the credential fields of the embedded DTO in both encoding/json and the CBOR
+// codec, so one decoding pass records whether each credential key carried a non-null value. Unknown fields stay
+// rejected because every other key still belongs to the embedded DTO.
 type httpAuthStructuredRequest struct {
-	request  authdto.Request
-	presence httpAuthCredentialPresence
+	Username *string `json:"username"`
+	Password *string `json:"password"`
+	authdto.Request
 }
 
-// UnmarshalJSON decodes the strict auth DTO, rejecting unknown fields, and probes the credential keys.
-func (r *httpAuthStructuredRequest) UnmarshalJSON(data []byte) error {
-	decoder := stdjson.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
+// takeDTO moves the decoded credentials into the auth DTO, drops the wrapper's password reference, and reports which
+// credential keys the body carried.
+func (r *httpAuthStructuredRequest) takeDTO() (authdto.Request, httpAuthCredentialPresence) {
+	presence := httpAuthCredentialPresence{username: r.Username != nil, password: r.Password != nil}
 
-	if err := decoder.Decode(&r.request); err != nil {
-		return err
+	request := r.Request
+	request.Username = ""
+	request.Password = ""
+
+	if r.Username != nil {
+		request.Username = *r.Username
 	}
 
-	var probe httpAuthCredentialProbe
-	if err := stdjson.Unmarshal(data, &probe); err != nil {
-		return err
+	if r.Password != nil {
+		request.Password = *r.Password
 	}
 
-	r.presence = probe.presence()
+	r.Request = authdto.Request{}
+	r.Username = nil
+	r.Password = nil
 
-	return nil
-}
-
-// UnmarshalCBOR decodes the auth DTO with the shared CBOR policy and probes the credential keys.
-func (r *httpAuthStructuredRequest) UnmarshalCBOR(data []byte) error {
-	if err := cborcodec.Unmarshal(data, &r.request); err != nil {
-		return err
-	}
-
-	var probe httpAuthCredentialProbe
-	if err := cborcodec.Unmarshal(data, &probe); err != nil {
-		return err
-	}
-
-	r.presence = probe.presence()
-
-	return nil
+	return request, presence
 }

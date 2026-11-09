@@ -790,10 +790,22 @@ level, and never stored in the positive password cache.
 A selected `deny` or `tempfail`, at `pre_auth` or later, always applies. The FSM
 records the host event whenever it ends in the same terminal state as the
 enforced decision, otherwise the rule's marker or the derived one. An empty
-username therefore records `auth_empty_user` and an empty password
-`auth_empty_pass` even when the selected rule names `auth_tempfail` or
-`auth_deny`, and a checked wrong password records `auth_deny` even when the
-rule names `auth_empty_pass`. A selected `permit` applies only when the frozen
+password therefore records `auth_empty_pass` even when the selected rule names
+`auth_deny`, an empty username under a `tempfail` records `auth_empty_user`
+even when the rule names `auth_tempfail`, and a checked wrong password records
+`auth_deny` even when the rule names `auth_empty_pass`.
+
+An empty username or password value is ordinary authentication input, not a
+malformed request. For `authenticate`, the builtin `standard_empty_username`
+and `standard_empty_password` rules deny it with the regular failed-login
+response, so the FSM records `auth_deny` for an empty username and
+`auth_empty_pass` for an empty password; the outcome markers
+`auth.outcome.empty_username` and `auth.outcome.empty_password` and the facts
+`backend.empty_username` and `backend.empty_password` keep both cases
+observable. For `lookup_identity`, the builtin
+`standard_lookup_identity_empty_username` rule keeps the temporary failure with
+`auth_empty_user`. HTTP transports still answer a missing credential key with
+`400 Bad Request`; only an empty value reaches the auth pipeline. A selected `permit` applies only when the frozen
 host evidence supports it. Otherwise the request fails closed: it is answered
 as a temporary failure, the FSM records `auth_tempfail`, the event is logged at
 error level as `Policy permit rejected by the auth FSM guard` with the session,

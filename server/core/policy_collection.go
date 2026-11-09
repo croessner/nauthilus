@@ -594,7 +594,7 @@ func (a *AuthState) recordPolicyBackendResult(ctx *gin.Context, authResult defin
 		Status:       status,
 		Reason:       reason,
 		Matched:      backendPolicyMatched(authResult, passDBResult, err),
-		DecisionHint: backendPolicyDecision(authResult, err),
+		DecisionHint: backendPolicyDecision(a.policyOperation(), authResult, err),
 		Attributes:   attributes,
 	})
 }
@@ -844,7 +844,12 @@ func backendPolicyMatched(authResult definitions.AuthResult, passDBResult *PassD
 	return passDBResult != nil
 }
 
-func backendPolicyDecision(authResult definitions.AuthResult, err error) policy.Decision {
+// backendPolicyDecision maps one backend result to the decision hint of its backend policy check.
+func backendPolicyDecision(operation policy.Operation, authResult definitions.AuthResult, err error) policy.Decision {
+	if authResult == definitions.AuthResultEmptyUsername && err == nil && emptyUsernameDenied(operation) {
+		return policy.DecisionDeny
+	}
+
 	if err != nil || authResult == definitions.AuthResultTempFail || authResult == definitions.AuthResultEmptyUsername {
 		return policy.DecisionTempFail
 	}

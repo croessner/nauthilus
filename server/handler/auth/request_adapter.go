@@ -190,19 +190,22 @@ func (b *httpAuthInputBuilder) structuredInput(
 	decode httpAuthStructuredDecoder,
 ) (httpAuthSurface, bool) {
 	var decoded httpAuthStructuredRequest
-	if err := decode(ctx, &decoded); err != nil {
-		decoded.request.Password = ""
+
+	err := decode(ctx, &decoded)
+	request, presence := decoded.takeDTO()
+
+	if err != nil {
 		core.HandleJSONError(ctx, err)
 
 		return httpAuthSurface{}, false
 	}
 
-	input := core.NewAuthInputFromStructuredRequest(service, mode, decoded.request)
-	decoded.request.Password = ""
+	input := core.NewAuthInputFromStructuredRequest(service, mode, request)
+	request.Password = ""
 	ctx.Request.Body = http.NoBody
 	ctx.Request.ContentLength = 0
 
-	return httpAuthSurface{input: input, presence: decoded.presence, structured: true}, true
+	return httpAuthSurface{input: input, presence: presence, structured: true}, true
 }
 
 // formInput maps the established urlencoded auth fields and removes password form values.
@@ -262,23 +265,11 @@ func (b *httpAuthInputBuilder) headerInput(
 	ctx.Request.Header.Del(cfg.GetPassword())
 	ctx.Request.Header.Del(cfg.GetPasswordEncoded())
 
-	passwordBytes := []byte(passwordValue)
-	if encoded == "1" {
-		padding := len(passwordValue) % 4
-		if padding > 0 {
-			passwordValue += string(bytes.Repeat([]byte("="), 4-padding))
-		}
+	passwordBytes, ok := headerHTTPAuthPassword(passwordValue, encoded == "1")
+	if !ok {
+		ctx.AbortWithStatus(http.StatusBadRequest)
 
-		decodedPassword, err := base64.URLEncoding.DecodeString(passwordValue)
-		if err != nil {
-			clear(passwordBytes)
-			ctx.AbortWithStatus(http.StatusBadRequest)
-
-			return httpAuthSurface{}, false
-		}
-
-		clear(passwordBytes)
-		passwordBytes = decodedPassword
+		return httpAuthSurface{}, false
 	}
 
 	credentials := core.NewCredentials(
@@ -307,6 +298,29 @@ func (b *httpAuthInputBuilder) headerInput(
 		},
 		presence: presence,
 	}, true
+}
+
+// headerHTTPAuthPassword returns the header password bytes, decoding the legacy unpadded URL-safe base64 form when
+// requested. It reports false for an undecodable encoded password.
+func headerHTTPAuthPassword(passwordValue string, encoded bool) ([]byte, bool) {
+	passwordBytes := []byte(passwordValue)
+	if !encoded {
+		return passwordBytes, true
+	}
+
+	if padding := len(passwordValue) % 4; padding > 0 {
+		passwordValue += string(bytes.Repeat([]byte("="), 4-padding))
+	}
+
+	decodedPassword, err := base64.URLEncoding.DecodeString(passwordValue)
+
+	clear(passwordBytes)
+
+	if err != nil {
+		return nil, false
+	}
+
+	return decodedPassword, true
 }
 
 // baseContext collects common request and server-observed transport facts once.
@@ -488,7 +502,8 @@ func mergeHTTPAuthContext(base core.AuthContext, surface core.AuthContext) core.
 	return base
 }
 
-// decodeStrictHTTPAuthJSON accepts exactly one JSON value; credential key presence is validated by the caller.
+// decodeStrictHTTPAuthJSON accepts exactly one JSON value without unknown fields; credential key presence is
+// validated by the caller.
 func decodeStrictHTTPAuthJSON(ctx *gin.Context, request *httpAuthStructuredRequest) error {
 	decoder := stdjson.NewDecoder(ctx.Request.Body)
 	decoder.DisallowUnknownFields()
