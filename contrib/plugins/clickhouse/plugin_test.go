@@ -763,18 +763,19 @@ func singleRowForRequest(t *testing.T, options requestOptions) map[string]any {
 }
 
 type requestOptions struct {
-	runtimeValues map[string]any
-	facts         []pluginapi.PolicyFact
-	passwordHash  string
-	protocol      string
-	service       string
-	grantType     string
-	samlEntityID  string
-	mfaMethod     string
-	statusMessage string
-	authenticated bool
-	noAuth        bool
-	disableRedis  bool
+	runtimeValues   map[string]any
+	facts           []pluginapi.PolicyFact
+	rblMatchedLists []string
+	passwordHash    string
+	protocol        string
+	service         string
+	grantType       string
+	samlEntityID    string
+	mfaMethod       string
+	statusMessage   string
+	authenticated   bool
+	noAuth          bool
+	disableRedis    bool
 }
 
 // testRequest builds one representative post-action request.
@@ -838,6 +839,7 @@ func testRequest(t *testing.T, options requestOptions) pluginapi.PostActionReque
 				},
 			},
 			Diagnostics: pluginapi.RequestDiagnostics{
+				RBLMatchedLists:   options.rblMatchedLists,
 				StatusMessage:     statusMessage,
 				BruteForceName:    "bucket-a",
 				LatencyMillis:     12,

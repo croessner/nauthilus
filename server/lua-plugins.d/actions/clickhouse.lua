@@ -15,6 +15,11 @@
 
 -- ClickHouse Post-Action
 --
+-- RETIRED: This Lua action is no longer maintained and receives no new columns or decision sources. Use the native
+-- Go ClickHouse plugin (contrib/plugins/clickhouse) instead; it writes decision_sources including the built-in rbl
+-- and brute_force controls and the rbl_lists column. Existing tables keep accepting rows from this script because new
+-- columns have defaults.
+--
 -- Purpose: Collect the same metrics as telegram.lua for non-authenticated requests,
 -- including requests without an existing account, and batch-insert them into ClickHouse.
 -- Batching is implemented using the nauthilus_cache module.

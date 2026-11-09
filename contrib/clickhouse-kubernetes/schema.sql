@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   session              String, -- high cardinality; keep as plain String
   service              LowCardinality(String) CODEC(ZSTD(3)),
   decision_sources     LowCardinality(String) CODEC(ZSTD(3)),
+  rbl_lists            Array(LowCardinality(String)),
   client_ip            String, -- could be IPv4/IPv6; left as String for compatibility
   client_port          String,
   client_net           LowCardinality(String),
@@ -110,6 +111,7 @@ The legacy features column is no longer part of the supported ClickHouse contrac
 ALTER TABLE nauthilus.logins MODIFY COLUMN service            LowCardinality(String) CODEC(ZSTD(3));
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS decision_sources LowCardinality(String) CODEC(ZSTD(3)) AFTER service;
 ALTER TABLE nauthilus.logins MODIFY COLUMN decision_sources   LowCardinality(String) CODEC(ZSTD(3));
+ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rbl_lists Array(LowCardinality(String)) AFTER decision_sources;
 ALTER TABLE nauthilus.logins MODIFY COLUMN client_net         LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN client_id          LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN hostname           LowCardinality(String) CODEC(ZSTD(3));

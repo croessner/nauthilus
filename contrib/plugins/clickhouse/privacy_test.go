@@ -17,11 +17,14 @@ import (
 	"github.com/croessner/nauthilus/v4/pluginapi/v1/exchange"
 )
 
-var privacyColumnContract = []struct {
+// clickHouseColumnContract binds one row field to its JSON name and ClickHouse column type.
+type clickHouseColumnContract struct {
 	fieldName string
 	jsonName  string
 	sqlType   string
-}{
+}
+
+var privacyColumnContract = []clickHouseColumnContract{
 	{"GeoIPPrivacyLookupState", "geoip_privacy_lookup_state", "LowCardinality(String)"},
 	{"GeoIPPrivacyDetected", "geoip_privacy_detected", "Nullable(Bool)"},
 	{"GeoIPPrivacyClasses", "geoip_privacy_classes", "Array(String)"},
@@ -154,6 +157,13 @@ func TestPrivacyUnavailableUsesNullScalarsAndNonNullEmptyArrays(t *testing.T) {
 }
 
 func TestPrivacyClickHouseRowAndSchemaStayInParity(t *testing.T) {
+	assertClickHouseColumnContracts(t, privacyColumnContract)
+}
+
+// assertClickHouseColumnContracts checks row tags, create and upgrade schema definitions, and the Kubernetes job.
+func assertClickHouseColumnContracts(t *testing.T, columns []clickHouseColumnContract) {
+	t.Helper()
+
 	schemaBytes, err := os.ReadFile("../../clickhouse-kubernetes/schema.sql")
 	if err != nil {
 		t.Fatalf("read schema: %v", err)
@@ -169,7 +179,7 @@ func TestPrivacyClickHouseRowAndSchemaStayInParity(t *testing.T) {
 	jobSchema := string(jobBytes)
 	rowType := reflect.TypeOf(clickHouseRow{})
 
-	for _, column := range privacyColumnContract {
+	for _, column := range columns {
 		field, ok := rowType.FieldByName(column.fieldName)
 		if !ok {
 			t.Fatalf("clickHouseRow missing %s", column.fieldName)

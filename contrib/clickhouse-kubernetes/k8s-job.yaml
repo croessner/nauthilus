@@ -19,6 +19,7 @@ data:
       session              String,
       service              LowCardinality(String) CODEC(ZSTD(3)),
       decision_sources     LowCardinality(String) CODEC(ZSTD(3)),
+      rbl_lists            Array(LowCardinality(String)),
       client_ip            String,
       client_port          String,
       client_net           LowCardinality(String),

@@ -107,6 +107,11 @@ can be separated in analytics. Kubernetes deployments should normally set them f
 `plugin.exchange.feature.rbl` and `plugin.exchange.feature.brute_force` markers, so other exchange consumers see them
 too.
 
+`rbl_lists` (`Array(LowCardinality(String))`) records every configured RBL list that listed the client IP, in
+configuration order and also below the RBL threshold, from `RequestSnapshot.Diagnostics.RBLMatchedLists`. Requests
+without RBL matches write an empty array. Existing tables need the repeatable
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS rbl_lists` statement from `contrib/clickhouse-kubernetes/schema.sql`.
+
 `status_msg` is taken from the core request snapshot, which preserves selected policy/failure text and fills terminal
 success or authentication-failure defaults before native post-actions run. `client_net` is the brute-force client
 network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.

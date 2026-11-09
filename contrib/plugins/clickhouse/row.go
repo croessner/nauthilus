@@ -49,6 +49,7 @@ type clickHouseRow struct {
 	mappingDiagnostics            []string `json:"-"`
 	GeoIPPrivacyClasses           []string `json:"geoip_privacy_classes"`
 	GeoIPPrivacySourceAuthorities []string `json:"geoip_privacy_source_authorities"`
+	RBLLists                      []string `json:"rbl_lists"`
 	TS                            string   `json:"ts"`
 	Session                       string   `json:"session"`
 	Service                       string   `json:"service"`
@@ -154,6 +155,7 @@ func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouse
 		Session:           request.Snapshot.Session,
 		Service:           request.Snapshot.Service,
 		DecisionSources:   exchangeSnapshot.DecisionSourcesString(),
+		RBLLists:          nonNilStrings(request.Snapshot.Diagnostics.RBLMatchedLists),
 		Deployment:        cfg.Deployment,
 		Instance:          cfg.Instance,
 		ClientIP:          request.Snapshot.ClientIP,
@@ -198,6 +200,16 @@ func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouse
 	applyDynamicResponseInfo(&row, exchangeSnapshot.Map(exchange.KeyDynamicResponse))
 
 	return row, nil
+}
+
+// nonNilStrings returns values unchanged, or an empty slice for nil, so JSONEachRow writes [] instead of null into
+// Array columns without copying the host-owned list.
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+
+	return values
 }
 
 // clickHousePasswordHash validates the general full digest before its row-only export.
