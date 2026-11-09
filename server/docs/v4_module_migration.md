@@ -53,6 +53,26 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.5: Credential Result In Logs And Subject Rejection State
+
+- The final auth log field `authn` reports the credential check, taken from
+  the host-frozen verdict. A verified password that a subject source rejects
+  afterwards, for example because the protocol is inactive, now logs
+  `authenticated=fail authz=false authn=true` instead of `authn=false`.
+  Wrong or empty credentials, rejections before the credential check, and
+  technical failures keep `authn=false`. Subject sources and plugin patches
+  cannot raise the logged value. Log queries that read `authn=false` as
+  "denied" must use `authenticated` instead.
+- A Lua subject rejection or Lua subject error now leaves the request
+  unauthenticated, as a native subject rejection already did. Post-actions
+  and request snapshots see a failed login with the failure status code
+  instead of HTTP 200 and OK, and `run_if: authenticated` providers and
+  password checks such as `haveibeenpwnd` no longer run after a Lua
+  rejection. Access decisions do not change.
+- `pluginapi/v1` is unchanged. Rebuild every private native plugin,
+  including `rns_auth` and `mailde_auth`, against the exact v4.0.5 source
+  and Go 1.27.3.
+
 ## v4.0.4: go-jose Update And Auth Setup Cleanup
 
 - `github.com/go-jose/go-jose/v4` moves to v4.1.6 for GHSA-mgcc-cww5-fp2q
