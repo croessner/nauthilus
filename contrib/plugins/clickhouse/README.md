@@ -105,7 +105,14 @@ can be separated in analytics. Kubernetes deployments should normally set them f
 `decision_sources` also lists the host-owned built-in controls: `rbl` when the RBL threshold was reached and
 `brute_force` when a brute-force bucket triggered. The host publishes them as the standard
 `plugin.exchange.feature.rbl` and `plugin.exchange.feature.brute_force` markers, so other exchange consumers see them
-too.
+too. Like the Lua builtin set, a marker records that the control fired, even when a configured policy still lets the
+request continue; allowlisted, tolerated, or failed checks publish no marker. `tls_encryption` and `relay_domains` are
+not reported by the native plugin.
+
+`decision_sources` keeps explicit exchange entries first, then feature markers in the standard order (`rbl` before
+`brute_force`), then sources derived from exchange maps and policy facts. The order can differ from rows written by
+the retired Lua action, so query membership instead of exact strings, for example
+`has(splitByChar(',', decision_sources), 'rbl')`.
 
 `rbl_lists` (`Array(LowCardinality(String))`) records every configured RBL list that listed the client IP, in
 configuration order and also below the RBL threshold, from `RequestSnapshot.Diagnostics.RBLMatchedLists`. Requests
