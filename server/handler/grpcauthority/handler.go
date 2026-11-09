@@ -46,6 +46,9 @@ import (
 const (
 	grpcTransportKind     = "grpc"
 	grpcAuthorityListener = "grpc.authority"
+
+	// grpcBinaryMetadataSuffix marks metadata keys whose values gRPC transports base64-encoded.
+	grpcBinaryMetadataSuffix = "-bin"
 )
 
 // Handler implements the authority-side gRPC service contracts.
@@ -236,20 +239,34 @@ func (h *Handler) ListAccounts(
 	}, nil
 }
 
+// grpcTextMetadataKey returns key for printable ASCII values and its binary "-bin" variant otherwise. gRPC rejects
+// other bytes in text metadata and would drop the whole header set, including the session, for a localized or
+// operator-configured status text.
+func grpcTextMetadataKey(key string, value string) string {
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x20 || value[index] > 0x7e {
+			return key + grpcBinaryMetadataSuffix
+		}
+	}
+
+	return key
+}
+
 func listAccountsDenied(outcome *core.ListAccountsOutcome) bool {
 	return outcome != nil &&
 		outcome.Decision != "" &&
 		outcome.Decision != core.AuthDecisionOK
 }
 
+// setListAccountsHeaders publishes the list-accounts status texts and session as response metadata.
 func setListAccountsHeaders(ctx context.Context, outcome *core.ListAccountsOutcome) {
 	pairs := make([]string, 0, 6)
 	if outcome.StatusMessage != "" {
-		pairs = append(pairs, "auth-status", outcome.StatusMessage)
+		pairs = append(pairs, grpcTextMetadataKey("auth-status", outcome.StatusMessage), outcome.StatusMessage)
 	}
 
 	if outcome.Error != "" {
-		pairs = append(pairs, "auth-error", outcome.Error)
+		pairs = append(pairs, grpcTextMetadataKey("auth-error", outcome.Error), outcome.Error)
 	}
 
 	if outcome.Session != "" {

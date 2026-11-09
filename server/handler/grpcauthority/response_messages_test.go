@@ -17,12 +17,17 @@ package grpcauthority
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	authv1 "github.com/croessner/nauthilus/v4/api/auth/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -89,5 +94,54 @@ func TestHandlerAuthenticateAppliesOperatorResponseMessages(t *testing.T) {
 				t.Fatal("presentation mutated the application outcome")
 			}
 		})
+	}
+}
+
+// validatingServerTransportStream rejects non-ASCII text metadata like grpc-go and records accepted headers.
+type validatingServerTransportStream struct {
+	recordingServerTransportStream
+}
+
+// SetHeader rejects the whole metadata set when one text key carries bytes outside printable ASCII.
+func (s *validatingServerTransportStream) SetHeader(md metadata.MD) error {
+	for key, values := range md {
+		if strings.HasSuffix(key, grpcBinaryMetadataSuffix) {
+			continue
+		}
+
+		for _, value := range values {
+			if grpcTextMetadataKey(key, value) != key {
+				return errors.New("non-ASCII text metadata")
+			}
+		}
+	}
+
+	return s.recordingServerTransportStream.SetHeader(md)
+}
+
+// TestHandlerListAccountsKeepsMetadataForNonASCIIStatusTexts keeps the session and status metadata when an operator
+// or localized status text contains non-ASCII characters.
+func TestHandlerListAccountsKeepsMetadataForNonASCIIStatusTexts(t *testing.T) {
+	const operatorText = "Bitte später erneut versuchen"
+
+	service := &recordingService{listOutcome: &core.ListAccountsOutcome{
+		Decision: core.AuthDecisionTempFail, Session: "session-non-ascii", StatusMessage: operatorText,
+		Error: definitions.TempFailDefault, HTTPStatus: 500,
+	}}
+	stream := &validatingServerTransportStream{}
+	ctx := grpc.NewContextWithServerTransportStream(context.Background(), stream)
+
+	_, _ = New(service).ListAccounts(ctx, &authv1.ListAccountsRequest{ClientIp: "203.0.113.22"})
+
+	if got := stream.header.Get("x-nauthilus-session"); len(got) != 1 || got[0] != "session-non-ascii" {
+		t.Fatalf("session metadata = %#v, want session-non-ascii", got)
+	}
+
+	if got := stream.header.Get("auth-status-bin"); len(got) != 1 || got[0] != operatorText {
+		t.Fatalf("binary status metadata = %#v, want %q", got, operatorText)
+	}
+
+	if got := stream.header.Get("auth-error"); len(got) != 1 || got[0] != definitions.TempFailDefault {
+		t.Fatalf("ASCII error metadata = %#v, want the text key", got)
 	}
 }
