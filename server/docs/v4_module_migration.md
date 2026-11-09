@@ -95,6 +95,13 @@ and signature, and immutable plugin directory as one compatible release.
   `contrib/clickhouse-kubernetes/schema.sql` before deploying the plugin.
   The Lua `actions/clickhouse.lua` action is retired and receives neither
   change.
+- `github.com/andybalholm/brotli` v1.2.7, `github.com/klauspost/compress`
+  v1.20.2, and `golang.org/x/net` v0.62.0 fix GO-2026-6888, GO-2026-6865,
+  and GO-2026-6860, which the release vulnerability gate reported as
+  reachable. GO-2026-6909 in `github.com/crewjam/saml` has no fixed version
+  and is reachable only from the `contrib/saml2testclient` SP test tool; the
+  gate excludes that tool as a documented maintainer exception while the
+  server stays fully scanned.
 - `pluginapi/v1` gains one field. Rebuild every private native plugin,
   including `rns_auth`, against the exact v4.0.3 source and Go 1.27.3.
 
