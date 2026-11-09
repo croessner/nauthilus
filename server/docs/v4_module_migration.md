@@ -53,6 +53,24 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.4: go-jose Update And Auth Setup Cleanup
+
+- `github.com/go-jose/go-jose/v4` moves to v4.1.6 for GHSA-mgcc-cww5-fp2q
+  (denial of service when parsing JWKs with RSA keys). The module is an
+  indirect dependency of the OIDC test client.
+- The unused core HTTP auth setup path is removed: `core.NewAuthStateWithSetupWithDeps`,
+  the `FinishSetup` method of `core.State`, `AuthState.SyncLoginAttemptsFromHeader`
+  with `LoginAttemptManager.InitFromHeader`, and the setup errors
+  `ErrEmptyUsername`, `ErrEmptyPassword`, `ErrInvalidUsername`, and
+  `ErrPasswordEncoding` from `server/errors`. Every HTTP auth surface already
+  used the shared auth application adapter, so request handling does not
+  change. Go code that imported these symbols must use the auth application
+  service instead.
+- RBL policy facts are created through one shared constructor; behavior is
+  unchanged.
+- `pluginapi/v1` is unchanged. Rebuild every private native plugin,
+  including `rns_auth`, against the exact v4.0.4 source and Go 1.27.3.
+
 ## v4.0.3: Empty Credentials, Operator Response Texts, And RBL Analytics
 
 - An empty username or password value is no longer a malformed request. HTTP
