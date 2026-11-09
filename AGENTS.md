@@ -40,7 +40,7 @@ This document captures practical, project-specific details to build, configure, 
   - make test: runs unit tests in short mode across all packages (excludes vendor).
   - make race: runs tests with -race in short mode.
   - make msan: runs tests with -msan in short mode (requires platform support).
-  - make govulncheck: runs Go vulnerability analysis across all packages (requires `govulncheck` in PATH).
+  - make govulncheck: runs Go vulnerability analysis across all packages except the documented maintainer exceptions in `GOVULNCHECK_EXCLUDED_PACKAGES` (requires `govulncheck` in PATH; `make print-govulncheck-version` prints the pinned version). Exceptions are limited to non-server tools whose findings have no upstream fix, and CI runs the same target.
   - make release-guardrails: runs the normal guardrails, `govulncheck`, and the complete identity-proxy Compose/Playwright E2E gate; use this before publishing `main` or version tags. The release E2E wrapper always removes its Compose stack on exit.
   - make install|uninstall: manages /usr/local/sbin/nauthilus and systemd unit.
   - make install-hooks: installs the repository Git hooks; the pre-push hook runs `make govulncheck` before pushing `main` or `v*` tags.

@@ -17,6 +17,7 @@ GOLANGCI_NEW_FROM_REV ?= HEAD
 NAUTHILUS_CONF_DIR ?= /etc/nauthilus
 NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
+GOVULNCHECK_VERSION ?= 1.7.0
 GOLANGCI_LINT ?= golangci-lint
 GOLANGCI_LINT_VERSION ?= 2.14.0
 
@@ -24,9 +25,14 @@ export GOEXPERIMENT := runtimesecret
 
 GO_PACKAGES = $(shell GOEXPERIMENT=$(GOEXPERIMENT) go list ./... | grep -v /vendor/)
 GO_PACKAGE_DIRS = $(patsubst $(CURDIR)/%,./%,$(shell GOEXPERIMENT=$(GOEXPERIMENT) go list -f '{{.Dir}}' $(GO_PACKAGES)))
+# Documented maintainer exceptions to the release vulnerability gate. Each entry must name a non-server tool whose
+# finding has no upstream fix. contrib/saml2testclient is the SAML SP test tool of the E2E stacks; it reaches
+# crewjam/saml ServiceProvider.ParseResponse (GO-2026-6909, no fixed version), which the server never calls.
+GOVULNCHECK_EXCLUDED_PACKAGES = github.com/croessner/nauthilus/v4/contrib/saml2testclient
+GOVULNCHECK_PACKAGES = $(filter-out $(GOVULNCHECK_EXCLUDED_PACKAGES),$(GO_PACKAGES))
 CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/v4/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/v4/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check makefile-package-scope-check release-contract-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-proto-check grpc-proto-compatibility-check generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e release-identity-proxy-e2e govulncheck release-guardrails guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check makefile-package-scope-check release-contract-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-proto-check grpc-proto-compatibility-check generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e release-identity-proxy-e2e govulncheck print-govulncheck-version release-guardrails guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck
 
@@ -150,9 +156,12 @@ release-identity-proxy-e2e: ## Run the release E2E gate, emit a PGO candidate, a
 		fi; \
 		cleanup
 
-govulncheck: ## Run Go vulnerability analysis across all packages
-	@command -v $(GOVULNCHECK) >/dev/null 2>&1 || { echo "govulncheck not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
-	$(GOVULNCHECK) $(GO_PACKAGES)
+print-govulncheck-version: ## Print the pinned govulncheck version used by local hooks and CI
+	@echo $(GOVULNCHECK_VERSION)
+
+govulncheck: ## Run Go vulnerability analysis across all packages except documented exceptions
+	@command -v $(GOVULNCHECK) >/dev/null 2>&1 || { echo "govulncheck not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@v$(GOVULNCHECK_VERSION)"; exit 1; }
+	$(GOVULNCHECK) $(GOVULNCHECK_PACKAGES)
 
 release-guardrails: ## Run mandatory quality, vulnerability, reputation journal, and identity-proxy E2E gates
 	$(MAKE) guardrails

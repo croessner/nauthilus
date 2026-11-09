@@ -8,7 +8,8 @@ import unittest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE_PATH = REPOSITORY_ROOT / "Makefile"
-GO_COMMAND_TARGETS = ("fix", "vet", "test", "race", "msan", "govulncheck")
+GO_COMMAND_TARGETS = ("fix", "vet", "test", "race", "msan")
+GOVULNCHECK_EXCEPTIONS = ("github.com/croessner/nauthilus/v4/contrib/saml2testclient",)
 
 
 def makefile_recipe(makefile: str, target: str) -> str:
@@ -89,6 +90,25 @@ class MakefilePackageScopeTest(unittest.TestCase):
         self.assertIn("$(GO_PACKAGE_DIRS)", guardrails_recipe)
         self.assertIn("$(GO_PACKAGES)", guardrails_recipe)
         self.assertNotIn("./...", guardrails_recipe)
+
+    def test_govulncheck_scans_shared_packages_minus_documented_exceptions(self) -> None:
+        """Keep govulncheck on GO_PACKAGES and allow only the reviewed non-server exceptions."""
+        recipe = makefile_recipe(self.makefile, "govulncheck")
+
+        self.assertIn("$(GOVULNCHECK_PACKAGES)", recipe)
+        self.assertNotIn("./...", recipe)
+        self.assertRegex(
+            self.makefile,
+            r"(?m)^GOVULNCHECK_PACKAGES\s*=\s*\$\(filter-out \$\(GOVULNCHECK_EXCLUDED_PACKAGES\),\$\(GO_PACKAGES\)\)$",
+        )
+
+        match = re.search(r"(?m)^GOVULNCHECK_EXCLUDED_PACKAGES\s*=\s*(.*)$", self.makefile)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(tuple(match.group(1).split()), GOVULNCHECK_EXCEPTIONS)
+
+        for package in GOVULNCHECK_EXCEPTIONS:
+            self.assertNotIn("/server", package)
 
     def test_build_does_not_mutate_sources(self) -> None:
         """Keep the normal build path independent from the mutating fix target."""
