@@ -83,30 +83,23 @@ func collectRBLListFacts(
 	auth *core.AuthState,
 	rblLists []config.RBL,
 ) []core.RBLListPolicyFact {
-	rblChan := make(chan core.RBLListPolicyFact, len(rblLists))
+	facts := make([]core.RBLListPolicyFact, len(rblLists))
 
 	var wg sync.WaitGroup
 
-	for _, rbl := range rblLists {
-		r := rbl
-
+	for index, rbl := range rblLists {
 		wg.Go(func() {
-			listFact, rblErr := core.RBLPolicyLookup(ctx, view, &r)
+			listFact, rblErr := core.RBLPolicyLookup(ctx, view, &rbl)
 			if rblErr != nil {
 				logRBLPolicyError(ctx, auth, rblErr, listFact)
 			}
 
-			rblChan <- listFact
+			// Each lookup owns its slot, so the facts keep configuration order without further locking.
+			facts[index] = listFact
 		})
 	}
 
 	wg.Wait()
-	close(rblChan)
-
-	facts := make([]core.RBLListPolicyFact, 0, len(rblLists))
-	for listFact := range rblChan {
-		facts = append(facts, listFact)
-	}
 
 	return facts
 }
