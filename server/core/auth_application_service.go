@@ -394,16 +394,15 @@ func normalizeAuthInput(input AuthInput, defaultMode AuthMode) AuthInput {
 	return input
 }
 
+// validateAuthenticateInput rejects only a syntactically invalid non-empty username. An empty username or password
+// value is ordinary authentication input that the authn pipeline denies as an invalid login; transports that can
+// distinguish a missing credential key from an empty value reject the missing key before they build the input.
 func validateAuthenticateInput(input AuthInput) error {
-	if err := validateUsernameInput(input); err != nil {
-		return err
+	if input.Credentials.Username == "" {
+		return nil
 	}
 
-	if input.Credentials.Password.IsZero() {
-		return &AuthInputError{Field: "password", Reason: authInputReasonRequired}
-	}
-
-	return nil
+	return validateUsernameSyntax(input.Credentials.Username)
 }
 
 func validateLookupIdentityInput(input AuthInput) error {
@@ -414,12 +413,18 @@ func validateLookupIdentityInput(input AuthInput) error {
 	return validateUsernameInput(input)
 }
 
+// validateUsernameInput requires a syntactically valid username for operations that address one identity.
 func validateUsernameInput(input AuthInput) error {
 	if input.Credentials.Username == "" {
 		return &AuthInputError{Field: authInputFieldUsername, Reason: authInputReasonRequired}
 	}
 
-	if !util.ValidateUsername(input.Credentials.Username) {
+	return validateUsernameSyntax(input.Credentials.Username)
+}
+
+// validateUsernameSyntax rejects a username that contains characters no backend may receive.
+func validateUsernameSyntax(username string) error {
+	if !util.ValidateUsername(username) {
 		return &AuthInputError{Field: authInputFieldUsername, Reason: "invalid"}
 	}
 

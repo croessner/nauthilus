@@ -27,7 +27,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
 )
 
 const (
@@ -35,6 +34,9 @@ const (
 	httpAuthModeLookup        = "no-auth"
 	httpAuthUnsupportedMedia  = "Unsupported media type"
 	httpAuthPasswordFieldName = "Password"
+	httpAuthUsernameFieldName = "Username"
+
+	httpAuthFieldRequiredMessage = "This field is required"
 )
 
 type httpAuthInputBuilder struct {
@@ -59,11 +61,12 @@ func (b *httpAuthInputBuilder) Build(ctx *gin.Context) (core.AuthInput, bool) {
 	service := ctx.GetString(definitions.CtxServiceKey)
 	mode := authModeFromQuery(ctx.Query("mode"))
 
-	input, structured, ok := b.surfaceInput(ctx, service, mode)
+	surface, ok := b.surfaceInput(ctx, service, mode)
 	if !ok {
 		return core.AuthInput{}, false
 	}
 
+	input := surface.input
 	input.Context = mergeHTTPAuthContext(b.baseContext(ctx), input.Context)
 	input.CorrelationID = ctx.GetString(definitions.CtxGUIDKey)
 	input.Mode = mode
@@ -72,11 +75,18 @@ func (b *httpAuthInputBuilder) Build(ctx *gin.Context) (core.AuthInput, bool) {
 	input.DisableMemoryCache = ctx.Query("in-memory") == "0"
 	input.DisableCache = ctx.Query("cache") == "0"
 
-	if !validateHTTPAuthInput(ctx, input, structured) {
+	if !validateHTTPAuthInput(ctx, input, surface) {
 		return core.AuthInput{}, false
 	}
 
 	return input, true
+}
+
+// httpAuthSurface is the decoded credential presentation of one response surface.
+type httpAuthSurface struct {
+	input      core.AuthInput
+	presence   httpAuthCredentialPresence
+	structured bool
 }
 
 // surfaceInput decodes only the credential and caller-supplied fields owned by one response surface.
@@ -84,24 +94,18 @@ func (b *httpAuthInputBuilder) surfaceInput(
 	ctx *gin.Context,
 	service string,
 	mode core.AuthMode,
-) (core.AuthInput, bool, bool) {
+) (httpAuthSurface, bool) {
 	switch service {
 	case definitions.ServBasic:
-		input, ok := b.basicInput(ctx, service, mode)
-
-		return input, false, ok
+		return b.basicInput(ctx, service, mode)
 	case definitions.ServHeader, definitions.ServNginx:
-		input, ok := b.headerInput(ctx, service, mode)
-
-		return input, false, ok
+		return b.headerInput(ctx, service, mode)
 	case definitions.ServJSON, definitions.ServCBOR:
-		input, structured, ok := b.bodyInput(ctx, service, mode)
-
-		return input, structured, ok
+		return b.bodyInput(ctx, service, mode)
 	default:
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
-		return core.AuthInput{}, false, false
+		return httpAuthSurface{}, false
 	}
 }
 
@@ -110,7 +114,7 @@ func (b *httpAuthInputBuilder) basicInput(
 	ctx *gin.Context,
 	service string,
 	mode core.AuthMode,
-) (core.AuthInput, bool) {
+) (httpAuthSurface, bool) {
 	header := strings.TrimSpace(ctx.GetHeader("Authorization"))
 	scheme, encoded, found := strings.Cut(header, " ")
 
@@ -120,14 +124,14 @@ func (b *httpAuthInputBuilder) basicInput(
 		ctx.Header("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 		ctx.AbortWithStatus(http.StatusUnauthorized)
 
-		return core.AuthInput{}, false
+		return httpAuthSurface{}, false
 	}
 
 	presentation, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 	if err != nil {
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
-		return core.AuthInput{}, false
+		return httpAuthSurface{}, false
 	}
 	defer clear(presentation)
 
@@ -135,16 +139,19 @@ func (b *httpAuthInputBuilder) basicInput(
 	if separator < 0 {
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
-		return core.AuthInput{}, false
+		return httpAuthSurface{}, false
 	}
 
-	return core.AuthInput{
-		Credentials: core.NewCredentials(
-			core.WithUsername(string(presentation[:separator])),
-			core.WithPassword(secret.FromBytes(presentation[separator+1:])),
-		),
-		Mode:    mode,
-		Service: service,
+	return httpAuthSurface{
+		input: core.AuthInput{
+			Credentials: core.NewCredentials(
+				core.WithUsername(string(presentation[:separator])),
+				core.WithPassword(secret.FromBytes(presentation[separator+1:])),
+			),
+			Mode:    mode,
+			Service: service,
+		},
+		presence: completeHTTPAuthCredentialPresence(),
 	}, true
 }
 
@@ -153,31 +160,27 @@ func (b *httpAuthInputBuilder) bodyInput(
 	ctx *gin.Context,
 	service string,
 	mode core.AuthMode,
-) (core.AuthInput, bool, bool) {
+) (httpAuthSurface, bool) {
 	if ctx.Request.Method != http.MethodPost {
-		return core.AuthInput{Mode: mode, Service: service}, false, true
+		return httpAuthSurface{input: core.AuthInput{Mode: mode, Service: service}}, true
 	}
 
 	contentType := ctx.GetHeader("Content-Type")
 	switch {
 	case strings.HasPrefix(contentType, "application/x-www-form-urlencoded"):
-		return b.formInput(ctx, service, mode), false, true
+		return b.formInput(ctx, service, mode), true
 	case strings.HasPrefix(contentType, "application/json"):
-		input, ok := b.structuredInput(ctx, service, mode, decodeStrictHTTPAuthJSON)
-
-		return input, true, ok
+		return b.structuredInput(ctx, service, mode, decodeStrictHTTPAuthJSON)
 	case strings.HasPrefix(contentType, "application/cbor"):
-		input, ok := b.structuredInput(ctx, service, mode, decodeHTTPAuthCBOR)
-
-		return input, true, ok
+		return b.structuredInput(ctx, service, mode, decodeHTTPAuthCBOR)
 	default:
 		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": httpAuthUnsupportedMedia})
 
-		return core.AuthInput{}, false, false
+		return httpAuthSurface{}, false
 	}
 }
 
-type httpAuthStructuredDecoder func(*gin.Context, *authdto.Request) error
+type httpAuthStructuredDecoder func(*gin.Context, *httpAuthStructuredRequest) error
 
 // structuredInput maps one structured DTO and clears the consumed request body.
 func (b *httpAuthInputBuilder) structuredInput(
@@ -185,32 +188,35 @@ func (b *httpAuthInputBuilder) structuredInput(
 	service string,
 	mode core.AuthMode,
 	decode httpAuthStructuredDecoder,
-) (core.AuthInput, bool) {
-	var request authdto.Request
-	if err := decode(ctx, &request); err != nil {
+) (httpAuthSurface, bool) {
+	var decoded httpAuthStructuredRequest
+	if err := decode(ctx, &decoded); err != nil {
+		decoded.request.Password = ""
 		core.HandleJSONError(ctx, err)
 
-		return core.AuthInput{}, false
+		return httpAuthSurface{}, false
 	}
 
-	input := core.NewAuthInputFromStructuredRequest(service, mode, request)
-	request.Password = ""
+	input := core.NewAuthInputFromStructuredRequest(service, mode, decoded.request)
+	decoded.request.Password = ""
 	ctx.Request.Body = http.NoBody
 	ctx.Request.ContentLength = 0
 
-	return input, true
+	return httpAuthSurface{input: input, presence: decoded.presence, structured: true}, true
 }
 
 // formInput maps the established urlencoded auth fields and removes password form values.
-func (b *httpAuthInputBuilder) formInput(ctx *gin.Context, service string, mode core.AuthMode) core.AuthInput {
-	username := ctx.PostForm("username")
-	if realm := ctx.PostForm("realm"); realm != "" {
+func (b *httpAuthInputBuilder) formInput(ctx *gin.Context, service string, mode core.AuthMode) httpAuthSurface {
+	username, usernamePresent := ctx.GetPostForm(httpAuthUsernameKey)
+	if realm := ctx.PostForm("realm"); realm != "" && username != "" {
 		username += "@" + realm
 	}
 
+	password, passwordPresent := ctx.GetPostForm(httpAuthPasswordKey)
+
 	request := authdto.Request{
 		Username:     username,
-		Password:     ctx.PostForm("password"),
+		Password:     password,
 		Method:       ctx.PostForm("method"),
 		UserAgent:    ctx.PostForm("user_agent"),
 		LocalIP:      definitions.Localhost4,
@@ -230,7 +236,10 @@ func (b *httpAuthInputBuilder) formInput(ctx *gin.Context, service string, mode 
 		ctx.Request.Form.Del("password")
 	}
 
-	return input
+	return httpAuthSurface{
+		input:    input,
+		presence: httpAuthCredentialPresence{username: usernamePresent, password: passwordPresent},
+	}
 }
 
 // headerInput maps configured header names, including legacy URL-safe base64 credentials.
@@ -238,14 +247,15 @@ func (b *httpAuthInputBuilder) headerInput(
 	ctx *gin.Context,
 	service string,
 	mode core.AuthMode,
-) (core.AuthInput, bool) {
+) (httpAuthSurface, bool) {
 	cfg := b.deps.Auth().Cfg
 	if cfg == nil {
 		ctx.AbortWithStatus(http.StatusInternalServerError)
 
-		return core.AuthInput{}, false
+		return httpAuthSurface{}, false
 	}
 
+	presence := headerHTTPAuthCredentialPresence(ctx.Request.Header, cfg.GetUsername(), cfg.GetPassword())
 	username := decodedHTTPAuthHeader(ctx, cfg.GetUsername())
 	passwordValue := decodedHTTPAuthHeader(ctx, cfg.GetPassword())
 	encoded := decodedHTTPAuthHeader(ctx, cfg.GetPasswordEncoded())
@@ -264,7 +274,7 @@ func (b *httpAuthInputBuilder) headerInput(
 			clear(passwordBytes)
 			ctx.AbortWithStatus(http.StatusBadRequest)
 
-			return core.AuthInput{}, false
+			return httpAuthSurface{}, false
 		}
 
 		clear(passwordBytes)
@@ -284,15 +294,18 @@ func (b *httpAuthInputBuilder) headerInput(
 		loginAttempt = uint(parsedLoginAttempt)
 	}
 
-	return core.AuthInput{
-		Credentials: credentials,
-		Context: core.NewAuthContext(
-			core.WithProtocol(decodedHTTPAuthHeader(ctx, cfg.GetProtocol())),
-			core.WithMethod(decodedHTTPAuthHeader(ctx, cfg.GetAuthMethod())),
-		),
-		Mode:             mode,
-		Service:          service,
-		AuthLoginAttempt: loginAttempt,
+	return httpAuthSurface{
+		input: core.AuthInput{
+			Credentials: credentials,
+			Context: core.NewAuthContext(
+				core.WithProtocol(decodedHTTPAuthHeader(ctx, cfg.GetProtocol())),
+				core.WithMethod(decodedHTTPAuthHeader(ctx, cfg.GetAuthMethod())),
+			),
+			Mode:             mode,
+			Service:          service,
+			AuthLoginAttempt: loginAttempt,
+		},
+		presence: presence,
 	}, true
 }
 
@@ -388,29 +401,46 @@ func authModeFromQuery(value string) core.AuthMode {
 	}
 }
 
-// validateHTTPAuthInput preserves the legacy direct-endpoint credential checks.
-func validateHTTPAuthInput(ctx *gin.Context, input core.AuthInput, structured bool) bool {
+// validateHTTPAuthInput rejects malformed direct-endpoint credentials with 400 Bad Request.
+//
+// Only a missing credential key or a syntactically invalid non-empty username is malformed. An empty username or
+// password value is ordinary authentication input that the auth pipeline answers as an invalid login.
+func validateHTTPAuthInput(ctx *gin.Context, input core.AuthInput, surface httpAuthSurface) bool {
 	if input.Mode == core.AuthModeListAccounts || input.Mode == core.AuthModeLookupIdentity {
 		return true
 	}
 
-	if input.Credentials.Username == "" || !util.ValidateUsername(input.Credentials.Username) {
+	if !surface.presence.username {
+		rejectMissingHTTPAuthCredential(ctx, surface.structured, httpAuthUsernameFieldName)
+
+		return false
+	}
+
+	if input.Credentials.Username != "" && !util.ValidateUsername(input.Credentials.Username) {
 		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return false
 	}
 
-	if input.Mode != core.AuthModeAuthenticate || !input.Credentials.Password.IsZero() {
+	if input.Mode != core.AuthModeAuthenticate || surface.presence.password {
 		return true
 	}
 
-	if structured {
-		core.HandleJSONValidationError(ctx, httpAuthPasswordFieldName, "This field is required")
-	} else {
-		ctx.AbortWithStatus(http.StatusBadRequest)
-	}
+	rejectMissingHTTPAuthCredential(ctx, surface.structured, httpAuthPasswordFieldName)
 
 	return false
+}
+
+// rejectMissingHTTPAuthCredential answers a missing credential key with 400 Bad Request, naming the field for
+// structured bodies in the established validation error format.
+func rejectMissingHTTPAuthCredential(ctx *gin.Context, structured bool, field string) {
+	if structured {
+		core.HandleJSONValidationError(ctx, field, httpAuthFieldRequiredMessage)
+
+		return
+	}
+
+	ctx.AbortWithStatus(http.StatusBadRequest)
 }
 
 // mergeHTTPAuthContext applies non-empty surface fields over common HTTP facts.
@@ -458,8 +488,8 @@ func mergeHTTPAuthContext(base core.AuthContext, surface core.AuthContext) core.
 	return base
 }
 
-// decodeStrictHTTPAuthJSON accepts exactly one JSON value and validates binding tags.
-func decodeStrictHTTPAuthJSON(ctx *gin.Context, request *authdto.Request) error {
+// decodeStrictHTTPAuthJSON accepts exactly one JSON value; credential key presence is validated by the caller.
+func decodeStrictHTTPAuthJSON(ctx *gin.Context, request *httpAuthStructuredRequest) error {
 	decoder := stdjson.NewDecoder(ctx.Request.Body)
 	decoder.DisallowUnknownFields()
 
@@ -476,15 +506,11 @@ func decodeStrictHTTPAuthJSON(ctx *gin.Context, request *authdto.Request) error 
 		return err
 	}
 
-	if binding.Validator == nil {
-		return nil
-	}
-
-	return binding.Validator.ValidateStruct(request)
+	return nil
 }
 
 // decodeHTTPAuthCBOR decodes the established structured CBOR request.
-func decodeHTTPAuthCBOR(ctx *gin.Context, request *authdto.Request) error {
+func decodeHTTPAuthCBOR(ctx *gin.Context, request *httpAuthStructuredRequest) error {
 	return cborcodec.DecodeReader(ctx.Request.Body, request)
 }
 

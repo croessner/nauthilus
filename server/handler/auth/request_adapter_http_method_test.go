@@ -62,12 +62,13 @@ func TestHTTPAuthInputBuilderMapsGETStructuredLookupWithoutCredentials(t *testin
 				service,
 			)
 
-			input, structured, ok := builder.surfaceInput(ctx, service, core.AuthModeLookupIdentity)
+			surface, ok := builder.surfaceInput(ctx, service, core.AuthModeLookupIdentity)
 			if !ok {
 				t.Fatal("surfaceInput rejected GET lookup conversion")
 			}
 
-			if structured {
+			input := surface.input
+			if surface.structured {
 				t.Fatal("GET lookup unexpectedly reported a structured credential body")
 			}
 
