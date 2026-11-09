@@ -1368,18 +1368,6 @@ func (a *AuthState) SyncLoginAttemptsFromAttemptOrdinal(ordinal uint) {
 	a.Security.LoginAttempts = lam.FailCount()
 }
 
-// SyncLoginAttemptsFromHeader updates the internal login attempt manager from
-// a header value containing a 1-based attempt ordinal.
-func (a *AuthState) SyncLoginAttemptsFromHeader(headerValue string) {
-	lam := a.ensureLAM()
-	if lam == nil {
-		return
-	}
-
-	lam.InitFromHeader(headerValue)
-	a.Security.LoginAttempts = lam.FailCount()
-}
-
 // GetFailCount returns the current number of failed login attempts using the
 // centralized manager if available. If the manager is not initialized, it
 // falls back to the legacy field. This method is used for logging
@@ -3679,14 +3667,6 @@ func (a *AuthState) HasOIDCScope(ctx *gin.Context, scope string) bool {
 // If the mode is "no-auth", it sets the NoAuth field of the AuthState object to true.
 // If the mode is "list-accounts", it sets the ListAccounts field of the AuthState object to true.
 // The function "util.DebugModule" is used for logging debug messages with the appropriate module name and function name.
-// Example usage of SetOperationMode:
-//
-//	a.setOperationMode(ctx)
-//
-//	func setupAuth(ctx *gin.Context, auth *AuthState) {
-//	  //...
-//	  auth.setOperationMode(ctx)
-//	}
 func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 	if stop := stats.PrometheusTimer(a.Cfg(), definitions.PromAuth, "auth_set_operation_mode_total", util.RequestResource(ctx, ctx.Request, a.Request.Service)); stop != nil {
 		defer stop()

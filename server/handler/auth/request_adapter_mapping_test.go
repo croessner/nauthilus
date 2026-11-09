@@ -21,10 +21,12 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/encoding/cborcodec"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
+	"github.com/croessner/nauthilus/v4/server/model/authdto/authdtotest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,7 +36,7 @@ import (
 func TestHTTPAuthInputBuilderMapsEveryStructuredField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	request := fullStructuredAuthRequest()
+	request := authdtotest.FullRequest()
 	encoders := map[string]struct {
 		contentType string
 		encode      func(any) ([]byte, error)
@@ -156,38 +158,54 @@ func assertStructuredAuthInput(t *testing.T, input core.AuthInput, want authdto.
 	}
 }
 
-// fullStructuredAuthRequest returns a structured auth request with every DTO field populated.
-func fullStructuredAuthRequest() authdto.Request {
-	return authdto.Request{
-		Username:            "user@example.test",
-		Password:            "secret",
-		ClientIP:            "203.0.113.10",
-		ClientPort:          "4143",
-		ClientHostname:      "client.example.test",
-		ClientID:            "client-123",
-		ExternalSessionID:   "external-session-123",
-		UserAgent:           "imap-client/1.0",
-		LocalIP:             "127.0.0.1",
-		LocalPort:           "9444",
-		Protocol:            "imap",
-		Method:              "plain",
-		XSSL:                "on",
-		XSSLSessionID:       "ssl-session-1",
-		XSSLClientVerify:    "SUCCESS",
-		XSSLClientDN:        "CN=client1,OU=mail",
-		XSSLClientCN:        "client1",
-		XSSLIssuer:          "CN=issuer",
-		XSSLClientNotBefore: "2026-01-01T00:00:00Z",
-		XSSLClientNotAfter:  "2026-12-31T23:59:59Z",
-		XSSLSubjectDN:       "CN=subject",
-		XSSLIssuerDN:        "CN=issuer-dn",
-		XSSLClientSubjectDN: "CN=client-subject",
-		XSSLClientIssuerDN:  "CN=client-issuer",
-		XSSLProtocol:        "TLSv1.3",
-		XSSLCipher:          "TLS_AES_256_GCM_SHA384",
-		SSLSerial:           "serial-1",
-		SSLFingerprint:      "aa:bb:cc",
-		OIDCCID:             "oidc-client-1",
-		AuthLoginAttempt:    4,
+// TestHTTPAuthInputBuilderPartiallyDecodesTransportHeaders pins partial URL decoding of every configured
+// non-credential transport header, including forwarded client facts from a trusted proxy.
+func TestHTTPAuthInputBuilderPartiallyDecodesTransportHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	deps := applicationBoundaryDeps()
+	deps.Cfg.(*config.FileSettings).Server.TrustedProxies = []string{"192.0.2.0/24"}
+
+	ctx, _ := newHTTPAuthAdapterTestContext(http.MethodGet, "/api/v1/auth/header", "", "", definitions.ServHeader)
+	ctx.Request.RemoteAddr = "192.0.2.10:4242"
+
+	headers := map[string]string{
+		"Auth-User": "alice@example.test", "Auth-Pass": "secret", "Auth-Login-Attempt": "%32",
+		"Client-IP": "203.0.113.%31%30", "X-Client-Port": "4%3443", "X-Client-Host": "client%2Eexample.test",
+		"X-Client-ID": "client%2D1", "X-Local-IP": "127.0.0.%31", "X-Local-Port": "%39443",
+		"X-SSL": "o%6E", "X-SSL-Protocol": "TLSv1%2E3",
+	}
+	for name, value := range headers {
+		ctx.Request.Header.Set(name, value)
+	}
+
+	input, ok := newHTTPAuthInputBuilder(deps).Build(ctx)
+	if !ok {
+		t.Fatal("Build() rejected partially encoded transport headers")
+	}
+
+	fields := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"client_ip", input.Context.ClientIP, "203.0.113.10"},
+		{"client_port", input.Context.ClientPort, "4443"},
+		{"client_hostname", input.Context.ClientHostname, "client.example.test"},
+		{"client_id", input.Context.ClientID, "client-1"},
+		{"local_ip", input.Context.LocalIP, "127.0.0.1"},
+		{"local_port", input.Context.LocalPort, "9443"},
+		{"ssl", input.Context.XSSL, "on"},
+		{"ssl_protocol", input.Context.XSSLProtocol, "TLSv1.3"},
+	}
+
+	for _, field := range fields {
+		if field.got != field.want {
+			t.Errorf("%s = %q, want %q", field.name, field.got, field.want)
+		}
+	}
+
+	if input.AuthLoginAttempt != 2 {
+		t.Errorf("auth login attempt = %d, want 2", input.AuthLoginAttempt)
 	}
 }

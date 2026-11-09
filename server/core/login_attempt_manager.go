@@ -15,15 +15,12 @@
 
 package core
 
-import "strconv"
-
 // LoginAttemptManager defines a small object that centralizes initialization and
-// mutation of login attempt counters from different sources (headers, brute-force buckets).
+// mutation of login attempt counters from different sources (request attempt ordinals, brute-force buckets).
 //
 // Invariant: failCount counts failed authentications (0 before first failure, 1 after first failure, ...).
-// Header values are interpreted as attempt ordinals (1-based) and normalized to failCount = max(0, ordinal-1).
+// Attempt ordinals are 1-based and normalized to failCount = max(0, ordinal-1).
 type LoginAttemptManager interface {
-	InitFromHeader(headerVal string)
 	InitFromAttemptOrdinal(ordinal uint)
 	InitFromBucket(counter uint)
 	OnAuthFailure()
@@ -52,21 +49,6 @@ type defaultLoginAttemptManager struct {
 // newLoginAttemptManager creates and returns a new defaultLoginAttemptManager with the specified maximum login attempts.
 func newLoginAttemptManager(maxAttempts uint) *defaultLoginAttemptManager {
 	return &defaultLoginAttemptManager{max: maxAttempts}
-}
-
-// InitFromHeader initializes the login attempt manager using a header value representing the ordinal of login attempts.
-func (m *defaultLoginAttemptManager) InitFromHeader(headerVal string) {
-	if headerVal == "" {
-		return
-	}
-
-	// Use ParseInt with bitSize 32 to avoid potential integer overflow on 64-bit platforms
-	n, err := strconv.ParseInt(headerVal, 10, 32)
-	if err != nil || n <= 0 {
-		return
-	}
-
-	m.InitFromAttemptOrdinal(uint(n))
 }
 
 // InitFromAttemptOrdinal initializes the login attempt manager from a 1-based attempt ordinal.
