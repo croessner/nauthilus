@@ -23,12 +23,9 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
-	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/secret"
 
-	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -50,25 +47,6 @@ type authnLogFieldsCase struct {
 	wantAuthz                string
 	wantAuthn                string
 	wantRuntimeAuthenticated bool
-}
-
-// authnLogFieldsRejectingLuaSubject rejects the request the way a Lua subject source with a reject result does.
-type authnLogFieldsRejectingLuaSubject struct{}
-
-// AnalyzeSource marks the request unauthorized and answers fail without touching the credential result.
-func (authnLogFieldsRejectingLuaSubject) AnalyzeSource(
-	_ *gin.Context,
-	view *StateView,
-	_ *PassDBResult,
-	_ string,
-	_ *lua.FunctionProto,
-	_ *vmpool.Manager,
-	_ vmpool.PoolKey,
-	_ *luaseal.Modules,
-) definitions.AuthResult {
-	view.Auth().Runtime.Authorized = false
-
-	return definitions.AuthResultFail
 }
 
 // runAuthnLogFieldsLuaSubjectRejection runs the backend checkpoint and one rejecting Lua subject source.
@@ -180,9 +158,9 @@ func authnLogFieldsSubjectCases() []authnLogFieldsCase {
 		},
 		{
 			name: "verified credential rejected by a Lua subject", verifier: verified,
-			subject: authnLogFieldsRejectingLuaSubject{}, prepare: runAuthnLogFieldsLuaSubjectRejection,
+			subject: rejectingLuaSubject{result: definitions.AuthResultFail}, prepare: runAuthnLogFieldsLuaSubjectRejection,
 			selected: policy.DecisionDeny, wantDecision: AuthDecisionFail,
-			wantAuthenticated: "fail", wantAuthz: "false", wantAuthn: "true", wantRuntimeAuthenticated: true,
+			wantAuthenticated: "fail", wantAuthz: "false", wantAuthn: "true",
 		},
 		{
 			name: "positive cache hit rejected by a native subject", verifier: wrong,

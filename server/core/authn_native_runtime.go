@@ -390,20 +390,14 @@ func (e *authnCandidateExecution) prepareNativeSubjectSource(
 		return false, callErr
 	}
 
-	e.subjectReady = true
-	if result.Rejected {
-		e.auth.Runtime.Authorized = false
-		e.auth.Runtime.Authenticated = false
-		e.authResult = definitions.AuthResultFail
-	} else if e.backendResult.Authenticated {
-		e.auth.Runtime.Authorized = true
-		e.authResult = definitions.AuthResultOK
-	} else {
-		e.auth.Runtime.Authorized = false
-		e.authResult = definitions.AuthResultFail
+	permitted := !result.Rejected && e.backendResult.Authenticated
+	e.auth.Runtime.Authorized = permitted
+
+	if permitted {
+		return e.settleSubjectResult(definitions.AuthResultOK), nil
 	}
 
-	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
+	return e.settleSubjectResult(definitions.AuthResultFail), nil
 }
 
 // captureAuthnNativeRequest projects values only after the exact provider has been selected.

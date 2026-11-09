@@ -462,7 +462,7 @@ func (e *authnCandidateExecution) prepareLuaSubjectSource(
 		return false, fmt.Errorf("generation-owned Lua subject runner is unavailable")
 	}
 
-	e.authResult = subject.AnalyzeSource(
+	e.settleSubjectResult(subject.AnalyzeSource(
 		e.ginCtx,
 		e.auth.View(),
 		e.backendResult,
@@ -471,11 +471,32 @@ func (e *authnCandidateExecution) prepareLuaSubjectSource(
 		pools,
 		poolKey,
 		modules,
-	)
-	e.subjectReady = true
+	))
 	e.enforceHostCredentialBound()
 
-	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
+	return e.subjectEndsCheckpoint(), nil
+}
+
+// settleSubjectResult records one subject source result and reports whether it ends the subject checkpoint.
+// A result other than success leaves the request unauthenticated for every source kind, so run_if=authenticated
+// providers, post-actions, and request snapshots observe the failed outcome. The frozen host credential evidence,
+// which the final authn log field reports, is not touched.
+func (e *authnCandidateExecution) settleSubjectResult(result definitions.AuthResult) bool {
+	e.authResult = result
+	e.subjectReady = true
+
+	if !e.subjectEndsCheckpoint() {
+		return false
+	}
+
+	e.auth.Runtime.Authenticated = false
+
+	return true
+}
+
+// subjectEndsCheckpoint reports whether the current subject result stops further subject providers.
+func (e *authnCandidateExecution) subjectEndsCheckpoint() bool {
+	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset
 }
 
 // prepareBruteForceProvider executes the request-local brute-force owner once.
@@ -682,7 +703,7 @@ func (e *authnCandidateExecution) prepareBuiltinSubjectProvider() (bool, error) 
 
 	e.subjectReady = true
 
-	return e.authResult != definitions.AuthResultOK && e.authResult != definitions.AuthResultUnset, nil
+	return e.subjectEndsCheckpoint(), nil
 }
 
 // completeSubjectCheckpoint finalizes backend ownership after every selected subject provider has run.
