@@ -664,7 +664,9 @@ no separate legacy Lua request key.
 
 `Diagnostics.RBLMatchedLists` names every configured RBL list that listed the client IP, in configuration order,
 including lists that matched while the RBL threshold was not reached; it is nil when no list matched or RBL checks did
-not run. It is a native-only field without a legacy Lua request key. The slice is shared with the host request state
+not run. Plugins that run before the host RBL provider in the decision program, such as an earlier environment
+source, therefore see nil, while backend, obligation, and post-action plugins see the evaluated list. It is a
+native-only field without a legacy Lua request key. The slice is shared with the host request state
 to avoid a per-call copy, so plugins must treat it as read-only.
 
 Runtime values are exposed through a read-only `RuntimeContext`:

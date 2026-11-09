@@ -67,13 +67,11 @@ func (DefaultRBLService) ScoreWithFacts(ctx *gin.Context, view *core.StateView) 
 	return fact, nil
 }
 
+// newRBLPolicyFact starts the request-local RBL fact; collectRBLListFacts allocates the per-list facts.
 func newRBLPolicyFact(rbls *config.RBLSection) core.RBLPolicyFact {
-	rblLists := rbls.GetLists()
-
 	return core.RBLPolicyFact{
 		Threshold: rbls.GetThreshold(),
-		ListCount: len(rblLists),
-		Lists:     make([]core.RBLListPolicyFact, 0, len(rblLists)),
+		ListCount: len(rbls.GetLists()),
 	}
 }
 
