@@ -53,6 +53,51 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.3: Empty Credentials, Operator Response Texts, And RBL Analytics
+
+- An empty username or password value is no longer a malformed request. HTTP
+  JSON, CBOR, form, header, nginx, and Basic requests and gRPC `Authenticate`
+  answer it as an ordinary failed login with `Invalid login or password`
+  through the builtin `standard_empty_username` and `standard_empty_password`
+  rules. A missing credential key, JSON or CBOR `null`, and an invalid
+  non-empty username still return `400 Bad Request`. For HTTP header
+  transports an absent header is a missing key and a present empty header is
+  an empty value. `lookup_identity` keeps its temporary failure through the
+  new `standard_lookup_identity_empty_username` rule. Empty-credential
+  failures run no backend and do not update brute-force buckets.
+- `auth.response.failure_message` and `auth.response.tempfail_message`
+  override the generic `Invalid login or password` and temporary-failure
+  texts in HTTP `Auth-Status` headers, plain-text bodies, and gRPC authority
+  responses. Empty values keep the built-in texts; control characters and
+  texts longer than 256 characters are rejected at load time. A configured
+  text is also its i18n key, so a Policy localization catalog may translate
+  it. Specific reasons such as missing TLS, Policy-selected response messages,
+  internal diagnostics, logs, and analytics rows keep their texts, and the IdP
+  login form keeps its bundled translations. The gRPC authority binds the texts
+  at startup, so a change needs a restart there. gRPC list-accounts metadata
+  sends non-ASCII status texts through `auth-status-bin` and `auth-error-bin`.
+- Native plugins receive `RequestSnapshot.Diagnostics.RBLMatchedLists` with
+  every configured RBL list that listed the client IP, in configuration
+  order, also below the RBL threshold. The slice is shared with the host and
+  read-only. RBL list facts, including `auth.rbl.matched_lists`, are now
+  deterministic and in configuration order.
+- The host publishes `plugin.exchange.feature.rbl` and
+  `plugin.exchange.feature.brute_force` when the RBL threshold is reached or a
+  brute-force bucket triggers. The native ClickHouse plugin therefore lists
+  `rbl` and `brute_force` in `decision_sources`, in the standard exchange
+  order. Dashboards migrating from `actions/clickhouse.lua` rows should query
+  membership, for example `has(splitByChar(',', decision_sources), 'rbl')`,
+  instead of exact strings.
+- The native ClickHouse plugin writes the new `rbl_lists
+  Array(LowCardinality(String))` column. Existing installations must run
+  `ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rbl_lists
+  Array(LowCardinality(String)) AFTER decision_sources;` from
+  `contrib/clickhouse-kubernetes/schema.sql` before deploying the plugin.
+  The Lua `actions/clickhouse.lua` action is retired and receives neither
+  change.
+- `pluginapi/v1` gains one field. Rebuild every private native plugin,
+  including `rns_auth`, against the exact v4.0.3 source and Go 1.27.3.
+
 ## v4.0.2: DKIM2 Intelligence Plugin Moved Out Of The Core
 
 The DKIM2 intelligence plugin (`dkim2-intelligence`, module
