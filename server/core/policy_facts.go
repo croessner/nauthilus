@@ -15,6 +15,8 @@
 
 package core
 
+import "github.com/croessner/nauthilus/v4/server/config"
+
 // RelayDomainPolicyFact is the request-local policy view of relay-domain evaluation.
 type RelayDomainPolicyFact struct {
 	Value           string
@@ -39,6 +41,14 @@ type RBLPolicyFact struct {
 	EffectiveError         bool
 	SoftAllowlisted        bool
 	IPAllowlisted          bool
+}
+
+// NewRBLPolicyFact starts the request-local RBL fact with the configured threshold and list count.
+func NewRBLPolicyFact(rbls *config.RBLSection) RBLPolicyFact {
+	return RBLPolicyFact{
+		Threshold: rbls.GetThreshold(),
+		ListCount: len(rbls.GetLists()),
+	}
 }
 
 // RBLListPolicyFact is the request-local policy view of one configured RBL list.

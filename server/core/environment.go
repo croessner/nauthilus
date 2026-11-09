@@ -322,10 +322,7 @@ func (a *AuthState) ControlRBL(ctx *gin.Context) (triggered bool, err error) {
 		return
 	}
 
-	a.Runtime.RBLPolicy = RBLPolicyFact{
-		Threshold: rbls.GetThreshold(),
-		ListCount: len(rbls.GetLists()),
-	}
+	a.Runtime.RBLPolicy = NewRBLPolicyFact(rbls)
 
 	if util.IsInNetworkWithCfg(ctx.Request.Context(), a.Cfg(), a.Logger(), rbls.GetIPWhiteList(), a.Runtime.GUID, a.Request.ClientIP) {
 		a.logAddMessage(definitions.Whitelisted, definitions.ControlRBL)
@@ -553,11 +550,8 @@ func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err e
 
 			rbls := a.cfg().GetRBLs()
 			if rbls != nil {
-				a.Runtime.RBLPolicy = RBLPolicyFact{
-					Threshold:       rbls.GetThreshold(),
-					ListCount:       len(rbls.GetLists()),
-					SoftAllowlisted: true,
-				}
+				a.Runtime.RBLPolicy = NewRBLPolicyFact(rbls)
+				a.Runtime.RBLPolicy.SoftAllowlisted = true
 			}
 		} else {
 			checkFunc()
