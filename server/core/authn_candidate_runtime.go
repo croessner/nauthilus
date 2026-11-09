@@ -110,6 +110,9 @@ func (s *authApplicationService) prepareAuthnCandidateExecution(
 	}
 
 	ginCtx.Set(authnCandidateRuntimeOwnerKey, true)
+
+	// From here on the final authn log value follows host credential evidence only; it is false until a verdict is frozen.
+	auth.Runtime.credentialVerdictOwned = true
 	execution := &authnCandidateExecution{
 		auth:      auth,
 		ginCtx:    ginCtx,

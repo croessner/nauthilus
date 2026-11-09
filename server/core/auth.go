@@ -542,6 +542,9 @@ type AuthRuntime struct {
 	// UsedPassDBBackend is the password database backend actually used.
 	UsedPassDBBackend definitions.Backend
 
+	// credentialVerdict mirrors the host-frozen credential verdict that the final log reports as authn.
+	credentialVerdict definitions.AuthResult
+
 	// UserFound indicates whether the user was found in the backend.
 	UserFound bool
 
@@ -563,6 +566,9 @@ type AuthRuntime struct {
 
 	// MasterUserMode indicates whether the request is in master user mode.
 	MasterUserMode bool
+
+	// credentialVerdictOwned marks requests whose authn log value comes only from host credential evidence.
+	credentialVerdictOwned bool
 }
 
 // IDPRequestContext is the bounded protocol projection used by policy/Lua requests without browser-state reads.

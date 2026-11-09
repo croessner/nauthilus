@@ -109,12 +109,16 @@ func (e *authnCandidateExecution) hostEvidenceSnapshot() authnHostEvidence {
 	return e.hostEvidence
 }
 
-// updateHostEvidence applies one host-owned change to the evidence under the execution lock.
+// updateHostEvidence applies one host-owned change to the evidence under the execution lock and mirrors the
+// credential verdict into the request, so the final log reports authn from host evidence only. The mirror is a plain
+// AuthState field: the host request goroutine writes it here and reads it when it emits the final log line; Decision
+// Service callbacks keep reading the evidence through hostEvidenceSnapshot.
 func (e *authnCandidateExecution) updateHostEvidence(update func(*authnHostEvidence)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	update(&e.hostEvidence)
+	e.auth.Runtime.credentialVerdict = e.hostEvidence.credential
 }
 
 // settleCredential freezes one host-owned backend verdict as auth FSM evidence and makes the frozen verdict the

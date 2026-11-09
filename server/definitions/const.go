@@ -516,11 +516,20 @@ const (
 	// LogKeyStatus represents the general status (like authentication) for logging.
 	LogKeyStatus = "authenticated"
 
-	// LogKeyAuthorized represents whether the request was authorized by subject analysis (authz).
+	// LogKeyAuthorized represents whether the request was authorized by subject analysis (authz). It defaults to
+	// true and turns false when a Lua or native subject source rejects the request or fails, or when a native subject
+	// source runs after an unverified credential.
 	LogKeyAuthorized = "authz"
 
-	// LogKeyAuthenticatedBool is a boolean that reflects the backend authentication decision (authn).
-	// This complements LogKeyStatus (string: ok/fail/tempfail) and is always present in final logs.
+	// LogKeyAuthenticatedBool is a boolean that reflects the credential check of the request (authn).
+	// This complements LogKeyStatus (string: ok/fail/tempfail), which reports the final access decision, and is
+	// always present in final logs. For authn requests it reports the host-frozen credential verdict:
+	//   - true when the backend or the positive authentication cache verified the credential, also when a later
+	//     subject or policy rejection denies access (authenticated=fail authz=false authn=true);
+	//   - false for wrong or empty credentials, for technical backend failures, when a later host-owned step such
+	//     as the password cache update failed, and when the request was rejected before the credential check.
+	// No-auth lookups (mode=no-auth) report the backend lookup verdict without any password check.
+	// Subject sources and plugin patches cannot raise it.
 	LogKeyAuthenticatedBool = "authn"
 
 	// LogKeyMode represents the mode of the operation.

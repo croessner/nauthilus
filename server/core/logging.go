@@ -143,7 +143,7 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 		definitions.LogKeyURIPath, endpoint,
 		definitions.LogKeyStatus, util.WithNotAvailable(status),
 		definitions.LogKeyAuthorized, a.Runtime.Authorized,
-		definitions.LogKeyAuthenticatedBool, a.Runtime.Authenticated,
+		definitions.LogKeyAuthenticatedBool, a.Runtime.authnLogValue(),
 		definitions.LogKeyLatency, util.FormatDurationMs(time.Since(a.Runtime.StartTime)),
 	)
 
@@ -157,6 +157,18 @@ func (a *AuthState) fillLogLineTemplate(keyvals []any, status string, endpoint s
 	}
 
 	return keyvals
+}
+
+// authnLogValue returns the authn log field, which reports the credential check rather than the access decision.
+// Requests driven by host credential evidence report the frozen credential verdict: a later authorization rejection
+// keeps authn=true, while technical failures, missing checks, and subject or plugin patches can never raise it.
+// Requests without that evidence keep reporting the Authenticated flag.
+func (r *AuthRuntime) authnLogValue() bool {
+	if r.credentialVerdictOwned {
+		return r.credentialVerdict == definitions.AuthResultOK
+	}
+
+	return r.Authenticated
 }
 
 // LogLineProcessingTemplate generates and returns a list of key-value pairs for logging session-related details.
