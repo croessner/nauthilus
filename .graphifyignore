@@ -15,3 +15,9 @@ nauthilus/bin/
 graphify-out/
 contrib/identity-proxy-e2e/.work/
 node_modules/
+
+# Minified third-party frontend bundles. Generated Go code (*.pb.go,
+# *.gen.go) stays indexed: graphify cannot parse .proto files, so these are
+# the only graph representation of the API types first-party code uses.
+*.min.js
+*.min.css
