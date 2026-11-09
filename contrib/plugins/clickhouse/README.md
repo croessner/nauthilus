@@ -102,6 +102,11 @@ The optional `deployment` and `instance` module config fields are serialized int
 can be separated in analytics. Kubernetes deployments should normally set them from `${NAUTHILUS_ENV}` and
 `${NAUTHILUS_RUNTIME_INSTANCE_NAME}`.
 
+`decision_sources` also lists the host-owned built-in controls: `rbl` when the RBL threshold was reached and
+`brute_force` when a brute-force bucket triggered. The host publishes them as the standard
+`plugin.exchange.feature.rbl` and `plugin.exchange.feature.brute_force` markers, so other exchange consumers see them
+too.
+
 `status_msg` is taken from the core request snapshot, which preserves selected policy/failure text and fills terminal
 success or authentication-failure defaults before native post-actions run. `client_net` is the brute-force client
 network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.

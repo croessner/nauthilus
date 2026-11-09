@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/croessner/nauthilus/v4/pluginapi/v1/exchange"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib"
@@ -48,6 +49,9 @@ const (
 	policyContinueAttribute         = "policy_continue"
 	policyContinueConfigured        = "configured"
 	policySkipRemainingAttr         = "policy_skip_remaining"
+
+	// builtinDecisionSourceProducer names the host as producer of built-in decision-source feature markers.
+	builtinDecisionSourceProducer = "builtin"
 )
 
 type preAuthEnvironmentOutcome struct {
@@ -76,6 +80,27 @@ func (a *AuthState) updateLuaContext(environmentName string) {
 	environmentControlSet.Set(environmentName)
 
 	a.Runtime.Context.Set(definitions.LuaCtxBuiltin, environmentControlSet)
+	a.publishBuiltinDecisionSource(environmentName)
+}
+
+// builtinDecisionSourceFeatures maps triggered built-in controls to the standard exchange feature markers that
+// native analytics plugins report in decision_sources.
+var builtinDecisionSourceFeatures = map[string]string{
+	definitions.ControlRBL:        exchange.FeatureRBL,
+	definitions.ControlBruteForce: exchange.FeatureBruteForce,
+}
+
+// publishBuiltinDecisionSource sets the host-owned exchange feature marker of one triggered built-in control.
+func (a *AuthState) publishBuiltinDecisionSource(environmentName string) {
+	feature, ok := builtinDecisionSourceFeatures[environmentName]
+	if !ok {
+		return
+	}
+
+	a.Runtime.Context.Set(exchange.FeatureKey(feature), exchange.FeatureMarkerValue(exchange.FeatureMarker{
+		Triggered: true,
+		Source:    builtinDecisionSourceProducer,
+	}))
 }
 
 // environmentControlStringSet restores the internal set from supported runtime bridge representations.
