@@ -268,6 +268,7 @@ func diagnosticsFromAuthState(auth *core.AuthState) pluginapi.RequestDiagnostics
 	}
 
 	return pluginapi.RequestDiagnostics{
+		RBLMatchedLists:   auth.Runtime.RBLPolicy.MatchedLists,
 		StatusMessage:     snapshotStatusMessage(auth),
 		BruteForceName:    auth.Security.BruteForceName,
 		EnvironmentName:   auth.Runtime.EnvironmentName,

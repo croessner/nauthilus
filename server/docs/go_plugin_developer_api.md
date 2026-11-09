@@ -662,6 +662,11 @@ remain on `RequestSnapshot.TLS` for common policy checks. `Runtime.LocalRequest`
 the explicit `Runtime.NoAuth` flag. `Runtime.Authorized` is a native request-outcome flag populated by the host; it has
 no separate legacy Lua request key.
 
+`Diagnostics.RBLMatchedLists` names every configured RBL list that listed the client IP, in configuration order,
+including lists that matched while the RBL threshold was not reached; it is nil when no list matched or RBL checks did
+not run. It is a native-only field without a legacy Lua request key. The slice is shared with the host request state
+to avoid a per-call copy, so plugins must treat it as read-only.
+
 Runtime values are exposed through a read-only `RuntimeContext`:
 
 ```go

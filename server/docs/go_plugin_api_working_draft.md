@@ -687,6 +687,7 @@ type IDPInfo struct {
 }
 
 type RequestDiagnostics struct {
+    RBLMatchedLists   []string
     StatusMessage     string
     BruteForceName    string
     EnvironmentName   string

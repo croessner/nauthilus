@@ -33,6 +33,10 @@ type IDPInfo struct {
 
 // RequestDiagnostics contains bounded request outcome and diagnostic metadata.
 type RequestDiagnostics struct {
+	// RBLMatchedLists names every configured RBL list that listed the client IP, in configuration order, whether or
+	// not the RBL threshold was reached. It is nil when no list matched or RBL checks did not run. The slice is shared
+	// with the host request state and must be treated as read-only.
+	RBLMatchedLists   []string
 	StatusMessage     string
 	BruteForceName    string
 	EnvironmentName   string
