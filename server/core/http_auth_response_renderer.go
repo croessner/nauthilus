@@ -158,10 +158,7 @@ func (r *HTTPAuthResponseRenderer) renderSuccess(ctx *gin.Context, input AuthInp
 
 // renderFailure writes the legacy null-body failure surface and bounded wait header.
 func (r *HTTPAuthResponseRenderer) renderFailure(ctx *gin.Context, input AuthInput, outcome *AuthOutcome) {
-	statusMessage := r.renderStatusMessage(ctx, outcome)
-	if statusMessage == "" {
-		statusMessage = definitions.PasswordFail
-	}
+	statusMessage := r.renderStatusMessage(ctx, outcome, definitions.PasswordFail)
 
 	ctx.Header("Auth-Status", statusMessage)
 	ctx.Header("X-Nauthilus-Session", outcome.Session)
@@ -181,14 +178,7 @@ func (r *HTTPAuthResponseRenderer) renderFailure(ctx *gin.Context, input AuthInp
 
 // renderTempFail writes the established temporary-failure surface.
 func (r *HTTPAuthResponseRenderer) renderTempFail(ctx *gin.Context, input AuthInput, outcome *AuthOutcome) {
-	statusMessage := r.renderStatusMessage(ctx, outcome)
-	if statusMessage == "" {
-		statusMessage = outcome.Error
-	}
-
-	if statusMessage == "" {
-		statusMessage = definitions.TempFailDefault
-	}
+	statusMessage := r.renderStatusMessage(ctx, outcome, outcome.Error, definitions.TempFailDefault)
 
 	ctx.Header("Auth-Status", statusMessage)
 	ctx.Header("X-Nauthilus-Session", outcome.Session)
@@ -332,9 +322,10 @@ func (r *HTTPAuthResponseRenderer) renderWaitHeader(
 }
 
 // renderStatusMessage resolves policy-selected localization at the HTTP boundary.
-func (r *HTTPAuthResponseRenderer) renderStatusMessage(ctx *gin.Context, outcome *AuthOutcome) string {
-	fallback := outcome.StatusMessage
-	key := strings.TrimSpace(outcome.StatusMessageI18NKey)
+func (r *HTTPAuthResponseRenderer) renderStatusMessage(ctx *gin.Context, outcome *AuthOutcome, fallbacks ...string) string {
+	fallback := firstNonEmptyStatusMessage(outcome.StatusMessage, fallbacks...)
+	fallback, key := r.responseSettings(outcome.ResponseSettings).ClientStatusMessage(fallback, outcome.StatusMessageI18NKey)
+	key = strings.TrimSpace(key)
 
 	resolver := outcome.MessageResolver
 	if resolver == nil {
@@ -371,7 +362,7 @@ func (r *HTTPAuthResponseRenderer) responseSettings(captured AuthResponseSetting
 		return captured
 	}
 
-	return newAuthResponseSettings(r.deps.Cfg)
+	return NewAuthResponseSettings(r.deps.Cfg)
 }
 
 // applyCapturedResponseMutations restores bounded response mutations selected before terminal rendering.
@@ -423,4 +414,19 @@ func authOutcomeStatus(outcome *AuthOutcome, fallback int) int {
 	}
 
 	return fallback
+}
+
+// firstNonEmptyStatusMessage returns the selected status text or the first non-empty surface fallback.
+func firstNonEmptyStatusMessage(selected string, fallbacks ...string) string {
+	if selected != "" {
+		return selected
+	}
+
+	for _, fallback := range fallbacks {
+		if fallback != "" {
+			return fallback
+		}
+	}
+
+	return ""
 }

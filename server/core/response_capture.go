@@ -18,6 +18,7 @@ package core
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -63,7 +64,7 @@ func NewCaptureResponseWriter(logger *slog.Logger) *CaptureResponseWriter {
 // NewDefaultCaptureResponseWriter creates a capture writer based on DI response dependencies.
 func NewDefaultCaptureResponseWriter(deps ResponseDeps) *CaptureResponseWriter {
 	w := NewCaptureResponseWriter(deps.Logger)
-	w.responseSettings = newAuthResponseSettings(deps.Cfg)
+	w.responseSettings = NewAuthResponseSettings(deps.Cfg)
 
 	return w
 }
@@ -171,7 +172,7 @@ func listAccountsSuccessOutcome(
 		ResponseHeaderDeletes: capturedResponseHeaderDeletes(ginCtx),
 		FSMEventPath:          append([]string(nil), auth.Runtime.AuthFSMEventPath...),
 		Accounts:              append(AccountList(nil), accounts...),
-		ResponseSettings:      newAuthResponseSettings(auth.Cfg()),
+		ResponseSettings:      NewAuthResponseSettings(auth.Cfg()),
 		Decision:              AuthDecisionOK,
 		Session:               auth.Runtime.GUID,
 		Protocol:              auth.GetProtocol().Get(),
@@ -257,14 +258,16 @@ func capturedAuthOutcomeFromAuthOutcome(
 	return convertAuthOutcomeProjection(*outcome, decision)
 }
 
-// newAuthResponseSettings detaches config-derived renderer inputs from one runtime generation.
-func newAuthResponseSettings(cfg config.File) AuthResponseSettings {
+// NewAuthResponseSettings detaches config-derived renderer inputs from one runtime generation.
+func NewAuthResponseSettings(cfg config.File) AuthResponseSettings {
 	settings := AuthResponseSettings{Captured: true}
 	if cfg == nil || cfg.GetServer() == nil {
 		return settings
 	}
 
 	server := cfg.GetServer()
+	settings.FailureMessage = server.GetAuthResponse().GetFailureMessage()
+	settings.TempFailMessage = server.GetAuthResponse().GetTempFailMessage()
 	settings.SMTPBackendAddress = server.GetSMTPBackendAddress()
 	settings.IMAPBackendAddress = server.GetIMAPBackendAddress()
 	settings.POP3BackendAddress = server.GetPOP3BackendAddress()
@@ -298,4 +301,32 @@ func cloneAttributeMapping(source bktype.AttributeMapping) bktype.AttributeMappi
 	}
 
 	return target
+}
+
+// ClientStatusMessage maps a built-in default status text to the operator text configured under auth.response and
+// returns the text and i18n key to present. A configured text doubles as its i18n key when none was selected, so a
+// policy localization catalog may translate it; every other text passes through unchanged.
+func (s AuthResponseSettings) ClientStatusMessage(text string, i18nKey string) (string, string) {
+	override := s.defaultMessageOverride(text)
+	if override == "" || override == text {
+		return text, i18nKey
+	}
+
+	if strings.TrimSpace(i18nKey) == "" {
+		i18nKey = override
+	}
+
+	return override, i18nKey
+}
+
+// defaultMessageOverride returns the operator text for one built-in default status text, or an empty string.
+func (s AuthResponseSettings) defaultMessageOverride(text string) string {
+	switch text {
+	case definitions.PasswordFail:
+		return s.FailureMessage
+	case definitions.TempFailDefault:
+		return s.TempFailMessage
+	default:
+		return ""
+	}
 }

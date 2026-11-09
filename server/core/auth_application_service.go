@@ -157,6 +157,8 @@ type AuthInput struct {
 
 // AuthResponseSettings snapshots config-derived response inputs from one runtime generation.
 type AuthResponseSettings struct {
+	FailureMessage      string
+	TempFailMessage     string
 	SMTPBackendAddress  string
 	IMAPBackendAddress  string
 	POP3BackendAddress  string

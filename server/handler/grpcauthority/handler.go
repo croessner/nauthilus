@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/croessner/nauthilus/v4/api/common/v1"
 	identityv1 "github.com/croessner/nauthilus/v4/api/identity/v1"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -58,6 +59,7 @@ type Handler struct {
 	idempotency     idempotencyStore
 	resolver        localization.MessageResolver
 	logger          *slog.Logger
+	responseCfg     config.File
 }
 
 // New constructs the authority handler around the application service.
@@ -88,6 +90,13 @@ func NewWithServices(
 		backendRefs:     backendRefs,
 		idempotency:     newMemoryIdempotencyStore(defaultMFAIdempotencyTTL),
 	}
+}
+
+// withResponseConfig binds the configuration whose auth.response texts apply to outcomes without captured settings.
+func (h *Handler) withResponseConfig(cfg config.File) *Handler {
+	h.responseCfg = cfg
+
+	return h
 }
 
 // withLogger binds the logger that records unexpected application failures answered as temporary failures.
@@ -265,64 +274,89 @@ func (h *Handler) localizedListAccountsOutcome(
 	return localizedOutcomeStatus(ctx, h, outcome, listAccountsOutcomeStatusFields, setListAccountsOutcomeStatusMessage)
 }
 
-// localizedOutcomeStatus clones an outcome only when status-message localization changes it.
+// localizedOutcomeStatus clones an outcome only when operator texts or status-message localization change it.
 func localizedOutcomeStatus[T any](
 	ctx context.Context,
 	handler *Handler,
 	outcome *T,
 	fieldsFor func(*T) grpcStatusMessageFields,
-	setStatusMessage func(*T, string),
+	setStatusMessage func(*T, string, string),
 ) *T {
 	if outcome == nil {
 		return outcome
 	}
 
-	statusMessage, ok := handler.resolvePolicyStatusMessage(ctx, fieldsFor(outcome))
-	if !ok {
+	original := fieldsFor(outcome)
+	fields := handler.operatorStatusFields(original)
+
+	statusMessage, localized := handler.resolvePolicyStatusMessage(ctx, fields)
+	if !localized && statusMessage == original.text && fields.errorText == original.errorText {
 		return outcome
 	}
 
-	localized := *outcome
-	setStatusMessage(&localized, statusMessage)
+	presented := *outcome
+	setStatusMessage(&presented, statusMessage, fields.errorText)
 
-	return &localized
+	return &presented
+}
+
+// operatorStatusFields replaces built-in default texts with the operator texts configured under auth.response.
+func (h *Handler) operatorStatusFields(fields grpcStatusMessageFields) grpcStatusMessageFields {
+	settings := fields.settings
+	if !settings.Captured {
+		settings = core.NewAuthResponseSettings(h.responseCfg)
+	}
+
+	fields.text, fields.i18nKey = settings.ClientStatusMessage(fields.text, fields.i18nKey)
+	fields.errorText, _ = settings.ClientStatusMessage(fields.errorText, "")
+
+	return fields
 }
 
 // authOutcomeStatusFields extracts localizable status-message fields from an auth outcome.
 func authOutcomeStatusFields(outcome *core.AuthOutcome) grpcStatusMessageFields {
 	return grpcStatusMessageFields{
-		resolver: outcome.MessageResolver,
-		text:     outcome.StatusMessage,
-		i18nKey:  outcome.StatusMessageI18NKey,
-		language: outcome.ResponseLanguage,
+		resolver:  outcome.MessageResolver,
+		settings:  outcome.ResponseSettings,
+		text:      outcome.StatusMessage,
+		errorText: outcome.Error,
+		i18nKey:   outcome.StatusMessageI18NKey,
+		language:  outcome.ResponseLanguage,
 	}
 }
 
-// setAuthOutcomeStatusMessage writes a localized status message into an auth outcome clone.
-func setAuthOutcomeStatusMessage(outcome *core.AuthOutcome, statusMessage string) {
+// setAuthOutcomeStatusMessage writes the presented status and error texts into an auth outcome clone.
+func setAuthOutcomeStatusMessage(outcome *core.AuthOutcome, statusMessage string, errorText string) {
 	outcome.StatusMessage = statusMessage
+	outcome.Error = errorText
 }
 
 // listAccountsOutcomeStatusFields extracts localizable status-message fields from a list outcome.
 func listAccountsOutcomeStatusFields(outcome *core.ListAccountsOutcome) grpcStatusMessageFields {
 	return grpcStatusMessageFields{
-		resolver: outcome.MessageResolver,
-		text:     outcome.StatusMessage,
-		i18nKey:  outcome.StatusMessageI18NKey,
-		language: outcome.ResponseLanguage,
+		resolver:  outcome.MessageResolver,
+		settings:  outcome.ResponseSettings,
+		text:      outcome.StatusMessage,
+		errorText: outcome.Error,
+		i18nKey:   outcome.StatusMessageI18NKey,
+		language:  outcome.ResponseLanguage,
 	}
 }
 
-// setListAccountsOutcomeStatusMessage writes a localized status message into a list outcome clone.
-func setListAccountsOutcomeStatusMessage(outcome *core.ListAccountsOutcome, statusMessage string) {
+// setListAccountsOutcomeStatusMessage writes the presented status and error texts into a list outcome clone.
+func setListAccountsOutcomeStatusMessage(outcome *core.ListAccountsOutcome, statusMessage string, errorText string) {
 	outcome.StatusMessage = statusMessage
+	outcome.Error = errorText
 }
 
+// grpcStatusMessageFields carries the status texts and presentation inputs of one outcome.
 type grpcStatusMessageFields struct {
-	resolver localization.MessageResolver
-	text     string
-	i18nKey  string
-	language string
+	resolver  localization.MessageResolver
+	settings  core.AuthResponseSettings
+	text      string
+	errorText string
+	i18nKey   string
+	language  string
 }
 
 func (h *Handler) resolvePolicyStatusMessage(ctx context.Context, fields grpcStatusMessageFields) (string, bool) {

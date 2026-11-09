@@ -666,17 +666,19 @@ func (snapshotWaitBruteForceService) LoadHistories(*gin.Context, *AuthState, str
 
 type httpAuthResponseRecordingResolver struct {
 	wantDefault string
+	selection   localization.StatusMessage
 	resolved    localization.ResolvedStatusMessage
 	calls       int
 }
 
-// ResolveStatusMessage records the snapshotted default language used by rendering.
+// ResolveStatusMessage records the selection and the snapshotted default language used by rendering.
 func (r *httpAuthResponseRecordingResolver) ResolveStatusMessage(
 	_ context.Context,
-	_ localization.StatusMessage,
+	selection localization.StatusMessage,
 	preference localization.LanguagePreference,
 ) localization.ResolvedStatusMessage {
 	r.calls++
+	r.selection = selection
 
 	if preference.Default != r.wantDefault {
 		return localization.ResolvedStatusMessage{Text: "wrong default: " + preference.Default}

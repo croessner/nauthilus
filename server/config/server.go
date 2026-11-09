@@ -77,6 +77,7 @@ type ServerSection struct {
 	Compression               Compression              `mapstructure:"compression" validate:"omitempty"`
 	KeepAlive                 KeepAlive                `mapstructure:"keep_alive" validate:"omitempty"`
 	SecurityTxt               SecurityTxt              `mapstructure:"security_txt" validate:"omitempty"`
+	AuthResponse              AuthResponseSection      `mapstructure:"-" validate:"-"`
 	// Middlewares holds runtimeModule switches to enable/disable individual HTTP middlewares.
 	// By default, all middlewares are considered enabled if not explicitly disabled in the config file.
 	Middlewares       Middlewares       `mapstructure:"middlewares" validate:"omitempty"`
@@ -720,6 +721,15 @@ func (s *ServerSection) GetLuaScriptTimeout() time.Duration {
 	}
 
 	return s.LuaScriptTimeout
+}
+
+// GetAuthResponse returns the operator overrides for built-in client status texts.
+func (s *ServerSection) GetAuthResponse() *AuthResponseSection {
+	if s == nil {
+		return nil
+	}
+
+	return &s.AuthResponse
 }
 
 // GetLocalCacheAuthTTL returns the TTL for local cache authentication.
@@ -2820,6 +2830,12 @@ func isOIDCClaimName(fl validator.FieldLevel) bool {
 	}
 
 	return !strings.ContainsFunc(value, unicode.IsControl)
+}
+
+// isResponseMessage validates an operator client status text: it must not contain control characters because the
+// text is sent in response headers such as Auth-Status.
+func isResponseMessage(fl validator.FieldLevel) bool {
+	return !strings.ContainsFunc(fieldStringValue(fl.Field()), unicode.IsControl)
 }
 
 // isOIDCClaimType validates an OIDC claim type against the supported set.

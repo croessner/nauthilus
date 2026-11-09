@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/secret"
 )
 
@@ -644,6 +645,7 @@ type AuthSection struct {
 	Request     AuthRequestSection     `mapstructure:"request" validate:"omitempty"`
 	Backchannel AuthBackchannelSection `mapstructure:"backchannel" validate:"omitempty"`
 	Pipeline    AuthPipelineSection    `mapstructure:"pipeline" validate:"omitempty"`
+	Response    AuthResponseSection    `mapstructure:"response" validate:"omitempty"`
 	Upstreams   AuthUpstreamsSection   `mapstructure:"upstreams" validate:"omitempty"`
 	Backends    AuthBackendsSection    `mapstructure:"backends" validate:"omitempty"`
 	Controls    AuthControlsSection    `mapstructure:"controls" validate:"omitempty"`
@@ -669,6 +671,31 @@ type AuthPipelineSection struct {
 	LocalCacheTTL         time.Duration          `mapstructure:"local_cache_ttl" validate:"omitempty"`
 	PasswordHistory       PasswordHistorySection `mapstructure:"password_history" validate:"omitempty"`
 	MasterUser            MasterUser             `mapstructure:"master_user" validate:"omitempty"`
+}
+
+// AuthResponseSection overrides the built-in client status texts of the authentication surfaces. An empty value keeps
+// the built-in text.
+type AuthResponseSection struct {
+	FailureMessage  string `mapstructure:"failure_message" validate:"omitempty,max=256,response_message"`
+	TempFailMessage string `mapstructure:"tempfail_message" validate:"omitempty,max=256,response_message"`
+}
+
+// GetFailureMessage returns the client text of an ordinary failed login, falling back to the built-in text.
+func (s *AuthResponseSection) GetFailureMessage() string {
+	if s == nil || s.FailureMessage == "" {
+		return definitions.PasswordFail
+	}
+
+	return s.FailureMessage
+}
+
+// GetTempFailMessage returns the generic temporary-failure client text, falling back to the built-in text.
+func (s *AuthResponseSection) GetTempFailMessage() string {
+	if s == nil || s.TempFailMessage == "" {
+		return definitions.TempFailDefault
+	}
+
+	return s.TempFailMessage
 }
 
 // PasswordHistorySection groups password-history related limits.
@@ -1135,6 +1162,7 @@ func (f *FileSettings) applyAuthSection(server *ServerSection) {
 	server.MaxLoginAttempts = auth.Pipeline.MaxLoginAttempts
 	server.NginxWaitDelay = auth.Pipeline.WaitDelay
 	server.LocalCacheAuthTTL = auth.Pipeline.LocalCacheTTL
+	server.AuthResponse = auth.Response
 	server.MaxPasswordHistoryEntries = auth.Pipeline.PasswordHistory.MaxEntries
 	server.MasterUser = auth.Pipeline.MasterUser
 	server.Backends = auth.Backends.Order

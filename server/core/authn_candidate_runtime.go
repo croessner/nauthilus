@@ -797,7 +797,7 @@ func authnCandidateOutcomeFromRuntime(auth *AuthState, result definitions.AuthRe
 		authTerminalState(decision),
 		"",
 		status,
-		newAuthResponseSettings(auth.Cfg()),
+		NewAuthResponseSettings(auth.Cfg()),
 	)
 }
 

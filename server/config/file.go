@@ -4198,6 +4198,7 @@ func newConfigValidator() (*validator.Validate, error) {
 		{"scope_token", isScopeToken},
 		{"oidc_claim_name", isOIDCClaimName},
 		{"oidc_claim_type", isOIDCClaimType},
+		{"response_message", isResponseMessage},
 		{"master_user_format", isMasterUserFormat},
 		{"hostname_rfc1123_with_opt_trailing_dot", hostnameRFC1123WithOptionalTrailingDot},
 	}

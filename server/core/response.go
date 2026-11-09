@@ -288,7 +288,7 @@ func (w stateResponseWriter) render(
 		authTerminalState(decision),
 		reason,
 		status,
-		newAuthResponseSettings(deps.Cfg),
+		NewAuthResponseSettings(deps.Cfg),
 	)
 	input := AuthInput{
 		Context: AuthContext{Protocol: auth.GetProtocol().Get()},
