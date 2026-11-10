@@ -53,6 +53,39 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.6: Username Syntax, Tempfail Causes, And Client Status Texts
+
+- Usernames are rejected only for invalid UTF-8 and control characters.
+  Spaces and IMAP atom specials such as `Max Mustermann`, `(`, `)`, `{`,
+  `%`, `"`, and `\` reach the backends, which decide whether the account
+  exists; percent-decoded nginx headers like `Vorname%20Nachname` are no
+  longer refused. An unsafe authenticate username is answered like an
+  empty one with `Invalid login or password` instead of `400 Bad Request`
+  for HTTP and gRPC. A missing username key stays `400`, and
+  `lookup_identity` over gRPC keeps `InvalidArgument`.
+- LDAP filters expand the legacy `%s` placeholder and `%{...}` macros in
+  one pass, so a username that contains macro syntax stays literal.
+- Every temporary failure writes the terminal WARN line, including
+  decisions without a selected policy rule (provider outage, evaluation
+  failure, auth FSM guard) that previously ended without a log line, and
+  JSON and CBOR requests. The line uses `Temporary server problem, try
+  again later` as `msg` and names the cause with `tempfail_reason`,
+  `checkpoint`, `status_code`, `policy_set`, `policy_rule`, and
+  `outcome_marker`. Log queries matching the old `msg="Temporary server
+  problem"` still match it as a prefix.
+- `status_message` in the summary log lines, Lua `request.status_message`,
+  and native post-action snapshots (for example ClickHouse `status_msg`)
+  report the text the client receives, including
+  `auth.response.failure_message` and `auth.response.tempfail_message`.
+- `Native plugin call failed`, `lua_vm_acquire_failed`, and the LDAP pool
+  `reply_channel_blocked_drop` warning carry the request `session`.
+- The identity-proxy E2E stack moved to the 38080-38083 and 39094-39444
+  port block and stops before starting when another process holds one of
+  its ports.
+- `pluginapi/v1` is unchanged. Rebuild every private native plugin,
+  including `rns_auth` and `mailde_auth`, against the exact v4.0.6 source
+  and Go 1.27.3.
+
 ## v4.0.5: Credential Result In Logs And Subject Rejection State
 
 - The final auth log field `authn` reports the credential check, taken from
