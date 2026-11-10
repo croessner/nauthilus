@@ -53,7 +53,7 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
-## v4.0.6: Username Syntax, Tempfail Causes, And Client Status Texts
+## v4.0.6: Username Syntax, Tempfail Causes, And Identity Lookup Checks
 
 - Usernames are rejected only for invalid UTF-8 and control characters.
   Spaces and IMAP atom specials such as `Max Mustermann`, `(`, `)`, `{`,
@@ -77,6 +77,16 @@ and signature, and immutable plugin directory as one compatible release.
   and native post-action snapshots (for example ClickHouse `status_msg`)
   report the text the client receives, including
   `auth.response.failure_message` and `auth.response.tempfail_message`.
+- `lookup_identity` (HTTP `mode=no-auth`, gRPC `LookupIdentity`, IdP
+  no-auth lookups) no longer schedules the TLS-encryption and RBL checks
+  by default; the built-in plan runs only the Lua environment, as the
+  runtime always did. A domain plan that binds `authn/builtin/tls_encryption`
+  or `authn/builtin/rbl` to `lookup_identity` now actually runs them in
+  no-auth mode; an RBL opt-in multiplies block-list query volume and quota
+  cost because lookup traffic is usually far higher than login traffic.
+- Configuration load rejects `authn/builtin/brute_force` and
+  `authn/builtin/relay_domains` bindings to `lookup_identity`, which were
+  silent no-ops before. Remove such `actions` entries before upgrading.
 - `Native plugin call failed`, `lua_vm_acquire_failed`, and the LDAP pool
   `reply_channel_blocked_drop` warning carry the request `session`.
 - The identity-proxy E2E stack moved to the 38080-38083 and 39094-39444
