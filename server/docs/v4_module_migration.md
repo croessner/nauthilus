@@ -53,6 +53,62 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.7: Request Termination Causes And Cancel Sources
+
+- The HTTP server records why a connection ended (client disconnected,
+  connection deadline exceeded, connection closed locally, connection
+  failed) and attaches it to the request context.
+- A request ended by the client logs `msg="Client Closed Request"` at
+  NOTICE with `status=499`, the level of `Processing incoming request`.
+  v4.0.6 logged it at WARN; development builds after v4.0.6 logged INFO.
+  Alerts or queries that select it by level must use NOTICE.
+- A request whose connection ended for a server-side reason logs
+  `msg="Request connection terminated"` at WARN.
+- Both lines carry `error` with the transport cause (for example
+  `client disconnected: read tcp ...: connection reset by peer`) and
+  `duration_ms` since the request entered the server. HTTP auth requests
+  also carry `client_ip` and `protocol` once the auth handler has resolved
+  them.
+- `Authentication application failed` (HTTP and gRPC) and
+  `Native plugin call failed` carry the state of the failing request's own
+  context: `request_context_error` (`context canceled`,
+  `context deadline exceeded`, or empty while it is active),
+  `request_context_cause` (for example `client disconnected: ...`), and
+  `cancel_source`:
+  - `request`: the own request context ended, typically because the
+    client closed the connection.
+  - `foreign`: the error carries a cancellation or deadline although the
+    own request context is still active. The cancellation came from work
+    shared with another request (deduplicated lookups) or from an internal
+    deadline; for plugin calls, `plugin_result=timeout` identifies a
+    per-call deadline.
+  - empty: no cancellation is involved.
+
+  The own request state is read when the line is written: `foreign` is
+  certain, while `request` can also mean that the client disconnected
+  after a foreign cancellation had already failed the request.
+- `Native plugin call failed` adds these fields only for request-bound
+  calls; lifecycle calls, plugin workers, and work detached from an ended
+  request do not carry them. Plugin calls that start after the request
+  context ended run on the service context and carry none of them
+  either.
+- gRPC answers an application error that wraps a cancellation or
+  deadline with the `Canceled` or `DeadlineExceeded` status, as before,
+  so such calls write no `Authentication application failed` line.
+- The terminal tempfail WARN line (`msg="Temporary server problem, try
+  again later"`) carries the same three fields, read from the own
+  transport request. `cancel_source` is derived from the first technical
+  error the request recorded; today that is a brute-force storage error,
+  including an unavailable RWP verdict, whichever `tempfail_reason` the
+  line names. Policy evaluation failures expose only a status code, so
+  without such an error the line shows `request` or an empty
+  `cancel_source`; for a failing native plugin, correlate the `session`
+  with `Native plugin call failed`, which carries its own `cancel_source`.
+- The field names match the Lua runtime cancel diagnostics, whose
+  `cancel_source` keeps its own values (`request_context`, `none`, ...).
+- Authentication decisions, temporary failures, and response bodies are
+  unchanged.
+
 ## v4.0.6: Username Syntax, Tempfail Causes, And Identity Lookup Checks
 
 - Usernames are rejected only for invalid UTF-8 and control characters.
