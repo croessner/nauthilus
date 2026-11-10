@@ -169,13 +169,15 @@ sequenceDiagram
 
 | Service           | Role                                                     | Host port                            | Networks                           |
 |-------------------|----------------------------------------------------------|--------------------------------------|------------------------------------|
-| `authority`       | local backend owner, gRPC authority, caller-token issuer | `127.0.0.1:18081`, `127.0.0.1:19444` | `authority-data`, `authority-grpc` |
+| `authority`       | local backend owner, gRPC authority, caller-token issuer | `127.0.0.1:38081`, `127.0.0.1:39444` | `authority-data`, `authority-grpc` |
 | `authority-redis` | authority-owned state                                    | none                                 | `authority-data`                   |
-| `edge-a`          | public edge IdP instance                                 | `127.0.0.1:18080`                    | `edge-data`, `authority-grpc`      |
-| `edge-b`          | second edge for continuity checks                        | `127.0.0.1:18082`                    | `edge-data`, `authority-grpc`      |
+| `edge-a`          | public edge IdP instance                                 | `127.0.0.1:38080`                    | `edge-data`, `authority-grpc`      |
+| `edge-b`          | second edge for continuity checks                        | `127.0.0.1:38082`                    | `edge-data`, `authority-grpc`      |
 | `edge-redis`      | edge-owned flow/session/token-cache state                | none                                 | `edge-data`                        |
 
-The browser smoke maps `split.example.test` and `authority.example.test` to `127.0.0.1` with Chromium host resolver rules. The WebAuthn RP ID is `split.example.test`, and the checked origins are `https://split.example.test:18080` and `https://split.example.test:18082`.
+The browser smoke maps `split.example.test` and `authority.example.test` to `127.0.0.1` with Chromium host resolver rules. The WebAuthn RP ID is `split.example.test`, and the checked origins are `https://split.example.test:38080` and `https://split.example.test:38082`.
+
+The stack uses the 38080-38083 and 39094-39444 block so it does not collide with local development stacks that commonly publish 18080-style ports. Host and container ports are identical because the issuer, origins, and SAML URLs carry the port. Before `up` starts any container, `run.sh` checks every published Compose port and the browser callback port and stops with the port and the owning container when anything other than this stack already listens there.
 
 ## Files
 
@@ -547,7 +549,7 @@ ok authority-webauthn-sign-count
 
 ## SAML
 
-The default Compose stack starts `saml-sp`, a local `contrib/saml2testclient` service on `https://localhost:19095`. The browser smoke uses that SP by default, completes SAML SSO, performs SP-initiated SLO, and then probes live SAML SSO/SLO negative cases.
+The default Compose stack starts `saml-sp`, a local `contrib/saml2testclient` service on `https://localhost:39095`. The browser smoke uses that SP by default, completes SAML SSO, performs SP-initiated SLO, and then probes live SAML SSO/SLO negative cases.
 
 To run the browser smoke against a different compatible test SP, provide its login URL:
 
@@ -568,12 +570,12 @@ The browser smoke covers live malformed SSO and SLO payload-shape attacks. The G
 | `NAUTHILUS_E2E_REDIS_IMAGE`          | `redis:7-alpine`                   | Redis image used by Docker Compose.                                            |
 | `NAUTHILUS_E2E_SKIP_BUILD`           | unset                              | Set to `1` to reuse the configured Nauthilus image.                            |
 | `NAUTHILUS_E2E_FORCE`                | unset                              | Set to `1` to regenerate `.work/` certificates and keys.                       |
-| `NAUTHILUS_E2E_EDGE_A`               | `https://split.example.test:18080` | Public browser URL for `edge-a`.                                               |
-| `NAUTHILUS_E2E_EDGE_B`               | `https://split.example.test:18082` | Public browser URL for `edge-b`.                                               |
-| `NAUTHILUS_E2E_EDGE_A_API`           | `https://127.0.0.1:18080`          | Host API URL for token/device endpoints when browser DNS names are not needed. |
+| `NAUTHILUS_E2E_EDGE_A`               | `https://split.example.test:38080` | Public browser URL for `edge-a`.                                               |
+| `NAUTHILUS_E2E_EDGE_B`               | `https://split.example.test:38082` | Public browser URL for `edge-b`.                                               |
+| `NAUTHILUS_E2E_EDGE_A_API`           | `https://127.0.0.1:38080`          | Host API URL for token/device endpoints when browser DNS names are not needed. |
 | `NAUTHILUS_E2E_CALLBACK_BIND_HOST`   | `127.0.0.1`                        | Local bind address for the OIDC callback server used by the browser smoke.     |
 | `NAUTHILUS_E2E_CALLBACK_PUBLIC_HOST` | `split.example.test`               | Hostname used in the OIDC redirect URI.                                        |
-| `NAUTHILUS_E2E_CALLBACK_PORT`        | `19094`                            | Local callback HTTPS port.                                                     |
+| `NAUTHILUS_E2E_CALLBACK_PORT`        | `39094`                            | Local callback HTTPS port.                                                     |
 | `NAUTHILUS_E2E_CALLBACK_TIMEOUT_MS`  | `90000`                            | Browser callback timeout.                                                      |
 | `NAUTHILUS_E2E_CALLBACK_CERT`        | `.work/certs/edge-http.crt`        | Callback server certificate.                                                   |
 | `NAUTHILUS_E2E_CALLBACK_KEY`         | `.work/certs/edge-http.key`        | Callback server private key.                                                   |
@@ -582,7 +584,7 @@ The browser smoke covers live malformed SSO and SLO payload-shape attacks. The G
 | `NAUTHILUS_E2E_STRICT_TLS`           | unset                              | Set to `1` to keep Node TLS verification enabled.                              |
 | `NAUTHILUS_E2E_HEADED`               | unset                              | Set to `1` to run Chromium with a visible window.                              |
 | `NAUTHILUS_E2E_TRACE`                | unset                              | Set to `1` for extra browser smoke trace output.                               |
-| `NAUTHILUS_E2E_SAML_URL`             | `https://localhost:19095/saml/login` | SAML SP login URL; set to an empty string to intentionally skip SAML.        |
+| `NAUTHILUS_E2E_SAML_URL`             | `https://localhost:39095/saml/login` | SAML SP login URL; set to an empty string to intentionally skip SAML.        |
 
 ## Generated Material And Secrets
 

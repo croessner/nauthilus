@@ -6,7 +6,7 @@ runtime:
 
   servers:
     http:
-      address: "0.0.0.0:18080"
+      address: "0.0.0.0:38080"
       tls:
         enabled: true
         cert: "/etc/nauthilus/e2e/certs/edge-http.crt"
@@ -25,7 +25,7 @@ runtime:
     grpc:
       nauthilus_authorities:
         authority:
-          address: "172.30.80.10:19444"
+          address: "172.30.80.10:39444"
           timeout: 5s
           edge_cluster_id: "edge-e2e"
           edge_instance_id: "edge-a"
@@ -40,13 +40,13 @@ runtime:
             oidc_bearer:
               enabled: true
               mode: "client_credentials"
-              token_endpoint: "http://authority:18081/oidc/token"
+              token_endpoint: "http://authority:38081/oidc/token"
               client_id: "nauthilus-edge-e2e"
               token_endpoint_auth_method: "private_key_jwt"
               client_private_key_file: "/etc/nauthilus/e2e/keys/edge-authority-client.key"
               client_key_id: "edge-e2e-rs256"
               client_assertion_alg: "RS256"
-              audience: "http://authority:18081/oidc/token"
+              audience: "http://authority:38081/oidc/token"
               scopes:
                 - nauthilus:authenticate
                 - nauthilus:security
@@ -160,15 +160,15 @@ identity:
       rp_display_name: "Nauthilus Split E2E"
       rp_id: "split.example.test"
       rp_origins:
-        - "https://split.example.test:18080"
-        - "https://split.example.test:18082"
+        - "https://split.example.test:38080"
+        - "https://split.example.test:38082"
       authenticator_attachment: "cross-platform"
       resident_key: "discouraged"
       user_verification: "preferred"
 
   oidc:
     enabled: true
-    issuer: "https://split.example.test:18080"
+    issuer: "https://split.example.test:38080"
     access_token_type: "opaque"
     response_types_supported: [code]
     subject_types_supported: [public]
@@ -208,7 +208,7 @@ identity:
         client_id: "split-e2e-browser"
         client_secret: "split-e2e-browser-secret"
         redirect_uris:
-          - "https://split.example.test:19094/callback"
+          - "https://split.example.test:39094/callback"
         grant_types:
           - authorization_code
           - refresh_token
@@ -236,7 +236,7 @@ identity:
         client_id: "split-e2e-mfa"
         client_secret: "split-e2e-mfa-secret"
         redirect_uris:
-          - "https://split.example.test:19094/callback"
+          - "https://split.example.test:39094/callback"
         grant_types:
           - authorization_code
         token_endpoint_auth_method: "client_secret_post"
@@ -265,7 +265,7 @@ identity:
         client_id: "split-e2e-mfa-delayed"
         client_secret: "split-e2e-mfa-delayed-secret"
         redirect_uris:
-          - "https://split.example.test:19094/callback"
+          - "https://split.example.test:39094/callback"
         grant_types:
           - authorization_code
         token_endpoint_auth_method: "client_secret_post"
@@ -295,7 +295,7 @@ identity:
         client_id: "split-e2e-required-mfa-journey"
         client_secret: "split-e2e-required-mfa-journey-secret"
         redirect_uris:
-          - "https://split.example.test:19094/callback"
+          - "https://split.example.test:39094/callback"
         grant_types:
           - authorization_code
         token_endpoint_auth_method: "client_secret_post"
@@ -325,7 +325,7 @@ identity:
         client_id: "split-e2e-consent"
         client_secret: "split-e2e-consent-secret"
         redirect_uris:
-          - "https://split.example.test:19094/callback"
+          - "https://split.example.test:39094/callback"
         grant_types:
           - authorization_code
           - urn:ietf:params:oauth:grant-type:device_code
@@ -356,14 +356,14 @@ identity:
 
   saml:
     enabled: true
-    entity_id: "https://split.example.test:18080/saml/metadata"
+    entity_id: "https://split.example.test:38080/saml/metadata"
     cert_file: "/etc/nauthilus/e2e/certs/edge-saml.crt"
     key_file: "/etc/nauthilus/e2e/certs/edge-saml.key"
     service_providers:
       - name: "Split SAML Test Client"
-        entity_id: "https://localhost:19095/saml/metadata"
-        acs_url: "https://localhost:19095/saml/acs"
-        slo_url: "https://localhost:19095/saml/slo"
+        entity_id: "https://localhost:39095/saml/metadata"
+        acs_url: "https://localhost:39095/saml/acs"
+        slo_url: "https://localhost:39095/saml/slo"
         allowed_attributes:
           - uid
           - displayName

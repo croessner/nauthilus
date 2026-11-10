@@ -44,11 +44,11 @@ services:
       authority-grpc:
         ipv4_address: 172.30.80.10
     expose:
-      - "18081"
-      - "19444"
+      - "38081"
+      - "39444"
     ports:
-      - "127.0.0.1:18081:18081"
-      - "127.0.0.1:19444:19444"
+      - "127.0.0.1:38081:38081"
+      - "127.0.0.1:39444:39444"
 
   edge-a:
     <<: *nauthilus-service
@@ -69,7 +69,7 @@ services:
       - edge-data
       - authority-grpc
     ports:
-      - "127.0.0.1:18080:18080"
+      - "127.0.0.1:38080:38080"
 
   edge-b:
     <<: *nauthilus-service
@@ -90,7 +90,7 @@ services:
       - edge-data
       - authority-grpc
     ports:
-      - "127.0.0.1:18082:18082"
+      - "127.0.0.1:38082:38082"
 
   saml-sp:
     <<: *nauthilus-service
@@ -99,16 +99,16 @@ services:
     command:
       - /usr/app/saml2testclient
     environment:
-      SAML2_IDP_METADATA_URL: "https://edge-a:18080/saml/metadata"
-      SAML2_SP_ENTITY_ID: "https://localhost:19095/saml/metadata"
-      SAML2_SP_URL: "https://localhost:19095"
-      SAML2_SP_LISTEN_ADDRESS: "0.0.0.0:19095"
+      SAML2_IDP_METADATA_URL: "https://edge-a:38080/saml/metadata"
+      SAML2_SP_ENTITY_ID: "https://localhost:39095/saml/metadata"
+      SAML2_SP_URL: "https://localhost:39095"
+      SAML2_SP_LISTEN_ADDRESS: "0.0.0.0:39095"
       SAML2_INSECURE_SKIP_VERIFY: "true"
     networks:
       - edge-data
       - saml-sp-public
     ports:
-      - "127.0.0.1:19095:19095"
+      - "127.0.0.1:39095:39095"
 
   plugin-reload-redis:
     image: ${NAUTHILUS_E2E_REDIS_IMAGE:-redis:7-alpine}
@@ -136,7 +136,7 @@ services:
       - plugin-reload-data
       - plugin-reload-public
     ports:
-      - "127.0.0.1:18083:18083"
+      - "127.0.0.1:38083:38083"
 
 networks:
   plugin-reload-data:

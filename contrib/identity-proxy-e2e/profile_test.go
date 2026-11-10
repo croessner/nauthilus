@@ -45,7 +45,7 @@ const (
 	edgeClusterID             = "edge-e2e"
 	samlSPPublic              = "saml-sp-public"
 	samlSPService             = "saml-sp"
-	defaultSAMLLoginURL       = "https://localhost:19095/saml/login"
+	defaultSAMLLoginURL       = "https://localhost:39095/saml/login"
 	samlSSOMalformedScenario  = "saml-sso-malformed-request-rejected"
 	samlSLOAmbiguousScenario  = "saml-slo-ambiguous-payload-rejected"
 	privateKeyJWT             = "private_key_jwt"
@@ -136,11 +136,11 @@ func TestComposeNetworksPreventDirectCrossRedisAccess(t *testing.T) {
 	assertServiceNetworks(t, compose, "edge-a", []string{edgeData, authorityGRPC})
 	assertServiceNetworks(t, compose, "edge-b", []string{edgeData, authorityGRPC})
 	assertServiceNetworks(t, compose, samlSPService, []string{edgeData, samlSPPublic})
-	assertServicePorts(t, compose, "authority", []string{"127.0.0.1:18081:18081", "127.0.0.1:19444:19444"})
-	assertServicePorts(t, compose, samlSPService, []string{"127.0.0.1:19095:19095"})
+	assertServicePorts(t, compose, "authority", []string{"127.0.0.1:38081:38081", "127.0.0.1:39444:39444"})
+	assertServicePorts(t, compose, samlSPService, []string{"127.0.0.1:39095:39095"})
 	assertServiceNetworks(t, compose, "plugin-reload-redis", []string{"plugin-reload-data"})
 	assertServiceNetworks(t, compose, "plugin-reload", []string{"plugin-reload-data", "plugin-reload-public"})
-	assertServicePorts(t, compose, "plugin-reload", []string{"127.0.0.1:18083:18083"})
+	assertServicePorts(t, compose, "plugin-reload", []string{"127.0.0.1:38083:38083"})
 }
 
 func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
@@ -481,8 +481,8 @@ func assertEdgeWebAuthnOrigins(t *testing.T, cfg map[string]any, label string) {
 
 	origins := sequence(cfg, "identity", "mfa", "webauthn", "rp_origins")
 	want := []string{
-		"https://split.example.test:18080",
-		"https://split.example.test:18082",
+		"https://split.example.test:38080",
+		"https://split.example.test:38082",
 	}
 
 	sort.Strings(origins)

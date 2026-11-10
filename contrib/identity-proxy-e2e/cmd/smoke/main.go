@@ -62,7 +62,7 @@ const (
 	smokeClientID       = "split-e2e-smoke"
 	smokeUserAgent      = "nauthilus-identity-proxy-e2e/1.0"
 	smokeLocalIP        = "127.0.0.1"
-	smokeLocalPort      = "19444"
+	smokeLocalPort      = "39444"
 	smokeProtocol       = "imap"
 	smokeMethod         = "plain"
 	smokeAuthority      = "authority"
@@ -131,10 +131,10 @@ func parseOptions() options {
 	var opts options
 
 	flag.StringVar(&opts.mode, "mode", modePreBrowser, "smoke mode: pre-browser or post-browser")
-	flag.StringVar(&opts.authorityTokenURL, "authority-token-url", "http://localhost:18081/oidc/token", "authority token endpoint URL reachable from the host")
-	flag.StringVar(&opts.authorityTokenAudience, "authority-token-audience", "http://authority:18081/oidc/token", "private_key_jwt audience expected by the authority")
-	flag.StringVar(&opts.authorityManagementURL, "authority-management-url", "http://localhost:18081", "authority management API base URL reachable from the host")
-	flag.StringVar(&opts.authorityGRPC, "authority-grpc", "localhost:19444", "authority gRPC endpoint reachable from the host")
+	flag.StringVar(&opts.authorityTokenURL, "authority-token-url", "http://localhost:38081/oidc/token", "authority token endpoint URL reachable from the host")
+	flag.StringVar(&opts.authorityTokenAudience, "authority-token-audience", "http://authority:38081/oidc/token", "private_key_jwt audience expected by the authority")
+	flag.StringVar(&opts.authorityManagementURL, "authority-management-url", "http://localhost:38081", "authority management API base URL reachable from the host")
+	flag.StringVar(&opts.authorityGRPC, "authority-grpc", "localhost:39444", "authority gRPC endpoint reachable from the host")
 	flag.StringVar(&opts.authorityUnavailable, "authority-unavailable", "localhost:19445", "unused endpoint for unavailable-authority negative check")
 	flag.StringVar(&opts.workDir, "work-dir", "contrib/identity-proxy-e2e/.work", "generated E2E material directory")
 	flag.StringVar(&opts.clientID, "client-id", "nauthilus-edge-e2e", "authority service-principal client id")

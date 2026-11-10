@@ -6,7 +6,7 @@ REPO_DIR="$(cd "${ROOT_DIR}/../.." && pwd)"
 COMPOSE=(docker compose --project-directory "${ROOT_DIR}" -f "${ROOT_DIR}/docker-compose.yml")
 PGO_DIR="${ROOT_DIR}/.work/pgo"
 PLUGIN_RELOAD_DIR="${ROOT_DIR}/.work/plugin-reload"
-PLUGIN_RELOAD_URL="http://127.0.0.1:18083"
+PLUGIN_RELOAD_URL="http://127.0.0.1:38083"
 PGO_PIDS=()
 
 usage() {
@@ -82,9 +82,9 @@ start_pgo_capture() {
   fi
 
   echo "Capturing ${NAUTHILUS_E2E_PGO_SECONDS:-30}s PGO CPU profiles from authority, edge-a, and edge-b."
-  capture_pgo_profile authority http://127.0.0.1:18081
-  capture_pgo_profile edge-a https://127.0.0.1:18080 -k
-  capture_pgo_profile edge-b https://127.0.0.1:18082 -k
+  capture_pgo_profile authority http://127.0.0.1:38081
+  capture_pgo_profile edge-a https://127.0.0.1:38080 -k
+  capture_pgo_profile edge-b https://127.0.0.1:38082 -k
 }
 
 # Stop and reap every outstanding profile request.
@@ -173,15 +173,53 @@ wait_for_http() {
   return 1
 }
 
+# Print every host port the run binds: the ports published by the Compose file and the browser callback port.
+e2e_host_ports() {
+  "${COMPOSE[@]}" config | awk '$1 == "published:" { gsub(/"/, "", $2); print $2 }'
+  echo "${NAUTHILUS_E2E_CALLBACK_PORT:-39094}"
+}
+
+# Report whether something already accepts connections on one loopback port.
+host_port_in_use() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1
+}
+
+# Fail fast when a host port of the stack is taken by anything but this stack, naming the owning container.
+check_host_ports() {
+  local own owners port busy=0
+
+  own="$("${COMPOSE[@]}" ps -q 2>/dev/null | sort)"
+
+  for port in $(e2e_host_ports | sort -un); do
+    if ! host_port_in_use "${port}"; then
+      continue
+    fi
+
+    owners="$(docker ps -q --filter "publish=${port}" | sort)"
+    if [[ -n "${owners}" && -z "$(comm -23 <(echo "${owners}") <(echo "${own}"))" ]]; then
+      continue
+    fi
+
+    echo "Host port ${port} is already in use${owners:+ by container(s) $(docker ps --filter "publish=${port}" --format '{{.Names}}' | paste -sd, -)}." >&2
+    busy=1
+  done
+
+  if [[ "${busy}" -ne 0 ]]; then
+    echo "Stop the listed services before running the identity-proxy E2E stack." >&2
+    return 1
+  fi
+}
+
 up() {
   prepare
+  check_host_ports
   build_image
   "${COMPOSE[@]}" up -d authority edge-a edge-b
-  wait_for_http "https://127.0.0.1:18080/ping" "edge-a"
-  wait_for_http "https://127.0.0.1:18082/ping" "edge-b"
-  wait_for_http "http://127.0.0.1:18081/ping" "authority"
+  wait_for_http "https://127.0.0.1:38080/ping" "edge-a"
+  wait_for_http "https://127.0.0.1:38082/ping" "edge-b"
+  wait_for_http "http://127.0.0.1:38081/ping" "authority"
   "${COMPOSE[@]}" up -d saml-sp
-  wait_for_http "https://127.0.0.1:19095/" "saml-sp"
+  wait_for_http "https://127.0.0.1:39095/" "saml-sp"
 }
 
 rpc_pre_browser() {

@@ -18,13 +18,13 @@ try {
   throw error;
 }
 
-const edgeA = process.env.NAUTHILUS_E2E_EDGE_A || 'https://split.example.test:18080';
-const edgeB = process.env.NAUTHILUS_E2E_EDGE_B || 'https://split.example.test:18082';
-const edgeAAPI = process.env.NAUTHILUS_E2E_EDGE_A_API || 'https://127.0.0.1:18080';
-const edgeBAPI = process.env.NAUTHILUS_E2E_EDGE_B_API || 'https://127.0.0.1:18082';
+const edgeA = process.env.NAUTHILUS_E2E_EDGE_A || 'https://split.example.test:38080';
+const edgeB = process.env.NAUTHILUS_E2E_EDGE_B || 'https://split.example.test:38082';
+const edgeAAPI = process.env.NAUTHILUS_E2E_EDGE_A_API || 'https://127.0.0.1:38080';
+const edgeBAPI = process.env.NAUTHILUS_E2E_EDGE_B_API || 'https://127.0.0.1:38082';
 const callbackBindHost = process.env.NAUTHILUS_E2E_CALLBACK_BIND_HOST || '127.0.0.1';
 const callbackPublicHost = process.env.NAUTHILUS_E2E_CALLBACK_PUBLIC_HOST || 'split.example.test';
-const callbackPort = Number.parseInt(process.env.NAUTHILUS_E2E_CALLBACK_PORT || '19094', 10);
+const callbackPort = Number.parseInt(process.env.NAUTHILUS_E2E_CALLBACK_PORT || '39094', 10);
 const callbackTimeoutMS = Number.parseInt(process.env.NAUTHILUS_E2E_CALLBACK_TIMEOUT_MS || '90000', 10);
 const callbackCert = process.env.NAUTHILUS_E2E_CALLBACK_CERT
   || path.join(__dirname, '..', '.work', 'certs', 'edge-http.crt');
@@ -44,7 +44,7 @@ const masterUsername = `${username}.master`;
 const masterWithoutMFAUsername = `${username}.master-no-mfa`;
 const masterUserLogin = `${mfaUsername}*${masterUsername}`;
 const masterUserWithoutMFALogin = `${mfaUsername}*${masterWithoutMFAUsername}`;
-const defaultSAMLLoginURL = 'https://localhost:19095/saml/login';
+const defaultSAMLLoginURL = 'https://localhost:39095/saml/login';
 const samlLoginURL = Object.prototype.hasOwnProperty.call(process.env, 'NAUTHILUS_E2E_SAML_URL')
   ? process.env.NAUTHILUS_E2E_SAML_URL
   : defaultSAMLLoginURL;
@@ -221,28 +221,28 @@ async function runAuthorizeParameterFailures(browser) {
   );
 
   await expectTextResponse(
-    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://SPLIT.EXAMPLE.TEST:19094/callback', 'openid'),
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://SPLIT.EXAMPLE.TEST:39094/callback', 'openid'),
     400,
     /Invalid redirect_uri/,
     'oidc-authorize-mixed-case-host-redirect-rejected',
   );
 
   await expectTextResponse(
-    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test.:19094/callback', 'openid'),
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test.:39094/callback', 'openid'),
     400,
     /Invalid redirect_uri/,
     'oidc-authorize-trailing-dot-host-redirect-rejected',
   );
 
   await expectTextResponse(
-    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test:19094@evil.example.test/callback', 'openid'),
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test:39094@evil.example.test/callback', 'openid'),
     400,
     /Invalid redirect_uri/,
     'oidc-authorize-userinfo-redirect-rejected',
   );
 
   await expectTextResponse(
-    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test:19094/callback/../evil', 'openid'),
+    buildAuthorizeURL(edgeAAPI, browserClient.id, 'https://split.example.test:39094/callback/../evil', 'openid'),
     400,
     /Invalid redirect_uri/,
     'oidc-authorize-dot-segment-redirect-rejected',
@@ -578,7 +578,7 @@ async function runTokenEndpointFailures(browser) {
     client_id: browserClient.id,
     client_secret: browserClient.secret,
     code: redirectMismatchCode.code,
-    redirect_uri: 'https://split.example.test:19094/other-callback',
+    redirect_uri: 'https://split.example.test:39094/other-callback',
   }, 400, 'invalid_grant', 'oidc-token-redirect-mismatch-rejected');
 
   const missingVerifier = pkceVerifier();
@@ -2423,8 +2423,8 @@ async function maybeRunSAMLFlow(browser) {
     await submitPasswordLogin(page, `${username}.saml`, password);
     // The SAML response returns to the SP through a redirect and auto-submitted POST after the login
     // response. networkidle can already hold for the IdP page at that point, so wait for the SP URL itself.
-    await page.waitForURL(/localhost:19095/i, {timeout: callbackTimeoutMS});
-    assert.match(page.url(), /localhost:19095/i, 'SAML flow should return to the local SP');
+    await page.waitForURL(/localhost:39095/i, {timeout: callbackTimeoutMS});
+    assert.match(page.url(), /localhost:39095/i, 'SAML flow should return to the local SP');
     await expectPageText(page, /SAML2 Authentication Successful/i);
     console.log('ok saml-sso-login');
 
@@ -2438,7 +2438,7 @@ async function maybeRunSAMLFlow(browser) {
 
 async function runSAMLSPInitiatedSLO(page) {
   await page.click('a.logout-btn');
-  await page.waitForURL(/localhost:19095\/?$/, {timeout: callbackTimeoutMS});
+  await page.waitForURL(/localhost:39095\/?$/, {timeout: callbackTimeoutMS});
   await page.waitForLoadState('networkidle').catch(() => undefined);
   await expectPageText(page, /Login via SAML2/);
   console.log('ok saml-sp-initiated-slo');

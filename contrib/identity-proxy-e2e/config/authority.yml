@@ -6,7 +6,7 @@ runtime:
 
   servers:
     http:
-      address: "0.0.0.0:18081"
+      address: "0.0.0.0:38081"
       keep_alive:
         enabled: true
       middlewares:
@@ -19,7 +19,7 @@ runtime:
     grpc:
       authority:
         enabled: true
-        address: "0.0.0.0:19444"
+        address: "0.0.0.0:39444"
         backend_refs:
           enabled: true
         tls:
@@ -108,13 +108,13 @@ identity:
       rp_display_name: "Nauthilus Authority E2E"
       rp_id: "authority.example.test"
       rp_origins:
-        - "http://authority.example.test:18081"
+        - "http://authority.example.test:38081"
       resident_key: "discouraged"
       user_verification: "preferred"
 
   oidc:
     enabled: true
-    issuer: "http://authority:18081"
+    issuer: "http://authority:38081"
     access_token_type: "opaque"
     response_types_supported: [code]
     subject_types_supported: [public]
