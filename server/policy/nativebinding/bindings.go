@@ -38,7 +38,9 @@ type CallRecord struct {
 	ComponentName  string
 	ExtensionPoint string
 	Method         string
-	Panicked       bool
+	// Session is the request session of a request-bound call; it is empty for lifecycle and detached calls.
+	Session  string
+	Panicked bool
 }
 
 // Observer receives automatic native method call observations.

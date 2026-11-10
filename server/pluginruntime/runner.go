@@ -317,6 +317,8 @@ func (r *Runner) ServeHook(
 	qualifiedName string,
 	request pluginapi.HookRequest,
 ) (pluginapi.HookResponse, error) {
+	ctx = withPluginCallSession(ctx, request.Snapshot.Session)
+
 	return invokeTypedComponent(ctx, r, qualifiedName, pluginregistry.ComponentKindHook, "Serve", func(callCtx context.Context, hook pluginapi.Hook) (pluginapi.HookResponse, error) {
 		return hook.Serve(callCtx, request)
 	})
@@ -597,6 +599,7 @@ func invokePluginCall(ctx context.Context, observer Observer, spec invokeSpec, f
 			ComponentName:  spec.componentName,
 			ExtensionPoint: spec.extensionPoint,
 			Method:         spec.method,
+			Session:        pluginCallSession(ctx),
 			Panicked:       panicked,
 		})
 	}()

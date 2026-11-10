@@ -486,7 +486,9 @@ func (m *BackendManager) requestContext(auth *core.AuthState) (context.Context, 
 		return nil, pluginapi.RequestSnapshot{}, nil, m.temporaryError()
 	}
 
-	return auth.Ctx(), NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg())), runtimeContext, nil
+	snapshot := NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg()))
+
+	return withPluginCallSession(auth.Ctx(), snapshot.Session), snapshot, runtimeContext, nil
 }
 
 // passDBResult maps a plugin backend result into the internal PassDBResult model.

@@ -118,6 +118,10 @@ func (o *OperationalObserver) log(record CallRecord, result string) {
 		"plugin_result", result,
 		"duration_ms", durationMilliseconds(record.Duration),
 	}
+	if record.Session != "" {
+		keyvals = append(keyvals, definitions.LogKeyGUID, record.Session)
+	}
+
 	if record.Err != nil {
 		keyvals = append(keyvals, pluginLogFieldErrorClass, result)
 	}

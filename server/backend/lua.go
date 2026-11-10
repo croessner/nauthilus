@@ -377,7 +377,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 
 	lease, acqErr := vmPool.AcquireLease(luaCtx)
 	if acqErr != nil {
-		level.Warn(logger).Log(definitions.LogKeyMsg, "lua_vm_acquire_failed", "err", acqErr)
+		level.Warn(logger).Log(definitions.LogKeyGUID, luaRequest.Session, definitions.LogKeyMsg, "lua_vm_acquire_failed", "err", acqErr)
 
 		return
 	}

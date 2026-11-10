@@ -868,7 +868,7 @@ func (p *nativeAuthnEnvironmentProvider) EvaluateEnvironment(
 	request pluginapi.EnvironmentRequest,
 ) (result pluginapi.EnvironmentResult, err error) {
 	return invokeTimedAuthenticationComponent(
-		ctx, p.descriptor.Timeout, p.call,
+		withPluginCallSession(ctx, request.Snapshot.Session), p.descriptor.Timeout, p.call,
 		func(callbackCtx context.Context) (pluginapi.EnvironmentResult, error) {
 			return p.provider.Evaluate(callbackCtx, request)
 		},
@@ -894,7 +894,7 @@ func (p *nativeAuthnSubjectProvider) EvaluateSubject(
 	request pluginapi.SubjectRequest,
 ) (result pluginapi.SubjectResult, err error) {
 	return invokeTimedAuthenticationComponent(
-		ctx, p.descriptor.Timeout, p.call,
+		withPluginCallSession(ctx, request.Snapshot.Session), p.descriptor.Timeout, p.call,
 		func(callbackCtx context.Context) (pluginapi.SubjectResult, error) {
 			return p.provider.Evaluate(callbackCtx, request)
 		},
@@ -915,6 +915,8 @@ func (p *nativeAuthnObligationProvider) ExecuteObligation(
 	request pluginapi.ObligationRequest,
 	target decision.Target,
 ) (result pluginapi.ObligationResult, err error) {
+	ctx = withPluginCallSession(ctx, request.Snapshot.Session)
+
 	identity, err := p.call.executionIdentity(target, "obligation", "execute")
 	if err != nil {
 		return result, err
@@ -971,6 +973,8 @@ func (p *nativeAuthnPostActionProvider) EnqueuePostAction(
 	request pluginapi.PostActionRequest,
 	target decision.Target,
 ) (result pluginapi.PostActionEnqueueResult, err error) {
+	ctx = withPluginCallSession(ctx, request.Snapshot.Session)
+
 	identity, err := p.call.executionIdentity(target, "post_action", "enqueue")
 	if err != nil {
 		return result, err

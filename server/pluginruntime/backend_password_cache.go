@@ -101,7 +101,8 @@ func (e pluginPasswordCacheEnvelope) matches(auth *core.AuthState) bool {
 // positivePasswordCacheScope evaluates optional identity scoping behind the host panic boundary.
 func (m *BackendManager) positivePasswordCacheScope(auth *core.AuthState) (string, bool) {
 	snapshot := NewRequestSnapshotFromAuthState(auth, WithSnapshotConfig(auth.Cfg()))
-	result, err := invokeTypedComponent(auth.Ctx(), m.runner, m.qualifiedName, pluginregistry.ComponentKindBackend,
+	ctx := withPluginCallSession(auth.Ctx(), snapshot.Session)
+	result, err := invokeTypedComponent(ctx, m.runner, m.qualifiedName, pluginregistry.ComponentKindBackend,
 		"PositivePasswordCacheScope", func(_ context.Context, backend pluginapi.Backend) (passwordCacheScope, error) {
 			scoped, ok := backend.(pluginapi.PositivePasswordCacheScopeBackend)
 			if !ok {

@@ -1337,16 +1337,7 @@ func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl
 	ldapPool.releaseToken()
 
 	// 1.5) Trace release under the request context if available
-	var rctx context.Context
-
-	switch v := any(request).(type) {
-	case *bktype.LDAPRequest:
-		rctx = v.HTTPClientContext
-	case *bktype.LDAPAuthRequest:
-		rctx = v.HTTPClientContext
-	default:
-		rctx = ldapPool.ctx
-	}
+	rctx, guid := ldapPool.replyRequestScope(request)
 
 	tr := monittrace.New("nauthilus/ldap_pool")
 	xctx, xsp := tr.Start(rctx, "ldap.pool.release_conn",
@@ -1363,9 +1354,23 @@ func sendLDAPReplyAndUnlockState[T bktype.PoolRequest[T]](ldapPool *ldapPoolImpl
 		// delivered
 	case <-time.After(250 * time.Millisecond):
 		level.Warn(ldapPool.logger).Log(
+			definitions.LogKeyGUID, guid,
 			definitions.LogKeyLDAPPoolName, ldapPool.name,
 			definitions.LogKeyMsg, "reply_channel_blocked_drop",
 		)
+	}
+}
+
+// replyRequestScope returns the request context and session of a pool request, falling back to the pool context
+// and an empty session for request types without them.
+func (l *ldapPoolImpl) replyRequestScope(request any) (context.Context, string) {
+	switch v := request.(type) {
+	case *bktype.LDAPRequest:
+		return v.HTTPClientContext, v.GUID
+	case *bktype.LDAPAuthRequest:
+		return v.HTTPClientContext, v.GUID
+	default:
+		return l.ctx, ""
 	}
 }
 
