@@ -524,6 +524,10 @@ type AuthRuntime struct {
 	// Context is the Lua context associated with the request.
 	Context *lualib.Context
 
+	// tempFailErr is the first technical error that can explain a temporary failure; the terminal tempfail log line
+	// classifies it against the own request context.
+	tempFailErr error
+
 	// tempFailCause records why the request ends in a temporary failure, for the terminal tempfail log line.
 	tempFailCause authTempFailCause
 

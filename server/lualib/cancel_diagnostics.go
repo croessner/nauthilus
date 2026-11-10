@@ -18,6 +18,8 @@ package lualib
 import (
 	"context"
 	"errors"
+
+	"github.com/croessner/nauthilus/v4/server/conncause"
 )
 
 const (
@@ -49,9 +51,9 @@ type RuntimeCancellationDiagnostics struct {
 func NewRuntimeCancellationDiagnostics(runtimeCtx context.Context, groupCtx context.Context, requestCtx context.Context) RuntimeCancellationDiagnostics {
 	diagnostics := RuntimeCancellationDiagnostics{
 		Source:     RuntimeCancellationSourceNone,
-		RuntimeErr: contextErrorName(runtimeCtx),
-		GroupErr:   contextErrorName(groupCtx),
-		RequestErr: contextErrorName(requestCtx),
+		RuntimeErr: conncause.ContextErrorName(runtimeCtx),
+		GroupErr:   conncause.ContextErrorName(groupCtx),
+		RequestErr: conncause.ContextErrorName(requestCtx),
 	}
 
 	switch {
@@ -71,30 +73,14 @@ func NewRuntimeCancellationDiagnostics(runtimeCtx context.Context, groupCtx cont
 // LogValues returns structured slog key-value pairs for cancellation diagnostics.
 func (d RuntimeCancellationDiagnostics) LogValues() []any {
 	return []any{
-		"cancel_source", d.Source,
+		conncause.LogKeyCancelSource, d.Source,
 		"lua_context_error", d.RuntimeErr,
 		"parallel_group_error", d.GroupErr,
-		"request_context_error", d.RequestErr,
+		conncause.LogKeyRequestContextError, d.RequestErr,
 	}
 }
 
-func contextErrorName(ctx context.Context) string {
-	err := contextError(ctx)
-	if err == nil {
-		return ""
-	}
-
-	if errors.Is(err, context.Canceled) {
-		return context.Canceled.Error()
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return context.DeadlineExceeded.Error()
-	}
-
-	return err.Error()
-}
-
+// contextError returns ctx.Err() and tolerates a nil context.
 func contextError(ctx context.Context) error {
 	if ctx == nil {
 		return nil

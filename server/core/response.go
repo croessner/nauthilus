@@ -214,6 +214,7 @@ func (a *AuthState) logAuthTempFail(ctx *gin.Context, logger *slog.Logger) {
 
 	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", endpoint)
 	keyvals = append(keyvals, a.Runtime.tempFailCause.logValues()...)
+	keyvals = append(keyvals, a.tempFailCancelDiagnostics(ctx).LogValues()...)
 	keyvals = append(keyvals, definitions.LogKeyMsg, definitions.TempFailDefault)
 
 	if logger == nil {

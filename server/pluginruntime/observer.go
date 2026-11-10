@@ -126,6 +126,10 @@ func (o *OperationalObserver) log(record CallRecord, result string) {
 		keyvals = append(keyvals, pluginLogFieldErrorClass, result)
 	}
 
+	if record.Err != nil && record.Cancellation != nil {
+		keyvals = append(keyvals, record.Cancellation.LogValues()...)
+	}
+
 	switch {
 	case errors.Is(record.Err, errCallbackConcurrencyLimited):
 		keyvals = append(keyvals, "plugin_admission_limit", "concurrency")

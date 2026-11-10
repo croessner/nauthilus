@@ -21,6 +21,10 @@
 // accepted connections and installs a cancel-cause context per connection through
 // http.Server.ConnContext. The wrapper records the classified error before net/http sees it,
 // so the request context inherits the real cause.
+//
+// The package also anchors the transport request context (WithRequestContext, RequestHandler) and classifies
+// failures against it (DiagnoseCancel, DiagnoseCallCancel), so logs can tell a request that was canceled itself
+// from a request that received a cancellation from shared work.
 package conncause
 
 import (

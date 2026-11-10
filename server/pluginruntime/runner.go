@@ -26,6 +26,7 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/pluginloader"
 	"github.com/croessner/nauthilus/v4/server/pluginregistry"
@@ -594,6 +595,7 @@ func invokePluginCall(ctx context.Context, observer Observer, spec invokeSpec, f
 		finishPluginCallSpan(span, err, panicked)
 		observePluginCall(observer, CallRecord{
 			Err:            err,
+			Cancellation:   pluginCallCancellation(ctx, err),
 			Duration:       time.Since(start),
 			ModuleName:     spec.moduleName,
 			ComponentName:  spec.componentName,
@@ -609,6 +611,21 @@ func invokePluginCall(ctx context.Context, observer Observer, spec invokeSpec, f
 	}
 
 	return fn(ctx)
+}
+
+// pluginCallCancellation classifies a failed call against its anchored request context. Successful, unanchored, and
+// detached calls return nil, so only failure logs pay for the classification.
+func pluginCallCancellation(ctx context.Context, err error) *conncause.CancelDiagnostics {
+	if err == nil {
+		return nil
+	}
+
+	diagnostics, ok := conncause.DiagnoseCallCancel(ctx, err)
+	if !ok {
+		return nil
+	}
+
+	return &diagnostics
 }
 
 // startPluginCallSpan creates a low-cardinality host span for one plugin method.

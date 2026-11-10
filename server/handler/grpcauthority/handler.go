@@ -115,12 +115,14 @@ func (h *Handler) applicationFailures() core.AuthApplicationFailures {
 }
 
 // resolveApplicationOutcome keeps typed application failures as gRPC status errors and answers every
-// unexpected failure with the regular temporary-failure outcome instead of an Internal status.
+// unexpected failure with the regular temporary-failure outcome instead of an Internal status. callCtx is the
+// gRPC call context whose state the failure log reports.
 func resolveApplicationOutcome[T any](
+	callCtx context.Context,
 	input core.AuthInput,
 	outcome *T,
 	err error,
-	tempFail func(core.AuthInput, error) *T,
+	tempFail func(context.Context, core.AuthInput, error) *T,
 ) (*T, error) {
 	if err == nil {
 		return outcome, nil
@@ -130,7 +132,7 @@ func resolveApplicationOutcome[T any](
 		return nil, mapped
 	}
 
-	return tempFail(input, err), nil
+	return tempFail(callCtx, input, err), nil
 }
 
 // Authenticate maps the gRPC request into the auth application service.
@@ -150,7 +152,7 @@ func (h *Handler) Authenticate(ctx context.Context, request *authv1.AuthRequest)
 
 	outcome, err := h.service.Authenticate(ctx, input)
 
-	outcome, err = resolveApplicationOutcome(input, outcome, err, h.applicationFailures().TempFail)
+	outcome, err = resolveApplicationOutcome(ctx, input, outcome, err, h.applicationFailures().TempFail)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +184,7 @@ func (h *Handler) LookupIdentity(
 
 	outcome, err := h.service.LookupIdentity(ctx, input)
 
-	outcome, err = resolveApplicationOutcome(input, outcome, err, h.applicationFailures().TempFail)
+	outcome, err = resolveApplicationOutcome(ctx, input, outcome, err, h.applicationFailures().TempFail)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +216,7 @@ func (h *Handler) ListAccounts(
 
 	outcome, err := h.service.ListAccounts(ctx, input)
 
-	outcome, err = resolveApplicationOutcome(input, outcome, err, h.applicationFailures().ListAccountsTempFail)
+	outcome, err = resolveApplicationOutcome(ctx, input, outcome, err, h.applicationFailures().ListAccountsTempFail)
 	if err != nil {
 		return nil, err
 	}

@@ -134,6 +134,7 @@ func (h *Handler) process(ctx *gin.Context) {
 	}
 
 	ctx.Set(definitions.CtxAuthProtocolKey, input.Context.Protocol)
+	ctx.Set(definitions.CtxClientIPKey, input.Context.ClientIP)
 	applicationContext := h.applicationContext(ctx)
 	renderer := core.NewHTTPAuthResponseRenderer(h.responseDeps())
 
@@ -230,7 +231,7 @@ func (h *Handler) renderApplicationError(
 	// Every other failure is unexpected: log and count its exact cause, then answer the regular fail-closed
 	// temporary failure so auth_http and structured clients receive Auth-Status instead of a bare 500.
 	failures := core.NewAuthApplicationFailures(h.deps.Logger, authmetrics.TransportHTTP)
-	h.renderAuthOutcome(ctx, renderer, input, failures.TempFail(input, err))
+	h.renderAuthOutcome(ctx, renderer, input, failures.TempFail(ctx.Request.Context(), input, err))
 }
 
 // renderAuthOutcome publishes terminal metric metadata before rendering the HTTP response.

@@ -16,9 +16,12 @@
 package core
 
 import (
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/report"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Bounded temporary-failure causes named by the terminal tempfail log line.
@@ -104,4 +107,25 @@ func (a *AuthState) recordTempFailCause(cause authTempFailCause) {
 	}
 
 	a.Runtime.tempFailCause = cause
+}
+
+// recordTempFailError keeps the first technical error that can explain a temporary failure. Later errors and nil are
+// ignored, so the root cause is not overwritten by follow-up failures.
+func (a *AuthState) recordTempFailError(err error) {
+	if a == nil || err == nil || a.Runtime.tempFailErr != nil {
+		return
+	}
+
+	a.Runtime.tempFailErr = err
+}
+
+// tempFailCancelDiagnostics classifies the recorded technical error against the own transport request context. The
+// anchored transport context wins over the request context of ctx, which the application host derives for internal
+// work.
+func (a *AuthState) tempFailCancelDiagnostics(ctx *gin.Context) conncause.CancelDiagnostics {
+	if a == nil || ctx == nil || ctx.Request == nil {
+		return conncause.CancelDiagnostics{}
+	}
+
+	return conncause.DiagnoseCancel(conncause.OwnRequestContext(ctx.Request.Context()), a.Runtime.tempFailErr)
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/core"
 	coreauth "github.com/croessner/nauthilus/v4/server/core/auth"
 	"github.com/croessner/nauthilus/v4/server/core/localization"
@@ -223,6 +224,7 @@ func unaryServerInterceptor(deps ServerDeps, requestMetrics grpc.UnaryServerInte
 	deps = deps.withSharedOIDCValidator()
 
 	return chainUnaryInterceptors(
+		requestContextInterceptor(),
 		postActionResponseCompletionInterceptor(),
 		requestMetrics,
 		recoveryInterceptor(deps),
@@ -250,6 +252,14 @@ func requestLimitInterceptor(limit *mdlimit.Counter) grpc.UnaryServerInterceptor
 		defer limit.Release()
 
 		return handler(ctx, req)
+	}
+}
+
+// requestContextInterceptor anchors the call context as the request context, so failure logs below the transport
+// can tell a canceled call from a call that received a cancellation from shared work.
+func requestContextInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(conncause.WithRequestContext(ctx), req)
 	}
 }
 

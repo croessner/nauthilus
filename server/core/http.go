@@ -353,7 +353,7 @@ func (f DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 
 	srv := &http.Server{
 		Addr:              f.cfg.GetServer().Address,
-		Handler:           router,
+		Handler:           conncause.RequestHandler(router),
 		IdleTimeout:       idleTimeout,
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,

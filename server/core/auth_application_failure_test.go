@@ -17,12 +17,15 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/monitoring/authmetrics"
 	"github.com/croessner/nauthilus/v4/server/stats"
@@ -53,7 +56,7 @@ func TestAuthApplicationFailureAnswersFailClosedTempFail(t *testing.T) {
 			input := authnApplicationTestInput(AuthModeAuthenticate)
 			input.CorrelationID = "application-failure-correlation"
 
-			outcome := newRecordingAuthApplicationFailures(&logs, transport).TempFail(input, errApplicationFailureCause)
+			outcome := newRecordingAuthApplicationFailures(&logs, transport).TempFail(t.Context(), input, errApplicationFailureCause)
 
 			if outcome == nil || outcome.Decision != AuthDecisionTempFail ||
 				outcome.StatusMessage != definitions.TempFailDefault || outcome.Error != definitions.TempFailDefault ||
@@ -79,7 +82,7 @@ func TestAuthApplicationFailureAnswersListAccountsTempFail(t *testing.T) {
 	input.CorrelationID = "application-failure-list"
 
 	outcome := newRecordingAuthApplicationFailures(&logs, authmetrics.TransportGRPC).
-		ListAccountsTempFail(input, errApplicationFailureCause)
+		ListAccountsTempFail(t.Context(), input, errApplicationFailureCause)
 
 	if outcome == nil || outcome.Decision != AuthDecisionTempFail || len(outcome.Accounts) != 0 ||
 		outcome.StatusMessage != definitions.TempFailDefault || outcome.Session != input.CorrelationID {
@@ -96,7 +99,7 @@ func TestAuthApplicationFailureBoundsTransportLabel(t *testing.T) {
 	before := testutil.ToFloat64(counter)
 	input := authnApplicationTestInput(AuthModeAuthenticate)
 
-	outcome := newRecordingAuthApplicationFailures(&logs, "caller-controlled-value").TempFail(input, errApplicationFailureCause)
+	outcome := newRecordingAuthApplicationFailures(&logs, "caller-controlled-value").TempFail(t.Context(), input, errApplicationFailureCause)
 
 	if outcome.Session == "" {
 		t.Fatal("tempfail outcome without correlation ID has no generated session")
@@ -104,6 +107,58 @@ func TestAuthApplicationFailureBoundsTransportLabel(t *testing.T) {
 
 	if delta := testutil.ToFloat64(counter) - before; delta != 1 {
 		t.Fatalf("bounded application error counter delta = %v, want 1", delta)
+	}
+}
+
+// TestAuthApplicationFailureLogsOwnRequestContextState reproduces both observed cancellation patterns: a request whose
+// own context ended, and a request that received a cancellation from shared work while its own context stayed active.
+func TestAuthApplicationFailureLogsOwnRequestContextState(t *testing.T) {
+	canceledRequest, cancel := context.WithCancelCause(context.Background())
+	cancel(conncause.ErrClientDisconnected)
+
+	tests := []struct {
+		requestCtx context.Context
+		err        error
+		name       string
+		want       []string
+	}{
+		{
+			name:       "foreign cancel",
+			requestCtx: context.Background(),
+			err:        fmt.Errorf("native plugin refresh_user_data: %w", context.Canceled),
+			want:       []string{"cancel_source=foreign", `request_context_error=""`, `request_context_cause=""`},
+		},
+		{
+			name:       "own request canceled",
+			requestCtx: canceledRequest,
+			err:        fmt.Errorf("native plugin refresh_user_data: %w", context.Canceled),
+			want: []string{
+				"cancel_source=request", `request_context_error="context canceled"`,
+				`request_context_cause="client disconnected"`,
+			},
+		},
+		{
+			name:       "no cancellation",
+			requestCtx: context.Background(),
+			err:        errApplicationFailureCause,
+			want:       []string{`cancel_source=""`, `request_context_error=""`},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+
+			input := authnApplicationTestInput(AuthModeAuthenticate)
+
+			newRecordingAuthApplicationFailures(&logs, authmetrics.TransportHTTP).TempFail(test.requestCtx, input, test.err)
+
+			for _, want := range test.want {
+				if !strings.Contains(logs.String(), want) {
+					t.Fatalf("application failure log = %q, want %q", logs.String(), want)
+				}
+			}
+		})
 	}
 }
 

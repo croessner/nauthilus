@@ -41,6 +41,12 @@ const (
 
 	// msgRequestConnectionTerminated describes a request whose connection ended for a server-side reason.
 	msgRequestConnectionTerminated = "Request connection terminated"
+
+	// logKeyDurationMS carries the request duration in milliseconds.
+	logKeyDurationMS = "duration_ms"
+
+	// longRunningRequestThreshold is the duration above which a completed request is logged as long-running.
+	longRunningRequestThreshold = 1500 * time.Millisecond
 )
 
 // Counter tracks the current number of active connections and limits them based on a specified maximum.
@@ -148,58 +154,89 @@ func (lc *Counter) trackRequestStart(ctx *gin.Context, currentConnections int32)
 func (lc *Counter) finishRequest(ctx *gin.Context, logger *slog.Logger) {
 	lc.Release()
 
+	duration, timed := recordRequestDuration(ctx)
+
 	termination, terminated := conncause.RequestTermination(ctx.Request.Context())
 	if terminated {
-		logTerminatedRequest(ctx, logger, termination)
-	}
-
-	recordRequestDuration(ctx, logger, terminated)
-}
-
-// logTerminatedRequest logs a canceled request at INFO when the client ended it and at WARN with
-// the transport cause otherwise. Only client-ended requests are marked with status 499.
-func logTerminatedRequest(ctx *gin.Context, logger *slog.Logger, termination conncause.Termination) {
-	if !termination.ClientInitiated {
-		level.Warn(logger).Log(
-			definitions.LogKeyGUID, limitRequestGUID(ctx),
-			definitions.LogKeyMsg, msgRequestConnectionTerminated,
-			"path", ctx.FullPath(),
-			definitions.LogKeyError, termination.Cause,
-		)
+		logTerminatedRequest(ctx, logger, termination, requestDuration{value: duration, known: timed})
 
 		return
 	}
 
-	level.Info(logger).Log(
-		definitions.LogKeyGUID, limitRequestGUID(ctx),
+	if timed && duration > longRunningRequestThreshold {
+		logLongRunningRequest(ctx, logger, duration)
+	}
+}
+
+// requestDuration is the measured request duration; known is false when the request start time was not recorded.
+type requestDuration struct {
+	value time.Duration
+	known bool
+}
+
+// logTerminatedRequest logs a canceled request at NOTICE when the client ended it and at WARN with
+// the transport cause otherwise. Only client-ended requests are marked with status 499.
+func logTerminatedRequest(ctx *gin.Context, logger *slog.Logger, termination conncause.Termination, duration requestDuration) {
+	keyvals := terminatedRequestLogValues(ctx, termination, duration)
+
+	if !termination.ClientInitiated {
+		level.Warn(logger).Log(append(keyvals, definitions.LogKeyMsg, msgRequestConnectionTerminated)...)
+
+		return
+	}
+
+	level.Notice(logger).Log(append(keyvals,
 		definitions.LogKeyMsg, definitions.MsgClientClosedRequest,
-		"path", ctx.FullPath(),
 		"status", definitions.StatusClientClosedRequest,
-	)
+	)...)
 
 	if !ctx.Writer.Written() && !ctx.IsAborted() {
 		ctx.AbortWithStatus(definitions.StatusClientClosedRequest)
 	}
 }
 
-// recordRequestDuration stores the request duration and logs slow requests.
-func recordRequestDuration(ctx *gin.Context, logger *slog.Logger, canceled bool) {
+// terminatedRequestLogValues returns the correlation, cause, and duration fields shared by both termination logs.
+// The duration is omitted when unknown; client IP and protocol are included when a handler resolved them, which
+// costs two context lookups.
+func terminatedRequestLogValues(ctx *gin.Context, termination conncause.Termination, duration requestDuration) []any {
+	keyvals := []any{
+		definitions.LogKeyGUID, limitRequestGUID(ctx),
+		"path", ctx.FullPath(),
+		definitions.LogKeyError, termination.Cause,
+	}
+
+	if duration.known {
+		keyvals = append(keyvals, logKeyDurationMS, duration.value.Milliseconds())
+	}
+
+	if clientIP := ctx.GetString(definitions.CtxClientIPKey); clientIP != "" {
+		keyvals = append(keyvals, definitions.LogKeyClientIP, clientIP)
+	}
+
+	if protocol := ctx.GetString(definitions.CtxAuthProtocolKey); protocol != "" {
+		keyvals = append(keyvals, definitions.LogKeyProtocol, protocol)
+	}
+
+	return keyvals
+}
+
+// recordRequestDuration stores the request duration on ctx and returns it. It reports false when the request
+// start time is unknown.
+func recordRequestDuration(ctx *gin.Context) (time.Duration, bool) {
 	startTimeValue, exists := ctx.Get(definitions.CtxRequestStartTimeKey)
 	if !exists {
-		return
+		return 0, false
 	}
 
 	startTime, ok := startTimeValue.(time.Time)
 	if !ok {
-		return
+		return 0, false
 	}
 
 	duration := time.Since(startTime)
 	ctx.Set(definitions.CtxRequestDurationKey, duration)
 
-	if !canceled && duration > 1500*time.Millisecond {
-		logLongRunningRequest(ctx, logger, duration)
-	}
+	return duration, true
 }
 
 // logLongRunningRequest logs requests exceeding the middleware duration threshold.
@@ -208,7 +245,7 @@ func logLongRunningRequest(ctx *gin.Context, logger *slog.Logger, duration time.
 		definitions.LogKeyGUID, limitRequestGUID(ctx),
 		definitions.LogKeyMsg, "Long-running request detected",
 		"path", ctx.FullPath(),
-		"duration_ms", duration.Milliseconds(),
+		logKeyDurationMS, duration.Milliseconds(),
 	)
 }
 

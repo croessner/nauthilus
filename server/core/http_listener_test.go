@@ -16,9 +16,16 @@
 package core
 
 import (
+	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/conncause"
+
+	"github.com/gin-gonic/gin"
 	"github.com/pires/go-proxyproto"
 	"github.com/stretchr/testify/assert"
 )
@@ -41,4 +48,27 @@ func TestHTTPBaseListenerPrefersProxyListener(t *testing.T) {
 
 	_, isTCP := listener.(*net.TCPListener)
 	assert.True(t, isTCP)
+}
+
+// TestHTTPServerAnchorsRequestContext pins that the HTTP server anchors each request context, so failure logs below
+// the transport can classify a cancellation against the own request.
+func TestHTTPServerAnchorsRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var anchored bool
+
+	router := gin.New()
+	router.GET("/anchor", func(ctx *gin.Context) {
+		_, anchored = conncause.RequestContext(ctx.Request.Context())
+	})
+
+	factory := NewDefaultHTTPServerFactory(HTTPDeps{
+		Cfg:    &config.FileSettings{Server: &config.ServerSection{}},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	server := factory.New(router)
+
+	server.Handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/anchor", nil))
+
+	assert.True(t, anchored)
 }

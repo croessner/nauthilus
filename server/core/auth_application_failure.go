@@ -16,8 +16,10 @@
 package core
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/monitoring/authmetrics"
@@ -42,23 +44,33 @@ func NewAuthApplicationFailures(logger *slog.Logger, transport string) AuthAppli
 }
 
 // TempFail records err and returns the temporary-failure outcome for an authenticate or lookup operation.
-func (f AuthApplicationFailures) TempFail(input AuthInput, err error) *AuthOutcome {
+//
+// requestCtx is the own transport request context (the HTTP request context or the gRPC call context), not a context
+// derived for internal work; its state is logged to tell an own cancellation from one received through shared work.
+func (f AuthApplicationFailures) TempFail(requestCtx context.Context, input AuthInput, err error) *AuthOutcome {
 	outcome := newAuthTempFailOutcome(input)
-	f.observe(input, outcome.Session, err)
+	f.observe(requestCtx, input, outcome.Session, err)
 
 	return outcome
 }
 
 // ListAccountsTempFail records err and returns the temporary-failure outcome for an account listing.
-func (f AuthApplicationFailures) ListAccountsTempFail(input AuthInput, err error) *ListAccountsOutcome {
+//
+// requestCtx follows the same contract as in TempFail.
+func (f AuthApplicationFailures) ListAccountsTempFail(
+	requestCtx context.Context,
+	input AuthInput,
+	err error,
+) *ListAccountsOutcome {
 	outcome := newListAccountsTempFailOutcome(input)
-	f.observe(input, outcome.Session, err)
+	f.observe(requestCtx, input, outcome.Session, err)
 
 	return outcome
 }
 
-// observe logs the exact cause with request correlation and increments the bounded transport counter.
-func (f AuthApplicationFailures) observe(input AuthInput, session string, err error) {
+// observe logs the exact cause with request correlation and the state of the own request context, and increments the
+// bounded transport counter.
+func (f AuthApplicationFailures) observe(requestCtx context.Context, input AuthInput, session string, err error) {
 	stats.GetMetrics().GetAuthApplicationErrorsTotal().WithLabelValues(f.transport).Inc()
 
 	logger := f.logger
@@ -66,14 +78,16 @@ func (f AuthApplicationFailures) observe(input AuthInput, session string, err er
 		logger = slog.Default()
 	}
 
-	level.Error(logger).Log(
+	keyvals := []any{
 		definitions.LogKeyGUID, session,
 		definitions.LogKeyMsg, "Authentication application failed",
 		definitions.LogKeyError, err,
 		"transport", f.transport,
 		"mode", string(input.Mode),
 		definitions.LogKeyProtocol, input.Context.Protocol,
-	)
+	}
+
+	level.Error(logger).Log(append(keyvals, conncause.DiagnoseCancel(requestCtx, err).LogValues()...)...)
 }
 
 // newAuthTempFailOutcome builds the regular authenticate or lookup temporary failure for one request.

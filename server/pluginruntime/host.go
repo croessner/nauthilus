@@ -25,6 +25,7 @@ import (
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/lualib/smtp"
 	"github.com/croessner/nauthilus/v4/server/pluginloader"
@@ -443,7 +444,8 @@ func runPluginWorker(ctx context.Context, logger pluginapi.Logger, fn func(conte
 	}
 }
 
-// detachedWorkerContext preserves caller values while leaving cancellation to the host worker lifetime.
+// detachedWorkerContext preserves caller values while leaving cancellation to the host worker lifetime. It also drops
+// the request anchor, so worker failures are never attributed to the request that started the worker.
 func detachedWorkerContext(ctx context.Context, lifetimeContext context.Context) context.Context {
 	if ctx == nil {
 		ctx = lifetimeContext
@@ -453,7 +455,7 @@ func detachedWorkerContext(ctx context.Context, lifetimeContext context.Context)
 		ctx = context.Background()
 	}
 
-	return context.WithoutCancel(ctx)
+	return conncause.DetachRequestContext(ctx)
 }
 
 // workerLifetimeContext returns the host-owned cancellation root for supervised workers.

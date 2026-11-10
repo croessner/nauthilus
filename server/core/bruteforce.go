@@ -246,7 +246,7 @@ func (a *AuthState) runBruteForceRuleCheck(
 ) (bool, bool) {
 	eval, abort := a.evaluateBruteForceRules(bm, activeRules)
 	if abort {
-		a.Runtime.BruteForceError = true
+		a.markBruteForceError(bm.GetBruteForceError())
 		return true, false
 	}
 
@@ -259,8 +259,8 @@ func (a *AuthState) runBruteForceRuleCheck(
 	triggered := bm.ProcessBruteForce(eval.ruleTriggered, eval.alreadyTriggered, &eval.rules[eval.ruleNumber], eval.network, eval.message, func() {
 		a.applyTriggeredBruteForceRuntime(bm)
 	})
-	if bm.GetBruteForceError() != nil {
-		a.Runtime.BruteForceError = true
+	if err := bm.GetBruteForceError(); err != nil {
+		a.markBruteForceError(err)
 		return true, eval.ruleTriggered
 	}
 	a.storeBruteForceRuntimeHints(ctx, eval)
@@ -385,13 +385,20 @@ func (a *AuthState) newBruteForceBucketManager(ctx *gin.Context) bruteforce.Buck
 	return bm.WithPassword(a.Request.Password).WithAccountName(accountName).WithUsername(a.Request.Username)
 }
 
+// markBruteForceError records that brute-force protection failed technically and keeps err as a possible
+// explanation of the resulting temporary failure.
+func (a *AuthState) markBruteForceError(err error) {
+	a.Runtime.BruteForceError = true
+	a.recordTempFailError(err)
+}
+
 // cacheBruteForceRWPDecision stores the repeating-wrong-password precheck for later reuse.
 func (a *AuthState) cacheBruteForceRWPDecision(ctx *gin.Context, bm bruteforce.BucketManager) {
 	if needEnforce, err := bm.ShouldEnforceBucketUpdate(); err == nil {
 		ctx.Set(definitions.CtxRWPResultKey, needEnforce)
 		a.Runtime.BFRWP = !needEnforce
 	} else {
-		a.Runtime.BruteForceError = true
+		a.markBruteForceError(err)
 	}
 }
 
@@ -687,7 +694,7 @@ func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSou
 		// authentication answer on their own and are unaffected. Watch
 		// bruteforce_rwp_decisions_total{verdict="undecided"} against "counted":
 		// a sustained rise means accounting is blind, not that traffic is clean.
-		a.Runtime.BruteForceError = true
+		a.markBruteForceError(err)
 		a.Runtime.BFRWP = false
 
 		stats.GetMetrics().GetRWPDecisionsTotal().WithLabelValues("undecided").Inc()

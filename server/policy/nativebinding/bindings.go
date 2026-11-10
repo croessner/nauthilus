@@ -21,6 +21,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 )
@@ -32,7 +33,10 @@ var (
 
 // CallRecord describes one host-invoked native method call without exposing plugin-owned values.
 type CallRecord struct {
-	Err            error
+	Err error
+	// Cancellation classifies a failed request-bound call against its own request context. It is nil for
+	// successful calls and for calls without an anchored, still attached request context.
+	Cancellation   *conncause.CancelDiagnostics
 	Duration       time.Duration
 	ModuleName     string
 	ComponentName  string
