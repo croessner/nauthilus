@@ -96,6 +96,19 @@ func TestExpandLDAPFilterReplacesLegacyAndMacroSyntaxWithEscaping(t *testing.T) 
 	)
 }
 
+// TestExpandLDAPFilterTreatsLegacyUsernameAsLiteral ensures that a username substituted for the legacy %s placeholder
+// is not reinterpreted as macro syntax by a second expansion pass.
+func TestExpandLDAPFilterTreatsLegacyUsernameAsLiteral(t *testing.T) {
+	t.Parallel()
+
+	macroSource := &MacroSource{
+		Username: "%{account}",
+		Account:  "admin",
+	}
+
+	assert.Equal(t, "(&(uid=%{account})(acct=admin))", ExpandLDAPFilter("(&(uid=%s)(acct=%{account}))", macroSource))
+}
+
 // TestExpandLDAPFilterWithNilMacroSourceReturnsFilter ensures that ExpandLDAPFilter
 // returns the original filter if the MacroSource is nil.
 func TestExpandLDAPFilterWithNilMacroSourceReturnsFilter(t *testing.T) {

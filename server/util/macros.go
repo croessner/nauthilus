@@ -27,7 +27,18 @@ const (
 	emailAddressPartCount     = 2
 )
 
-var macroPattern = regexp.MustCompile(`%([LURT]*)?\{([^\}]*)\}`)
+const (
+	macroExpression       = `%([LURT]*)?\{([^\}]*)\}`
+	legacyLDAPPlaceholder = "%s"
+)
+
+var (
+	macroPattern = regexp.MustCompile(macroExpression)
+
+	// ldapFilterPattern matches the legacy %s placeholder and every macro, so one pass expands both and substituted
+	// values are never rescanned as template syntax.
+	ldapFilterPattern = regexp.MustCompile(regexp.QuoteMeta(legacyLDAPPlaceholder) + `|` + macroExpression)
+)
 
 // MacroSource holds all values that might be used in macros.
 type MacroSource struct {
@@ -74,19 +85,31 @@ account - authenticated account name
 user_dn - LDAP distinguished name of the current user
 */
 func (m *MacroSource) ReplaceMacros(source string) (dest string) {
-	return macroPattern.ReplaceAllStringFunc(source, func(match string) string {
-		replacement, ok := newMacroReplacement(match)
-		if !ok {
-			return match
-		}
+	return macroPattern.ReplaceAllStringFunc(source, m.replaceMacroMatch)
+}
 
-		value, shouldReplace := m.macroValue(replacement)
-		if !shouldReplace {
-			return match
-		}
+// replaceMacroMatch resolves one matched macro to its escaped value and keeps unknown macros verbatim.
+func (m *MacroSource) replaceMacroMatch(match string) string {
+	replacement, ok := newMacroReplacement(match)
+	if !ok {
+		return match
+	}
 
-		return value
-	})
+	value, shouldReplace := m.macroValue(replacement)
+	if !shouldReplace {
+		return match
+	}
+
+	return value
+}
+
+// replaceLDAPFilterMatch resolves either the legacy %s placeholder or one macro.
+func (m *MacroSource) replaceLDAPFilterMatch(match string) string {
+	if match == legacyLDAPPlaceholder {
+		return EscapeLDAPFilter(m.Username)
+	}
+
+	return m.replaceMacroMatch(match)
 }
 
 // newMacroReplacement parses the first macro occurrence in source.
@@ -200,13 +223,11 @@ func (r macroReplacement) applyCaseAndEscape(value string) string {
 }
 
 // ExpandLDAPFilter replaces legacy placeholders and macros using LDAP-safe escaping.
-// It supports both `%s` and `%{...}` syntax.
+// It supports both `%s` and `%{...}` syntax and expands them in a single pass, so substituted values stay literal.
 func ExpandLDAPFilter(filter string, macroSource *MacroSource) string {
 	if macroSource == nil {
 		return filter
 	}
 
-	expanded := strings.ReplaceAll(filter, "%s", EscapeLDAPFilter(macroSource.Username))
-
-	return macroSource.ReplaceMacros(expanded)
+	return ldapFilterPattern.ReplaceAllStringFunc(filter, macroSource.replaceLDAPFilterMatch)
 }
