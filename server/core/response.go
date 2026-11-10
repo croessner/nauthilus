@@ -153,10 +153,13 @@ func (a *AuthState) finishAuthSuccessSideEffects(ctx *gin.Context) {
 	}
 }
 
+// prepareAuthFailure sets the client text of a denial, defaulting to the built-in failure text.
 func (a *AuthState) prepareAuthFailure() {
 	if a.Runtime.StatusMessage == "" {
 		a.Runtime.StatusMessage = definitions.PasswordFail
 	}
+
+	a.applyClientStatusMessage()
 }
 
 func (a *AuthState) applyAuthFailureSideEffects(ctx *gin.Context) {
@@ -164,21 +167,58 @@ func (a *AuthState) applyAuthFailureSideEffects(ctx *gin.Context) {
 	a.loginAttemptProcessing(ctx)
 }
 
+// prepareAuthTempFail sets the client text of a temporary failure.
 func (a *AuthState) prepareAuthTempFail(reason string) {
 	a.Runtime.StatusMessage = reason
+	a.applyClientStatusMessage()
 }
 
-func (a *AuthState) shouldLogAuthTempFail() bool {
-	return a.Request.Service != definitions.ServJSON && a.Request.Service != definitions.ServCBOR
+// applyClientStatusMessage replaces a built-in default status text with the operator text configured under
+// auth.response before anything reads it, so the summary log line, the captured outcome, and post-action snapshots
+// report the message the client receives. The mapping is idempotent, so the renderer may apply it again.
+func (a *AuthState) applyClientStatusMessage() {
+	a.Runtime.StatusMessage, a.Runtime.StatusMessageI18NKey = a.clientStatusMessage(
+		a.Runtime.StatusMessage, a.Runtime.StatusMessageI18NKey,
+	)
 }
 
+// ClientStatusText returns the text the client receives for a status text: the operator text configured under
+// auth.response for a built-in default, and every other text unchanged.
+func (a *AuthState) ClientStatusText(text string) string {
+	if a == nil {
+		return text
+	}
+
+	clientText, _ := a.clientStatusMessage(text, "")
+
+	return clientText
+}
+
+// clientStatusMessage maps one status text and i18n key through the request's auth.response settings.
+func (a *AuthState) clientStatusMessage(text string, i18nKey string) (string, string) {
+	return NewAuthResponseSettings(a.Cfg()).ClientStatusMessage(text, i18nKey)
+}
+
+// logAuthTempFail writes the terminal tempfail summary line for every service. It carries the client-visible default
+// text as message and the recorded cause, so a temporary failure stays traceable although the client only sees the
+// generic text.
 func (a *AuthState) logAuthTempFail(ctx *gin.Context, logger *slog.Logger) {
 	keyvals := getLogSlice()
 
 	defer putLogSlice(keyvals)
 
-	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", ctx.Request.URL.Path)
-	keyvals = append(keyvals, definitions.LogKeyMsg, "Temporary server problem")
+	endpoint := ""
+	if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil {
+		endpoint = ctx.Request.URL.Path
+	}
+
+	keyvals = a.fillLogLineTemplate(keyvals, "tempfail", endpoint)
+	keyvals = append(keyvals, a.Runtime.tempFailCause.logValues()...)
+	keyvals = append(keyvals, definitions.LogKeyMsg, definitions.TempFailDefault)
+
+	if logger == nil {
+		logger = a.Logger()
+	}
 
 	_ = level.Warn(logger).WithContext(ctx).Log(keyvals...)
 }
@@ -207,17 +247,14 @@ func (w stateResponseWriter) Fail(ctx *gin.Context, view *StateView) {
 	a.loginAttemptProcessing(ctx)
 }
 
-// TempFail renders temporary failure before preserving legacy service-specific logging.
+// TempFail renders temporary failure before writing the terminal tempfail log line.
 func (w stateResponseWriter) TempFail(ctx *gin.Context, view *StateView, reason string) {
 	a := view.auth
 	deps := w.effectiveDeps(a)
 
 	a.prepareAuthTempFail(reason)
 	w.render(ctx, a, deps, AuthDecisionTempFail, reason, a.Runtime.StatusCodeInternalError)
-
-	if a.Request.Service != definitions.ServJSON && a.Request.Service != definitions.ServCBOR {
-		a.logAuthTempFail(ctx, deps.Logger)
-	}
+	a.logAuthTempFail(ctx, deps.Logger)
 }
 
 // AuthOK is the general method to indicate authentication success.

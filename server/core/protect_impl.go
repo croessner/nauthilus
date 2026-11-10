@@ -139,6 +139,7 @@ func handleProtectedEnvironment(ctx *gin.Context, auth *AuthState) bool {
 
 		return true
 	case definitions.AuthResultTempFail:
+		auth.recordTempFailCause(authTempFailCause{reason: tempFailReasonEnvironment})
 		auth.AuthTempFail(ctx, definitions.TempFailDefault)
 		ctx.Abort()
 

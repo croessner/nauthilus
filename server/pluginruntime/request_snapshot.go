@@ -293,7 +293,7 @@ func snapshotStatusMessage(auth *core.AuthState) string {
 	}
 
 	if auth.Runtime.StatusCodeFail > 0 {
-		return definitions.PasswordFail
+		return auth.ClientStatusText(definitions.PasswordFail)
 	}
 
 	return ""

@@ -243,12 +243,16 @@ func (e *authnCandidateExecution) guardAuthnPermit(
 func (e *authnCandidateExecution) recordAuthnFSMGuardViolation(checkpoint string, policyRule string) {
 	stats.GetMetrics().GetAuthnFSMGuardViolationsTotal().WithLabelValues(string(e.operation), checkpoint).Inc()
 
+	e.auth.recordTempFailCause(authTempFailCause{
+		reason: tempFailReasonAuthFSMGuard, checkpoint: checkpoint, policyRule: policyRule,
+	})
+
 	level.Error(e.auth.Logger()).Log(
 		definitions.LogKeyGUID, e.auth.Runtime.GUID,
 		definitions.LogKeyMsg, "Policy permit rejected by the auth FSM guard: host evidence does not support success",
 		"operation", string(e.operation),
-		"checkpoint", checkpoint,
-		"policy_rule", policyRule,
+		definitions.LogKeyPolicyCheckpoint, checkpoint,
+		definitions.LogKeyPolicyRule, policyRule,
 		"host_event", e.hostEvidenceSnapshot().hostEvent(e.operation),
 	)
 }

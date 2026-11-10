@@ -387,6 +387,24 @@ const (
 	// LogKeyHealthCheck indicates that the request was created by an internal backend health check.
 	LogKeyHealthCheck = "health_check"
 
+	// LogKeyTempFailReason names the bounded cause of a temporary authentication failure.
+	LogKeyTempFailReason = "tempfail_reason"
+
+	// LogKeyPolicyCheckpoint names the authn policy checkpoint that produced a decision.
+	LogKeyPolicyCheckpoint = "checkpoint"
+
+	// LogKeyPolicyStatusCode names the decision status code of an authn policy evaluation.
+	LogKeyPolicyStatusCode = "status_code"
+
+	// LogKeyPolicySet names the policy set that produced a decision.
+	LogKeyPolicySet = "policy_set"
+
+	// LogKeyPolicyRule names the policy rule that produced a decision.
+	LogKeyPolicyRule = "policy_rule"
+
+	// LogKeyPolicyOutcome names the outcome marker of the selected policy decision.
+	LogKeyPolicyOutcome = "outcome_marker"
+
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 

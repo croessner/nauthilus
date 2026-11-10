@@ -1001,12 +1001,20 @@ func (e *authnCandidateExecution) finalize(
 	effect := response.Effect()
 	final := e.selectedDecision(checkpoint)
 
+	if effect == decision.EffectIndeterminate {
+		e.auth.recordTempFailCause(newPolicyTempFailCause(checkpoint, response))
+	}
+
 	if final == nil {
 		return e.finalizeUnselected(checkpoint, effect, current)
 	}
 
 	presentation, acceptanceFailure := e.authnCandidatePresentation(response, final)
 	effect, presentation = e.guardAuthnPermit(checkpoint, effect, presentation)
+
+	if effect == decision.EffectIndeterminate {
+		e.auth.recordTempFailCause(e.auth.Runtime.tempFailCause.withPresentation(presentation))
+	}
 
 	if err := e.auth.applyAuthFSMMarkers(e.authnHostFSMEventPath(presentation)); err != nil {
 		return authnApplicationResult{}, err
@@ -1063,7 +1071,23 @@ func (e *authnCandidateExecution) finalizeUnselected(
 		return authnApplicationResult{}, err
 	}
 
-	return e.recordUnselectedAuthnFSM(checkpoint, result)
+	result, err = e.recordUnselectedAuthnFSM(checkpoint, result)
+	if err == nil && result.currentDecision() == AuthDecisionTempFail {
+		e.logUnselectedTempFail()
+	}
+
+	return result, err
+}
+
+// logUnselectedTempFail writes the terminal tempfail log line for a temporary failure decided without a selected
+// presentation. No response writer runs on this path, so without it the request would end silently.
+func (e *authnCandidateExecution) logUnselectedTempFail() {
+	if e == nil || e.auth == nil {
+		return
+	}
+
+	e.auth.prepareAuthTempFail(definitions.TempFailDefault)
+	e.auth.logAuthTempFail(e.ginCtx, nil)
 }
 
 // unselectedResult maps the effect onto the host result and guards an ok result without host evidence.

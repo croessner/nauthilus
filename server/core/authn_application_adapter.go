@@ -589,14 +589,10 @@ func logAuthnDecisionFailure(
 		return
 	}
 
-	fields := []any{
+	fields := append([]any{
 		definitions.LogKeyGUID, execution.auth.Runtime.GUID,
 		definitions.LogKeyMsg, "Authn policy evaluation indeterminate",
-		"checkpoint", checkpoint,
-		"status_code", response.Status().Code(),
-		"policy_set", response.Policy().PolicySet(),
-		"policy_rule", response.Policy().Rule(),
-	}
+	}, newPolicyTempFailCause(checkpoint, response).logValues()...)
 
 	if diagnostics := response.Diagnostics(); diagnostics != nil {
 		fields = append(fields, "diagnostics", authnDecisionDiagnostics{entries: diagnostics.Entries()})

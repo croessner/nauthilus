@@ -524,6 +524,9 @@ type AuthRuntime struct {
 	// Context is the Lua context associated with the request.
 	Context *lualib.Context
 
+	// tempFailCause records why the request ends in a temporary failure, for the terminal tempfail log line.
+	tempFailCause authTempFailCause
+
 	// UsedBackendPort is the port number of the backend server used.
 	UsedBackendPort int
 
@@ -4101,7 +4104,9 @@ func (a *AuthState) handlePreAuthBruteForce(ctx *gin.Context, span trace.Span) b
 // rejectDefaultPreAuthBruteForce performs the legacy rejection side effects.
 func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.Span) {
 	if a.Runtime.BruteForceError {
+		a.recordTempFailCause(authTempFailCause{reason: tempFailReasonBruteForce})
 		a.AuthTempFail(ctx, definitions.TempFailDefault)
+
 		return
 	}
 	a.markEnvironmentRejected(ctx)

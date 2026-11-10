@@ -116,10 +116,7 @@ func (w *CaptureResponseWriter) TempFail(ctx *gin.Context, view *StateView, reas
 
 	auth := view.auth
 	auth.prepareAuthTempFail(reason)
-
-	if auth.shouldLogAuthTempFail() {
-		auth.logAuthTempFail(ctx, w.logger)
-	}
+	auth.logAuthTempFail(ctx, w.logger)
 
 	w.captureOutcome(ctx, auth, authFSMStateAuthTempFail, CapturedAuthDecisionTempFail, reason, auth.Runtime.StatusCodeInternalError)
 }

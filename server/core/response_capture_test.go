@@ -145,8 +145,9 @@ func TestCaptureResponseWriter_TempFailCapturesOutcomeWithoutHTTPRendering(t *te
 		t.Fatalf("error = %q, want %q", outcome.Error, reason)
 	}
 
-	if logs.Count() != 0 {
-		t.Fatalf("CBOR tempfail logs = %d, want established no-log behavior", logs.Count())
+	// Every service writes the terminal tempfail line, so structured clients' temporary failures stay traceable.
+	if logs.Count() != 1 {
+		t.Fatalf("CBOR tempfail logs = %d, want one terminal tempfail line", logs.Count())
 	}
 }
 
