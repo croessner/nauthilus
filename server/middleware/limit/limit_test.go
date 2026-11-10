@@ -16,11 +16,17 @@
 package limit
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/croessner/nauthilus/v4/server/conncause"
+	"github.com/croessner/nauthilus/v4/server/definitions"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -124,5 +130,47 @@ func TestLimitCounterNeverAdmitsMoreThanTheMaximum(t *testing.T) {
 	if peak.Load() > maximum || admitted.Load() == 0 || counter.CurrentConnections != 0 {
 		t.Fatalf("peak = %d, admitted = %d, left = %d; want peak <= %d and a drained counter",
 			peak.Load(), admitted.Load(), counter.CurrentConnections, maximum)
+	}
+}
+
+// TestLimitCounterLogsTerminatedRequestsByCause pins that client disconnects are logged at INFO with
+// status 499, while server-side connection terminations are logged at WARN with their cause.
+func TestLimitCounterLogsTerminatedRequestsByCause(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		cause      error
+		name       string
+		wantLevel  string
+		wantMsg    string
+		wantStatus int
+	}{
+		{name: "client disconnected", cause: conncause.ErrClientDisconnected, wantLevel: `"level":"INFO"`, wantMsg: definitions.MsgClientClosedRequest, wantStatus: definitions.StatusClientClosedRequest},
+		{name: "stream reset without cause", cause: context.Canceled, wantLevel: `"level":"INFO"`, wantMsg: definitions.MsgClientClosedRequest, wantStatus: definitions.StatusClientClosedRequest},
+		{name: "server timeout", cause: conncause.ErrConnectionTimeout, wantLevel: `"level":"WARN"`, wantMsg: msgRequestConnectionTerminated, wantStatus: http.StatusOK},
+		{name: "closed locally", cause: conncause.ErrConnectionClosedLocally, wantLevel: `"level":"WARN"`, wantMsg: msgRequestConnectionTerminated, wantStatus: http.StatusOK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+
+			logger := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			engine := gin.New()
+			engine.Use(NewLimitCounter(4).MiddlewareWithLogger(logger))
+			engine.GET("/other", func(*gin.Context) {})
+
+			ctx, cancel := context.WithCancelCause(context.Background())
+			cancel(test.cause)
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequestWithContext(ctx, http.MethodGet, "/other", nil)
+
+			engine.ServeHTTP(recorder, request)
+
+			assert.Contains(t, output.String(), test.wantLevel)
+			assert.Contains(t, output.String(), test.wantMsg)
+			assert.Equal(t, test.wantStatus, recorder.Code)
+		})
 	}
 }

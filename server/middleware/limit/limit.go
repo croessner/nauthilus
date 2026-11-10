@@ -17,13 +17,12 @@
 package limit
 
 import (
-	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/stats"
@@ -39,6 +38,9 @@ const (
 	limitBypassPingPath     = "/ping"
 	limitResponseKeyScope   = "scope"
 	limitScopeConcurrency   = "concurrency"
+
+	// msgRequestConnectionTerminated describes a request whose connection ended for a server-side reason.
+	msgRequestConnectionTerminated = "Request connection terminated"
 )
 
 // Counter tracks the current number of active connections and limits them based on a specified maximum.
@@ -146,17 +148,29 @@ func (lc *Counter) trackRequestStart(ctx *gin.Context, currentConnections int32)
 func (lc *Counter) finishRequest(ctx *gin.Context, logger *slog.Logger) {
 	lc.Release()
 
-	canceled := errors.Is(ctx.Request.Context().Err(), context.Canceled)
-	if canceled {
-		logClientCanceledRequest(ctx, logger)
+	termination, terminated := conncause.RequestTermination(ctx.Request.Context())
+	if terminated {
+		logTerminatedRequest(ctx, logger, termination)
 	}
 
-	recordRequestDuration(ctx, logger, canceled)
+	recordRequestDuration(ctx, logger, terminated)
 }
 
-// logClientCanceledRequest logs and marks requests canceled by the client.
-func logClientCanceledRequest(ctx *gin.Context, logger *slog.Logger) {
-	level.Warn(logger).Log(
+// logTerminatedRequest logs a canceled request at INFO when the client ended it and at WARN with
+// the transport cause otherwise. Only client-ended requests are marked with status 499.
+func logTerminatedRequest(ctx *gin.Context, logger *slog.Logger, termination conncause.Termination) {
+	if !termination.ClientInitiated {
+		level.Warn(logger).Log(
+			definitions.LogKeyGUID, limitRequestGUID(ctx),
+			definitions.LogKeyMsg, msgRequestConnectionTerminated,
+			"path", ctx.FullPath(),
+			definitions.LogKeyError, termination.Cause,
+		)
+
+		return
+	}
+
+	level.Info(logger).Log(
 		definitions.LogKeyGUID, limitRequestGUID(ctx),
 		definitions.LogKeyMsg, definitions.MsgClientClosedRequest,
 		"path", ctx.FullPath(),

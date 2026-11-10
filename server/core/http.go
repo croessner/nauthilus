@@ -31,6 +31,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/handler/custom"
 	"github.com/croessner/nauthilus/v4/server/log/level"
@@ -357,6 +358,7 @@ func (f DefaultHTTPServerFactory) New(router *gin.Engine) *http.Server {
 		ReadTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
+		ConnContext:       conncause.ConnContext,
 	}
 
 	if err := http2.ConfigureServer(srv, h2Server); err != nil {
@@ -581,29 +583,43 @@ func (r DefaultTransportRunner) Serve(ctx context.Context, srv *http.Server, pro
 
 // serveHTTPInternal runs HTTP/1.1+2 with the already prepared server TLS identity.
 func serveHTTPInternal(logger *slog.Logger, srv *http.Server, proxy *proxyproto.Listener, tlsEnabled bool) {
-	if tlsEnabled {
-		if proxy == nil {
-			if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
-			}
-		} else {
-			if err := srv.ServeTLS(proxy, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
-			}
-		}
+	listener, err := httpBaseListener(srv.Addr, proxy, tlsEnabled)
+	if err != nil {
+		logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
 
 		return
 	}
 
-	if proxy == nil {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
-		}
+	// The cause listener sits below TLS and above PROXY protocol, so it sees raw transport errors.
+	listener = conncause.NewListener(listener)
+
+	if tlsEnabled {
+		err = srv.ServeTLS(listener, "", "")
 	} else {
-		if err := srv.Serve(proxy); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
+		err = srv.Serve(listener)
+	}
+
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logAndExit(logger, "HTTP/1.1 and HTTP/2 server error", err)
+	}
+}
+
+// httpBaseListener returns the PROXY protocol listener when configured, otherwise a TCP listener
+// on addr. An empty addr falls back to the standard HTTP or HTTPS port like net/http does.
+func httpBaseListener(addr string, proxy *proxyproto.Listener, tlsEnabled bool) (net.Listener, error) {
+	if proxy != nil {
+		return proxy, nil
+	}
+
+	if addr == "" {
+		addr = ":http"
+
+		if tlsEnabled {
+			addr = ":https"
 		}
 	}
+
+	return net.Listen("tcp", addr)
 }
 
 // DefaultHTTPApp orchestrates all components and preserves exact behavior.
