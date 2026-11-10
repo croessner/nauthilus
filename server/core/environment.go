@@ -422,8 +422,13 @@ func (a *AuthState) logEnvironmentControlAllowlisting(environmentName string) {
 // If the environment control is enabled and the whitelist applies, logs the event and returns false.
 // Executes the checkFunc when the environment control is enabled and not whitelisted, returning its outcome.
 // Returns false if the environment control is not enabled in the configuration.
-func (a *AuthState) checkEnvironmentControlWithAllowlist(environmentName string, isWhitelisted func() bool, checkFunc func()) {
-	if a.cfg().ShouldRunControl(environmentName, a.Request.NoAuth) {
+func (a *AuthState) checkEnvironmentControlWithAllowlist(
+	environmentName string,
+	plan authnEnvironmentProviderPlan,
+	isWhitelisted func() bool,
+	checkFunc func(),
+) {
+	if a.cfg().ShouldRunControl(environmentName, plan.controlNoAuth(a.Request.NoAuth)) {
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(environmentName)
 		} else {
@@ -434,7 +439,11 @@ func (a *AuthState) checkEnvironmentControlWithAllowlist(environmentName string,
 
 // checkTLSEncryptionEnvironment determines if the TLS encryption environment control should be processed for the current authentication state.
 // It uses a whitelist check to decide if the environment control action needs to be executed based on the current auth state.
-func (a *AuthState) checkTLSEncryptionEnvironment(ctx *gin.Context, record func(bool)) (triggered bool) {
+func (a *AuthState) checkTLSEncryptionEnvironment(
+	ctx *gin.Context,
+	plan authnEnvironmentProviderPlan,
+	record func(bool),
+) (triggered bool) {
 	tr := monittrace.New("nauthilus/auth")
 	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.environment.tls",
 		attribute.String("service", a.Request.Service),
@@ -457,7 +466,7 @@ func (a *AuthState) checkTLSEncryptionEnvironment(ctx *gin.Context, record func(
 		}
 	}
 
-	a.checkEnvironmentControlWithAllowlist(definitions.ControlTLSEncryption, func() bool { return false }, checkFunc)
+	a.checkEnvironmentControlWithAllowlist(definitions.ControlTLSEncryption, plan, func() bool { return false }, checkFunc)
 
 	return
 }
@@ -511,7 +520,7 @@ func (a *AuthState) checkRelayDomainsEnvironment(ctx *gin.Context, record func(b
 
 // checkRBLEnvironment checks if a Real-time Blackhole List (RBL) environment control is triggered for the current request.
 // Returns true if the environment control is triggered and processed, otherwise false.
-func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err error) {
+func (a *AuthState) checkRBLEnvironment(ctx *gin.Context, plan authnEnvironmentProviderPlan) (triggered bool, err error) {
 	tr := monittrace.New("nauthilus/auth")
 	fctx, fspan := tr.Start(ctx.Request.Context(), "auth.environment.rbl",
 		attribute.String("service", a.Request.Service),
@@ -544,7 +553,7 @@ func (a *AuthState) checkRBLEnvironment(ctx *gin.Context) (triggered bool, err e
 		a.processEnvironmentAction(ctx, definitions.ControlRBL)
 	}
 
-	if a.cfg().ShouldRunControl(definitions.ControlRBL, a.Request.NoAuth) {
+	if a.cfg().ShouldRunControl(definitions.ControlRBL, plan.controlNoAuth(a.Request.NoAuth)) {
 		if isWhitelisted() {
 			a.logEnvironmentControlAllowlisting(definitions.ControlRBL)
 
@@ -570,10 +579,19 @@ func (a *AuthState) processEnvironmentAction(ctx *gin.Context, environmentName s
 	a.Runtime.EnvironmentName = environmentName
 }
 
+// authnEnvironmentProviderPlan selects the environment controls one evaluation runs.
+// policyScheduled marks controls an authn policy plan scheduled explicitly; only those
+// TLS and RBL controls also run for no-auth identity lookups.
 type authnEnvironmentProviderPlan struct {
-	tls   bool
-	relay bool
-	rbl   bool
+	tls             bool
+	relay           bool
+	rbl             bool
+	policyScheduled bool
+}
+
+// controlNoAuth returns the no-auth state that gates TLS and RBL, lifting it for policy-scheduled controls.
+func (p authnEnvironmentProviderPlan) controlNoAuth(noAuth bool) bool {
+	return noAuth && !p.policyScheduled
 }
 
 // HandleEnvironment processes the complete established environment provider sequence.
@@ -605,7 +623,7 @@ func (a *AuthState) handleEnvironmentProviders(
 	}
 
 	if plan.tls {
-		if result, handled := a.handleTLSEnvironmentResult(ctx, fsp); handled {
+		if result, handled := a.handleTLSEnvironmentResult(ctx, fsp, plan); handled {
 			return result
 		}
 	}
@@ -617,7 +635,7 @@ func (a *AuthState) handleEnvironmentProviders(
 	}
 
 	if plan.rbl {
-		return a.handleRBLEnvironmentResult(ctx, fsp)
+		return a.handleRBLEnvironmentResult(ctx, fsp, plan)
 	}
 
 	return finishPreAuthEnvironmentOK(fsp, false)
@@ -636,11 +654,18 @@ func (a *AuthState) startEnvironmentEvaluation(ctx *gin.Context) (trace.Span, *r
 	return fsp, requestScope
 }
 
-func (a *AuthState) handleTLSEnvironmentResult(ctx *gin.Context, span trace.Span) (definitions.AuthResult, bool) {
+// handleTLSEnvironmentResult evaluates and records the TLS control under the given provider plan.
+func (a *AuthState) handleTLSEnvironmentResult(
+	ctx *gin.Context,
+	span trace.Span,
+	plan authnEnvironmentProviderPlan,
+) (definitions.AuthResult, bool) {
 	return a.handleRecordedRejectingEnvironmentResult(
 		ctx,
 		span,
-		a.checkTLSEncryptionEnvironment,
+		func(ctx *gin.Context, record func(bool)) bool {
+			return a.checkTLSEncryptionEnvironment(ctx, plan, record)
+		},
 		a.recordPolicyTLS,
 		preAuthEnvironmentOutcome{
 			current:                 definitions.AuthResultPreAuthTLS,
@@ -686,8 +711,13 @@ func (a *AuthState) handleRecordedRejectingEnvironmentResult(
 	return definitions.AuthResultUnset, false
 }
 
-func (a *AuthState) handleRBLEnvironmentResult(ctx *gin.Context, span trace.Span) definitions.AuthResult {
-	triggered, err := a.checkRBLEnvironment(ctx)
+// handleRBLEnvironmentResult evaluates and records the RBL control under the given provider plan.
+func (a *AuthState) handleRBLEnvironmentResult(
+	ctx *gin.Context,
+	span trace.Span,
+	plan authnEnvironmentProviderPlan,
+) definitions.AuthResult {
+	triggered, err := a.checkRBLEnvironment(ctx, plan)
 	if err != nil {
 		a.recordPolicyRBL(ctx, triggered, err)
 		span.RecordError(err)

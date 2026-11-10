@@ -185,7 +185,8 @@ func AuthnBuiltinCheckpointProviderIDs(operation Operation, checkpoint Stage) []
 			AuthnProviderSubject,
 		}
 	case operation == OperationLookupIdentity && checkpoint == StagePreAuth:
-		return []string{AuthnProviderEnvironment, AuthnProviderTLSEncryption, AuthnProviderRBL}
+		// TLS and RBL are opt-in for identity lookups through an explicit domain-plan provider.
+		return []string{AuthnProviderEnvironment}
 	case operation == OperationLookupIdentity && checkpoint == StageAuthDecision:
 		return []string{AuthnProviderBackend, AuthnProviderSubject}
 	case operation == OperationListAccounts && checkpoint == StageAuthDecision:
@@ -193,6 +194,11 @@ func AuthnBuiltinCheckpointProviderIDs(operation Operation, checkpoint Stage) []
 	default:
 		return nil
 	}
+}
+
+// AuthnBuiltinProviderSkipsLookupIdentity reports whether a builtin host control never runs for identity lookups.
+func AuthnBuiltinProviderSkipsLookupIdentity(identity string) bool {
+	return identity == AuthnProviderRelayDomains || identity == AuthnProviderBruteForce
 }
 
 // AuthnBuiltinProviderUse resolves an instance only when the immutable target checkpoint schedules it.

@@ -270,11 +270,11 @@ func (e *authnCandidateExecution) prepareProviderInstance(
 	case policy.AuthnProviderEnvironment:
 		terminal = e.prepareBuiltinEnvironmentProvider()
 	case policy.AuthnProviderTLSEncryption:
-		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{tls: true})
+		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{tls: true, policyScheduled: true})
 	case policy.AuthnProviderRelayDomains:
 		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{relay: true})
 	case policy.AuthnProviderRBL:
-		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{rbl: true})
+		terminal = e.prepareEnvironmentProviders(authnEnvironmentProviderPlan{rbl: true, policyScheduled: true})
 	case policy.AuthnProviderBackend:
 		terminal, err = e.prepareBuiltinBackendProvider()
 	case policy.AuthnProviderLDAPBackend, policy.AuthnProviderLuaBackend, policy.AuthnProviderPluginBackendOrder:

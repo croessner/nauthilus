@@ -97,11 +97,8 @@ func TestAuthnCheckpointSessionUsesExactOperationPlans(t *testing.T) {
 			action: string(policy.OperationLookupIdentity),
 			want:   []string{"pre_auth", "auth_decision"},
 			wantProviders: [][]string{
-				{
-					policy.AuthnProviderEnvironment,
-					policy.AuthnProviderTLSEncryption,
-					policy.AuthnProviderRBL,
-				},
+				// TLS and RBL are opt-in for identity lookups.
+				{policy.AuthnProviderEnvironment},
 				{policy.AuthnProviderBackend, policy.AuthnProviderSubject},
 			},
 		},

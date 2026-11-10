@@ -189,7 +189,7 @@ func builtinAuthnPlanScheduleExpectations() []authnPlanScheduleExpectation {
 		{
 			action: "lookup_identity",
 			checkpoints: []authnCheckpointExpectation{
-				{name: "pre_auth", providers: []string{policy.AuthnProviderEnvironment, policy.AuthnProviderTLSEncryption, policy.AuthnProviderRBL}},
+				{name: "pre_auth", providers: []string{policy.AuthnProviderEnvironment}},
 				{name: "auth_decision", providers: []string{policy.AuthnProviderBackend, policy.AuthnProviderSubject}},
 			},
 		},

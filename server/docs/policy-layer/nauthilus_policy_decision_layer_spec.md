@@ -1694,13 +1694,14 @@ YAML check and policy entries may declare `operations`. If they omit it, they ap
 1. it uses the same policy runtime snapshot as normal authentication;
 2. it may run `pre_auth`, `auth_backend`, `subject_analysis`, and `auth_decision` stages, but only with checks enabled for `lookup_identity`;
 3. it does not perform password validation or password verification;
-4. brute-force checks are not enabled for `lookup_identity` by the built-in default policy;
-5. Lua environment and subject sources run only when the policy check plan explicitly opts them into `lookup_identity`;
-6. backend evaluation is identity lookup, not credential verification;
-7. backend user-found semantics map to lookup success;
-8. `auth_decision` means "identity lookup permitted and found", not "password authenticated";
-9. gRPC `LookupIdentity` renders normal lookup denials and tempfails as AuthService responses, not transport errors unless the failure is actually transport/caller/internal;
-10. HTTP `mode=no-auth`, gRPC `LookupIdentity`, and IdP no-auth lookup use the same operation semantics.
+4. brute-force and relay-domain checks never run for `lookup_identity`; a configured domain plan that binds `authn/builtin/brute_force` or `authn/builtin/relay_domains` to `lookup_identity` is rejected at configuration load;
+5. TLS-encryption and RBL checks do not run for `lookup_identity` by default: the built-in default plan schedules neither. A configured domain plan opts in by binding `authn/builtin/tls_encryption` or `authn/builtin/rbl` to `lookup_identity` explicitly; only then does the check run in no-auth mode. Lookup traffic is typically far higher than login traffic, so an RBL opt-in multiplies block-list query volume and quota cost;
+6. Lua environment and subject sources run only when the policy check plan explicitly opts them into `lookup_identity`;
+7. backend evaluation is identity lookup, not credential verification;
+8. backend user-found semantics map to lookup success;
+9. `auth_decision` means "identity lookup permitted and found", not "password authenticated";
+10. gRPC `LookupIdentity` renders normal lookup denials and tempfails as AuthService responses, not transport errors unless the failure is actually transport/caller/internal;
+11. HTTP `mode=no-auth`, gRPC `LookupIdentity`, and IdP no-auth lookup use the same operation semantics.
 
 During migration, current no-auth eligibility from old mechanism-local flags must be normalized into generated policy `operations` and `run_if` settings. It must not survive as an independent target scheduler.
 
@@ -3992,9 +3993,9 @@ The check-type registry is built into Go. Lua registry scripts may register attr
 | Check type | Stage | Operations | Config reference | Minimum emitted attributes | Observe-safe default | Side-effect rule |
 |---|---|---|---|---|---|---|
 | `builtin.brute_force` | `pre_auth` | `authenticate` | `auth.controls.brute_force` | `auth.brute_force.triggered`, `auth.brute_force.error` | false | Check evaluation must not directly choose the final response; counter and learning updates happen through registered obligations. |
-| `builtin.tls_encryption` | `pre_auth` | `authenticate`, `lookup_identity` | `auth.controls.tls_encryption` | `auth.tls.secure` | true | Read-only request inspection. |
+| `builtin.tls_encryption` | `pre_auth` | `authenticate`; `lookup_identity` only by explicit domain-plan opt-in | `auth.controls.tls_encryption` | `auth.tls.secure` | true | Read-only request inspection. |
 | `builtin.relay_domains` | `pre_auth` | `authenticate` | `auth.controls.relay_domains` | `auth.relay_domain.present`, `auth.relay_domain.known`, `auth.relay_domain.error` | true | Read-only request/config inspection. |
-| `builtin.rbl` | `pre_auth` | `authenticate`, `lookup_identity` | `auth.controls.rbl` | `auth.rbl.threshold_reached`, `auth.rbl.error` | false | May perform network lookups or cache access; non-observe-safe unless implemented as a provably read-only/cache-only check. |
+| `builtin.rbl` | `pre_auth` | `authenticate`; `lookup_identity` only by explicit domain-plan opt-in | `auth.controls.rbl` | `auth.rbl.threshold_reached`, `auth.rbl.error` | false | May perform network lookups or cache access; non-observe-safe unless implemented as a provably read-only/cache-only check. |
 | `lua.environment` | `pre_auth` | default `authenticate`, explicit opt-in allowed | one named `auth.policy.attribute_sources.lua.environment.<name>` entry | `auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, `auth.lua.environment.<name>.error`, plus registered Lua attributes | false | Arbitrary Lua may have side effects; observe execution requires explicit `observe_safe: true`. |
 | `backend.ldap` | `auth_backend` | `authenticate`, `lookup_identity` | `auth.backends.ldap` | `auth.authenticated`, `auth.identity.found`, `auth.backend.tempfail`, `auth.backend.empty_username`, `auth.backend.empty_password` | false | Performs backend I/O and may update backend-local telemetry or caches. |
 | `backend.lua` | `auth_backend` | `authenticate`, `lookup_identity` | `auth.backends.lua.backend` | `auth.authenticated`, `auth.identity.found`, `auth.backend.tempfail`, `auth.backend.empty_username`, `auth.backend.empty_password`, plus registered Lua attributes | false | Arbitrary Lua may have side effects; observe execution requires explicit `observe_safe: true`. |
@@ -4022,12 +4023,12 @@ The Go built-in registry must include at least these attributes. Lua-generated s
 | `request.protocol` | `pre_auth` | all | string enum | none | request context |
 | `auth.brute_force.triggered` | `pre_auth` | `authenticate` | bool | `rule`, `client_net`, `repeating` | `builtin.brute_force` |
 | `auth.brute_force.error` | `pre_auth` | `authenticate` | bool | `reason_code`, `retryable` | `builtin.brute_force` |
-| `auth.tls.secure` | `pre_auth` | `authenticate`, `lookup_identity` | bool | none | request context or `builtin.tls_encryption` |
+| `auth.tls.secure` | `pre_auth` | `authenticate`; `lookup_identity` when opted in | bool | none | request context or `builtin.tls_encryption` |
 | `auth.relay_domain.present` | `pre_auth` | `authenticate` | bool | `domain` | `builtin.relay_domains` |
 | `auth.relay_domain.known` | `pre_auth` | `authenticate` | bool | `domain` | `builtin.relay_domains` |
 | `auth.relay_domain.error` | `pre_auth` | `authenticate` | bool | `reason_code`, `retryable` | `builtin.relay_domains` |
-| `auth.rbl.threshold_reached` | `pre_auth` | `authenticate`, `lookup_identity` | bool | `lists` | `builtin.rbl` |
-| `auth.rbl.error` | `pre_auth` | `authenticate`, `lookup_identity` | bool | `reason_code`, `retryable` | `builtin.rbl` |
+| `auth.rbl.threshold_reached` | `pre_auth` | `authenticate`; `lookup_identity` when opted in | bool | `lists` | `builtin.rbl` |
+| `auth.rbl.error` | `pre_auth` | `authenticate`; `lookup_identity` when opted in | bool | `reason_code`, `retryable` | `builtin.rbl` |
 | `auth.lua.environment.<name>.triggered` | `pre_auth` | per script definition | bool | optional public `status_message` | `lua.environment` |
 | `auth.lua.environment.<name>.abort` | `pre_auth` | per script definition | bool | none | `lua.environment` |
 | `auth.lua.environment.<name>.error` | `pre_auth` | per script definition | bool | `reason_code` | `lua.environment` |
@@ -4104,7 +4105,7 @@ Phase 0 must freeze the current external behavior for every row in this matrix. 
 | Nginx auth-request | `authenticate` | current auth-request success status and headers | current deny status and headers | current tempfail status and headers | status-message behavior matches current header/body rules for this surface |
 | Header-style HTTP auth | `authenticate` | current success headers | current deny headers | current tempfail headers | policy response markers render through the existing header profile |
 | Plain HTTP auth | `authenticate` | current plain success response | current plain deny response | current plain tempfail response | no structured report data appears in the response |
-| HTTP `mode=no-auth` | `lookup_identity` | current identity-found response | current identity-not-found response | current lookup tempfail response | password verification is not executed; brute force is not part of the default check plan unless explicitly configured |
+| HTTP `mode=no-auth` | `lookup_identity` | current identity-found response | current identity-not-found response | current lookup tempfail response | password verification is not executed; brute force and relay domains never run; TLS and RBL run only by explicit domain-plan opt-in |
 | gRPC `AuthService` authenticate | `authenticate` | current AuthService success payload | current AuthService denial payload | current AuthService temporary-failure payload | normal auth denials are payload decisions, not gRPC status errors |
 | gRPC `LookupIdentity` | `lookup_identity` | current lookup success payload | current lookup failure payload | current lookup tempfail payload | caller authentication errors remain gRPC errors outside policy denial |
 | HTTP `mode=list-accounts` | `list_accounts` | current account-list response, including empty-list semantics | current account-list denial response | current account-provider tempfail response | caller auth and scope rejection remain prerequisites outside policy denial; account list is not a policy attribute |
@@ -4126,6 +4127,8 @@ Every matrix row must be tested for at least these outcome classes:
 ### 17.7 `standard_auth` Mapping Checklist
 
 The built-in `standard_auth` policy set uses ordered first-match evaluation. The rows below are implementation requirements, not examples. The default-deny row must remain the final `auth_decision` rule.
+
+For `lookup_identity`, rows 30, 60, and 70 match only when a configured domain plan opts the TLS-encryption or RBL check into `lookup_identity`. The built-in default plan schedules neither check for identity lookups, so their facts stay absent and these rows never match there.
 
 For `authenticate`/`pre_auth`, rows 10 and 20 are evaluated at the built-in checkpoint immediately after the `brute_force` check. A terminal result from either row stops the remaining pre-auth check plan. Rows 30 and later run only when the brute-force checkpoint is neutral. This preserves current default behavior without injecting implicit `after` dependencies into TLS, relay-domain, RBL, or Lua-control checks.
 

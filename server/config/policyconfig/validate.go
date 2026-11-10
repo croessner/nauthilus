@@ -1420,6 +1420,21 @@ func validateProviderInstance(namespace string, provider ProviderInstanceConfig,
 		return err
 	}
 
+	return validateBuiltinProviderActions(namespace, provider, path+".actions")
+}
+
+// validateBuiltinProviderActions rejects explicit identity-lookup bindings of host controls that never run there.
+func validateBuiltinProviderActions(namespace string, provider ProviderInstanceConfig, path string) error {
+	if namespace != authnNamespace || !policy.AuthnBuiltinProviderSkipsLookupIdentity(provider.Use) {
+		return nil
+	}
+
+	for index, action := range provider.Actions {
+		if action == string(policy.OperationLookupIdentity) {
+			return invalid(fmt.Sprintf("%s[%d]", path, index), provider.Use+" never runs for lookup_identity")
+		}
+	}
+
 	return nil
 }
 

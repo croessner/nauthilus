@@ -396,32 +396,31 @@ func TestPolicyCompiledPlanRejectsMixedConfiguredAndBuiltinRequirementIdentity(t
       domain_plans:
         configured:
           checkpoints:
-            pre_auth:
+            auth_decision:
               providers:
-                - {name: rbl, use: authn/builtin/rbl}
-            auth_decision: {providers: []}
+                - {name: backend_order, use: authn/builtin/ldap_backend}
       policy_sets:
         configured:
           rules:
-            - name: shared_rbl_requirement
-              checkpoint: pre_auth
+            - name: shared_backend_requirement
+              checkpoint: auth_decision
               actions: [authenticate, lookup_identity]
-              require_providers: [rbl]
+              require_providers: [backend_order]
               if: {always: true}
-              then: {decision: deny, fsm_event_marker: auth.fsm.event.pre_auth_deny}
+              then: {decision: deny, fsm_event_marker: auth.fsm.event.auth_deny}
   targets:
     - namespace: authn
       action: authenticate
       schema: authn/authenticate/v1
       domain_plan: authn/configured
       plans:
-        pre_auth:
+        auth_decision:
           policy_sets: [authn/configured]
     - namespace: authn
       action: lookup_identity
       schema: authn/lookup_identity/v1
       plans:
-        pre_auth:
+        auth_decision:
           policy_sets: [authn/configured]
 `)
 
@@ -759,7 +758,7 @@ func assertUnconfiguredBuiltinAuthnTargets(t *testing.T, catalog *policyruntime.
 		t.Fatal("unconfigured lookup_identity pre_auth checkpoint is missing")
 	}
 
-	wantLookup := []string{policy.AuthnProviderEnvironment, policy.AuthnProviderTLSEncryption, policy.AuthnProviderRBL}
+	wantLookup := []string{policy.AuthnProviderEnvironment}
 	if got := lookupPreAuth.ProviderIDs(); !slices.Equal(got, wantLookup) {
 		t.Fatalf("lookup_identity providers = %v, want unaffected builtin %v", got, wantLookup)
 	}
