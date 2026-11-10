@@ -54,6 +54,9 @@ func TestAuthnEmptyCredentialsSettleAsInvalidLogin(t *testing.T) {
 			clearUsername(input)
 			clearPassword(input)
 		}, wantRule: "standard_empty_username", wantOutcome: "auth.outcome.empty_username"},
+		{name: "authenticate control character username", prepare: func(input *AuthInput) {
+			input.Credentials.Username = "alice\r\nX-Injected: 1"
+		}, wantRule: "standard_empty_username", wantOutcome: "auth.outcome.empty_username"},
 	}
 
 	for _, test := range cases {

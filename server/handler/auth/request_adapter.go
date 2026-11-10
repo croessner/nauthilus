@@ -417,8 +417,8 @@ func authModeFromQuery(value string) core.AuthMode {
 
 // validateHTTPAuthInput rejects malformed direct-endpoint credentials with 400 Bad Request.
 //
-// Only a missing credential key or a syntactically invalid non-empty username is malformed. An empty username or
-// password value is ordinary authentication input that the auth pipeline answers as an invalid login.
+// Only a missing credential key is malformed. An empty username or password value is ordinary authentication input
+// that the auth pipeline answers as an invalid login; username syntax is checked once by the application boundary.
 func validateHTTPAuthInput(ctx *gin.Context, input core.AuthInput, surface httpAuthSurface) bool {
 	if input.Mode == core.AuthModeListAccounts || input.Mode == core.AuthModeLookupIdentity {
 		return true
@@ -426,12 +426,6 @@ func validateHTTPAuthInput(ctx *gin.Context, input core.AuthInput, surface httpA
 
 	if !surface.presence.username {
 		rejectMissingHTTPAuthCredential(ctx, surface.structured, httpAuthUsernameFieldName)
-
-		return false
-	}
-
-	if input.Credentials.Username != "" && !util.ValidateUsername(input.Credentials.Username) {
-		ctx.AbortWithStatus(http.StatusBadRequest)
 
 		return false
 	}

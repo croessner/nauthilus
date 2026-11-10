@@ -413,7 +413,7 @@ func (s *authnPolicyApplicationService) run(
 		return authnApplicationResult{}, err
 	}
 
-	input = normalizeAuthInput(input, authModeForOperation(operation))
+	input = discardUnsafeAuthenticateUsername(normalizeAuthInput(input, authModeForOperation(operation)), operation)
 	if err := validateAuthnCandidateInput(input, operation); err != nil {
 		return authnApplicationResult{}, err
 	}
@@ -1302,15 +1302,31 @@ func validateAuthnAuthenticationPresentation(
 	return nil
 }
 
-// validateAuthnCandidateInput preserves existing validation before Decision Service admission.
+// discardUnsafeAuthenticateUsername clears an authenticate username that fails the syntax check, so the request
+// settles like an empty username through the builtin empty-username rule as an ordinary invalid login with the
+// uniform client response, without the unsafe value reaching backends, brute-force buckets, caches, or logs.
+// Transports that can distinguish a missing credential key from an empty value reject the missing key before they
+// build the input.
+func discardUnsafeAuthenticateUsername(input AuthInput, operation policy.Operation) AuthInput {
+	if operation != policy.OperationAuthenticate {
+		return input
+	}
+
+	if validateUsernameSyntax(input.Credentials.Username) != nil {
+		input.Credentials.Username = ""
+	}
+
+	return input
+}
+
+// validateAuthnCandidateInput preserves existing validation before Decision Service admission. Authenticate input has
+// no input errors: empty and unsafe usernames settle as an ordinary invalid login.
 func validateAuthnCandidateInput(input AuthInput, operation policy.Operation) error {
 	switch operation {
-	case policy.OperationAuthenticate:
-		return validateAuthenticateInput(input)
+	case policy.OperationAuthenticate, policy.OperationListAccounts:
+		return nil
 	case policy.OperationLookupIdentity:
 		return validateUsernameInput(input)
-	case policy.OperationListAccounts:
-		return nil
 	default:
 		return &AuthInputError{Field: authInputFieldMode, Reason: authInputReasonUnsupported}
 	}

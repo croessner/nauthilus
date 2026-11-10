@@ -62,9 +62,10 @@ func TestValidateLookupIdentityInputPreservesHTTPAndGRPCContracts(t *testing.T) 
 		wantErr  bool
 	}{
 		{name: "HTTP empty username reaches admitted host", service: definitions.ServJSON},
-		{name: "HTTP invalid username reaches admitted host", service: definitions.ServCBOR, username: "invalid username"},
+		{name: "HTTP invalid username reaches admitted host", service: definitions.ServCBOR, username: "invalid\x00username"},
 		{name: "gRPC empty username is rejected", service: definitions.ServGRPC, wantErr: true},
-		{name: "gRPC invalid username is rejected", service: definitions.ServGRPC, username: "invalid username", wantErr: true},
+		{name: "gRPC username with space is accepted", service: definitions.ServGRPC, username: "Max Mustermann"},
+		{name: "gRPC invalid username is rejected", service: definitions.ServGRPC, username: "invalid\x00username", wantErr: true},
 	}
 
 	for _, test := range tests {

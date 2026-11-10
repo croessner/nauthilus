@@ -34,6 +34,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	pluginpassword "github.com/croessner/nauthilus/v4/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -53,9 +55,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
-
-// Legal characters for IMAP username based on RFC 9051: Any character except "(", ")", "{", SP, CTL, "%", "\"", "\"". Master-user formats can reserve additional literal separators.
-var usernamePattern = regexp.MustCompile(`^[^\x00-\x1F\x7F(){}%"\\ ]+$`)
 
 const forwardedProtoHTTPS = "https"
 
@@ -763,12 +762,14 @@ func ByteSize(bytes uint64) string {
 	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// ValidateUsername validates the given username against the usernamePattern regular expression.
-// It takes a string username as input and returns a boolean value representing whether the username is valid or not.
-// The usernamePattern regular expression allows any character except "(", ")", "{", SP, CTL, "%", "*", "\", except empty string.
-// The function returns true if the username matches the pattern, and false otherwise.
+// ValidateUsername reports whether a username can be carried safely through logs, response headers, caches, and
+// backends. It rejects only invalid UTF-8 and control characters (C0, DEL, C1), which covers NUL and CR/LF
+// injection. Every printable character, including spaces and IMAP atom specials, is accepted: protocol quoting is
+// already resolved by the client-facing proxy, and each sink escapes values for its own syntax (for example
+// EscapeLDAPFilter). An empty value is syntactically safe; whether a username is required, and whether a printable
+// name exists, is decided by the caller and the configured backends.
 func ValidateUsername(username string) bool {
-	return usernamePattern.MatchString(username)
+	return utf8.ValidString(username) && !strings.ContainsFunc(username, unicode.IsControl)
 }
 
 // NewDNSResolver initializes and returns a new DNS resolver based on the provided configuration.
