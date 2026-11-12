@@ -579,6 +579,62 @@ func TestBackendManagerPassDBTemporaryErrorMapsToTempFailure(t *testing.T) {
 	}
 }
 
+// TestBackendManagerPassDBTemporaryFailureNamesCause proves that every temporary plugin backend failure names a
+// bounded cause, so operators can tell a reported outage from a failed, panicked, or malformed plugin call.
+func TestBackendManagerPassDBTemporaryFailureNamesCause(t *testing.T) {
+	tests := []struct {
+		verify    func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error)
+		name      string
+		wantCause string
+	}{
+		{
+			name: "reported temporary status",
+			verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+				return pluginapi.BackendResult{Status: &pluginapi.StatusMessage{
+					Code: "user_lookup_failed", DefaultText: "user lookup failed", Temporary: true,
+				}}, nil
+			},
+			wantCause: "plugin reported a temporary failure (user_lookup_failed): user lookup failed",
+		},
+		{
+			name: "returned error",
+			verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+				return pluginapi.BackendResult{}, stderrors.New("database timeout with " + backendTestPassword)
+			},
+			wantCause: "plugin call failed (error)",
+		},
+		{
+			name: "panic",
+			verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+				panic("panic with " + backendTestPassword)
+			},
+			wantCause: "plugin call failed (panic)",
+		},
+		{
+			name: "invalid account field",
+			verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {
+				return pluginapi.BackendResult{UserFound: true, Account: "user", AccountField: "bad field"}, nil
+			},
+			wantCause: pluginCauseInvalidAccountField,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager := newBackendTestManager(t, backendTestModuleName, &fakePluginBackend{verify: test.verify}, false)
+
+			_, err := manager.PassDB(newBackendTestAuth(t))
+			if !stderrors.Is(err, servererrors.ErrBackendTemporaryFailure) {
+				t.Fatalf("PassDB() error = %v, want ErrBackendTemporaryFailure", err)
+			}
+
+			if !strings.HasSuffix(err.Error(), ": "+test.wantCause) || strings.Contains(err.Error(), backendTestPassword) {
+				t.Fatalf("PassDB() error = %q, want the secret-safe cause %q", err.Error(), test.wantCause)
+			}
+		})
+	}
+}
+
 func TestBackendManagerPassDBPanicMapsToSecretSafeTempFailure(t *testing.T) {
 	backend := &fakePluginBackend{
 		verify: func(context.Context, pluginapi.BackendAuthRequest) (pluginapi.BackendResult, error) {

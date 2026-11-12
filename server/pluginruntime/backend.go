@@ -96,13 +96,13 @@ func (m *BackendManager) PassDB(auth *core.AuthState) (*core.PassDBResult, error
 
 	result, err := m.runner.VerifyPassword(ctx, m.qualifiedName, request)
 	if err != nil {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginCallFailureCause(err))
 	}
 
 	applyPluginStatus(auth, result.Status)
 
 	if result.Status != nil && result.Status.Temporary {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginTemporaryStatusCause(result.Status))
 	}
 
 	return m.passDBResult(auth, result)
@@ -125,18 +125,18 @@ func (m *BackendManager) AccountDB(auth *core.AuthState) (core.AccountList, erro
 		Username: auth.GetUsername(),
 	})
 	if err != nil {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginCallFailureCause(err))
 	}
 
 	applyPluginStatus(auth, result.Status)
 
 	if result.Status != nil && result.Status.Temporary {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginTemporaryStatusCause(result.Status))
 	}
 
 	facts, err := validatePluginPolicyFacts(result.Facts)
 	if err != nil {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginCauseInvalidFacts)
 	}
 
 	if len(facts) > 0 {
@@ -495,12 +495,12 @@ func (m *BackendManager) requestContext(auth *core.AuthState) (context.Context, 
 func (m *BackendManager) passDBResult(auth *core.AuthState, result pluginapi.BackendResult) (*core.PassDBResult, error) {
 	facts, err := validatePluginPolicyFacts(result.Facts)
 	if err != nil {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginCauseInvalidFacts)
 	}
 
 	accountField, err := pluginResultAccountField(result)
 	if err != nil {
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginCauseInvalidAccountField)
 	}
 
 	passDBResult := core.GetPassDBResultFromPool()
@@ -518,7 +518,7 @@ func (m *BackendManager) passDBResult(auth *core.AuthState, result pluginapi.Bac
 	if err := mapPluginBackendIdentity(passDBResult, result.Identity); err != nil {
 		core.PutPassDBResultToPool(passDBResult)
 
-		return nil, m.temporaryError()
+		return nil, m.temporaryErrorBecause(pluginCauseInvalidIdentity)
 	}
 
 	if passDBResult.Account != "" {
@@ -591,14 +591,58 @@ func clonePluginBackendIdentity(identity pluginapi.BackendIdentityResult) plugin
 	return identity
 }
 
-// temporaryError returns a secret-safe temporary backend failure.
+// Bounded causes of a temporary plugin backend failure that the host itself detected in a plugin result.
+const (
+	pluginCauseInvalidFacts        = "plugin returned invalid policy facts"
+	pluginCauseInvalidAccountField = "plugin returned an invalid account field"
+	pluginCauseInvalidIdentity     = "plugin returned an invalid identity"
+)
+
+// temporaryError returns a secret-safe temporary backend failure without a named cause.
 func (m *BackendManager) temporaryError() error {
+	return m.temporaryErrorBecause("")
+}
+
+// temporaryErrorBecause returns a secret-safe temporary backend failure that names a bounded cause, so the backend
+// error log and the terminal tempfail line explain why the plugin backend did not answer.
+func (m *BackendManager) temporaryErrorBecause(cause string) error {
 	name := ""
 	if m != nil {
 		name = m.qualifiedName
 	}
 
-	return servererrors.ErrBackendTemporaryFailure.WithDetail(fmt.Sprintf("plugin backend %q could not complete the request", name))
+	detail := fmt.Sprintf("plugin backend %q could not complete the request", name)
+	if cause != "" {
+		detail += ": " + cause
+	}
+
+	return servererrors.ErrBackendTemporaryFailure.WithDetail(detail)
+}
+
+// pluginCallFailureCause names a failed plugin call by its bounded result class. The raw plugin error stays out of
+// the cause because it may carry request secrets; the plugin logs its own error text.
+func pluginCallFailureCause(err error) string {
+	record := CallRecord{Err: err, Panicked: stderrors.Is(err, ErrPluginPanic)}
+
+	return "plugin call failed (" + pluginCallResult(record) + ")"
+}
+
+// pluginTemporaryStatusCause names a temporary failure the plugin reported itself, with its status code and text.
+func pluginTemporaryStatusCause(status *pluginapi.StatusMessage) string {
+	cause := "plugin reported a temporary failure"
+	if status == nil {
+		return cause
+	}
+
+	if status.Code != "" {
+		cause += " (" + status.Code + ")"
+	}
+
+	if status.DefaultText != "" {
+		cause += ": " + status.DefaultText
+	}
+
+	return cause
 }
 
 // mapOptionalError maps optional-interface errors without exposing plugin panic details.
