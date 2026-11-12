@@ -679,6 +679,12 @@ const (
 	// DNSResolveTimeout is the default DNS resolver timeout.
 	DNSResolveTimeout = 5
 
+	// DNSLookupAttempts is the default maximum number of queries sent for one DNS lookup.
+	DNSLookupAttempts = 3
+
+	// DNSPoolMaxUses is the default number of queries after which a pooled DNS socket is replaced.
+	DNSPoolMaxUses = 256
+
 	// SMTPBackendAddress is the default SMTP backend address
 	SMTPBackendAddress = Localhost4
 

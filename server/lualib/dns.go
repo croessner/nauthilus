@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/dnsclient"
 	"github.com/croessner/nauthilus/v4/server/lualib/luastack"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -82,7 +83,7 @@ func lookupRecord(ctx context.Context, cfg config.File, L *lua.LState, domain, k
 
 	defer cancel()
 
-	resolver := util.NewDNSResolver(cfg)
+	resolver := dnsclient.For(cfg)
 
 	switch kind {
 	case "A", luaDNSRecordAAAA:
@@ -109,7 +110,7 @@ func lookupDNSIPRecords(
 	L *lua.LState,
 	domain string,
 	recordType string,
-	resolver *net.Resolver,
+	resolver *dnsclient.Client,
 ) (lua.LValue, error) {
 	tctx, tsp := startDNSLookupTrace(ctx, cfg, domain, recordType, true)
 
@@ -140,7 +141,7 @@ func dnsIPMatchesRecordType(ip net.IP, recordType string) bool {
 }
 
 // lookupDNSMXRecords resolves MX records into Lua tables.
-func lookupDNSMXRecords(ctx context.Context, L *lua.LState, domain string, resolver *net.Resolver) (lua.LValue, error) {
+func lookupDNSMXRecords(ctx context.Context, L *lua.LState, domain string, resolver *dnsclient.Client) (lua.LValue, error) {
 	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, "MX", false)
 
 	mxs, err := resolver.LookupMX(tctx, domain)
@@ -165,7 +166,7 @@ func lookupDNSMXRecords(ctx context.Context, L *lua.LState, domain string, resol
 }
 
 // lookupDNSNSRecords resolves NS records into a Lua table.
-func lookupDNSNSRecords(ctx context.Context, L *lua.LState, domain string, resolver *net.Resolver) (lua.LValue, error) {
+func lookupDNSNSRecords(ctx context.Context, L *lua.LState, domain string, resolver *dnsclient.Client) (lua.LValue, error) {
 	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, "NS", false)
 
 	nss, err := resolver.LookupNS(tctx, domain)
@@ -187,7 +188,7 @@ func lookupDNSNSRecords(ctx context.Context, L *lua.LState, domain string, resol
 }
 
 // lookupDNSCNAMERecord resolves a CNAME record into a Lua string.
-func lookupDNSCNAMERecord(ctx context.Context, domain string, resolver *net.Resolver) (lua.LValue, error) {
+func lookupDNSCNAMERecord(ctx context.Context, domain string, resolver *dnsclient.Client) (lua.LValue, error) {
 	tctx, tsp := startDNSLookupTrace(ctx, nil, domain, "CNAME", false)
 
 	cname, err := resolver.LookupCNAME(tctx, domain)

@@ -1574,6 +1574,10 @@ func (t *Tracing) IsLogExportResultsEnabled() bool {
 type DNS struct {
 	Resolver        string        `mapstructure:"resolver" validate:"omitempty,tcp_addr"`
 	Timeout         time.Duration `mapstructure:"timeout" validate:"omitempty,gt=0,max=30s"`
+	RetryInterval   time.Duration `mapstructure:"retry_interval" validate:"omitempty,gt=0,max=30s"`
+	Attempts        int           `mapstructure:"attempts" validate:"omitempty,min=1,max=10"`
+	PoolSize        int           `mapstructure:"pool_size" validate:"omitempty,min=0,max=1024"`
+	PoolMaxUses     int           `mapstructure:"pool_max_uses" validate:"omitempty,min=1"`
 	ResolveClientIP bool          `mapstructure:"resolve_client_ip"`
 }
 
@@ -1595,6 +1599,46 @@ func (d *DNS) GetTimeout() time.Duration {
 	}
 
 	return d.Timeout
+}
+
+// GetRetryInterval returns the delay before an additional lookup attempt is started.
+// Returns 0 if the DNS is nil or the interval is derived from the timeout.
+func (d *DNS) GetRetryInterval() time.Duration {
+	if d == nil {
+		return 0
+	}
+
+	return d.RetryInterval
+}
+
+// GetAttempts returns the maximum number of queries sent for one lookup.
+// Returns 0 if the DNS is nil or the default applies.
+func (d *DNS) GetAttempts() int {
+	if d == nil {
+		return 0
+	}
+
+	return d.Attempts
+}
+
+// GetPoolSize returns the number of idle UDP sockets kept per resolver.
+// Returns 0 if the DNS is nil or socket pooling is disabled.
+func (d *DNS) GetPoolSize() int {
+	if d == nil {
+		return 0
+	}
+
+	return d.PoolSize
+}
+
+// GetPoolMaxUses returns the number of queries after which a pooled socket is replaced.
+// Returns 0 if the DNS is nil or the default applies.
+func (d *DNS) GetPoolMaxUses() int {
+	if d == nil {
+		return 0
+	}
+
+	return d.PoolMaxUses
 }
 
 // GetResolveClientIP returns the value of the ResolveClientIP field indicating whether client IP resolution is enabled.

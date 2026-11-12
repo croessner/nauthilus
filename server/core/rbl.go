@@ -25,6 +25,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/dnsclient"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -151,7 +152,7 @@ func (a *AuthState) rblQueryResults(ctx *gin.Context, query string) ([]net.IP, e
 	ctxTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(a.Cfg().GetServer().GetDNS().GetTimeout()))
 	defer cancel()
 
-	resolver := util.NewDNSResolver(a.Cfg())
+	resolver := dnsclient.For(a.Cfg())
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
 		attribute.String("rpc.system", "dns"),

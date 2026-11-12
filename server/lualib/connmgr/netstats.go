@@ -28,6 +28,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/dnsclient"
 	"github.com/croessner/nauthilus/v4/server/log"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib"
@@ -167,7 +168,7 @@ func (m *ConnectionManager) checkForIPUpdates(ctx context.Context, cfg config.Fi
 		}
 
 		ctxTimeout, cancel := createDeadlineContext(ctx, cfg)
-		resolver := util.NewDNSResolver(cfg)
+		resolver := dnsclient.For(cfg)
 
 		tr := monittrace.New("nauthilus/dns")
 		tctx, tsp := tr.StartClient(ctxTimeout, "dns.lookup",
@@ -230,7 +231,7 @@ func (m *ConnectionManager) Register(ctx context.Context, cfg config.File, targe
 
 	defer cancel()
 
-	resolver := util.NewDNSResolver(cfg)
+	resolver := dnsclient.For(cfg)
 
 	tr := monittrace.New("nauthilus/dns")
 	tctx, tsp := tr.StartClient(ctxTimeut, "dns.lookup",

@@ -40,6 +40,7 @@ import (
 	pluginpassword "github.com/croessner/nauthilus/v4/pluginapi/v1/password"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/dnsclient"
 	"github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/secret"
@@ -273,7 +274,7 @@ func ResolveIPAddress(ctx context.Context, cfg config.File, address string) (hos
 
 	defer cancel()
 
-	resolver := NewDNSResolver(cfg)
+	resolver := dnsclient.For(cfg)
 
 	// Trace reverse DNS (PTR) lookup
 	tr := monittrace.New("nauthilus/dns")
@@ -770,26 +771,6 @@ func ByteSize(bytes uint64) string {
 // name exists, is decided by the caller and the configured backends.
 func ValidateUsername(username string) bool {
 	return utf8.ValidString(username) && !strings.ContainsFunc(username, unicode.IsControl)
-}
-
-// NewDNSResolver initializes and returns a new DNS resolver based on the provided configuration.
-func NewDNSResolver(cfg config.File) (resolver *net.Resolver) {
-	if cfg == nil || cfg.GetServer().GetDNS().GetResolver() == "" {
-		resolver = &net.Resolver{PreferGo: true}
-	} else {
-		resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				dialer := net.Dialer{
-					Timeout: cfg.GetServer().GetDNS().GetTimeout(),
-				}
-
-				return dialer.DialContext(ctx, network, cfg.GetServer().GetDNS().GetResolver())
-			},
-		}
-	}
-
-	return
 }
 
 // NewHTTPClient creates and returns a new instance of http.Client configured with settings from the provided config.File.
