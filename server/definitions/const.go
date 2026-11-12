@@ -405,6 +405,12 @@ const (
 	// LogKeyPolicyOutcome names the outcome marker of the selected policy decision.
 	LogKeyPolicyOutcome = "outcome_marker"
 
+	// LogKeySkippedProviders lists the providers a failed backend left without input, as "instance:reason" entries.
+	LogKeySkippedProviders = "skipped_providers"
+
+	// LogKeyTempFailError carries the first technical error that explains a temporary authentication failure.
+	LogKeyTempFailError = "tempfail_error"
+
 	// LogKeyMsg represents the message content in log entries.
 	LogKeyMsg = "msg"
 

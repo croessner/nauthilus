@@ -16,6 +16,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -63,6 +64,8 @@ type authnCandidateExecution struct {
 	capture        *CaptureResponseWriter
 	selected       map[string]*report.FinalDecision
 	accounts       AccountList
+	// backendSkipped lists the provider instances skipped because the backend settled without a result.
+	backendSkipped []string
 	backendPlan    backendExecutionPlan
 	providerFacts  decision.FactSet
 	backendAccount string
@@ -196,6 +199,8 @@ func (e *authnCandidateExecution) prepareCheckpoint(
 		}
 
 		if directive.Disposition() == decisionservice.AuthnHostDispositionSkipped {
+			e.noteBackendSkippedProvider(directive)
+
 			continue
 		}
 
@@ -240,6 +245,17 @@ func (e *authnCandidateExecution) prepareCheckpoint(
 	}
 
 	return e.currentResult(), nil
+}
+
+// noteBackendSkippedProvider remembers a provider the scheduler skipped for want of a backend result, so the
+// terminal tempfail log line can name what the failed backend left unanswered.
+func (e *authnCandidateExecution) noteBackendSkippedProvider(directive decisionservice.AuthnHostDirective) {
+	if directive.Reason() != decisionservice.AuthnHostReasonBackendUnavailable {
+		return
+	}
+
+	instance := directive.Instance()
+	e.backendSkipped = append(e.backendSkipped, instance.Name()+":"+directive.Reason())
 }
 
 // authnHostScheduleFacts projects current request observations for the next plan-local guard.
@@ -630,6 +646,8 @@ func (e *authnCandidateExecution) recordBackendFailure(result *PassDBResult, err
 		)
 	}
 
+	e.auth.recordTempFailError(cmp.Or(err, error(errors.ErrNoPassDBResult)))
+
 	e.auth.Runtime.Authenticated = false
 	e.auth.recordPolicyBackendResult(e.ginCtx, definitions.AuthResultTempFail, result, err)
 	e.settleCredential(definitions.AuthResultTempFail, result != nil && result.UserFound)
@@ -1002,7 +1020,7 @@ func (e *authnCandidateExecution) finalize(
 	final := e.selectedDecision(checkpoint)
 
 	if effect == decision.EffectIndeterminate {
-		e.auth.recordTempFailCause(newPolicyTempFailCause(checkpoint, response))
+		e.auth.recordTempFailCause(e.policyTempFailCause(checkpoint, response))
 	}
 
 	if final == nil {
@@ -1035,6 +1053,20 @@ func (e *authnCandidateExecution) finalize(
 	}
 
 	return e.applySelectedAuthEffect(effect, presentation, current)
+}
+
+// policyTempFailCause describes an indeterminate checkpoint and blames the backend when it settled without a result:
+// the checkpoint then only failed because its providers had nothing to analyze.
+func (e *authnCandidateExecution) policyTempFailCause(
+	checkpoint string,
+	response decision.DecisionResponse,
+) authTempFailCause {
+	cause := newPolicyTempFailCause(checkpoint, response)
+	if e.backendSettledWithoutResult() {
+		return cause.withBackendFailure(e.backendSkipped)
+	}
+
+	return cause
 }
 
 // clearAuthnCandidateTempFailLocalization removes language state not selected by the replacement response.

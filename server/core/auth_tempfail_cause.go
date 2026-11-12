@@ -16,6 +16,8 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/croessner/nauthilus/v4/server/conncause"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
@@ -29,6 +31,9 @@ const (
 	// tempFailReasonPolicyIndeterminate marks an authn policy checkpoint that could not decide reliably, for example
 	// because a required fact provider failed or a rule selected a temporary failure.
 	tempFailReasonPolicyIndeterminate = "policy_indeterminate"
+	// tempFailReasonBackend marks a backend that settled without a result, for example because it was unreachable.
+	// The checkpoint that reports it only skipped the providers depending on that result.
+	tempFailReasonBackend = "backend_tempfail"
 	// tempFailReasonAuthFSMGuard marks a permit the auth FSM guard rejected for missing host evidence.
 	tempFailReasonAuthFSMGuard = "auth_fsm_guard"
 	// tempFailReasonBruteForce marks a brute-force check that failed technically.
@@ -46,6 +51,8 @@ type authTempFailCause struct {
 	policySet  string
 	policyRule string
 	outcome    string
+	// skippedProviders lists the provider instances that had no backend result to analyze.
+	skippedProviders string
 }
 
 // newPolicyTempFailCause describes an indeterminate authn policy evaluation at one checkpoint.
@@ -57,6 +64,15 @@ func newPolicyTempFailCause(checkpoint string, response decision.DecisionRespons
 		policySet:  response.Policy().PolicySet(),
 		policyRule: response.Policy().Rule(),
 	}
+}
+
+// withBackendFailure reattributes an indeterminate checkpoint to the backend that settled without a result. The
+// checkpoint and status code stay as evidence of where the missing result surfaced.
+func (c authTempFailCause) withBackendFailure(skippedProviders []string) authTempFailCause {
+	c.reason = tempFailReasonBackend
+	c.skippedProviders = strings.Join(skippedProviders, ",")
+
+	return c
 }
 
 // withPresentation adds the rule and outcome marker of the enforced presentation; its rule supersedes the checkpoint
@@ -87,6 +103,7 @@ func (c authTempFailCause) logValues() []any {
 		{definitions.LogKeyPolicySet, c.policySet},
 		{definitions.LogKeyPolicyRule, c.policyRule},
 		{definitions.LogKeyPolicyOutcome, c.outcome},
+		{definitions.LogKeySkippedProviders, c.skippedProviders},
 	}
 
 	keyvals := make([]any, 0, 2*len(fields))
@@ -117,6 +134,16 @@ func (a *AuthState) recordTempFailError(err error) {
 	}
 
 	a.Runtime.tempFailErr = err
+}
+
+// tempFailErrorLogValues returns the recorded technical error as a structured log key/value pair, or nothing when
+// the temporary failure has no technical error.
+func (a *AuthState) tempFailErrorLogValues() []any {
+	if a == nil || a.Runtime.tempFailErr == nil {
+		return nil
+	}
+
+	return []any{definitions.LogKeyTempFailError, a.Runtime.tempFailErr.Error()}
 }
 
 // tempFailCancelDiagnostics classifies the recorded technical error against the own transport request context. The

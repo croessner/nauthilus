@@ -765,6 +765,7 @@ func validHostReceiptStateReason(state providerState, reason string) bool {
 		return reason == AuthnHostReasonAction ||
 			reason == AuthnHostReasonAuthState ||
 			reason == AuthnHostReasonDependency ||
+			reason == AuthnHostReasonBackendUnavailable ||
 			strings.HasPrefix(reason, AuthnHostReasonSchedulerGuardPrefix) ||
 			reason == AuthnHostReasonTerminal
 	default:

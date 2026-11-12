@@ -74,17 +74,38 @@ func TestNativeSubjectProviderErrorSurfacesAsApplicationError(t *testing.T) {
 // TestNativeSubjectProviderErrorAnswersJSONTempFail proves the JSON endpoint answers that application error as a
 // regular fail-closed temporary failure instead of a bare HTTP 500.
 func TestNativeSubjectProviderErrorAnswersJSONTempFail(t *testing.T) {
+	application, configured := nativeSubjectApplicationErrorRuntime(t)
+	logger, captured := newNativeCapturingLogger()
+	recorder := serveNativeSubjectJSON(t, application, configured, logger)
+	logs := captured.String()
+
+	assertNativeSubjectJSONTempFail(t, recorder)
+
+	if !strings.Contains(logs, "Authentication application failed") ||
+		!strings.Contains(logs, "LDAP request dropped from the queue") {
+		t.Fatalf("application failure log = %q, want the exact subject provider cause", logs)
+	}
+}
+
+// newNativeCapturingLogger returns a debug-level logger together with the buffer that collects its lines.
+func newNativeCapturingLogger() (*slog.Logger, *bytes.Buffer) {
+	logs := &bytes.Buffer{}
+
+	return slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})), logs
+}
+
+// serveNativeSubjectJSON answers one real JSON authentication request through the auth handler, which logs to logger.
+func serveNativeSubjectJSON(
+	t *testing.T,
+	application core.AuthApplicationService,
+	configured *config.FileSettings,
+	logger *slog.Logger,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
 	gin.SetMode(gin.TestMode)
 
-	application, configured := nativeSubjectApplicationErrorRuntime(t)
-
-	var logs bytes.Buffer
-
-	deps := &handlerdeps.Deps{
-		Cfg:    configured,
-		Env:    config.NewTestEnvironmentConfig(),
-		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-	}
+	deps := &handlerdeps.Deps{Cfg: configured, Env: config.NewTestEnvironmentConfig(), Logger: logger}
 	router := gin.New()
 	router.Use(func(ctx *gin.Context) {
 		requestContext, gate := core.ContextWithHTTPPostActionExecutionGate(ctx.Request.Context())
@@ -98,12 +119,7 @@ func TestNativeSubjectProviderErrorAnswersJSONTempFail(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, nativeSubjectJSONRequest(t))
 
-	assertNativeSubjectJSONTempFail(t, recorder)
-
-	if !strings.Contains(logs.String(), "Authentication application failed") ||
-		!strings.Contains(logs.String(), "LDAP request dropped from the queue") {
-		t.Fatalf("application failure log = %q, want the exact subject provider cause", logs.String())
-	}
+	return recorder
 }
 
 // nativeSubjectJSONRequest builds one real JSON authentication request.

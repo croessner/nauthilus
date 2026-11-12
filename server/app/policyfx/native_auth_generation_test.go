@@ -326,8 +326,22 @@ func newNativeAuthApplicationWithVerifier(
 ) core.AuthApplicationService {
 	t.Helper()
 
+	return newNativeAuthApplicationWithLogger(
+		t, configured, service, verifier, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+}
+
+// newNativeAuthApplicationWithLogger binds the production application to one backend verifier and request logger.
+func newNativeAuthApplicationWithLogger(
+	t *testing.T,
+	configured config.File,
+	service *decisionservice.DecisionService,
+	verifier core.PasswordVerifier,
+	logger *slog.Logger,
+) core.AuthApplicationService {
+	t.Helper()
+
 	database, _ := redismock.NewClientMock()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	hostServices, err := core.NewAuthnHostServices(core.AuthnHostServicesInput{
 		PasswordVerifier: verifier,
