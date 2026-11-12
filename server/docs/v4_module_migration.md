@@ -53,6 +53,34 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.8: DNS Lookup Retries And Socket Pool
+
+- All outbound DNS lookups (RBL checks, the client IP reverse lookup, the
+  Lua `nauthilus_dns` module, and the connection monitor) share one
+  long-lived client. See `server/docs/dns_client.md`.
+- A lookup now sends up to `runtime.clients.dns.attempts` queries
+  (default `3`) inside `runtime.clients.dns.timeout`. An additional
+  attempt starts after each `runtime.clients.dns.retry_interval` (default
+  `timeout / attempts`) while earlier attempts keep running, and the first
+  definitive answer wins. Before, one lost UDP datagram always ended in
+  `lookup <name>: i/o timeout` after the full timeout. Set `attempts: 1`
+  to keep the previous single-query behavior.
+- This default applies without a configuration change. A slow or lossy
+  resolver can receive up to `attempts` queries per lookup.
+- "Name does not exist" ends a lookup without a retry, so RBL lookups for
+  unlisted addresses still send one query.
+- `runtime.clients.dns.pool_size` (default `0`, disabled) keeps that many
+  idle UDP sockets per resolver and reuses them instead of opening one
+  socket per query. `runtime.clients.dns.pool_max_uses` (default `256`)
+  replaces a socket after that many queries. A socket whose query stayed
+  unanswered is closed and not reused.
+- New metrics: `dns_lookups_total{result,attempts}` counts finished
+  lookups (`result` is `success`, `not_found`, `timeout`, or `error`), and
+  `dns_pool_sockets_total{source}` counts pooled queries by socket source
+  (`reused` or `new`).
+- The new settings require a restart, like the existing DNS settings.
+- Lookup results, RBL scoring, and error handling are unchanged.
+
 ## v4.0.7: Request Termination Causes And Cancel Sources
 
 - The HTTP server records why a connection ended (client disconnected,
