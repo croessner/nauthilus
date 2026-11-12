@@ -80,6 +80,11 @@ and signature, and immutable plugin directory as one compatible release.
   (`reused` or `new`).
 - The new settings require a restart, like the existing DNS settings.
 - Lookup results, RBL scoring, and error handling are unchanged.
+- The toolchain moves to Go 1.27.4. Go 1.27.3 carries a `net/http`
+  vulnerability (GO-2026-6859, HTTP/1 server crash through a
+  `MaxBytesReader` header race) that is reachable in the server.
+- `pluginapi/v1` is unchanged. Rebuild every private native plugin,
+  including `rns_auth`, against the exact v4.0.8 source and Go 1.27.4.
 
 ## v4.0.7: Request Termination Causes And Cancel Sources
 
