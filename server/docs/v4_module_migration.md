@@ -53,6 +53,35 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.0.9: Backend Tempfail Causes And Empty Credentials With Subject Providers
+
+- A request the host settles without a backend result no longer fails the
+  `subject_analysis` checkpoint when a subject provider is scheduled there
+  with `run_if.auth_state` `any`, `unauthenticated`, or the default. The
+  skipped provider (`backend_unavailable`) is now a regular skip, so the
+  request reaches `auth_decision`:
+  - An empty password or username answers `Invalid login or password`
+    through `standard_empty_password` / `standard_empty_username` again.
+    Before, it ended as a temporary failure with
+    `tempfail_reason=policy_indeterminate checkpoint=subject_analysis
+    status_code=provider_unavailable` and no other log line.
+  - A backend temporary failure stays a temporary failure, now selected by
+    `standard_backend_tempfail` with `outcome_marker=auth.outcome.backend_tempfail`.
+- The terminal tempfail WARN line names a failed backend with
+  `tempfail_reason=backend_tempfail`, lists the providers that had no
+  backend result to analyze in `skipped_providers` (`instance:reason`), and
+  carries the first technical error in `tempfail_error`, for example
+  `backend_temporary_failure: plugin backend "mod.passdb" could not complete
+  the request: plugin reported a temporary failure (user_lookup_failed)`.
+  Log queries and alerts on `tempfail_reason=policy_indeterminate` no longer
+  match backend outages.
+- A native plugin backend failure names a bounded cause in the backend error:
+  `plugin call failed (error|timeout|canceled|panic|admission_limited)`,
+  `plugin reported a temporary failure (<Status.Code>): <Status.DefaultText>`,
+  or an invalid result (`policy facts`, `account field`, `identity`). Raw
+  plugin errors stay out of host logs; plugins should set `StatusMessage.Code`
+  on temporary results and log their own error text with the request session.
+
 ## v4.0.8: DNS Lookup Retries And Socket Pool
 
 - All outbound DNS lookups (RBL checks, the client IP reverse lookup, the
