@@ -535,10 +535,12 @@ def build_config(args: argparse.Namespace) -> ClientConfig:
     token_cache = None if cache_value in ("", "none", "off", "false") else Path(cache_value or "")
 
     insecure_value = first_value("INSECURE", args, env_file, "0")
+    # CLI values are repeatable; an explicit CLI list replaces environment defaults.
     resolve_values = list(args.resolve or [])
-    env_resolve = first_value("RESOLVE", args, env_file)
-    if env_resolve:
-        resolve_values.append(env_resolve)
+    if not resolve_values:
+        env_resolve = first_value("RESOLVE", args, env_file)
+        if env_resolve:
+            resolve_values.append(env_resolve)
 
     return ClientConfig(
         url=url,
@@ -1294,7 +1296,7 @@ def build_parser() -> argparse.ArgumentParser:
     brute_list = brute_sub.add_parser("list", help="list bans and blocked accounts")
     brute_list.add_argument("--account", action="append", help="account filter; repeatable")
     brute_list.add_argument("--ip", action="append", help="IP filter; repeatable")
-    brute_list.add_argument("--limit", type=int)
+    brute_list.add_argument("--limit", type=int, default=100, help="page size (default: 100); inspect page.has_more")
     brute_list.add_argument("--offset", type=int)
     brute_list.set_defaults(func=bruteforce_list)
 

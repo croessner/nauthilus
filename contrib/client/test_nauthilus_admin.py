@@ -23,6 +23,46 @@ CONVERTER_SPEC.loader.exec_module(CONVERTER)
 NOW = 1_800_000_000
 
 
+
+
+class ManagementClientTest(unittest.TestCase):
+    """Keep operator lookups bounded and resolve overrides usable."""
+
+    def test_bruteforce_list_defaults_to_bounded_pages(self):
+        for filters, method, body in [([], "GET", None), (["--ip", "192.0.2.8"], "POST", {"ip_addresses": ["192.0.2.8"]}), (["--account", "alice"], "POST", {"accounts": ["alice"]})]:
+            with self.subTest(filters=filters):
+                args = ADMIN.build_parser().parse_args(["--bearer-token", "synthetic", "bruteforce", "list", *filters])
+                client = ADMIN.NauthilusClient(ADMIN.build_config(args))
+                response = ADMIN.Response(200, "OK", {}, b"{}", {})
+                with patch.object(client, "_send", return_value=response) as send:
+                    args.func(client, args)
+                self.assertEqual(send.call_args.args, (method, ADMIN.DEFAULT_URL + "/api/v1/bruteforce/list?limit=100"))
+                data = send.call_args.kwargs["body"]
+                self.assertEqual(json.loads(data) if data else None, body)
+
+    def test_bruteforce_explicit_page_is_preserved(self):
+        args = ADMIN.build_parser().parse_args(["--bearer-token", "synthetic", "bruteforce", "list", "--limit", "20", "--offset", "40"])
+        client = ADMIN.NauthilusClient(ADMIN.build_config(args))
+        with patch.object(client, "_send", return_value=ADMIN.Response(200, "OK", {}, b"{}", {})) as send:
+            args.func(client, args)
+        self.assertEqual(send.call_args.args, ("GET", ADMIN.DEFAULT_URL + "/api/v1/bruteforce/list?limit=20&offset=40"))
+
+    def test_resolve_precedence_and_repeated_cli_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / "client.env"
+            env_file.write_text("NAUTHILUS_RESOLVE=login.example:443:192.0.2.1\n")
+            base = ["--env-file", str(env_file)]
+            with patch.dict(ADMIN.os.environ, {}, clear=True):
+                for cli, expected in [([], ["192.0.2.1"]), (["--resolve", "login.example:443:192.0.2.3", "--resolve", "other.example:443:192.0.2.4"], ["192.0.2.3", "192.0.2.4"])]:
+                    args = ADMIN.build_parser().parse_args([*base, *cli, "bruteforce", "list"])
+                    self.assertEqual([item.address for item in ADMIN.build_config(args).resolve], expected)
+                with patch.dict(ADMIN.os.environ, {"NAUTHILUS_RESOLVE": "login.example:443:192.0.2.2,other.example:443:192.0.2.5"}):
+                    args = ADMIN.build_parser().parse_args([*base, "bruteforce", "list"])
+                    self.assertEqual([item.address for item in ADMIN.build_config(args).resolve], ["192.0.2.2", "192.0.2.5"])
+                    args = ADMIN.build_parser().parse_args([*base, "--resolve", "login.example:443:192.0.2.3", "bruteforce", "list"])
+                    self.assertEqual([item.address for item in ADMIN.build_config(args).resolve], ["192.0.2.3"])
+
+
 class ReputationClientTest(unittest.TestCase):
     """Exercise the real parser, bearer selection and JSON HTTP boundary."""
 

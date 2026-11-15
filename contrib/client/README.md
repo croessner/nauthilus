@@ -39,6 +39,17 @@ NAUTHILUS_RESOLVE=nauthilus.example.invalid:443:192.0.2.10
 ./nauthilus-admin.py raw GET /api/v1/openapi.json
 ```
 
+`bruteforce list` requests a bounded page of 100 entries by default. The IP
+and account filters apply to separate result sections: `--ip` alone still
+lists affected accounts. An unbounded account listing can exceed a reverse
+proxy response-header timeout. Use both filters for an incident, or inspect
+`page.has_more` and request `--limit 100 --offset 100` (then subsequent
+`next_offset` values) for additional pages. A page is not the complete list.
+
+Repeated `--resolve` flags replace `NAUTHILUS_RESOLVE`; without CLI overrides,
+the process environment takes precedence over the env file. Comma-separated
+environment values remain supported.
+
 The `raw` subcommand is deliberately included so operators can reach future
 backchannel routes before the convenience layer grows first-class subcommands.
 
