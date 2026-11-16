@@ -74,13 +74,19 @@ func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect(t *testing.
 		},
 	)
 
-	validTarget := logoutResponse.Redirect("relay-state").String()
+	validTarget := mustBuildRedirectLogoutResponseTarget(t, logoutResponse, "relay-state")
 	tamperedTarget := mustMutateRedirectSAMLResponseTarget(
 		t,
 		validTarget,
 		func(rawXML []byte) []byte {
 			return bytes.Replace(rawXML, []byte("id-request-1"), []byte("id-request-2"), 1)
 		},
+	)
+	querySignedTarget := mustBuildQuerySignedRedirectLogoutResponseTarget(
+		t, logoutResponse, "relay-state", dsig.RSASHA256SignatureMethod, spKey,
+	)
+	querySignedSHA1Target := mustBuildQuerySignedRedirectLogoutResponseTarget(
+		t, logoutResponse, "relay-state", dsig.RSASHA1SignatureMethod, spKey,
 	)
 
 	testCases := []sloRedirectSignatureCase{
@@ -92,6 +98,25 @@ func TestSAMLHandler_validateInboundLogoutResponseSignature_Redirect(t *testing.
 			name:    "tampered XML payload",
 			target:  tamperedTarget,
 			wantErr: "cannot validate LogoutResponse XML signature",
+		},
+		{
+			name:   "valid query signature",
+			target: querySignedTarget,
+		},
+		{
+			name:    "tampered query relay state",
+			target:  strings.Replace(querySignedTarget, "RelayState=relay-state", "RelayState=tampered", 1),
+			wantErr: "invalid redirect logout response signature",
+		},
+		{
+			name:    "unsupported SHA-1 query signature",
+			target:  querySignedSHA1Target,
+			wantErr: "unsupported redirect signature algorithm",
+		},
+		{
+			name:    "query signature without SigAlg",
+			target:  strings.Replace(querySignedTarget, "&SigAlg=", "&SigAlgX=", 1),
+			wantErr: "require both Signature and SigAlg",
 		},
 	}
 
@@ -414,7 +439,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 		},
 	)
 
-	target := logoutResponse.Redirect(transactionID).String()
+	target := mustBuildQuerySignedRedirectLogoutResponseTarget(t, logoutResponse, transactionID, dsig.RSASHA256SignatureMethod, spKey)
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
@@ -623,31 +648,32 @@ func mustMutateRedirectSAMLResponseTarget(t *testing.T, target string, mutate fu
 		t.Fatalf("failed to inflate SAMLResponse payload: %v", err)
 	}
 
-	xmlPayload = mutate(xmlPayload)
-
-	var encoded bytes.Buffer
-
-	encoder := base64.NewEncoder(base64.StdEncoding, &encoded)
-
-	deflater, err := flate.NewWriter(encoder, 9)
-	if err != nil {
-		t.Fatalf("failed to create deflater: %v", err)
-	}
-
-	if _, err = deflater.Write(xmlPayload); err != nil {
-		t.Fatalf("failed to deflate mutated XML payload: %v", err)
-	}
-
-	if err = deflater.Close(); err != nil {
-		t.Fatalf("failed to close deflater: %v", err)
-	}
-
-	if err = encoder.Close(); err != nil {
-		t.Fatalf("failed to close base64 encoder: %v", err)
-	}
-
-	query.Set("SAMLResponse", encoded.String())
+	query.Set("SAMLResponse", mustDeflateRedirectSAMLXML(t, mutate(xmlPayload)))
 	parsedTarget.RawQuery = query.Encode()
 
 	return parsedTarget.String()
+}
+
+// mustBuildRedirectLogoutResponseTarget encodes a Redirect LogoutResponse as-is, keeping any enveloped XML signature.
+// SAML libraries strip that signature in their Redirect helpers, so the encoding is built explicitly.
+func mustBuildRedirectLogoutResponseTarget(t *testing.T, logoutResponse *saml.LogoutResponse, relayState string) string {
+	t.Helper()
+
+	return logoutResponse.Destination + "?" + mustBuildRedirectSAMLQuery(t, "SAMLResponse", logoutResponse.Element(), relayState)
+}
+
+// mustBuildQuerySignedRedirectLogoutResponseTarget signs a Redirect LogoutResponse with SigAlg and Signature.
+func mustBuildQuerySignedRedirectLogoutResponseTarget(
+	t *testing.T,
+	logoutResponse *saml.LogoutResponse,
+	relayState string,
+	sigAlg string,
+	key *rsa.PrivateKey,
+) string {
+	t.Helper()
+
+	unsigned := *logoutResponse
+	unsigned.Signature = nil
+
+	return mustBuildSignedRedirectSAMLTarget(t, unsigned.Destination, "SAMLResponse", unsigned.Element(), relayState, sigAlg, key)
 }

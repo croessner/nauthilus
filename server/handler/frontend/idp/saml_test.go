@@ -887,26 +887,74 @@ func mustExtractHiddenFormValue(t *testing.T, responseHTML string, fieldName str
 func mustBuildSignedRedirectLogoutTarget(t *testing.T, path string, logoutRequest *saml.LogoutRequest, relayState, sigAlg string, key *rsa.PrivateKey) string {
 	t.Helper()
 
-	deflated, err := logoutRequest.Deflate()
-	if err != nil {
-		t.Fatalf("failed to deflate logout request: %v", err)
-	}
+	return mustBuildSignedRedirectSAMLTarget(t, path, "SAMLRequest", logoutRequest.Element(), relayState, sigAlg, key)
+}
 
-	rawSAMLRequest := url.QueryEscape(base64.StdEncoding.EncodeToString(deflated))
-	rawSigAlg := url.QueryEscape(sigAlg)
+// mustBuildSignedRedirectSAMLTarget query-signs an HTTP-Redirect SAML message independently of the production signer.
+func mustBuildSignedRedirectSAMLTarget(
+	t *testing.T,
+	path string,
+	payloadKey string,
+	element *etree.Element,
+	relayState string,
+	sigAlg string,
+	key *rsa.PrivateKey,
+) string {
+	t.Helper()
 
-	signedContent := "SAMLRequest=" + rawSAMLRequest
-
-	if relayState != "" {
-		signedContent += "&RelayState=" + url.QueryEscape(relayState)
-	}
-
-	signedContent += "&SigAlg=" + rawSigAlg
-
+	signedContent := mustBuildRedirectSAMLQuery(t, payloadKey, element, relayState) + "&SigAlg=" + url.QueryEscape(sigAlg)
 	signature := mustSignRedirectPayload(t, []byte(signedContent), sigAlg, key)
 	query := signedContent + "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(signature))
 
 	return path + "?" + query
+}
+
+// mustBuildRedirectSAMLQuery encodes an HTTP-Redirect SAML message and optional RelayState without a query signature.
+func mustBuildRedirectSAMLQuery(t *testing.T, payloadKey string, element *etree.Element, relayState string) string {
+	t.Helper()
+
+	document := etree.NewDocument()
+	document.SetRoot(element)
+
+	rawXML, err := document.WriteToBytes()
+	if err != nil {
+		t.Fatalf("failed to serialize redirect %s: %v", payloadKey, err)
+	}
+
+	query := payloadKey + "=" + url.QueryEscape(mustDeflateRedirectSAMLXML(t, rawXML))
+	if relayState != "" {
+		query += "&RelayState=" + url.QueryEscape(relayState)
+	}
+
+	return query
+}
+
+// mustDeflateRedirectSAMLXML applies the HTTP-Redirect DEFLATE and base64 encoding to raw XML.
+func mustDeflateRedirectSAMLXML(t *testing.T, rawXML []byte) string {
+	t.Helper()
+
+	var encoded bytes.Buffer
+
+	encoder := base64.NewEncoder(base64.StdEncoding, &encoded)
+
+	deflater, err := flate.NewWriter(encoder, flate.BestCompression)
+	if err != nil {
+		t.Fatalf("failed to create deflater: %v", err)
+	}
+
+	if _, err = deflater.Write(rawXML); err != nil {
+		t.Fatalf("failed to deflate redirect XML payload: %v", err)
+	}
+
+	if err = deflater.Close(); err != nil {
+		t.Fatalf("failed to close deflater: %v", err)
+	}
+
+	if err = encoder.Close(); err != nil {
+		t.Fatalf("failed to close base64 encoder: %v", err)
+	}
+
+	return encoded.String()
 }
 
 func mustSignRedirectPayload(t *testing.T, payload []byte, sigAlg string, key *rsa.PrivateKey) []byte {

@@ -606,6 +606,7 @@ func assertRedirectFanoutDispatch(
 	assert.NoError(t, validateRedirectLogoutRequestSignature(parsedURL.RawQuery, []*x509.Certificate{idpCert}))
 
 	logoutRequest := mustDecodeRedirectLogoutRequest(t, parsedURL.Query().Get("SAMLRequest"))
+	assert.Nil(t, logoutRequest.Signature, "HTTP-Redirect payload must not embed an XML signature")
 	assert.Equal(t, participantByEntity[dispatch.Participant.EntityID].RequestID, logoutRequest.ID)
 	assert.Equal(t, "https://auth.example.com/saml/metadata", logoutRequest.Issuer.Value)
 	assertRedirectFanoutParticipant(t, dispatch.Participant.EntityID, logoutRequest, fallbackNameID)
