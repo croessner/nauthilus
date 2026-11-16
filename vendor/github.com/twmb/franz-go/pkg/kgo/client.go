@@ -115,6 +115,15 @@ type sinkAndSource struct {
 	source *source
 }
 
+func (cl *Client) allSinksAndSources(fn func(sns sinkAndSource)) {
+	cl.sinksAndSourcesMu.Lock()
+	defer cl.sinksAndSourcesMu.Unlock()
+
+	for _, sns := range cl.sinksAndSources {
+		fn(sns)
+	}
+}
+
 func (cl *Client) allSources(fn func(s *source)) {
 	cl.sinksAndSourcesMu.Lock()
 	srcs := make([]*source, 0, len(cl.sinksAndSources))
@@ -209,10 +218,7 @@ func namefn(fn any) string {
 // Variadic option inputs are returned as a single slice.  Options that are
 // internally stored as a pointer (ClientID, TransactionalID, and InstanceID)
 // are returned as their string input; you can see if the option is internally
-// nil by looking at the second value returned from OptValues. Options that
-// take an int, or a type that wraps an int, may be returned at a different
-// width or as the inner value (e.g. RequestRetries returns an int64;
-// FetchIsolationLevel returns an int8). A time.Duration may be truncated.
+// nil by looking at the second value returned from OptValues.
 //
 //	var (
 //		cl, _ := NewClient(
@@ -251,7 +257,7 @@ func (cl *Client) OptValue(opt any) any {
 //		)
 //		idValues = cl.OptValues(InstanceID)           // idValues is []any{"foo", true}
 //		tValues  = cl.OptValues(SessionTimeout)       // tValues is []any{45 * time.Second}
-//		topics   = cl.OptValues(ConsumeTopics)        // topics is []any{[]string{"foo", "bar"}}
+//		topics   = cl.OptValues(ConsumeTopics)        // topics is []any{[]string{"foo", "bar"}
 //		bpoll    = cl.OptValues(BlockRebalanceOnPoll) // bpoll is []any{false}
 //		unknown  = cl.OptValues("Unknown")            // unknown is nil
 //	)
@@ -316,9 +322,9 @@ func (cl *Client) OptValues(opt any) []any {
 	case namefn(SASL):
 		return []any{cfg.sasls}
 	case namefn(WithHooks):
-		return []any{[]Hook(cfg.hooks)}
+		return []any{cfg.hooks}
 	case namefn(WithPools):
-		return []any{[]Pool(cfg.pools)}
+		return []any{cfg.pools}
 	case namefn(ConcurrentTransactionsBackoff):
 		return []any{cfg.txnBackoff}
 	case namefn(ConsiderMissingTopicDeletedAfter):
@@ -397,13 +403,13 @@ func (cl *Client) OptValues(opt any) []any {
 	case namefn(ConsumeRegex):
 		return []any{cfg.regex}
 	case namefn(ConsumeExcludeTopics):
-		return []any{slices.Sorted(maps.Keys(cfg.excludeTopics))}
+		return []any{slices.Collect(maps.Keys(cfg.excludeTopics))}
 	case namefn(ConsumeStartOffset):
 		return []any{cfg.startOffset}
 	case namefn(ConsumeResetOffset):
 		return []any{cfg.resetOffset}
 	case namefn(ConsumeTopics):
-		return []any{slices.Sorted(maps.Keys(cfg.topics))}
+		return []any{cfg.topics}
 	case namefn(DisableFetchSessions):
 		return []any{cfg.disableFetchSessions}
 	case namefn(FetchIsolationLevel):
@@ -860,8 +866,6 @@ func (c *connTimeouter) timeouts(req kmsg.Request) (r, w time.Duration) {
 		return def + millis(t.timeout), def
 	case *fetchRequest:
 		return def + millis(t.maxWait), def
-	case *kmsg.ListOffsetsRequest:
-		return def + millis(t.TimeoutMillis), def
 	case *kmsg.FetchRequest:
 		return def + millis(t.MaxWaitMillis), def
 	case *kmsg.ShareFetchRequest:
@@ -929,13 +933,6 @@ func (cl *Client) broker() *broker {
 	// this reinit will do nothing and we will keep looping seeds.
 	cl.reinitAnyBrokerOrd()
 	return b
-}
-
-func (cl *Client) ctxErr(ctx context.Context) error {
-	if cl.ctx.Err() != nil {
-		return ErrClientClosed
-	}
-	return ctx.Err()
 }
 
 func (cl *Client) waitTries(ctx context.Context, backoff time.Duration) bool {
@@ -1361,9 +1358,8 @@ func (cl *Client) brokerRacks() map[int32]string {
 // safe. The CloseAllowingRebalance function exists a shortcut to opt into
 // allowing rebalance while closing.
 //
-// If you are using static membership, CloseAllowingRebalance does not send a
-// leave group request, except for one specific case noted in the [InstanceID]
-// docs.
+// If you are using static membership, CloseAllowingRebalance will NOT send a
+// leave group request. See InstanceID for more details.
 func (cl *Client) CloseAllowingRebalance() {
 	cl.AllowRebalance()
 	cl.Close()
@@ -1371,8 +1367,8 @@ func (cl *Client) CloseAllowingRebalance() {
 
 // Close leaves any group and closes all connections and goroutines. This
 // function waits for the group to be left. If you want to force leave a group
-// immediately and ensure a speedy shutdown you can use LeaveGroupContext with a
-// canceled context first (and then Close will be immediate).
+// immediately and ensure a speedy shutdown you can use LeaveGroupContext first
+// (and then Close will be immediate).
 //
 // If you are group consuming and have overridden the default
 // OnPartitionsRevoked, you must manually commit offsets before closing the
@@ -1385,8 +1381,8 @@ func (cl *Client) CloseAllowingRebalance() {
 // notification of revoked partitions. If you want to automatically allow
 // rebalancing, use CloseAllowingRebalance.
 //
-// If you are using static membership, Close does not send a leave group
-// request, except for one specific case noted in the [InstanceID] docs.
+// If you are using static membership, Close will NOT send a leave group
+// request. See InstanceID for more details.
 func (cl *Client) Close() {
 	cl.close(cl.ctx)
 }
@@ -1423,24 +1419,26 @@ func (cl *Client) close(ctx context.Context) (rerr error) {
 	// assignPartitions above is synchronous.
 
 	sessCloseCtx, sessCloseCancel := context.WithTimeout(ctx, time.Second)
-	var kills []*respWaiter
-	cl.allSources(func(s *source) {
-		if s.session.id != 0 {
-			if w := s.killSessionOnClose(sessCloseCtx); w != nil {
-				kills = append(kills, w)
-			}
+	var wg sync.WaitGroup
+	cl.allSinksAndSources(func(sns sinkAndSource) {
+		if sns.source.session.id != 0 {
+			sns := sns
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sns.source.killSessionOnClose(sessCloseCtx)
+			}()
 		}
 	})
-	for _, w := range kills {
-		w.wait()
-	}
+	wg.Wait()
 	sessCloseCancel()
 
 	// Tell the metrics loop to send its final Terminating=true push and
 	// give it 1s to do so. This must happen BEFORE we cancel the client
-	// context: the entire request path (the dial and the broker connection
-	// write/read loops) aborts requests once cl.ctx is dead, so a terminating
-	// push started after cancelation could never be delivered. The metrics
+	// context: the entire request path (shardedRequest's cancel watchdog,
+	// Broker.request's select, and the broker connection write/read
+	// loops) aborts requests once cl.ctx is dead, so a terminating push
+	// started after cancelation could never be delivered. The metrics
 	// loop cancels metrics.ctx when it exits; clients with metrics
 	// disabled, unsupported, or never observed pass through instantly.
 	cl.metrics.quit()
@@ -1575,9 +1573,9 @@ func (cl *Client) Request(ctx context.Context, req kmsg.Request) (kmsg.Response,
 }
 
 // RequestCachedMetadata returns a metadata response, using any cached topic
-// data possible. Any topic with data cached longer than 'limit', or whose
-// cached leader no longer exists, triggers a cache update. If limit is zero
-// or less, MetadataMinAge is used (default 5s).
+// data possible. Any topic with data cached longer than 'limit' has its
+// metadata updated before being returned. If limit is zero or less,
+// MetadataMinAge is used (default 5s).
 //
 // This function is useful if you run a lot of functions that internally
 // fetch metadata to execute. As an example, many functions in the kadm
@@ -1703,24 +1701,7 @@ func (cl *Client) RequestCachedMetadata(ctx context.Context, req *kmsg.MetadataR
 	resp.ControllerID = cl.controllerID
 	cl.controllerIDMu.Unlock()
 
-	// While we run, another metadata update (the metadata loop, a Ping) can
-	// remove a topic's leader from cl.brokers before the copy above. We add
-	// that leader from the brokers the topic was cached with.
-	known := make(map[int32]bool, len(resp.Brokers))
-	for _, b := range resp.Brokers {
-		known[b.NodeID] = true
-	}
 	for _, t := range cached {
-		for _, p := range t.t.Partitions {
-			if known[p.Leader] {
-				continue
-			}
-			if b, ok := t.brokers[p.Leader]; ok {
-				b.Rack = dups(b.Rack)
-				resp.Brokers = append(resp.Brokers, b)
-				known[p.Leader] = true
-			}
-		}
 		resp.Topics = append(resp.Topics, dupt(t.t))
 	}
 	for _, t := range idErrTopics {
@@ -1846,13 +1827,6 @@ start:
 			}
 		}
 	}
-	if err != nil {
-		// If ctx ends or the client closes during a retry backoff, err
-		// is the last request's error.
-		if ctxErr := r.cl.ctxErr(ctx); ctxErr != nil {
-			return nil, ctxErr
-		}
-	}
 	return resp, err
 }
 
@@ -1932,6 +1906,18 @@ func (cl *Client) RequestSharded(ctx context.Context, req kmsg.Request) []Respon
 type shardMerge func([]ResponseShard) (kmsg.Response, error)
 
 func (cl *Client) shardedRequest(ctx context.Context, req kmsg.Request) ([]ResponseShard, shardMerge) {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer cancel()
+		select {
+		case <-done:
+		case <-ctx.Done():
+		case <-cl.ctx.Done():
+		}
+	}()
+
 	// First, handle any sharded request. This comes before the conditional
 	// below because this handles two group requests, which we do not want
 	// to fall into the handleCoordinatorReq logic.
@@ -2126,51 +2112,12 @@ type coordinatorLoad struct {
 	err      error
 }
 
-// Returns the coordinator's broker if the coordinator is loaded and its broker
-// is known, or nil. Most requests find every coordinator they need this way,
-// and skip the goroutine in loadCoordinators and the maps in
-// doLoadCoordinators.
-func (cl *Client) loadedCoordinator(typ int8, key string) *broker {
-	cl.coordinatorsMu.Lock()
-	c := cl.coordinators[coordinatorKey{key, typ}]
-	cl.coordinatorsMu.Unlock()
-	if c == nil {
-		return nil
-	}
-	select {
-	case <-c.loadWait: // publishes c.err and c.node
-		if c.err == nil {
-			if b, err := cl.brokerOrErr(nil, c.node, errUnknownBroker); err == nil {
-				return b
-			}
-		}
-	default:
-	}
-	return nil
-}
-
 func (cl *Client) loadCoordinator(ctx context.Context, typ int8, key string) (*broker, error) {
-	if b := cl.loadedCoordinator(typ, key); b != nil {
-		return b, nil
-	}
 	berr := cl.loadCoordinators(ctx, typ, key)[key]
 	return berr.b, berr.err
 }
 
 func (cl *Client) loadCoordinators(ctx context.Context, typ int8, keys ...string) map[string]brokerOrErr {
-	m := make(map[string]brokerOrErr, len(keys))
-	for _, key := range keys {
-		b := cl.loadedCoordinator(typ, key)
-		if b == nil {
-			m = nil
-			break
-		}
-		m[key] = brokerOrErr{b, nil}
-	}
-	if m != nil {
-		return m
-	}
-
 	mch := make(chan map[string]brokerOrErr, 1)
 	go func() { mch <- cl.doLoadCoordinators(ctx, typ, keys...) }()
 	select {
@@ -2781,31 +2728,51 @@ func (b *Broker) RetriableRequest(ctx context.Context, req kmsg.Request) (kmsg.R
 }
 
 func (b *Broker) request(ctx context.Context, retry bool, req kmsg.Request) (kmsg.Response, error) {
-	if !retry {
-		br, err := b.cl.brokerOrErr(ctx, b.id, errUnknownBroker)
-		if err != nil {
-			return nil, err
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var resp kmsg.Response
+	var err error
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if !retry {
+			var br *broker
+			br, err = b.cl.brokerOrErr(ctx, b.id, errUnknownBroker)
+			if err == nil {
+				resp, err = br.waitResp(ctx, req)
+			}
+		} else {
+			r := b.cl.retryableBrokerFn(func() (*broker, error) {
+				return b.cl.brokerOrErr(ctx, b.id, errUnknownBroker)
+			})
+			// Pinned by ID: on dial failure, retry with backoff to give
+			// the broker time to come back (e.g. rolling restart).
+			// Also clear cached controller/coordinator entries pointing
+			// at this broker so other code paths re-resolve.
+			d := failDial{clearFn: func() {
+				b.cl.forgetControllerID(b.id)
+				b.cl.deleteStaleCoordinatorsByNode(b.id)
+			}}
+			r.parseRetryErr = func(_ kmsg.Response, err error) error {
+				if err != nil {
+					return d.handleDialErr(err)
+				}
+				return nil
+			}
+			resp, err = r.Request(ctx, req)
 		}
-		return br.waitResp(ctx, req)
+	}()
+
+	select {
+	case <-done:
+		return resp, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-b.cl.ctx.Done():
+		return nil, b.cl.ctx.Err()
 	}
-	r := b.cl.retryableBrokerFn(func() (*broker, error) {
-		return b.cl.brokerOrErr(ctx, b.id, errUnknownBroker)
-	})
-	// Pinned by ID: on dial failure, retry with backoff to give
-	// the broker time to come back (e.g. rolling restart).
-	// Also clear cached controller/coordinator entries pointing
-	// at this broker so other code paths re-resolve.
-	d := failDial{clearFn: func() {
-		b.cl.forgetControllerID(b.id)
-		b.cl.deleteStaleCoordinatorsByNode(b.id)
-	}}
-	r.parseRetryErr = func(_ kmsg.Response, err error) error {
-		if err != nil {
-			return d.handleDialErr(err)
-		}
-		return nil
-	}
-	return r.Request(ctx, req)
 }
 
 //////////////////////
@@ -3085,12 +3052,6 @@ func (cl *Client) handleShardedReq(ctx context.Context, req kmsg.Request) ([]Res
 				// The end user can parse the response ErrorCode.
 				if errIsFromResp {
 					err = nil
-				} else if err != nil {
-					// waitTries above can end the retries early; see
-					// retryable.Request.
-					if ctxErr := cl.ctxErr(ctx); ctxErr != nil {
-						err = ctxErr
-					}
 				}
 				addShard(shard(br, myIssue.req, resp, err)) // the error was not retryable
 			}()
@@ -3159,11 +3120,10 @@ func firstErrMerger(sresps []ResponseShard, merge func(kresp kmsg.Response)) err
 }
 
 type cachedMetaTopic struct {
-	id      [16]byte
-	t       kmsg.MetadataResponseTopic
-	ps      map[int32]kmsg.MetadataResponseTopicPartition
-	when    time.Time
-	brokers map[int32]kmsg.MetadataResponseBroker // shared by all topics from one response
+	id   [16]byte
+	t    kmsg.MetadataResponseTopic
+	ps   map[int32]kmsg.MetadataResponseTopicPartition
+	when time.Time
 }
 
 // For NOT_LEADER_FOR_PARTITION:
@@ -3224,6 +3184,20 @@ func (cl *Client) resolveTopicMeta(ctx context.Context, topics []string, useCach
 
 	all := topics == nil
 
+	// All-topics: return a copy of the cache if fresh.
+	if all && useCache {
+		cl.metaCache.mu.Lock()
+		if cl.metaCache.topics != nil && time.Since(cl.metaCache.allAt) < limit {
+			cached := make(map[string]cachedMetaTopic, len(cl.metaCache.topics))
+			for k, v := range cl.metaCache.topics {
+				cached[k] = v
+			}
+			cl.metaCache.mu.Unlock()
+			return cached, nil
+		}
+		cl.metaCache.mu.Unlock()
+	}
+
 	// No-topics: just need brokers/controller. The main metadata loop
 	// maintains both; we only fetch if we have no broker info yet.
 	if !all && len(topics) == 0 {
@@ -3235,68 +3209,33 @@ func (cl *Client) resolveTopicMeta(ctx context.Context, topics []string, useCach
 		}
 	}
 
-	var brokers map[int32]bool
-	if useCache {
-		cl.brokersMu.RLock()
-		brokers = make(map[int32]bool, len(cl.brokers))
-		for _, b := range cl.brokers {
-			brokers[b.meta.NodeID] = true
-		}
-		cl.brokersMu.RUnlock()
-	}
-
-	// All-topics: return a copy of the cache if fresh.
-	if all && useCache {
-		var cached map[string]cachedMetaTopic
-		cl.metaCache.mu.Lock()
-		if cl.metaCache.topics != nil && time.Since(cl.metaCache.allAt) < limit {
-			cached = make(map[string]cachedMetaTopic, len(cl.metaCache.topics))
-			for k, v := range cl.metaCache.topics {
-				cached[k] = v
-			}
-		}
-		cl.metaCache.mu.Unlock()
-		if cached != nil && !leaderGone(cached, brokers) {
-			return cached, nil
-		}
-	}
-
-	// Specific topics: return the cache if every topic is fresh. Otherwise,
-	// we fetch every topic asked for, so all come from one response.
+	// Specific topics: check cache for individual topics.
+	var results map[string]cachedMetaTopic
+	needed := topics
 	if len(topics) > 0 && useCache {
-		results := make(map[string]cachedMetaTopic, len(topics))
 		cl.metaCache.mu.Lock()
-		for _, t := range topics {
-			tcached, exists := cl.metaCache.topics[t]
-			if !exists || time.Since(tcached.when) >= limit {
-				results = nil
-				break
+		if len(cl.metaCache.topics) > 0 {
+			results = make(map[string]cachedMetaTopic)
+			needed = topics[:0]
+			for _, t := range topics {
+				tcached, exists := cl.metaCache.topics[t]
+				if exists && time.Since(tcached.when) < limit {
+					results[t] = tcached
+				} else {
+					needed = append(needed, t)
+				}
 			}
-			results[t] = tcached
 		}
 		cl.metaCache.mu.Unlock()
-		if results != nil && !leaderGone(results, brokers) {
+		if results != nil && len(needed) == 0 {
 			return results, nil
 		}
 	}
-	results := make(map[string]cachedMetaTopic)
-	_, _, err := cl.fetchMetadataByName(ctx, all, topics, true, results) // prune: yes; our caller wants only these cached
-	return results, err
-}
-
-// Returns if any cached partition's leader no longer exists in the client.
-func leaderGone(cached map[string]cachedMetaTopic, brokers map[int32]bool) bool {
-	for _, ct := range cached {
-		for _, p := range ct.t.Partitions {
-			if brokers[p.Leader] {
-				continue
-			}
-			if _, listed := ct.brokers[p.Leader]; listed {
-				return true
-			}
-		}
+	if results == nil {
+		results = make(map[string]cachedMetaTopic)
 	}
-	return false
+	_, _, err := cl.fetchMetadataByName(ctx, all, needed, true, results) // prune: yes; our caller wants only these cached
+	return results, err
 }
 
 // storeCachedMeta caches the fetched metadata in the Client, and
@@ -3333,18 +3272,6 @@ func (cl *Client) storeCachedMeta(req *kmsg.MetadataRequest, meta *kmsg.Metadata
 		cl.metaCache.byID = make(map[[16]byte]string)
 	}
 	when := time.Now()
-
-	// RequestCachedMetadata may return a leader that left cl.brokers.
-	brokers := make(map[int32]kmsg.MetadataResponseBroker, len(meta.Brokers))
-	for _, b := range meta.Brokers {
-		if b.Rack != nil {
-			rack := *b.Rack
-			b.Rack = &rack
-		}
-		b.UnknownTags = kmsg.Tags{}
-		brokers[b.NodeID] = b
-	}
-
 	var stored int
 	for _, topic := range meta.Topics {
 		if topic.Topic == nil {
@@ -3375,11 +3302,10 @@ func (cl *Client) storeCachedMeta(req *kmsg.MetadataRequest, meta *kmsg.Metadata
 			p.OfflineReplicas = slices.Clone(p.OfflineReplicas)
 		}
 		t := cachedMetaTopic{
-			id:      topic.TopicID,
-			t:       topic,
-			ps:      make(map[int32]kmsg.MetadataResponseTopicPartition),
-			when:    when,
-			brokers: brokers,
+			id:   topic.TopicID,
+			t:    topic,
+			ps:   make(map[int32]kmsg.MetadataResponseTopicPartition),
+			when: when,
 		}
 		// A recreated topic comes back under a new ID. Delete the old
 		// ID's mapping when overwriting the entry, else byID accumulates
@@ -3571,7 +3497,6 @@ func (cl *listOffsetsSharder) shard(ctx context.Context, kreq kmsg.Request, _ er
 		r := kmsg.NewPtrListOffsetsRequest()
 		r.ReplicaID = req.ReplicaID
 		r.IsolationLevel = req.IsolationLevel
-		r.TimeoutMillis = req.TimeoutMillis
 		return r
 	}
 

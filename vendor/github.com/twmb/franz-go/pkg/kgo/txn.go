@@ -269,7 +269,6 @@ func (s *GroupTransactSession) End(ctx context.Context, commit TransactionEndTry
 	var hasAbortableCommitErr bool
 	var commitErr error
 	var g *groupConsumer
-	var sent *kmsg.TxnOffsetCommitRequest // the TxnOffsetCommit as sent, after a PreTxnCommitFnContext fn ran
 
 	kip447 := false
 	// The transaction cannot commit if a topic it produced to was
@@ -332,7 +331,7 @@ func (s *GroupTransactSession) End(ctx context.Context, commit TransactionEndTry
 
 		committed := make(chan struct{})
 		g = s.cl.commitTransactionOffsets(ctx, postcommit,
-			func(req *kmsg.TxnOffsetCommitRequest, resp *kmsg.TxnOffsetCommitResponse, err error) {
+			func(_ *kmsg.TxnOffsetCommitRequest, resp *kmsg.TxnOffsetCommitResponse, err error) {
 				defer close(committed)
 				if err != nil {
 					if isAbortableCommitErr(err) {
@@ -343,7 +342,6 @@ func (s *GroupTransactSession) End(ctx context.Context, commit TransactionEndTry
 					return
 				}
 				kip447 = resp.Version >= 3
-				sent = req
 
 				for _, t := range resp.Topics {
 					for _, p := range t.Partitions {
@@ -522,7 +520,7 @@ retry:
 	}
 
 	if !willTryCommit || endTxnErr != nil {
-		currentCommit := s.cl.consumer.g.getAllCommitted()
+		currentCommit := s.cl.CommittedOffsets()
 		s.cl.cfg.logger.Log(LogLevelInfo, "transact session resetting to current committed state (potentially after a rejoin)",
 			"tried_commit", willTryCommit,
 			"commit_err", endTxnErr,
@@ -535,27 +533,7 @@ retry:
 			"tried_commit", willTryCommit,
 			"postcommit", postcommit,
 		)
-		// commitTxn skips updateCommitted: a TxnOffsetCommit is
-		// committed only once EndTxn commits, so we record the commit
-		// here.
-		//
-		// Nothing changes g.uncommitted between EndTxn and this lock.
-		// Every path that clears or rebuilds the map first calls
-		// onRevoked or onLost, and our wrappers for both take s.failMu,
-		// which we hold until we return. Autocommit never runs with a
-		// transactional id, and polling concurrently with End is
-		// invalid.
-		g.mu.Lock()
-		for _, t := range sent.Topics {
-			topicUncommitted := g.uncommitted[t.Topic]
-			for _, p := range t.Partitions {
-				if current, exists := topicUncommitted[p.Partition]; exists {
-					current.committed, current.hasCommit = EpochOffset{p.LeaderEpoch, p.Offset}, true
-					topicUncommitted[p.Partition] = current
-				}
-			}
-		}
-		g.mu.Unlock()
+		s.cl.setOffsets(postcommit, false)
 	}
 
 	switch {
@@ -713,10 +691,8 @@ func (cl *Client) AbortBufferedRecords(ctx context.Context) error {
 // responses before failing a record, otherwise the client cannot know if a
 // sequence number was seen by the broker and tracked or not seen by the broker
 // and not tracked. By unsafely aborting, the client forcefully abandons all
-// records. With transactions, producing to the topics again may re-use a
-// sequence number and cause internal errors. Without transactions, the client
-// bumps its producer epoch if it abandoned a record it had sent, so sequence
-// numbers are not re-used.
+// records, and producing to the topics again may re-use a sequence number and
+// cause internal errors.
 func (cl *Client) UnsafeAbortBufferedRecords() {
 	cl.failBufferedRecords(ErrAborting)
 }
@@ -1186,8 +1162,8 @@ start:
 // and only allow transaction sessions to commit.
 //
 // Unlike CommitOffsets, we do not update the group's uncommitted map. We leave
-// that to the calling code: End records a successful commit, and rewinds with
-// setOffsets after an abort.
+// that to the calling code to do properly with SetOffsets depending on whether
+// an eventual abort happens or not.
 func (cl *Client) commitTransactionOffsets(
 	ctx context.Context,
 	uncommitted map[string]map[int32]EpochOffset,
@@ -1313,8 +1289,8 @@ func (cl *Client) addOffsetsToTxn(ctx context.Context, group string) error {
 }
 
 // commitTxn is ALMOST EXACTLY THE SAME as commit, but changed for txn types
-// and we avoid updateCommitted. We avoid updating because we record the commit
-// when ending the transaction.
+// and we avoid updateCommitted. We avoid updating because we manually
+// SetOffsets when ending the transaction.
 func (g *groupConsumer) commitTxn(ctx context.Context, tx890p2 bool, req *kmsg.TxnOffsetCommitRequest, onDone func(*kmsg.TxnOffsetCommitRequest, *kmsg.TxnOffsetCommitResponse, error)) {
 	if onDone == nil { // note we must always call onDone
 		onDone = func(_ *kmsg.TxnOffsetCommitRequest, _ *kmsg.TxnOffsetCommitResponse, _ error) {}
@@ -1372,7 +1348,10 @@ func (g *groupConsumer) commitTxn(ctx context.Context, tx890p2 bool, req *kmsg.T
 	go func() {
 		defer close(commitDone) // allow future commits to continue when we are done
 		if priorDone != nil {   // wait for any prior request to finish
-			// Same as commit(): we must NOT cancel the prior commit.
+			// Same as commit(): we must NOT cancel the prior commit
+			// because canceling kills the TCP connection, and our
+			// subsequent request on a new connection can be processed
+			// out of order at the broker, rewinding committed offsets.
 			select {
 			case <-priorDone:
 			default:
@@ -1385,10 +1364,11 @@ func (g *groupConsumer) commitTxn(ctx context.Context, tx890p2 bool, req *kmsg.T
 		start := time.Now()
 		// The request rides the caller's context (the End context),
 		// not the group context: a transactional offset commit must
-		// not be canceled by group teardown midway: the broker may
-		// still apply a canceled commit, and we would not learn
-		// whether it did. End documents that canceling ITS context
-		// risks an invalid state.
+		// not be canceled by group teardown midway, because canceling
+		// an in-flight request kills the connection and a replacement
+		// commit on a new connection can be reordered behind the
+		// canceled one by the broker. End documents that canceling
+		// ITS context risks an invalid state.
 		ctx := ctx
 		if !tx890p2 {
 			ctx = context.WithValue(ctx, ctxPinReq, &pinReq{pinMax: true, max: 4}) // v5 is only supported with KIP-890 part 2

@@ -19,6 +19,9 @@ NAUTHILUS_PLUGINS_DIR ?= /usr/local/share/nauthilus/lua-plugins.d
 GOVULNCHECK ?= govulncheck
 GOVULNCHECK_VERSION ?= 1.7.0
 GOLANGCI_LINT ?= golangci-lint
+# The release image owns the list of bundled native plugins; local checks read it from there.
+BUNDLED_NATIVE_PLUGINS ?= $(shell sed -n 's/^ARG BUNDLED_NATIVE_PLUGINS="\(.*\)"$$/\1/p' Dockerfile)
+NATIVE_PLUGINS_CHECK_DIR ?= temp/native-plugins-check
 GOLANGCI_LINT_VERSION ?= 2.14.0
 
 export GOEXPERIMENT := runtimesecret
@@ -32,7 +35,7 @@ GOVULNCHECK_EXCLUDED_PACKAGES = github.com/croessner/nauthilus/v4/contrib/saml2t
 GOVULNCHECK_PACKAGES = $(filter-out $(GOVULNCHECK_EXCLUDED_PACKAGES),$(GO_PACKAGES))
 CONFIG_EXPANSION_LDFLAGS := -X github.com/croessner/nauthilus/v4/server/config.nauthilusConfDir=$(NAUTHILUS_CONF_DIR) -X github.com/croessner/nauthilus/v4/server/config.nauthilusPluginsDir=$(NAUTHILUS_PLUGINS_DIR)
 
-.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check makefile-package-scope-check release-contract-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-proto-check grpc-proto-compatibility-check generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e release-identity-proxy-e2e govulncheck print-govulncheck-version release-guardrails guardrails
+.PHONY: all fix vet test race msan build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck clean install uninstall sbom validate-templates install-hooks sync-prompts sync-prompts-check policy-check makefile-package-scope-check release-contract-check generate-vim-syntax generate-vim-syntax-check generate-grpc-proto generate-grpc-proto-check grpc-proto-compatibility-check generate-grpc-auth-proto generate-openapi-bindings generate-openapi-bindings-check generate-openapi-management generate-openapi-management-check identity-proxy-e2e release-identity-proxy-e2e native-plugins-build-check govulncheck print-govulncheck-version release-guardrails guardrails
 
 all: build build-client build-oidctestclient build-saml2testclient build-encryption-secret-decoder build-healthcheck
 
@@ -203,7 +206,7 @@ admin-client-check: ## Test the standalone administrative Python client
 
 .PHONY: admin-client-check
 
-guardrails: admin-client-check static-reputation-conversion-check sync-prompts-check policy-check makefile-package-scope-check check-go-toolchain-contract release-contract-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
+guardrails: admin-client-check native-plugins-build-check static-reputation-conversion-check sync-prompts-check policy-check makefile-package-scope-check check-go-toolchain-contract release-contract-check generate-vim-syntax-check generate-grpc-proto-check grpc-proto-compatibility-check generate-openapi-bindings-check ## Run mandatory local quality gates
 	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) not found. Install it and rerun make guardrails"; exit 1; }
 	@$(GOLANGCI_LINT) version | grep -Eq 'version $(GOLANGCI_LINT_VERSION)([[:space:]]|$$)' || { echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required"; $(GOLANGCI_LINT) version; exit 1; }
 	$(GOLANGCI_LINT) run --new-from-rev=$(GOLANGCI_NEW_FROM_REV) --enable dupl --enable goconst --enable revive --enable govet --enable errcheck --enable gocyclo --enable funlen --enable unused $(GO_PACKAGE_DIRS)
@@ -212,6 +215,15 @@ guardrails: admin-client-check static-reputation-conversion-check sync-prompts-c
 .PHONY: reputation-redis-check
 reputation-redis-check:
 	sh scripts/check-reputation-redis.sh
+
+native-plugins-build-check: ## Build the bundled native plugins with -buildmode=plugin like the release image
+	@set -eu; \
+	test -n "$(BUNDLED_NATIVE_PLUGINS)" || { echo "no bundled native plugins found in Dockerfile"; exit 1; }; \
+	mkdir -p "$(CURDIR)/$(NATIVE_PLUGINS_CHECK_DIR)"; \
+	for plugin in $(BUNDLED_NATIVE_PLUGINS); do \
+		echo "building native plugin $$plugin"; \
+		(cd contrib/plugins/$$plugin && GOEXPERIMENT=runtimesecret go build -mod=vendor -tags=netgo -buildmode=plugin -trimpath -o "$(CURDIR)/$(NATIVE_PLUGINS_CHECK_DIR)/$$plugin.so" .); \
+	done
 
 .PHONY: reputation-worker-check
 reputation-worker-check:

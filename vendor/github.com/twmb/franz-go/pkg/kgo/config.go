@@ -19,14 +19,11 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl"
 )
 
-//////////////////////////////////////////////////////////////////////////
-// NOTE:                                                                //
-// NOTE: Make sure new configs are added to OptValues.                  //
-// NOTE:                                                                //
-// NOTE: OptValues returns cfg fields as stored, so changing a field's  //
-// NOTE: type changes what OptValue returns: that is a breaking change. //
-// NOTE:                                                                //
-//////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+// NOTE:                                              //
+// NOTE: Make sure new configs are added to OptValues //
+// NOTE:                                              //
+////////////////////////////////////////////////////////
 
 // Opt is an option to configure a client.
 type Opt interface {
@@ -1238,8 +1235,9 @@ func DisableIdempotentWrite() ProducerOpt {
 // received it" from "the broker wrote it but the reply was lost".
 // Cancelling at this point leaves the client's idempotent sequence
 // window inconsistent with the broker: once cancelled records are
-// failed to the user, the client bumps its producer epoch before
-// producing again. A
+// failed to the user, the next produce either silently gap-accepts (if
+// the broker wrote them) or hits OUT_OF_ORDER_SEQUENCE and forces the
+// client to reload its producer ID (new epoch, reset sequence). A
 // subsequent application-level retry of the cancelled record races
 // against what the broker may already have stored - the broker cannot
 // dedupe it, and you can get duplicates. By default, the client refuses
@@ -1278,15 +1276,10 @@ func MaxProduceRequestsInflightPerBroker(n int) ProducerOpt {
 // example, zstd compression was introduced in Kafka 2.1, so the preference can
 // be first zstd, fallback snappy, fallback none.
 //
-// The default preference is [snappy, none]. Snappy has been part of the Kafka
-// protocol since Kafka 0.8.0, but some clients only decode it when an optional
-// library is installed (for example, ruby-kafka needs the snappy gem). Make sure
-// every consumer of your topics can decode the codecs you produce with, or use
-// [NoCompression] to disable compression. To use zstd, your brokers must be at
-// least 2.1 and all consumers must be upgraded to support decoding zstd records.
-//
-// A batch is only sent compressed if compressing makes it smaller, so small or
-// incompressible batches go out uncompressed even with a codec configured.
+// The default preference is [snappy, none], which should be fine for all old
+// consumers since snappy compression has existed since Kafka 0.8.0.  To use
+// zstd, your brokers must be at least 2.1 and all consumers must be upgraded
+// to support decoding zstd records.
 //
 // Alternatively, if you want finer control over compression you can use
 // [WithCompressor] for complete control.
@@ -2206,15 +2199,15 @@ func BlockRebalanceOnPoll() GroupOpt {
 //
 // This function should not exceed the rebalance interval. It is possible
 // for the group, immediately after finishing a balance, to re-enter a new balancing
-// session. This function is passed a context that is canceled when the current
-// group session begins revoking.
+// session. This function is passed a context that is canceled if the current group
+// session finishes (i.e., after revoking).
 //
 // If you are resetting the position of the offset, you may want to clear any existing
 // "epoch" with WithEpoch(-1). If the epoch is non-negative, the client performs
 // data loss detection, which may result in errors and unexpected behavior.
 //
-// This function is called after OnPartitionsAssigned and before
-// OnPartitionsRevoked.
+// This function is called after OnPartitionsAssigned and may be called before
+// or after OnPartitionsRevoked.
 func AdjustFetchOffsetsFn(adjustOffsetsBeforeAssign func(context.Context, map[string]map[int32]Offset) (map[string]map[int32]Offset, error)) GroupOpt {
 	return groupOpt{func(cfg *cfg) { cfg.adjustOffsetsBeforeAssign = adjustOffsetsBeforeAssign }}
 }
@@ -2322,11 +2315,11 @@ func OnPartitionsCallbackBlocked(fn func(context.Context, *Client)) GroupOpt {
 //
 // This function should not exceed the rebalance interval. It is possible for
 // the group, immediately after finishing a balance, to re-enter a new
-// balancing session. This function is passed a context that is canceled when the
-// current group session begins revoking.
+// balancing session. This function is passed a context that is canceled if the
+// current group session finishes (i.e., after revoking).
 //
-// This function is called after OnPartitionsAssigned and before
-// OnPartitionsRevoked.
+// This function is called after OnPartitionsAssigned and may be called before
+// or after OnPartitionsRevoked.
 func OnOffsetsFetched(onFetched func(context.Context, *Client, *kmsg.OffsetFetchResponse) error) GroupOpt {
 	return groupOpt{func(cfg *cfg) { cfg.onFetched = onFetched }}
 }
@@ -2401,13 +2394,6 @@ func AutoCommitMarks() GroupOpt {
 // ID and rejoin the group to avoid a rebalance. It is strongly recommended to
 // increase the session timeout enough to allow time for the restart (remember
 // that the default session timeout is 45s).
-//
-// In a classic group with a cooperative balancer, if the client revoked
-// partitions in a rebalance and closes before rejoining, the client sends a
-// leave group request and logs a warning. The leave makes the group rebalance
-// and assign the revoked partitions. If the client did not leave, a restart
-// with the same instance ID would get its old assignment back, not rebalance,
-// and the revoked partitions would stay unassigned until the next rebalance.
 //
 // To actually leave the group, you must use an external admin command that
 // issues a leave group request on behalf of this instance ID (see kcl), or you
