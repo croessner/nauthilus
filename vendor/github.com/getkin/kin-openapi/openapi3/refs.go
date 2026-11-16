@@ -4,10 +4,12 @@ package openapi3
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/url"
 	"strings"
 
 	"github.com/go-openapi/jsonpointer"
+	"go.yaml.in/yaml/v4"
 )
 
 // CallbackRef represents either a Callback or a $ref to a Callback.
@@ -18,12 +20,16 @@ type CallbackRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *Callback
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -54,12 +60,22 @@ func (x *CallbackRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of CallbackRef.
 func (x CallbackRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -73,12 +89,23 @@ func (x CallbackRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets CallbackRef from node.
+func (x *CallbackRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets CallbackRef to a copy of data.
 func (x *CallbackRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -88,8 +115,12 @@ func (x *CallbackRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -99,45 +130,27 @@ func (x *CallbackRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if CallbackRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if CallbackRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *CallbackRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -146,6 +159,9 @@ func (x *CallbackRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if CallbackRef does not comply with the OpenAPI spec.
 func (x *CallbackRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -180,12 +196,16 @@ type ExampleRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *Example
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -216,12 +236,22 @@ func (x *ExampleRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of ExampleRef.
 func (x ExampleRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -235,12 +265,23 @@ func (x ExampleRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets ExampleRef from node.
+func (x *ExampleRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets ExampleRef to a copy of data.
 func (x *ExampleRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -250,8 +291,12 @@ func (x *ExampleRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -261,45 +306,27 @@ func (x *ExampleRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if ExampleRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if ExampleRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *ExampleRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -308,6 +335,9 @@ func (x *ExampleRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if ExampleRef does not comply with the OpenAPI spec.
 func (x *ExampleRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -342,12 +372,16 @@ type HeaderRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *Header
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -378,12 +412,22 @@ func (x *HeaderRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of HeaderRef.
 func (x HeaderRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -397,12 +441,23 @@ func (x HeaderRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets HeaderRef from node.
+func (x *HeaderRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets HeaderRef to a copy of data.
 func (x *HeaderRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -412,8 +467,12 @@ func (x *HeaderRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -423,45 +482,27 @@ func (x *HeaderRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if HeaderRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if HeaderRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *HeaderRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -470,6 +511,9 @@ func (x *HeaderRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if HeaderRef does not comply with the OpenAPI spec.
 func (x *HeaderRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -504,12 +548,16 @@ type LinkRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *Link
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -540,12 +588,22 @@ func (x *LinkRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of LinkRef.
 func (x LinkRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -559,12 +617,23 @@ func (x LinkRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets LinkRef from node.
+func (x *LinkRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets LinkRef to a copy of data.
 func (x *LinkRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -574,8 +643,12 @@ func (x *LinkRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -585,45 +658,27 @@ func (x *LinkRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if LinkRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if LinkRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *LinkRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -632,6 +687,9 @@ func (x *LinkRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if LinkRef does not comply with the OpenAPI spec.
 func (x *LinkRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -666,12 +724,16 @@ type ParameterRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *Parameter
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -702,12 +764,22 @@ func (x *ParameterRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of ParameterRef.
 func (x ParameterRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -721,12 +793,23 @@ func (x ParameterRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets ParameterRef from node.
+func (x *ParameterRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets ParameterRef to a copy of data.
 func (x *ParameterRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -736,8 +819,12 @@ func (x *ParameterRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -747,45 +834,27 @@ func (x *ParameterRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if ParameterRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if ParameterRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *ParameterRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -794,6 +863,9 @@ func (x *ParameterRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if ParameterRef does not comply with the OpenAPI spec.
 func (x *ParameterRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -828,12 +900,16 @@ type RequestBodyRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *RequestBody
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -864,12 +940,22 @@ func (x *RequestBodyRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of RequestBodyRef.
 func (x RequestBodyRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -883,12 +969,23 @@ func (x RequestBodyRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets RequestBodyRef from node.
+func (x *RequestBodyRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets RequestBodyRef to a copy of data.
 func (x *RequestBodyRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -898,8 +995,12 @@ func (x *RequestBodyRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -909,45 +1010,27 @@ func (x *RequestBodyRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if RequestBodyRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if RequestBodyRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *RequestBodyRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -956,6 +1039,9 @@ func (x *RequestBodyRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if RequestBodyRef does not comply with the OpenAPI spec.
 func (x *RequestBodyRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -990,12 +1076,16 @@ type ResponseRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *Response
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -1026,12 +1116,22 @@ func (x *ResponseRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of ResponseRef.
 func (x ResponseRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -1045,12 +1145,23 @@ func (x ResponseRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets ResponseRef from node.
+func (x *ResponseRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets ResponseRef to a copy of data.
 func (x *ResponseRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -1060,8 +1171,12 @@ func (x *ResponseRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -1071,45 +1186,27 @@ func (x *ResponseRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if ResponseRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if ResponseRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *ResponseRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -1118,6 +1215,9 @@ func (x *ResponseRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if ResponseRef does not comply with the OpenAPI spec.
 func (x *ResponseRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -1155,9 +1255,19 @@ type SchemaRef struct {
 	Ref   string
 	Value *Schema
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 	// sibling holds keyword siblings of a $ref (OAS 3.1 / JSON Schema 2020-12).
 	// It is populated during unmarshal and applied to Value after $ref resolution.
 	sibling *Schema
+	// siblingErr is why the siblings could not be read as a Schema. OAS 3.1
+	// reports it, while OAS 3.0 ignores the fields next to a $ref anyway.
+	siblingErr error
+	// target is the referenced schema, which Value is a copy of once siblings
+	// are applied to it.
+	target *Schema
 
 	refPath *url.URL
 }
@@ -1188,10 +1298,37 @@ func (x *SchemaRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of SchemaRef.
 func (x SchemaRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:        ref,
 			Extensions: x.Extensions,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+			if x.sibling != nil && len(x.siblingExtras) != 0 {
+				// The $refs within the siblings may have been rewritten since, as
+				// InternalizeRefs does, so write out what the siblings now hold. A
+				// field the Schema leaves out, such as an empty pattern, is still
+				// written as it was.
+				current, err := x.sibling.MarshalYAML()
+				if err != nil {
+					return nil, err
+				}
+				if current, ok := current.(map[string]any); ok {
+					for k := range x.siblingExtras {
+						if v, ok := current[k]; ok {
+							m[k] = v
+						}
+					}
+				}
+			}
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -1205,12 +1342,41 @@ func (x SchemaRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets SchemaRef from node.
+func (x *SchemaRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, nil, nil, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	// OAS 3.1 / JSON Schema 2020-12: schema keywords alongside a $ref are valid
+	// and are merged with the resolved reference, so they are held on sibling
+	// until resolveSchemaRef can apply them.
+	var hasSiblings bool
+	for _, k := range x.extra {
+		if !strings.HasPrefix(k, "x-") {
+			hasSiblings = true
+			break
+		}
+	}
+	if hasSiblings {
+		var sibling Schema
+		if err := node.Decode(&sibling); err == nil {
+			x.sibling = &sibling
+		} else {
+			x.siblingErr = err
+		}
+	}
+	return nil
+}
+
 // UnmarshalJSON sets SchemaRef to a copy of data.
 func (x *SchemaRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -1228,12 +1394,18 @@ func (x *SchemaRef) UnmarshalJSON(data []byte) error {
 			}
 			if hasSiblings {
 				var sibling Schema
-				if err := json.Unmarshal(data, &sibling); err == nil {
+				if err := unmarshalJSON(data, &sibling); err == nil {
 					x.sibling = &sibling
+				} else {
+					x.siblingErr = err
 				}
 			}
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -1243,47 +1415,38 @@ func (x *SchemaRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if SchemaRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if SchemaRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *SchemaRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
-		if !validationOpts.isOpenAPI31OrLater {
-			return newExtraSiblingFields(extras, x.Origin)
-		}
+		return newExtraSiblingFields(extras, x.Origin)
 	}
 	return nil
 }
 
 // Validate returns an error if SchemaRef does not comply with the OpenAPI spec.
 func (x *SchemaRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err
@@ -1318,12 +1481,16 @@ type SecuritySchemeRef struct {
 	Extensions map[string]any
 	Origin     *Origin `json:"-" yaml:"-"`
 	// Reference Object summary and description are supported in OpenAPI 3.1+.
-	Summary     *string `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *string `json:"summary,omitempty,case:strict" yaml:"summary,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
 
 	Ref   string
 	Value *SecurityScheme
 	extra []string
+	// siblingExtras holds, verbatim, the non-`x-` fields written next to $ref.
+	// Marshaling writes them back out, so a document survives a round trip:
+	// an OpenAPI 3.1 schema's sibling keywords constrain the referenced one.
+	siblingExtras map[string]any
 
 	refPath *url.URL
 }
@@ -1354,12 +1521,22 @@ func (x *SecuritySchemeRef) setRefPath(u *url.URL) {
 // MarshalYAML returns the YAML encoding of SecuritySchemeRef.
 func (x SecuritySchemeRef) MarshalYAML() (any, error) {
 	if ref := x.Ref; ref != "" {
-		return &Ref{
+		out, err := Ref{
 			Ref:         ref,
 			Extensions:  x.Extensions,
 			Summary:     x.Summary,
 			Description: x.Description,
-		}, nil
+		}.MarshalYAML()
+		if err != nil {
+			return nil, err
+		}
+		if m, ok := out.(map[string]any); ok {
+			maps.Copy(m, x.siblingExtras)
+		}
+		return out, nil
+	}
+	if x.Value == nil {
+		return nil, nil
 	}
 	return x.Value.MarshalYAML()
 }
@@ -1373,12 +1550,23 @@ func (x SecuritySchemeRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(y)
 }
 
+// UnmarshalYAML sets SecuritySchemeRef from node.
+func (x *SecuritySchemeRef) UnmarshalYAML(node *yaml.Node) error {
+	x.Origin = originFromNode(node, nativeOriginFile())
+	if !unmarshalRefYAML(node, &x.Ref, &x.Summary, &x.Description, &x.Extensions, &x.extra, &x.siblingExtras) {
+		return node.Decode(&x.Value)
+	}
+	return nil
+}
+
 // UnmarshalJSON sets SecuritySchemeRef to a copy of data.
 func (x *SecuritySchemeRef) UnmarshalJSON(data []byte) error {
 	var refOnly Ref
-	if err := json.Unmarshal(data, &refOnly); err == nil && refOnly.Ref != "" {
+	if err := unmarshalJSON(data, &refOnly); err == nil && refOnly.Ref != "" {
 		extra := map[string]any{}
-		_ = json.Unmarshal(data, &extra)
+		if err := unmarshalJSON(data, &extra); err != nil {
+			return unmarshalError(err)
+		}
 		delete(extra, "$ref")
 		x.Ref = refOnly.Ref
 		x.Origin = refOnly.Origin
@@ -1388,8 +1576,12 @@ func (x *SecuritySchemeRef) UnmarshalJSON(data []byte) error {
 		delete(extra, "description")
 		if len(extra) != 0 {
 			x.extra = componentNames(extra)
-			for k := range extra {
+			for k, v := range extra {
 				if !strings.HasPrefix(k, "x-") {
+					if x.siblingExtras == nil {
+						x.siblingExtras = make(map[string]any, len(extra))
+					}
+					x.siblingExtras[k] = v
 					delete(extra, k)
 				}
 			}
@@ -1399,45 +1591,27 @@ func (x *SecuritySchemeRef) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	}
-	return json.Unmarshal(data, &x.Value)
+	return unmarshalJSON(data, &x.Value)
 }
 
-// validateExtras returns an error if SecuritySchemeRef has sibling fields
-// alongside $ref that are not allowed by the validation options.
+// validateExtras returns an error if SecuritySchemeRef has `x-` extensions
+// next to its $ref while ProhibitExtensionsWithRef is set. Every other field
+// next to a $ref is not an error: every version's Reference Object says "any
+// properties added SHALL be ignored", from 3.1 on summary and description
+// override the referenced component's, and an OpenAPI 3.1 schema applies its
+// sibling keywords alongside the referenced schema.
 func (x *SecuritySchemeRef) validateExtras(ctx context.Context) error {
 	validationOpts := getValidationOptions(ctx)
+	if x.Ref == "" || !validationOpts.schemaExtensionsInRefProhibited {
+		return nil
+	}
+
 	var extras []string
-
-	allowed := validationOpts.extraSiblingFieldsAllowed
-	if allowed == nil {
-		allowed = make(map[string]struct{})
-	}
-	if !validationOpts.isOpenAPI31OrLater {
-		if _, ok := allowed["description"]; x.Description != nil && !ok {
-			extras = append(extras, "description")
-		}
-		if _, ok := allowed["summary"]; x.Summary != nil && !ok {
-			extras = append(extras, "summary")
+	for _, ex := range componentNames(x.Extensions) {
+		if _, ok := validationOpts.extraSiblingFieldsAllowed[ex]; !ok {
+			extras = append(extras, ex)
 		}
 	}
-	for _, ex := range x.extra {
-		if _, ok := allowed[ex]; !ok {
-			if _, ok := x.Extensions[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
-	if validationOpts.schemaExtensionsInRefProhibited {
-		for _, ex := range componentNames(x.Extensions) {
-			if _, ok := allowed[ex]; !ok {
-				extras = append(extras, ex)
-			}
-			// extras in the Extensions checked below
-		}
-	}
-
 	if len(extras) != 0 {
 		return newExtraSiblingFields(extras, x.Origin)
 	}
@@ -1446,6 +1620,9 @@ func (x *SecuritySchemeRef) validateExtras(ctx context.Context) error {
 
 // Validate returns an error if SecuritySchemeRef does not comply with the OpenAPI spec.
 func (x *SecuritySchemeRef) Validate(ctx context.Context, opts ...ValidationOption) error {
+	if x == nil {
+		return newUnresolvedRef("", nil)
+	}
 	ctx = WithValidationOptions(ctx, opts...)
 	if err := x.validateExtras(ctx); err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/netip"
 	"regexp"
+	"time"
 )
 
 // FormatValidator is an interface for custom format validators.
@@ -50,13 +51,13 @@ const (
 	FormatOfStringDate = `^[0-9]{4}-(0[1-9]|10|11|12)-(0[1-9]|[12][0-9]|3[01])$`
 
 	// FormatOfStringDateTime is a RFC3339 date-time format regexp, for example "2017-07-21T17:32:28Z".
-	FormatOfStringDateTime = `^[0-9]{4}-(0[1-9]|10|11|12)-(0[1-9]|[12][0-9]|3[01])T([0-1][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\.[0-9]+)?(Z|(\+|-)[0-9]{2}:[0-9]{2})$`
+	FormatOfStringDateTime = `^[0-9]{4}-(0[1-9]|10|11|12)-(0[1-9]|[12][0-9]|3[01])T([0-1][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\.[0-9]+)?(Z|(\+|-)([0-1][0-9]|2[0-3]):[0-5][0-9])$`
 )
 
 func init() {
 	DefineStringFormatValidator("byte", NewRegexpFormatValidator(FormatOfStringByte))
-	DefineStringFormatValidator("date", NewRegexpFormatValidator(FormatOfStringDate))
-	DefineStringFormatValidator("date-time", NewRegexpFormatValidator(FormatOfStringDateTime))
+	DefineStringFormatValidator("date", newDateFormatValidator(FormatOfStringDate))
+	DefineStringFormatValidator("date-time", newDateFormatValidator(FormatOfStringDateTime))
 	DefineIntegerFormatValidator("int32", NewRangeFormatValidator(int64(math.MinInt32), int64(math.MaxInt32)))
 	DefineIntegerFormatValidator("int64", NewRangeFormatValidator(int64(math.MinInt64), int64(math.MaxInt64)))
 }
@@ -106,6 +107,19 @@ func NewRangeFormatValidator[T int64 | float64](min, max T) FormatValidator[T] {
 	return rangeFormat[T]{min: min, max: max}
 }
 
+// validateIntegerFormat converts a JSON number for an integer format validator. A float64
+// outside the int64 range wraps back into it on conversion, so it is rejected here instead.
+func validateIntegerFormat(validator IntegerFormatValidator, value float64) error {
+	switch {
+	case value == float64(math.MaxInt64): // math.MaxInt64 has no float64 representation: it rounds up to 2^63
+		return validator.Validate(math.MaxInt64)
+	case value >= float64(math.MinInt64) && value < float64(math.MaxInt64):
+		return validator.Validate(int64(value))
+	default:
+		return fmt.Errorf("value should be between %v and %v", int64(math.MinInt64), int64(math.MaxInt64))
+	}
+}
+
 // NewRegexpFormatValidator creates a new FormatValidator that uses a regular expression to validate the value.
 func NewRegexpFormatValidator(pattern string) StringFormatValidator {
 	re, err := regexp.Compile(pattern)
@@ -114,6 +128,19 @@ func NewRegexpFormatValidator(pattern string) StringFormatValidator {
 		panic(err)
 	}
 	return stringRegexpFormatValidator{re: re}
+}
+
+// newDateFormatValidator matches the value against pattern, which only matches strings starting with
+// a YYYY-MM-DD date, then checks that its month has this day, as RFC 3339 requires (section 5.7).
+func newDateFormatValidator(pattern string) StringFormatValidator {
+	re := NewRegexpFormatValidator(pattern)
+	return NewCallbackValidator(func(value string) error {
+		if err := re.Validate(value); err != nil {
+			return err
+		}
+		_, err := time.Parse(time.DateOnly, value[:len(time.DateOnly)])
+		return err
+	})
 }
 
 // NewCallbackValidator creates a new FormatValidator that uses a callback function to validate the value.
@@ -155,22 +182,13 @@ func NewIPValidator(isIPv4 bool) FormatValidator[string] {
 	return callbackValidator[string]{fn: func(ip string) error {
 		addr, err := netip.ParseAddr(ip)
 		if err != nil {
-			return &SchemaError{
-				Value:  ip,
-				Reason: "Not an IP address",
-			}
+			return newSchemaError(nil, ip).withReason("Not an IP address")
 		}
 		if isIPv4 && !addr.Is4() {
-			return &SchemaError{
-				Value:  ip,
-				Reason: "Not an IPv4 address (it's IPv6)",
-			}
+			return newSchemaError(nil, ip).withReason("Not an IPv4 address (it's IPv6)")
 		}
 		if !isIPv4 && !addr.Is6() {
-			return &SchemaError{
-				Value:  ip,
-				Reason: "Not an IPv6 address (it's IPv4)",
-			}
+			return newSchemaError(nil, ip).withReason("Not an IPv6 address (it's IPv4)")
 		}
 		return nil
 	}}

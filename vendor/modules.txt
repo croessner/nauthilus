@@ -228,8 +228,9 @@ github.com/gabriel-vasile/mimetype/internal/magic
 github.com/gabriel-vasile/mimetype/internal/markup
 github.com/gabriel-vasile/mimetype/internal/mp3
 github.com/gabriel-vasile/mimetype/internal/scan
-# github.com/getkin/kin-openapi v0.149.0
+# github.com/getkin/kin-openapi v0.153.0
 ## explicit; go 1.25
+github.com/getkin/kin-openapi/internal/nodeindex
 github.com/getkin/kin-openapi/openapi3
 github.com/getkin/kin-openapi/openapi3filter
 github.com/getkin/kin-openapi/routers
@@ -434,21 +435,16 @@ github.com/nicksnyder/go-i18n/v2/i18n
 github.com/nicksnyder/go-i18n/v2/i18n/template
 github.com/nicksnyder/go-i18n/v2/internal
 github.com/nicksnyder/go-i18n/v2/internal/plural
-# github.com/oapi-codegen/oapi-codegen/v2 v2.8.0
+# github.com/oapi-codegen/oapi-codegen/v2 v2.8.2
 ## explicit; go 1.25.0
 github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 github.com/oapi-codegen/oapi-codegen/v2/pkg/codegen
 github.com/oapi-codegen/oapi-codegen/v2/pkg/util
-# github.com/oapi-codegen/runtime v1.7.0
-## explicit; go 1.24.0
+# github.com/oapi-codegen/runtime v1.9.0
+## explicit; go 1.26.0
 github.com/oapi-codegen/runtime
+github.com/oapi-codegen/runtime/internal/jsoncodec
 github.com/oapi-codegen/runtime/types
-# github.com/oasdiff/yaml v0.1.1
-## explicit; go 1.25
-github.com/oasdiff/yaml
-# github.com/oasdiff/yaml3 v0.0.14
-## explicit; go 1.25
-github.com/oasdiff/yaml3
 # github.com/oschwald/maxminddb-golang v1.13.1
 ## explicit; go 1.21
 github.com/oschwald/maxminddb-golang
@@ -860,6 +856,17 @@ go.uber.org/zap/zapcore
 # go.yaml.in/yaml/v3 v3.0.6
 ## explicit; go 1.16
 go.yaml.in/yaml/v3
+# go.yaml.in/yaml/v4 v4.0.0
+## explicit; go 1.18
+go.yaml.in/yaml/v4
+go.yaml.in/yaml/v4/internal/libyaml
+go.yaml.in/yaml/v4/internal/plugin
+go.yaml.in/yaml/v4/internal/plugin/mergekey
+go.yaml.in/yaml/v4/plugin/aliasdata
+go.yaml.in/yaml/v4/plugin/errorformat/v3
+go.yaml.in/yaml/v4/plugin/errorformat/v4
+go.yaml.in/yaml/v4/plugin/loaderlimits
+go.yaml.in/yaml/v4/plugin/mergekey
 # golang.org/x/arch v0.31.0
 ## explicit; go 1.26.0
 golang.org/x/arch/x86/x86asm

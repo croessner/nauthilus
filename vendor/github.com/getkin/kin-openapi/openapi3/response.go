@@ -107,10 +107,10 @@ type Response struct {
 	Extensions map[string]any `json:"-" yaml:"-"`
 	Origin     *Origin        `json:"-" yaml:"-"`
 
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
-	Headers     Headers `json:"headers,omitempty" yaml:"headers,omitempty"`
-	Content     Content `json:"content,omitempty" yaml:"content,omitempty"`
-	Links       Links   `json:"links,omitempty" yaml:"links,omitempty"`
+	Description *string `json:"description,omitempty,case:strict" yaml:"description,omitempty"`
+	Headers     Headers `json:"headers,omitempty,case:strict" yaml:"headers,omitempty"`
+	Content     Content `json:"content,omitempty,case:strict" yaml:"content,omitempty"`
+	Links       Links   `json:"links,omitempty,case:strict" yaml:"links,omitempty"`
 }
 
 func NewResponse() *Response {
@@ -169,10 +169,12 @@ func (response Response) MarshalYAML() (any, error) {
 func (response *Response) UnmarshalJSON(data []byte) error {
 	type ResponseBis Response
 	var x ResponseBis
-	if err := json.Unmarshal(data, &x); err != nil {
+	if err := unmarshalJSON(data, &x); err != nil {
 		return unmarshalError(err)
 	}
-	_ = json.Unmarshal(data, &x.Extensions)
+	if err := unmarshalJSON(data, &x.Extensions); err != nil {
+		return unmarshalError(err)
+	}
 	delete(x.Extensions, "description")
 	delete(x.Extensions, "headers")
 	delete(x.Extensions, "content")
@@ -191,8 +193,9 @@ func (response *Response) Validate(ctx context.Context, opts ...ValidationOption
 	if response.Description == nil {
 		return newResponseDescriptionRequired(response.Origin)
 	}
-	if vo := getValidationOptions(ctx); !vo.examplesValidationDisabled {
+	if vo := *getValidationOptions(ctx); !vo.examplesValidationDisabled {
 		vo.examplesValidationAsReq, vo.examplesValidationAsRes = false, true
+		ctx = context.WithValue(ctx, validationOptionsKey{}, &vo)
 	}
 
 	if content := response.Content; content != nil {

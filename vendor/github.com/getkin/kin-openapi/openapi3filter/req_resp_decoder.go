@@ -18,8 +18,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
-	yaml "github.com/oasdiff/yaml3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
@@ -337,6 +338,11 @@ func decodeValueGuarded(dec valueDecoder, param string, sm *openapi3.Serializati
 		return nil, found, errors.New("not implemented: decoding 'not'")
 	}
 
+	if schema.Value.Type == nil && (schema.Value.Const != nil || len(schema.Value.Enum) > 0) {
+		// Typeless const/enum schema (#1367): decode as a primitive.
+		return dec.DecodePrimitive(param, sm, schema)
+	}
+
 	if schema.Value.Type != nil {
 		var decodeFn func(param string, sm *openapi3.SerializationMethod, schema *openapi3.SchemaRef) (any, bool, error)
 		switch {
@@ -594,7 +600,7 @@ func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRe
 	var value []any
 
 	for i, v := range raw {
-		item, err := d.parseValue(v, schemaRef.Value.Items)
+		item, err := parseValue(v, schemaRef.Value.Items)
 		if err != nil {
 			if v, ok := err.(*ParseError); ok {
 				return nil, &ParseError{path: []any{i}, Cause: v}
@@ -618,12 +624,12 @@ func (d *urlValuesDecoder) parseArray(raw []string, schemaRef *openapi3.SchemaRe
 	return value, nil
 }
 
-func (d *urlValuesDecoder) parseValue(v string, schema *openapi3.SchemaRef) (any, error) {
+func parseValue(v string, schema *openapi3.SchemaRef) (any, error) {
 	if len(schema.Value.AllOf) > 0 {
 		var value any
 		var err error
 		for _, sr := range schema.Value.AllOf {
-			value, err = d.parseValue(v, sr)
+			value, err = parseValue(v, sr)
 			if value == nil || err != nil {
 				break
 			}
@@ -635,7 +641,7 @@ func (d *urlValuesDecoder) parseValue(v string, schema *openapi3.SchemaRef) (any
 		var value any
 		var err error
 		for _, sr := range schema.Value.AnyOf {
-			if value, err = d.parseValue(v, sr); err == nil {
+			if value, err = parseValue(v, sr); err == nil {
 				return value, nil
 			}
 		}
@@ -648,7 +654,7 @@ func (d *urlValuesDecoder) parseValue(v string, schema *openapi3.SchemaRef) (any
 		var value any
 		var err error
 		for _, sr := range schema.Value.OneOf {
-			result, err := d.parseValue(v, sr)
+			result, err := parseValue(v, sr)
 			if err == nil {
 				value = result
 				isMatched++
@@ -706,6 +712,24 @@ func (d *urlValuesDecoder) DecodeObject(param string, sm *openapi3.Serialization
 				return nil, nil
 			}
 			return propsFromString(values[0], ",", ",")
+		}
+	case "spaceDelimited", "pipeDelimited":
+		// Only explode=false is defined for objects: name and value
+		// pairs are joined by the delimiter, as in "color=R|100|G|200".
+		if sm.Explode {
+			return nil, false, invalidSerializationMethodErr(sm)
+		}
+		delim := " "
+		if sm.Style == "pipeDelimited" {
+			delim = "|"
+		}
+		propsFn = func(params url.Values) (map[string]string, error) {
+			values := params[param]
+			if len(values) == 0 {
+				// HTTP request does not contain a value of the target query parameter.
+				return nil, nil
+			}
+			return propsFromString(values[0], delim, delim)
 		}
 	case "deepObject":
 		// Compile the parameter-name prefix matcher once: it depends only on
@@ -805,7 +829,11 @@ func (d *headerParamDecoder) DecodeArray(param string, sm *openapi3.Serializatio
 		return nil, ok, nil
 	}
 
-	val, err := parseArray(strings.Split(raw[0], ","), schema)
+	parts := strings.Split(strings.Join(raw, ","), ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	val, err := parseArray(parts, schema)
 	return val, ok, err
 }
 
@@ -823,7 +851,7 @@ func (d *headerParamDecoder) DecodeObject(param string, sm *openapi3.Serializati
 		// HTTP request does not contain a corresponding header.
 		return nil, ok, nil
 	}
-	props, err := propsFromString(raw[0], ",", valueDelim)
+	props, err := propsFromString(strings.Join(raw, ","), ",", valueDelim)
 	if err != nil {
 		return nil, ok, err
 	}
@@ -1187,7 +1215,7 @@ func parseArray(raw []string, schemaRef *openapi3.SchemaRef) ([]any, error) {
 	}
 	var value []any
 	for i, v := range raw {
-		item, err := parsePrimitive(v, schemaRef.Value.Items)
+		item, err := parseValue(v, schemaRef.Value.Items)
 		if err != nil {
 			if v, ok := err.(*ParseError); ok {
 				return nil, &ParseError{path: []any{i}, Cause: v}
@@ -1209,33 +1237,93 @@ func parseArray(raw []string, schemaRef *openapi3.SchemaRef) ([]any, error) {
 // that is specified by a schema. The function returns nil when the source string is empty and the type is not "string".
 // The function panics when a schema has a non-primitive type.
 func parsePrimitive(raw string, schema *openapi3.SchemaRef) (v any, err error) {
-	for _, typ := range schema.Value.Type.Slice() {
-		if raw == "" && typ != "string" {
+	typs := schema.Value.Type.Slice()
+	constrainedTypeless := len(typs) == 0 && (schema.Value.Const != nil || len(schema.Value.Enum) > 0)
+	if constrainedTypeless {
+		// No type: derive the candidate types from the const/enum values (#1367).
+		typs = constraintTypes(schema)
+	}
+	for _, typ := range typs {
+		if raw == "" && typ != openapi3.TypeString {
 			return nil, nil
 		}
 		if v, err = parsePrimitiveCase(raw, schema, typ); err == nil {
 			return
 		}
 	}
+	if constrainedTypeless {
+		return raw, nil
+	}
 	return
+}
+
+// constraintTypes returns the types of the const/enum values of a schema,
+// with boolean and number before string so that "42" decodes to 42.
+// It makes a single pass over the values, then keeps the seen types only,
+// reducing the worst case from O(5 x values) hash lookups to O(values).
+func constraintTypes(schema *openapi3.SchemaRef) []string {
+	seen := make(map[string]struct{}, 5)
+	consider := func(value any) {
+		switch value.(type) {
+		case bool:
+			seen[openapi3.TypeBoolean] = struct{}{}
+		case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+			seen[openapi3.TypeNumber] = struct{}{}
+		case string:
+			seen[openapi3.TypeString] = struct{}{}
+		case []any:
+			seen[openapi3.TypeArray] = struct{}{}
+		case map[string]any:
+			seen[openapi3.TypeObject] = struct{}{}
+		}
+	}
+	for _, value := range schema.Value.Enum {
+		consider(value)
+	}
+	if schema.Value.Const != nil {
+		consider(schema.Value.Const)
+	}
+	typs := make([]string, 0, 5)
+	if _, ok := seen[openapi3.TypeBoolean]; ok {
+		typs = append(typs, openapi3.TypeBoolean)
+	}
+	if _, ok := seen[openapi3.TypeNumber]; ok {
+		typs = append(typs, openapi3.TypeNumber)
+	}
+	if _, ok := seen[openapi3.TypeString]; ok {
+		typs = append(typs, openapi3.TypeString)
+	}
+	if _, ok := seen[openapi3.TypeArray]; ok {
+		typs = append(typs, openapi3.TypeArray)
+	}
+	if _, ok := seen[openapi3.TypeObject]; ok {
+		typs = append(typs, openapi3.TypeObject)
+	}
+	return typs
 }
 
 func parsePrimitiveCase(raw string, schema *openapi3.SchemaRef, typ string) (any, error) {
 	switch typ {
 	case "integer":
 		if schema.Value.Format == "int32" {
-			v, err := strconv.ParseInt(raw, 0, 32)
+			v, err := strconv.ParseInt(raw, 10, 32)
 			if err != nil {
 				return nil, &ParseError{Kind: KindInvalidFormat, Value: raw, Reason: "an invalid " + typ, Cause: err.(*strconv.NumError).Err}
 			}
 			return int32(v), nil
 		}
-		v, err := strconv.ParseInt(raw, 0, 64)
+		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, &ParseError{Kind: KindInvalidFormat, Value: raw, Reason: "an invalid " + typ, Cause: err.(*strconv.NumError).Err}
 		}
 		return v, nil
 	case "number":
+		// strconv.ParseFloat also accepts Go float literals that are not decimal
+		// numbers: hexadecimal (0x1p4), digits separated by underscores (1_000),
+		// infinities and NaN.
+		if strings.ContainsFunc(raw, func(r rune) bool { return !strings.ContainsRune("+-.0123456789eE", r) }) {
+			return nil, &ParseError{Kind: KindInvalidFormat, Value: raw, Reason: "an invalid " + typ, Cause: strconv.ErrSyntax}
+		}
 		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
 			return nil, &ParseError{Kind: KindInvalidFormat, Value: raw, Reason: "an invalid " + typ, Cause: err.(*strconv.NumError).Err}
@@ -1261,23 +1349,27 @@ type EncodingFn func(partName string) *openapi3.Encoding
 // An implementation must return a value that is a primitive, []any, or map[string]any.
 type BodyDecoder func(io.Reader, http.Header, *openapi3.SchemaRef, EncodingFn) (any, error)
 
-// bodyDecoders contains decoders for supported content types of a body.
-// By default, there is content type "application/json" is supported only.
+var bodyDecodersLock sync.RWMutex
 var bodyDecoders = make(map[string]BodyDecoder)
 
 // RegisteredBodyDecoder returns the registered body decoder for the given content type.
 //
 // If no decoder was registered for the given content type, nil is returned.
-// This call is not thread-safe: body decoders should not be created/destroyed by multiple goroutines.
+// Content types are matched case-insensitively (RFC 9110, section 8.3.1).
 func RegisteredBodyDecoder(contentType string) BodyDecoder {
-	return bodyDecoders[contentType]
+	bodyDecodersLock.RLock()
+	decoder := bodyDecoders[strings.ToLower(contentType)]
+	bodyDecodersLock.RUnlock()
+	return decoder
 }
 
 // RegisterBodyDecoder registers a request body's decoder for a content type.
 //
 // If a decoder for the specified content type already exists, the function replaces
 // it with the specified decoder.
-// This call is not thread-safe: body decoders should not be created/destroyed by multiple goroutines.
+// A "+json" media type (RFC 6839) falls back to the "application/json" decoder.
+// A decoder registered for "*/*" is used if none match.
+// Content types are matched case-insensitively (RFC 9110, section 8.3.1).
 func RegisterBodyDecoder(contentType string, decoder BodyDecoder) {
 	if contentType == "" {
 		panic("contentType is empty")
@@ -1285,18 +1377,21 @@ func RegisterBodyDecoder(contentType string, decoder BodyDecoder) {
 	if decoder == nil {
 		panic("decoder is not defined")
 	}
-	bodyDecoders[contentType] = decoder
+	bodyDecodersLock.Lock()
+	bodyDecoders[strings.ToLower(contentType)] = decoder
+	bodyDecodersLock.Unlock()
 }
 
 // UnregisterBodyDecoder dissociates a body decoder from a content type.
 //
 // Decoding this content type will result in an error.
-// This call is not thread-safe: body decoders should not be created/destroyed by multiple goroutines.
 func UnregisterBodyDecoder(contentType string) {
 	if contentType == "" {
 		panic("contentType is empty")
 	}
-	delete(bodyDecoders, contentType)
+	bodyDecodersLock.Lock()
+	delete(bodyDecoders, strings.ToLower(contentType))
+	bodyDecodersLock.Unlock()
 }
 
 var headerCT = http.CanonicalHeaderKey("Content-Type")
@@ -1313,60 +1408,18 @@ func isBinary(schema *openapi3.SchemaRef) bool {
 	return schema.Value.Type.Is("string") && schema.Value.Format == "binary"
 }
 
-func getEncodingContentType(encFn EncodingFn) string {
-	var enc *openapi3.Encoding
-	if encFn != nil {
-		// encFn is passed to decodeBody only in form body decoders as a subEncFn, so key can be ""
-		// func(string) *openapi3.Encoding { return enc }
-		enc = encFn("")
+func getEncoding(encFn EncodingFn) *openapi3.Encoding {
+	if encFn == nil {
+		return nil
 	}
-	if enc == nil {
-		return ""
-	}
-
-	return enc.ContentType
-}
-
-// contentTypeAllowedByEncoding reports whether mediaType satisfies the
-// encoding.contentType, which per OAS 3.0 may be a single media type, a wildcard
-// (e.g. image/*), or a comma-separated list of those. mediaType must be a base
-// type; parameters on encoding entries (e.g. "; charset=utf-8") are ignored.
-func contentTypeAllowedByEncoding(mediaType, encodingContentType string) bool {
-	for raw := range strings.SplitSeq(encodingContentType, ",") {
-		want := strings.TrimSpace(raw)
-		if want == "" {
-			continue
-		}
-		if base, _, err := mime.ParseMediaType(want); err == nil {
-			want = base
-		}
-		if mediaTypeMatches(mediaType, want) {
-			return true
-		}
-	}
-	return false
-}
-
-// mediaTypeMatches reports whether got matches want (exact, type/* or */* wildcard,
-// case-insensitive). Both must be base media types without parameters.
-func mediaTypeMatches(got, want string) bool {
-	if want == "*/*" || strings.EqualFold(want, got) {
-		return true
-	}
-	if prefix, ok := strings.CutSuffix(want, "/*"); ok {
-		gotType, _, found := strings.Cut(got, "/")
-		return found && strings.EqualFold(gotType, prefix)
-	}
-	return false
+	// encFn is passed to decodeBody only in form body decoders as a subEncFn, so key can be ""
+	// func(string) *openapi3.Encoding { return enc }
+	return encFn("")
 }
 
 // decodeBody returns a decoded body.
 // The function returns ParseError when a body is invalid.
-func decodeBody(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn EncodingFn) (
-	string,
-	any,
-	error,
-) {
+func decodeBody(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn EncodingFn) (string, any, error) {
 	contentType := header.Get(headerCT)
 	if contentType == "" {
 		if _, ok := body.(*multipart.Part); ok {
@@ -1374,32 +1427,40 @@ func decodeBody(body io.Reader, header http.Header, schema *openapi3.SchemaRef, 
 		}
 	}
 
-	mediaType := parseMediaType(contentType)
-	encodingContentType := getEncodingContentType(encFn)
-	if isBinary(schema) && encodingContentType == "" {
+	// Ignore parameters on encoding entries (e.g. "; charset=utf-8")
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.TrimSpace(mediaType)
+
+	// Media types are case-insensitive (RFC 9110, section 8.3.1).
+	mediaType = strings.ToLower(mediaType)
+	enc := getEncoding(encFn)
+
+	if isBinary(schema) && (enc == nil || enc.ContentType == "") {
 		value, err := FileBodyDecoder(body, header, schema, encFn)
 		return mediaType, value, err
 	}
 
-	if encodingContentType != "" &&
-		!contentTypeAllowedByEncoding(mediaType, encodingContentType) {
+	if !enc.AllowsContentType(mediaType) {
 		return "", nil, &ParseError{
-			Kind: KindOther,
-			Reason: fmt.Sprintf(
-				"%s: header %q, encoding %q",
-				prefixNotMatchingCT,
-				mediaType,
-				encodingContentType,
-			),
+			Kind:   KindOther,
+			Reason: fmt.Sprintf("%s: header %q, encoding %q", prefixNotMatchingCT, mediaType, enc.ContentType),
 		}
 	}
 
-	decoder, ok := bodyDecoders[mediaType]
-	if !ok {
+	decoder := RegisteredBodyDecoder(mediaType)
+	// A binary part is raw bytes: do not decode it as JSON.
+	if decoder == nil && strings.HasSuffix(mediaType, "+json") && !isBinary(schema) {
+		decoder = RegisteredBodyDecoder("application/json")
+	}
+	if decoder == nil {
+		decoder = RegisteredBodyDecoder("*/*") // fall back to catch-all, if any
+	}
+	if decoder == nil {
 		// A binary part with no registered decoder (e.g. image/png) is read as
 		// raw bytes: encoding.contentType restricts the accepted media types but
 		// does not require a registered decoder.
-		if isBinary(schema) {
+		// OpenAPI 3.1 describes such data with contentMediaType instead.
+		if isBinary(schema) || (schema != nil && schema.Value != nil && schema.Value.ContentMediaType != "") {
 			value, err := FileBodyDecoder(body, header, schema, encFn)
 			return mediaType, value, err
 		}
@@ -1443,10 +1504,8 @@ func PlainBodyDecoder(body io.Reader, header http.Header, schema *openapi3.Schem
 // JSONBodyDecoder decodes a JSON formatted body. It is public so that is easy
 // to register additional JSON based formats.
 func JSONBodyDecoder(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn EncodingFn) (any, error) {
-	var value any
-	dec := json.NewDecoder(body)
-	dec.UseNumber()
-	if err := dec.Decode(&value); err != nil {
+	value, err := decodeJSON(body)
+	if err != nil {
 		return nil, &ParseError{Kind: KindInvalidFormat, Cause: err}
 	}
 	return value, nil
@@ -1457,14 +1516,81 @@ func YamlBodyDecoder(body io.Reader, header http.Header, schema *openapi3.Schema
 	if err := yaml.NewDecoder(body).Decode(&value); err != nil {
 		return nil, &ParseError{Kind: KindInvalidFormat, Cause: err}
 	}
+	value, err := yamlToJSONValue(value)
+	if err != nil {
+		return nil, &ParseError{Kind: KindInvalidFormat, Cause: err}
+	}
 	return value, nil
+}
+
+// yamlToJSONValue turns the mappings YAML decodes with keys other than
+// strings, such as "1: a" or "? : a", into the map[string]any a BodyDecoder
+// returns. A scalar key is written the way JSON would write it, and a mapping
+// or sequence as a key is refused: no JSON object can hold it.
+func yamlToJSONValue(value any) (any, error) {
+	switch v := value.(type) {
+	case map[string]any:
+		for k, e := range v {
+			e, err := yamlToJSONValue(e)
+			if err != nil {
+				return nil, err
+			}
+			v[k] = e
+		}
+	case map[any]any:
+		m := make(map[string]any, len(v))
+		for k, e := range v {
+			var key string
+			switch k := k.(type) {
+			case nil:
+				key = "null"
+			case string:
+				key = k
+			case bool, int, int64, uint64, float64:
+				key = fmt.Sprint(k)
+			default:
+				return nil, fmt.Errorf("unsupported mapping key of type %T", k)
+			}
+			if _, ok := m[key]; ok {
+				return nil, fmt.Errorf("duplicate mapping key %q", key)
+			}
+			e, err := yamlToJSONValue(e)
+			if err != nil {
+				return nil, err
+			}
+			m[key] = e
+		}
+		return m, nil
+	case []any:
+		for i, e := range v {
+			e, err := yamlToJSONValue(e)
+			if err != nil {
+				return nil, err
+			}
+			v[i] = e
+		}
+	}
+	return value, nil
+}
+
+// urlencodedObjectEncoded reports whether the encoding of an object property
+// of a urlencoded body keeps the object's properties apart from the rest of
+// the form: deepObject ("d[k]=v") or form without explode ("d=k,v").
+// The default, form with explode, would spread them over the whole form.
+func urlencodedObjectEncoded(encFn EncodingFn, propName string) bool {
+	if encFn == nil {
+		return false
+	}
+	sm := encFn(propName).SerializationMethod()
+	return sm.Style == openapi3.SerializationDeepObject ||
+		(sm.Style == openapi3.SerializationForm && !sm.Explode)
 }
 
 func UrlencodedBodyDecoder(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn EncodingFn) (any, error) {
 	// Validate schema of request body.
 	// By the OpenAPI 3 specification request body's schema must have type "object".
 	// Properties of the schema describes individual parts of request body.
-	if !schema.Value.Type.Is("object") {
+	if schema == nil || schema.Value == nil || !schema.Value.Type.Is("object") {
 		return nil, errors.New("unsupported schema of request body")
 	}
 	propNames := make([]string, 0, len(schema.Value.Properties))
@@ -1477,7 +1603,9 @@ func UrlencodedBodyDecoder(body io.Reader, header http.Header, schema *openapi3.
 		propType := propSchema.Value.Type
 		switch {
 		case propType.Is("object"):
-			return nil, fmt.Errorf("unsupported schema of request body's property %q", propName)
+			if !urlencodedObjectEncoded(encFn, propName) {
+				return nil, fmt.Errorf("unsupported schema of request body's property %q", propName)
+			}
 		case propType.Is("array"):
 			if propSchema.Value.Items == nil || propSchema.Value.Items.Value == nil {
 				return nil, fmt.Errorf("unsupported schema of request body's property %q: array items required", propName)
@@ -1502,9 +1630,18 @@ func UrlencodedBodyDecoder(body io.Reader, header http.Header, schema *openapi3.
 	// Make an object value from form values.
 	obj := make(map[string]any)
 	dec := &urlValuesDecoder{values: values}
+	parseErrs := make(map[string]*ParseError)
 
-	if err := decodeSchemaConstructs(dec, []*openapi3.SchemaRef{schema}, obj, encFn); err != nil {
+	if err := decodeSchemaConstructs(dec, []*openapi3.SchemaRef{schema}, obj, parseErrs, encFn); err != nil {
 		return nil, err
+	}
+
+	// Report values that no schema declaring the property could parse,
+	// instead of dropping them from the body to be validated.
+	for _, name := range slices.Sorted(maps.Keys(parseErrs)) {
+		if _, ok := obj[name]; !ok {
+			return nil, &ParseError{path: []any{name}, Cause: parseErrs[name]}
+		}
 	}
 
 	return obj, nil
@@ -1512,17 +1649,17 @@ func UrlencodedBodyDecoder(body io.Reader, header http.Header, schema *openapi3.
 
 // decodeSchemaConstructs tries to decode properties based on provided schemas.
 // This function is for decoding purposes only and not for validation.
-func decodeSchemaConstructs(dec *urlValuesDecoder, schemas []*openapi3.SchemaRef, obj map[string]any, encFn EncodingFn) error {
+func decodeSchemaConstructs(dec *urlValuesDecoder, schemas []*openapi3.SchemaRef, obj map[string]any, parseErrs map[string]*ParseError, encFn EncodingFn) error {
 	for _, schemaRef := range schemas {
 
 		// Decode schema constructs (allOf, anyOf, oneOf)
-		if err := decodeSchemaConstructs(dec, schemaRef.Value.AllOf, obj, encFn); err != nil {
+		if err := decodeSchemaConstructs(dec, schemaRef.Value.AllOf, obj, parseErrs, encFn); err != nil {
 			return err
 		}
-		if err := decodeSchemaConstructs(dec, schemaRef.Value.AnyOf, obj, encFn); err != nil {
+		if err := decodeSchemaConstructs(dec, schemaRef.Value.AnyOf, obj, parseErrs, encFn); err != nil {
 			return err
 		}
-		if err := decodeSchemaConstructs(dec, schemaRef.Value.OneOf, obj, encFn); err != nil {
+		if err := decodeSchemaConstructs(dec, schemaRef.Value.OneOf, obj, parseErrs, encFn); err != nil {
 			return err
 		}
 
@@ -1534,7 +1671,13 @@ func decodeSchemaConstructs(dec *urlValuesDecoder, schemas []*openapi3.SchemaRef
 		for _, name := range propNames {
 			prop := schemaRef.Value.Properties[name]
 			value, present, err := decodeProperty(dec, name, prop, encFn)
-			if err != nil || !present {
+			if err != nil {
+				if v, ok := err.(*ParseError); ok && parseErrs[name] == nil {
+					parseErrs[name] = v
+				}
+				continue
+			}
+			if !present {
 				continue
 			}
 			if existingValue, exists := obj[name]; exists && !isEqual(existingValue, value) {
@@ -1561,7 +1704,7 @@ func decodeProperty(dec valueDecoder, name string, prop *openapi3.SchemaRef, enc
 }
 
 func MultipartBodyDecoder(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn EncodingFn) (any, error) {
-	if !schema.Value.Type.Is("object") {
+	if schema == nil || schema.Value == nil || !schema.Value.Type.Is("object") {
 		return nil, errors.New("unsupported schema of request body")
 	}
 
@@ -1688,6 +1831,15 @@ func MultipartBodyDecoder(body io.Reader, header http.Header, schema *openapi3.S
 
 // FileBodyDecoder is a body decoder that decodes a file body to a string.
 func FileBodyDecoder(body io.Reader, header http.Header, schema *openapi3.SchemaRef, encFn EncodingFn) (any, error) {
+	if reader, ok := body.(*bytes.Reader); ok && reader.Len() > 0 {
+		// Request validation has already buffered the body. Copy it directly to
+		// string storage instead of allocating another intermediate byte slice.
+		var data strings.Builder
+		if _, err := reader.WriteTo(&data); err != nil {
+			return nil, err
+		}
+		return data.String(), nil
+	}
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return nil, err
