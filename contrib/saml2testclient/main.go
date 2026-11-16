@@ -298,7 +298,12 @@ func buildLogoutInitiation(
 		return nil, fmt.Errorf("service provider is not initialized")
 	}
 
-	logoutRequest, err := newLogoutRequest(serviceProvider, binding, nameID, sessionIndex, signRequest)
+	signingServiceProvider, err := cloneServiceProviderForSigning(serviceProvider, signRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	logoutRequest, err := newLogoutRequest(signingServiceProvider, binding, nameID, sessionIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -307,15 +312,11 @@ func buildLogoutInitiation(
 
 	switch binding {
 	case saml.HTTPRedirectBinding:
-		if signRequest {
-			redirectURL, err := buildSignedRedirectLogoutRequestURL(logoutRequest, relayState, serviceProvider)
-			if err != nil {
-				return nil, err
-			}
-
-			initiation.RedirectURL = redirectURL
-		} else {
-			initiation.RedirectURL = logoutRequest.Redirect(relayState)
+		// RedirectLogoutRequestURL drops any enveloped XML signature and adds the SigAlg/Signature query
+		// parameters when the signer has a SignatureMethod (saml-bindings-2.0-os §3.4.4.1).
+		initiation.RedirectURL, err = signingServiceProvider.RedirectLogoutRequestURL(logoutRequest, relayState)
+		if err != nil {
+			return nil, err
 		}
 	case saml.HTTPPostBinding:
 		initiation.PostBody = logoutRequest.Post(relayState)
@@ -326,85 +327,15 @@ func buildLogoutInitiation(
 	return initiation, nil
 }
 
-func newLogoutRequest(
-	serviceProvider *saml.ServiceProvider,
-	binding, nameID, sessionIndex string,
-	signRequest bool,
-) (*saml.LogoutRequest, error) {
-	logoutDestination := strings.TrimSpace(serviceProvider.GetSLOBindingLocation(binding))
+// newLogoutRequest builds a LogoutRequest for the IDP SingleLogoutService of the binding.
+// The SessionIndex is set before signing so that an enveloped POST signature covers it.
+func newLogoutRequest(signingServiceProvider *saml.ServiceProvider, binding, nameID, sessionIndex string) (*saml.LogoutRequest, error) {
+	logoutDestination := strings.TrimSpace(signingServiceProvider.GetSLOBindingLocation(binding))
 	if logoutDestination == "" {
 		return nil, fmt.Errorf("missing IDP SingleLogoutService for binding %q", binding)
 	}
 
-	signingServiceProvider, err := cloneServiceProviderForSigning(serviceProvider, signRequest)
-	if err != nil {
-		return nil, err
-	}
-
-	logoutRequest, err := signingServiceProvider.MakeLogoutRequest(logoutDestination, nameID)
-	if err != nil {
-		return nil, err
-	}
-
-	if sessionIndex != "" {
-		logoutRequest.SessionIndex = &saml.SessionIndex{Value: sessionIndex}
-	}
-
-	// Redirect binding signatures are transported via the query string, not embedded XML.
-	if binding == saml.HTTPRedirectBinding {
-		logoutRequest.Signature = nil
-	}
-
-	return logoutRequest, nil
-}
-
-func buildSignedRedirectLogoutRequestURL(
-	logoutRequest *saml.LogoutRequest,
-	relayState string,
-	serviceProvider *saml.ServiceProvider,
-) (*url.URL, error) {
-	if logoutRequest == nil {
-		return nil, fmt.Errorf("logout request is missing")
-	}
-
-	signingServiceProvider, err := cloneServiceProviderForSigning(serviceProvider, true)
-	if err != nil {
-		return nil, err
-	}
-
-	deflated, err := logoutRequest.Deflate()
-	if err != nil {
-		return nil, err
-	}
-
-	rawSAMLRequest := url.QueryEscape(base64.StdEncoding.EncodeToString(deflated))
-	rawSigAlg := url.QueryEscape(signingServiceProvider.SignatureMethod)
-
-	signedContent := "SAMLRequest=" + rawSAMLRequest
-	if relayState != "" {
-		signedContent += "&RelayState=" + url.QueryEscape(relayState)
-	}
-
-	signedContent += "&SigAlg=" + rawSigAlg
-
-	signingContext, err := saml.GetSigningContext(signingServiceProvider)
-	if err != nil {
-		return nil, err
-	}
-
-	signature, err := signingContext.SignString(signedContent)
-	if err != nil {
-		return nil, err
-	}
-
-	redirectURL, err := url.Parse(logoutRequest.Destination)
-	if err != nil {
-		return nil, err
-	}
-
-	redirectURL.RawQuery = signedContent + "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(signature))
-
-	return redirectURL, nil
+	return signingServiceProvider.MakeLogoutRequest(logoutDestination, nameID, saml.WithSessionIndex(sessionIndex))
 }
 
 func cloneServiceProviderForSigning(serviceProvider *saml.ServiceProvider, signMessages bool) (*saml.ServiceProvider, error) {
@@ -506,21 +437,6 @@ func parseIncomingSLOValues(values url.Values, binding string) (*incomingSLOMess
 	}
 }
 
-func decodeIncomingLogoutRequest(binding, payload string) (*saml.LogoutRequest, error) {
-	xmlPayload, err := decodeIncomingSLOPayload(binding, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var logoutRequest saml.LogoutRequest
-
-	if err = xml.Unmarshal(xmlPayload, &logoutRequest); err != nil {
-		return nil, fmt.Errorf("cannot parse LogoutRequest XML: %w", err)
-	}
-
-	return &logoutRequest, nil
-}
-
 func decodeIncomingLogoutResponse(binding, payload string) ([]byte, *saml.LogoutResponse, error) {
 	xmlPayload, err := decodeIncomingSLOPayload(binding, payload)
 	if err != nil {
@@ -571,10 +487,6 @@ func decodeIncomingSLOPayload(binding, payload string) ([]byte, error) {
 	return xmlPayload, nil
 }
 
-func xmlPayloadHasSignature(document []byte) bool {
-	return bytes.Contains(document, []byte("<ds:Signature")) || bytes.Contains(document, []byte(":Signature"))
-}
-
 func validateIncomingLogoutResponse(
 	serviceProvider *saml.ServiceProvider,
 	r *http.Request,
@@ -584,15 +496,16 @@ func validateIncomingLogoutResponse(
 		return fmt.Errorf("service provider is not initialized")
 	}
 
-	responseXML, logoutResponse, err := decodeIncomingLogoutResponse(message.Binding, message.Payload)
+	_, logoutResponse, err := decodeIncomingLogoutResponse(message.Binding, message.Payload)
 	if err != nil {
 		return err
 	}
 
-	if xmlPayloadHasSignature(responseXML) {
-		if err = serviceProvider.ValidateLogoutResponseRequest(r); err != nil {
-			return err
-		}
+	// Nauthilus signs every LogoutResponse, so the signature is always verified: a query-string signature for
+	// HTTP-Redirect or an enveloped XML signature for HTTP-POST. The test client does not persist the IDs of the
+	// LogoutRequests it sends, so InResponseTo is only required to be present, not matched against a sent request.
+	if _, err = serviceProvider.ParseLogoutResponse(r, []string{logoutResponse.InResponseTo}); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(logoutResponse.Destination) != serviceProvider.SloURL.String() {
@@ -948,7 +861,9 @@ func handleIncomingLogoutResponse(w http.ResponseWriter, r *http.Request, samlSP
 
 // handleIncomingLogoutRequest responds to an incoming SLO request.
 func handleIncomingLogoutRequest(w http.ResponseWriter, r *http.Request, samlSP *samlsp.Middleware, message *incomingSLOMessage) {
-	logoutRequest, err := decodeIncomingLogoutRequest(message.Binding, message.Payload)
+	// Verify the IdP signature (query-string for HTTP-Redirect, enveloped XML for HTTP-POST), issuer and
+	// destination before answering, so the end-to-end run proves that SLO fan-out requests are signed.
+	logoutRequest, err := samlSP.ServiceProvider.ValidateLogoutRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 
