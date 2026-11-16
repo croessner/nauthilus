@@ -632,16 +632,15 @@ func (w *generationExecutableWork) Execute(ctx context.Context) effectsupervisor
 	return w.work.Execute(ctx)
 }
 
-// Cleanup releases provider work and its retained generation exactly once.
+// Cleanup releases provider work and its retained generation exactly once. It runs on an effect supervisor worker,
+// so the generation lease is released detached: a final retirement must not dispose the supervisor on its own worker.
 func (w *generationExecutableWork) Cleanup() {
 	if w == nil {
 		return
 	}
 
 	w.once.Do(func() {
-		defer func() {
-			_ = w.lease.release()
-		}()
+		defer w.lease.releaseDetached()
 
 		w.work.Cleanup()
 	})

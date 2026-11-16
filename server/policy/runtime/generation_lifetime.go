@@ -116,17 +116,48 @@ func (l *generationLease) release() error {
 	return l.err
 }
 
+// releaseDetached releases the lease like release, but runs a final retirement it triggers on its own goroutine.
+// Post-action cleanup runs on an effect supervisor worker, and the final retirement disposes that supervisor, which
+// waits for all of its workers; retiring on the releasing worker would make the supervisor wait for itself.
+func (l *generationLease) releaseDetached() {
+	if l == nil {
+		return
+	}
+
+	l.once.Do(func() {
+		shouldClose, retireCtx, err := l.lifetime.dropUse()
+		l.err = err
+
+		if shouldClose {
+			go func() {
+				_ = l.lifetime.close(retireCtx)
+			}()
+		}
+	})
+}
+
 // releaseUse drops one lifetime count and performs final retirement when required.
 func (l *generationLifetime) releaseUse() error {
+	shouldClose, retireCtx, err := l.dropUse()
+	if err != nil || !shouldClose {
+		return err
+	}
+
+	return l.close(retireCtx)
+}
+
+// dropUse drops one lifetime count and claims the final retirement when this was the last user of a retiring
+// generation; the caller then owns closing it with the returned context.
+func (l *generationLifetime) dropUse() (bool, context.Context, error) {
 	if l == nil {
-		return nil
+		return false, nil, nil
 	}
 
 	l.mu.Lock()
-	if l.users == 0 {
-		l.mu.Unlock()
+	defer l.mu.Unlock()
 
-		return fmt.Errorf("%w: generation %d lease underflow", ErrInvalidGeneration, l.id)
+	if l.users == 0 {
+		return false, nil, fmt.Errorf("%w: generation %d lease underflow", ErrInvalidGeneration, l.id)
 	}
 
 	l.users--
@@ -136,14 +167,7 @@ func (l *generationLifetime) releaseUse() error {
 		l.closeClaimed = true
 	}
 
-	retireCtx := l.retireCtx
-	l.mu.Unlock()
-
-	if !shouldClose {
-		return nil
-	}
-
-	return l.close(retireCtx)
+	return shouldClose, l.retireCtx, nil
 }
 
 // retire prevents new captures and closes resources once the last user releases them.

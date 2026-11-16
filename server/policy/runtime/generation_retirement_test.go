@@ -570,54 +570,15 @@ func TestGenerationDiscardCannotCloseResourcesDuringValidation(t *testing.T) {
 // TestGenerationPostActionLeaseKeepsRetiredResourcesUsable proves detached-effect ownership.
 func TestGenerationPostActionLeaseKeepsRetiredResourcesUsable(t *testing.T) {
 	resource := &countingCandidateResource{}
-	resources := &candidateResourceOwnership{}
-	resources.add(resource)
-
-	lifetime := newGenerationLifetime(1, resources, nil)
-	requestLease := lifetime.acquireCapture()
-
-	if requestLease == nil {
-		t.Fatal("initial generation capture was rejected")
-	}
-
 	work := &testGenerationExecutableWork{}
-
-	bindings, err := NewBindingSet(BindingSetInput{
-		PostActions: map[string]PostActionProvider{
-			"test/post_action": &testGenerationPostActionProvider{work: work},
-		},
-		PostActionAcceptance: &rejectingTestAcceptor{},
-	})
-	if err != nil {
-		t.Fatalf("NewBindingSet() error = %v", err)
-	}
-
-	captured := bindings.withGenerationLifetime(lifetime)
-
-	prepared, err := captured.PostActions()["test/post_action"].Prepare(context.Background(), EffectExecution{})
-	if err != nil {
-		t.Fatalf("Prepare() error = %v", err)
-	}
-
-	if err = lifetime.retire(context.Background()); err != nil {
-		t.Fatalf("retire() error = %v", err)
-	}
-
-	if err = requestLease.release(); err != nil {
-		t.Fatalf("request release error = %v", err)
-	}
+	executable := prepareRetiredGenerationPostAction(t, work, resource)
 
 	assertResourceDisposals(t, []*countingCandidateResource{resource}, 0)
 
-	executable, ok := prepared.(effectsupervisor.ExecutableWork)
-	if !ok {
-		t.Fatal("prepared work does not retain executable cleanup ownership")
-	}
-
 	executable.Cleanup()
 	executable.Cleanup()
 
-	assertResourceDisposals(t, []*countingCandidateResource{resource}, 1)
+	waitResourceDisposals(t, resource, 1)
 
 	if got := work.cleanups.Load(); got != 1 {
 		t.Fatalf("underlying work cleanup count = %d, want 1", got)
@@ -684,7 +645,7 @@ func TestGenerationPostActionPreparationLeaseSurvivesRequestCancellation(t *test
 	}
 
 	executable.Cleanup()
-	assertResourceDisposals(t, []*countingCandidateResource{resource}, 1)
+	waitResourceDisposals(t, resource, 1)
 }
 
 // TestGenerationFactProviderCallLeaseSurvivesCheckpointCancellation proves pre-spawn capture.
@@ -951,6 +912,72 @@ func assertResourceDisposals(t *testing.T, resources []*countingCandidateResourc
 		if got := resource.disposals.Load(); got != want {
 			t.Fatalf("resource %d disposal count = %d, want %d", index, got, want)
 		}
+	}
+}
+
+// prepareRetiredGenerationPostAction prepares one post action of a generation that is retired afterwards, so the
+// prepared work holds the last lease and its cleanup triggers the final retirement.
+func prepareRetiredGenerationPostAction(
+	t *testing.T,
+	work *testGenerationExecutableWork,
+	resource CandidateResource,
+) effectsupervisor.ExecutableWork {
+	t.Helper()
+
+	resources := &candidateResourceOwnership{}
+	resources.add(resource)
+
+	lifetime := newGenerationLifetime(1, resources, nil)
+
+	requestLease := lifetime.acquireCapture()
+	if requestLease == nil {
+		t.Fatal("initial generation capture was rejected")
+	}
+
+	bindings, err := NewBindingSet(BindingSetInput{
+		PostActions: map[string]PostActionProvider{
+			"test/post_action": &testGenerationPostActionProvider{work: work},
+		},
+		PostActionAcceptance: &rejectingTestAcceptor{},
+	})
+	if err != nil {
+		t.Fatalf("NewBindingSet() error = %v", err)
+	}
+
+	prepared, err := bindings.withGenerationLifetime(lifetime).PostActions()["test/post_action"].Prepare(
+		context.Background(), EffectExecution{},
+	)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	if err = lifetime.retire(context.Background()); err != nil {
+		t.Fatalf("retire() error = %v", err)
+	}
+
+	if err = requestLease.release(); err != nil {
+		t.Fatalf("request release error = %v", err)
+	}
+
+	executable, ok := prepared.(effectsupervisor.ExecutableWork)
+	if !ok {
+		t.Fatal("prepared work does not retain executable cleanup ownership")
+	}
+
+	return executable
+}
+
+// waitResourceDisposals waits for a retirement that runs off the releasing goroutine.
+func waitResourceDisposals(t *testing.T, resource *countingCandidateResource, want int64) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for resource.disposals.Load() != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("resource disposal count = %d, want %d", resource.disposals.Load(), want)
+		}
+
+		time.Sleep(time.Millisecond)
 	}
 }
 
