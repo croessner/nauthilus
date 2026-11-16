@@ -154,6 +154,8 @@ through normal brute-force enforcement.
     * `brute_force.rwp_allowed_unique_hashes`: The maximum number of remembered wrong password hashes within the
       window (default: 3).
     * `brute_force.rwp_window`: The sliding window duration (default: 15 minutes).
+    * `brute_force.affected_accounts.retention` (default: 24h) and `brute_force.affected_accounts.cleanup_enabled`
+      (default: true) control the affected-account lifecycle, see [8.1](#81-affected-account-lifecycle).
 * **Logic:** Uses two Lua scripts: `RWPSlidingWindowCheck` (check) and `RWPSlidingWindowCommit` (commit). The check
   never records the password hash, but it trims expired window entries with `ZREMRANGEBYSCORE` and therefore runs on
   the write handle.
@@ -205,9 +207,9 @@ because a pipeline only reports its first error.
   `bf_update_loop_total` function-duration task observes this batch write once per failed login; it used to observe
   every rule iteration.
 * **Blocked requests:** the matched rule's counter is reused from the same request's bucket evaluation instead of
-  running `SlidingWindowCounter` again. The affected account is written with one `SADD` + `ZADD NX` pipeline
-  (`pipeline_affected_account`) without a membership read; `ZADD NX` keeps the first-seen timestamp of an indexed
-  account. The failed password hash is stored in the account-scoped and the IP-scoped history set with one
+  running `SlidingWindowCounter` again. The affected account is written with one `ZADD GT` + `SADD` + `ZADD NX`
+  pipeline (`pipeline_affected_account`) without a membership read: `ZADD GT` moves the retention deadline forward
+  (see [8.1](#81-affected-account-lifecycle)) and `ZADD NX` keeps the first-seen timestamp of an indexed account. The failed password hash is stored in the account-scoped and the IP-scoped history set with one
   `AddToSetAndExpireLimit` pipeline (`pipeline_pw_hist_save`). The burst gate stays a separate round trip because
   only the burst leader records the hash. The `SISMEMBER` before learning a `pw_hist_ips` entry also stays: it
   decides whether the set TTL is refreshed.
@@ -221,7 +223,8 @@ because a pipeline only reports its first error.
 | `pipeline_preauth_check` | RWP check, candidate ban keys and reputation before authentication |
 | `pipeline_eval_bucket_counter` | Read-side `SlidingWindowCounter` evaluation of all matched buckets |
 | `pipeline_eval_bucket_counter_save` | Counter increments of a counted failed login |
-| `pipeline_affected_account` | `SADD` + `ZADD NX` of the affected account on the blocked path |
+| `pipeline_affected_account` | `ZADD GT` + `SADD` + `ZADD NX` of the affected account (failed login or blocked request) |
+| `pipeline_affected_account_history` | Management listing: one pipeline execution per bounded batch of `SMEMBERS pw_hist_ips:*` (≤ 256 accounts; a cluster fans it out to one round trip per owning node) |
 | `pipeline_pw_hist_save` | `AddToSetAndExpireLimit` into the account and IP history sets |
 | `pipeline_exists_ban_preresult` | Fallback ban-key read of the repeating check without prefetch |
 | `pipeline_exists_ban_policy_facts` | Fallback ban-key read of the policy facts without prefetch |
@@ -288,7 +291,10 @@ All keys are prefixed with the configured Redis prefix.
 | `bf:tr:{ip}`                          | Hash   | Reputation data (`positive` and `negative` counters).                                                             |
 | `bf:tr:{ip}:P`                        | ZSet   | Time-series of positive authentication events.                                                                    |
 | `bf:tr:{ip}:N`                        | ZSet   | Time-series of negative authentication events.                                                                    |
-| `affected_accounts`                   | Set    | List of accounts affected by brute-force triggers. **No TTL** — cleared only via Flush API or admin intervention. |
+| `affected_accounts`                   | Set    | Accounts with a counted failed login or a blocked request. No key TTL; members age out per account (8.1). |
+| `affected_accounts:index`             | ZSet   | Same members, score = first-seen Unix timestamp; used for paged listings.                                         |
+| `<prefix>{<prefix>affected_accounts}:retention` | ZSet | Same slot as the set (hash tag = full set key). Score = retain-until Unix timestamp per account. |
+| `<prefix>{<prefix>affected_accounts}:maintenance` | Hash | Same slot as the set. Maintenance heartbeat (TTL 10 min) and scan cursors; `...:maintenance:lease` is the tick lease (45 s). |
 | `pw_hist:{account}:{ip}`              | Set    | Failed password hashes for a specific account and IP.                                                             |
 | `pw_hist_ips:{account}`               | Set    | List of IPs that have attempted logins for an account (used for cache flush).                                     |
 
@@ -327,12 +333,66 @@ brute_force:
    then pipelines `GET` + `TTL` on each ban key to build the response with `network`, `bucket`, `ban_time`, `ttl`,
    and `banned_at`.
 
+### 8.1 Affected-Account Lifecycle
+
+`affected_accounts` and its index are management metadata: they list accounts that had a counted failed login or a
+blocked/triggered request (`updateAffectedAccount` from `ProcessPWHist` and `processTriggeredBruteForce`). RWP-only
+failures write the password-history IPs but do not mark an account as affected. No authentication, ban, counter,
+RWP, reputation, or toleration decision reads these keys, so aging them out does not change the protection.
+
+Earlier releases kept every member until an explicit user flush ("intentionally no TTL … preserves the signal path").
+That intent is **retracted**: the set grew without bound. An account is now listed while it had activity within the
+retention R or while it still has a `pw_hist_ips` history:
+
+* **R** = max(`auth.controls.brute_force.affected_accounts.retention` (default 24h), `negative_cache_ttl`,
+  `rwp_window`, max(`ban_time`) + 2 × max(`period`), `tolerate_ttl`, max(custom `tolerate_ttl`)). R is a visibility
+  policy. Bans, counters, and toleration are IP/network keyed and cannot be mapped back to an account once the IP
+  history is gone, so they are not checked per account; the cleanup never touches them.
+* **Writer:** every counted or blocked request writes `ZADD GT retention now+R` before `SADD`, independent of
+  `cleanup_enabled`, so enabling cleanup later never sees stale deadlines.
+* **Maintenance** (`AffectedAccountsMaintenanceService`, every minute, one instance per tick via a best-effort 45 s
+  lease, never in the authentication path), each step bounded by 256 members. Every Redis call has the configured
+  write timeout and is counted in `redis_read_total`/`redis_write_total`; all reads go to the primary. The steps run
+  independently, so a failing step does not block the others, and the heartbeat is refreshed before any step:
+  1. *Remove:* due deadlines (`ZRANGE … BYSCORE LIMIT 0 256`). The history TTL is read from the primary. Accounts
+     with history get the deadline moved to the end of that history (`ZADD XX GT`); the others are removed by a
+     Lua script that atomically re-checks the deadline and removes the member from the set and the retention ZSET
+     (same slot). A concurrent writer's `ZADD GT` therefore always wins. The index entry is removed afterwards, and
+     restored at once for a member that a writer re-added in between.
+  2. *Adopt and backfill:* `SSCAN` of the set; a Lua script gives members without a deadline `now+R` only while they
+     are still in the set (a concurrent flush is never undone); missing index entries are added with the repair time
+     as score (existing first-seen scores are never changed) and re-checked for orphans.
+  3. *Index repair:* `ZSCAN` of the index and `SMISMEMBER` against the set; entries without a member are removed.
+* **Re-arm:** when the maintenance heartbeat is missing (first rollout, cleanup disabled, downgrade, or no leased tick
+  for more than 10 minutes), a full re-arm pass gives every member a deadline of at least `now+R` (`ZADD GT`) before
+  anything is removed again. Legacy members from earlier releases are handled the same way: their last activity is
+  unknown, so they stay listed for at least R after the rollout. Names are never used as a criterion.
+* **Explicit flush:** one write pipeline `SREM` set, `ZREM` retention, `ZREM` index.
+* **Consistency:** the index is derived and repaired; races between flush, writer, and repair converge on the next
+  pass or the next writer call. A later failure normally starts a new episode with a new first-seen score.
+* **Operations:** `cleanup_enabled: false` stops the maintenance (writers keep refreshing deadlines). Metrics:
+  `bruteforce_affected_accounts_maintenance_total{action}`, `bruteforce_affected_accounts_maintenance_errors_total{step}`
+  (`refused` = the Redis prefix contains braces that prevent a same-slot key; maintenance then deletes nothing), and
+  `bruteforce_affected_accounts_members{key}` (refreshed by every instance). The new keys start with the Redis
+  prefix unless the prefix itself contains `{`, so prefix-scoped ACLs keep working. Requires Redis 6.2 or newer
+  (`ZADD GT/XX`, `ZRANGE … BYSCORE`, `SMISMEMBER`).
+* **Metric change:** `redis_write_total` now counts each command of the affected-account write (3) and of the flush
+  pipeline (3) instead of one per pipeline; dashboards show a step at the rollout.
+* **Rollout:** keep old and new instances side by side for less than R; after a rollback longer than the heartbeat,
+  the next upgrade re-arms automatically.
+
+The management listing reads the password-history IPs of the selected accounts with bounded pipelines (256 accounts
+per round trip, `pipeline_affected_account_history`), sequentially and with a per-batch Redis read deadline. Every
+command result is checked; the first failing read ends the listing with an error.
+
 ## 9. CROSSSLOT & Cluster Considerations
 
 - **Ban keys** (`bf:ban:{network}`) are individual String keys — no CROSSSLOT issues with `GET`/`SET`/`DEL`.
 - **ZSET shards** (`bf:bans:0` to `bf:bans:F`) are distributed across cluster slots. Listing uses pipelining
   instead of multi-key Lua to avoid CROSSSLOT errors.
-- **Affected accounts** (`affected_accounts`) is a single key — no CROSSSLOT concern.
+- **Affected accounts:** the set, its retention ZSET, and the maintenance state share one slot (hash tag of the set
+  key), so the lifecycle scripts are slot-local and receive their keys verbatim. The index lives in its own slot and
+  is never updated atomically with them; it is repaired by the maintenance.
 
 ## 10. Developer Tips
 
@@ -342,8 +402,9 @@ brute_force:
   instance-specific metrics `nauthilus_brute_force_cache_hits_total`.
 * **Cache Flush:** If a user is blocked incorrectly, use the Admin API to flush the cache for that user. This will clean
   up most `bf:*` keys associated with their IPs via `prepareRedisUserKeys` in `server/core/rest.go`.
-* **Affected Accounts:** The `affected_accounts` SET intentionally has no TTL. It preserves the signal path for
-  accounts that were targeted by brute-force attacks. Clean up only via the Flush API or administrative intervention.
+* **Affected Accounts:** Members age out per account after the retention described in
+  [8.1](#81-affected-account-lifecycle); the key itself never gets a TTL. Use the Flush API to remove an account
+  immediately.
 
 ## Redis time precision
 

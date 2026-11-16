@@ -574,6 +574,7 @@ type runtimeLifecycleParams struct {
 	MonitoringSvc *loopsfx.BackendMonitoringService
 	ConnMgrSvc    *loopsfx.ConnMgrService
 	BFSyncSvc     *loopsfx.BruteForceSyncService
+	AffectedSvc   *loopsfx.AffectedAccountsMaintenanceService
 	Env           config.Environment
 	Channel       backend.Channel
 	LangManager   language.Manager
@@ -910,6 +911,10 @@ func startRuntimeLoopServices(p *runtimeLifecycleParams) error {
 		return err
 	}
 
+	if err := p.AffectedSvc.Start(p.Ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -998,6 +1003,10 @@ func stopRuntimeLoopServices(stopCtx context.Context, p *runtimeLifecycleParams)
 
 	if err := p.BFSyncSvc.Stop(stopCtx); err != nil {
 		stdlog.Printf("Unable to stop brute-force sync service. Error: %v", err)
+	}
+
+	if err := p.AffectedSvc.Stop(stopCtx); err != nil {
+		stdlog.Printf("Unable to stop affected-account maintenance service. Error: %v", err)
 	}
 }
 

@@ -31,6 +31,7 @@ type BruteForceSection struct {
 	Learning                   []*RuntimeModule `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
+	AffectedAccounts           AffectedAccounts `mapstructure:"affected_accounts"`
 	SoftWhitelist              SoftWhitelist    `mapstructure:"allowlist"`
 	TolerateTTL                time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
 	RWPWindow                  time.Duration    `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
@@ -41,6 +42,19 @@ type BruteForceSection struct {
 	MaxToleratePercent         uint8            `mapstructure:"max_tolerate_percent" validate:"omitempty,min=0,max=100"`
 	AdaptiveToleration         bool             `mapstructure:"adaptive_toleration"`
 	LogHistoryForKnownAccounts bool             `mapstructure:"pw_history_for_known_accounts"`
+}
+
+// DefaultAffectedAccountsRetention is the default minimum time an affected account stays listed after its
+// last recorded brute-force activity.
+const DefaultAffectedAccountsRetention = 24 * time.Hour
+
+// AffectedAccounts configures the lifecycle of the affected-account management metadata.
+type AffectedAccounts struct {
+	// CleanupEnabled toggles the background maintenance that ages out stale entries; nil means enabled.
+	CleanupEnabled *bool `mapstructure:"cleanup_enabled"`
+
+	// Retention is the minimum visibility after the last recorded activity; 0 means the default.
+	Retention time.Duration `mapstructure:"retention" validate:"omitempty,gt=0,max=8760h"`
 }
 
 // IPScoping configures how client IPs are normalized/scoped for different contexts.
@@ -244,6 +258,24 @@ func (b *BruteForceSection) GetRWPAllowedUniqueHashes() uint {
 	}
 
 	return b.AllowedUniqueWrongPWHashes
+}
+
+// GetAffectedAccountsRetention returns the configured minimum visibility of an affected account.
+func (b *BruteForceSection) GetAffectedAccountsRetention() time.Duration {
+	if b == nil || b.AffectedAccounts.Retention <= 0 {
+		return DefaultAffectedAccountsRetention
+	}
+
+	return b.AffectedAccounts.Retention
+}
+
+// IsAffectedAccountsCleanupEnabled reports whether stale affected accounts are aged out; it defaults to true.
+func (b *BruteForceSection) IsAffectedAccountsCleanupEnabled() bool {
+	if b == nil || b.AffectedAccounts.CleanupEnabled == nil {
+		return true
+	}
+
+	return *b.AffectedAccounts.CleanupEnabled
 }
 
 // GetRWPWindow returns the time window for recognizing previously recorded failed password hashes.

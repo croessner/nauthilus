@@ -2892,7 +2892,6 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 	ctx, sp := tr.Start(bm.ctx, "bruteforce.update_affected_account", attribute.String("account", accountName))
 	defer sp.End()
 
-	key := bm.cfg().GetServer().GetRedis().GetPrefix() + definitions.RedisAffectedAccountsKey
 	logger := bm.logger()
 
 	rwpActive, err := bm.isRWPActive()
@@ -2910,47 +2909,70 @@ func (bm *bucketManagerImpl) updateAffectedAccount() {
 		return
 	}
 
-	bm.addAffectedAccount(ctx, logger, key, accountName)
+	bm.addAffectedAccount(ctx, logger, accountName)
 }
 
-// addAffectedAccount adds an account to the affected-account set and the sorted index in one write pipeline.
-// No membership read is needed: SADD is idempotent and ZADD NX keeps the first-seen timestamp of an account
-// that is already indexed. Both keys live in different cluster slots, so each command is evaluated on its own.
-func (bm *bucketManagerImpl) addAffectedAccount(ctx context.Context, logger *slog.Logger, key string, accountName string) {
-	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
-
+// addAffectedAccount records one counted or blocked request for an account in one write pipeline.
+//
+// The retention deadline is written first with ZADD GT, so it only ever moves forward, then SADD adds the
+// membership and ZADD NX keeps the first-seen score of an indexed account. No membership read is needed. The
+// deadline is written regardless of whether cleanup is enabled, so enabling cleanup later never sees stale
+// deadlines. S and L share a slot and node, which keeps their order on one connection; I may live on another
+// node. Every command is evaluated on its own because Pipelined only reports the first failure.
+func (bm *bucketManagerImpl) addAffectedAccount(ctx context.Context, logger *slog.Logger, accountName string) {
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, bm.cfg())
 	defer cancel()
 
 	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_affected_account").Inc()
 
-	indexKey := rediscli.GetAffectedAccountsIndexKey(bm.cfg().GetServer().GetRedis().GetPrefix())
+	// A prefix without a same-slot retention key only loses the deadline; maintenance refuses to run then.
+	keys, keysErr := NewAffectedAccountKeys(bm.cfg().GetServer().GetRedis().GetPrefix())
+	now := time.Now()
 
-	var setCmd, indexCmd *redis.IntCmd
+	var retentionCmd, setCmd, indexCmd *redis.IntCmd
 
-	// Pipelined only reports the first failed command; both commands are evaluated individually below.
-	_, _ = bm.redis().GetWriteHandle().Pipelined(dCtx, func(pipe redis.Pipeliner) error {
-		setCmd = pipe.SAdd(dCtx, key, accountName)
-		indexCmd = pipe.ZAddNX(dCtx, indexKey, redis.Z{
-			Score:  float64(time.Now().Unix()),
+	cmds, execErr := bm.redis().GetWriteHandle().Pipelined(dCtx, func(pipe redis.Pipeliner) error {
+		if keysErr == nil {
+			retentionCmd = pipe.ZAddGT(dCtx, keys.Retention, redis.Z{
+				Score:  affectedAccountDeadline(now, AffectedAccountRetention(bm.cfg())),
+				Member: accountName,
+			})
+		}
+
+		setCmd = pipe.SAdd(dCtx, keys.Set, accountName)
+		indexCmd = pipe.ZAddNX(dCtx, keys.Index, redis.Z{
+			Score:  float64(now.Unix()),
 			Member: accountName,
 		})
 
 		return nil
 	})
 
-	if err := setCmd.Err(); err != nil {
-		level.Error(logger).Log(
+	stats.GetMetrics().GetRedisWriteCounter().Add(float64(len(cmds)))
+
+	bm.logAffectedAccountWriteError(logger, retentionCmd, "Error refreshing the affected-account retention deadline")
+	bm.logAffectedAccountWriteError(logger, setCmd, "Error adding account to the affected accounts set")
+	bm.logAffectedAccountWriteError(logger, indexCmd, "Error adding account to the affected accounts index")
+
+	if err := rediscli.UnattributedPipelineError(execErr, cmds); err != nil {
+		_ = level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Error adding account to the affected accounts set",
+			definitions.LogKeyMsg, "Error writing the affected-account pipeline",
 			definitions.LogKeyError, err,
 		)
 	}
+}
 
-	if err := indexCmd.Err(); err != nil {
+// logAffectedAccountWriteError logs one failed affected-account pipeline command; a nil command was not queued.
+func (bm *bucketManagerImpl) logAffectedAccountWriteError(logger *slog.Logger, cmd *redis.IntCmd, msg string) {
+	if cmd == nil {
+		return
+	}
+
+	if err := cmd.Err(); err != nil {
 		_ = level.Error(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
-			definitions.LogKeyMsg, "Error adding account to the affected accounts index",
+			definitions.LogKeyMsg, msg,
 			definitions.LogKeyError, err,
 		)
 	}

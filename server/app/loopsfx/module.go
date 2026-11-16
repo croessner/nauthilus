@@ -27,6 +27,7 @@ func Module() fx.Option {
 			NewDefaultBackendMonitoringService,
 			NewDefaultConnMgrService,
 			NewBruteForceSyncService,
+			NewAffectedAccountsMaintenanceService,
 		),
 	)
 }

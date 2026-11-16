@@ -2593,6 +2593,11 @@ components:
           format: date-time
     BruteForceBlockedAccounts:
       type: object
+      description: >-
+        Accounts with recent brute-force activity and their known password-history IPs. An account stays listed
+        for at least the affected-account retention (default 24h, raised to the longest configured brute-force
+        state lifetime) after its last counted failed or blocked request, and while it still has an IP history.
+        An empty IP list means the history has expired. A set error marks the listing as incomplete.
       required:
         - accounts
       properties:

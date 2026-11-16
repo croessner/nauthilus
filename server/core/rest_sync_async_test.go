@@ -349,6 +349,7 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 	// processUserCmd: UNLINK PW_HIST_IPS set, SREM affected accounts
 	mock.ExpectUnlink(pwHistSet).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), user).SetVal(1)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user).SetVal(1)
 
 	// removeUserFromCache pipeline: HDEL USER hash field and UNLINK default positive cache key
@@ -388,6 +389,7 @@ func TestCacheFlushSync_RemoteOnlyBackendFlushesLocalState(t *testing.T) {
 	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
 	mock.ExpectUnlink(pwHistSet).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), user).SetVal(1)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user).SetVal(1)
 
 	defaultPos := prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user
@@ -438,6 +440,7 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 
 	affectedKey := prefix + definitions.RedisAffectedAccountsKey
 	mock.ExpectSRem(affectedKey, user, mappedAccount).SetVal(2)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), user, mappedAccount).SetVal(2)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user, mappedAccount).SetVal(2)
 
 	// removeUserFromCache pipeline: HDEL USER hash fields and UNLINK default positive cache keys
@@ -480,6 +483,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesUsernameOnly(t *testing.T) {
 	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), user).SetVal(1)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), user).SetVal(1)
 	mock.ExpectHDel(shardKey, user).SetVal(1)
 	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
@@ -512,6 +516,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesForRedisAlias(t *testing.T) {
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), alias, user).SetVal(2)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
 	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
 	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
@@ -544,6 +549,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesForLuaAlias(t *testing.T) {
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), alias, user).SetVal(2)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
 	mock.ExpectHDel(shardKey, user).SetVal(1)
 	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + alias).SetVal(1)
@@ -877,6 +883,7 @@ func expectExecutedAsyncAliasUserFlush(mock redismock.ClientMock, jobKey, shardK
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
+	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), alias, user).SetVal(2)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
 	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
 	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + alias).SetVal(1)
@@ -899,4 +906,15 @@ func expectQueuedUserFlushJob(mock redismock.ClientMock, jobKey string) {
 		"resultCount", 0,
 	).SetVal(4)
 	mock.ExpectExpire(jobKey, config.GetFile().GetServer().GetRedis().NegCacheTTL).SetVal(true)
+}
+
+// affectedAccountsRetentionTestKey returns the retention ZSET key the flush pipeline cleans up.
+// The test prefixes never contain braces, so building the key cannot fail.
+func affectedAccountsRetentionTestKey(prefix string) string {
+	key, err := rediscli.GetAffectedAccountsRetentionKey(prefix)
+	if err != nil {
+		panic(err)
+	}
+
+	return key
 }

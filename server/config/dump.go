@@ -1242,12 +1242,14 @@ func configDumpIdentityDefaults() map[string]configDumpValueProvider {
 
 func configDumpBruteForceDefaults() map[string]configDumpValueProvider {
 	return map[string]configDumpValueProvider{
-		"auth.controls.brute_force.rwp_window":                func() any { return 15 * time.Minute },
-		"auth.controls.brute_force.rwp_allowed_unique_hashes": func() any { return uint(3) },
-		"auth.controls.brute_force.tolerate_percent":          func() any { return uint8(10) },
-		"auth.controls.brute_force.min_tolerate_percent":      func() any { return uint8(10) },
-		"auth.controls.brute_force.max_tolerate_percent":      func() any { return uint8(50) },
-		"auth.controls.brute_force.scale_factor":              func() any { return 1.0 },
+		"auth.controls.brute_force.rwp_window":                        func() any { return 15 * time.Minute },
+		"auth.controls.brute_force.affected_accounts.retention":       func() any { return DefaultAffectedAccountsRetention },
+		"auth.controls.brute_force.affected_accounts.cleanup_enabled": func() any { return true },
+		"auth.controls.brute_force.rwp_allowed_unique_hashes":         func() any { return uint(3) },
+		"auth.controls.brute_force.tolerate_percent":                  func() any { return uint8(10) },
+		"auth.controls.brute_force.min_tolerate_percent":              func() any { return uint8(10) },
+		"auth.controls.brute_force.max_tolerate_percent":              func() any { return uint8(50) },
+		"auth.controls.brute_force.scale_factor":                      func() any { return 1.0 },
 	}
 }
 

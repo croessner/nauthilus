@@ -362,6 +362,12 @@ func NewTestClient(db *redis.Client) Client {
 	return NewTestClientWithSecurity(db, nil)
 }
 
+// NewTestClientForHandle wraps any Redis handle, for example a cluster client, for tests without publishing
+// it as the process-wide client.
+func NewTestClientForHandle(handle redis.UniversalClient) Client {
+	return &testClient{client: handle}
+}
+
 // NewTestClientWithSecurity publishes a test client and returns that same instance independently of concurrent publishers.
 func NewTestClientWithSecurity(db *redis.Client, sm *SecurityManager) Client {
 	injected := &testClient{

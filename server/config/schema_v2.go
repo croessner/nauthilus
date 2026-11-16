@@ -869,6 +869,7 @@ type BruteForceControlSection struct {
 	Learning                   []*RuntimeModule `mapstructure:"learning" validate:"omitempty,dive"`
 	CustomTolerations          []Tolerate       `mapstructure:"custom_tolerations" validate:"omitempty,dive"`
 	IPScoping                  IPScoping        `mapstructure:"ip_scoping"`
+	AffectedAccounts           AffectedAccounts `mapstructure:"affected_accounts"`
 	Allowlist                  SoftWhitelist    `mapstructure:"allowlist"`
 	TolerateTTL                time.Duration    `mapstructure:"tolerate_ttl" validate:"omitempty,gt=0,max=8760h"`
 	RWPWindow                  time.Duration    `mapstructure:"rwp_window" validate:"omitempty,gt=0,max=8760h"`
@@ -1262,6 +1263,7 @@ func (f *FileSettings) materializeBruteForce() *BruteForceSection {
 		Learning:                   append([]*RuntimeModule(nil), wire.Learning...),
 		CustomTolerations:          append([]Tolerate(nil), wire.CustomTolerations...),
 		IPScoping:                  wire.IPScoping,
+		AffectedAccounts:           wire.AffectedAccounts,
 		SoftWhitelist:              wire.Allowlist,
 		TolerateTTL:                wire.TolerateTTL,
 		RWPWindow:                  wire.RWPWindow,

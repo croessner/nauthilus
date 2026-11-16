@@ -17,13 +17,13 @@ package rediscli
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log"
+	"github.com/croessner/nauthilus/v4/server/testing/rediscluster"
 	"github.com/croessner/nauthilus/v4/server/testing/redisslot"
 	"github.com/redis/go-redis/v9"
 )
@@ -32,9 +32,6 @@ import (
 // It proves slot-local script keys, per-node splitting of cross-slot pipelines and a NOSCRIPT on one node.
 // miniredis does not own slots, so MOVED and ASK redirections cannot be simulated; the repository has no
 // cluster mock that answers them, and go-redis handles those redirections below the ScriptPipeline.
-
-// clusterSlotSplit is the first slot of the second fixture node.
-const clusterSlotSplit = 8192
 
 // scriptPipelineCounterScript is the two-key script used to prove slot-local script keys.
 const scriptPipelineCounterScript = "SlidingWindowCounter"
@@ -93,23 +90,12 @@ func newScriptPipelineCluster(t *testing.T) *scriptPipelineCluster {
 	config.SetTestFile(&config.FileSettings{Server: &config.ServerSection{}})
 	log.SetupLogging(definitions.LogLevelNone, false, false, false, "test")
 
-	low := miniredis.RunT(t)
-	high := miniredis.RunT(t)
-
-	cluster := redis.NewClusterClient(&redis.ClusterOptions{
-		ClusterSlots: func(context.Context) ([]redis.ClusterSlot, error) {
-			return []redis.ClusterSlot{
-				{Start: 0, End: clusterSlotSplit - 1, Nodes: []redis.ClusterNode{{Addr: low.Addr()}}},
-				{Start: clusterSlotSplit, End: 16383, Nodes: []redis.ClusterNode{{Addr: high.Addr()}}},
-			}, nil
-		},
-	})
-
-	t.Cleanup(func() { _ = cluster.Close() })
+	nodes := rediscluster.NewTwoNode(t)
+	cluster := nodes.Cluster
 
 	fixture := &scriptPipelineCluster{
-		low:     low,
-		high:    high,
+		low:     nodes.Low,
+		high:    nodes.High,
 		cluster: cluster,
 		guard:   redisslot.NewGuard(t, "").Attach(cluster),
 		client:  &clusterTestClient{handle: cluster},
@@ -131,16 +117,7 @@ func newScriptPipelineCluster(t *testing.T) *scriptPipelineCluster {
 func keyOnNode(t *testing.T, base string, high bool) string {
 	t.Helper()
 
-	for index := range 1000 {
-		key := fmt.Sprintf("%s-%d", base, index)
-		if (redisslot.Slot(key) >= clusterSlotSplit) == high {
-			return key
-		}
-	}
-
-	t.Fatalf("no key for %s on the requested node", base)
-
-	return ""
+	return rediscluster.KeyOnNode(t, base, high)
 }
 
 // queueCounter queues one SlidingWindowCounter increment that writes currentKey.

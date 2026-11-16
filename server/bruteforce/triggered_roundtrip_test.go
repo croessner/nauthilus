@@ -61,7 +61,7 @@ func TestTriggeredBruteForceMergesIndependentWrites(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"sadd", "zadd"},                // affected account and index without a membership read
+		{"zadd", "sadd", "zadd"},        // retention deadline, affected account and index without a membership read
 		{"set"},                         // ban key
 		{"zadd"},                        // ban index
 		{"publish"},                     // ban broadcast
@@ -147,7 +147,19 @@ func TestAffectedAccountKeepsFirstSeenIndexWithoutMembershipRead(t *testing.T) {
 		t.Fatal("affected-account set does not contain the account")
 	}
 
-	want := [][]string{{"sadd", "zadd"}, {"sadd", "zadd"}}
+	retentionKey, err := rediscli.GetAffectedAccountsRetentionKey(prefix)
+	if err != nil {
+		t.Fatalf("retention key: %v", err)
+	}
+
+	deadline, err := fixture.storage.ZScore(retentionKey, passwordHistoryCommandAccount)
+	wantDeadline := float64(time.Now().Add(AffectedAccountRetention(fixture.cfg)).Unix())
+
+	if err != nil || deadline < wantDeadline-5 || deadline > wantDeadline+5 {
+		t.Fatalf("retention deadline = %v (err %v), want about %v", deadline, err, wantDeadline)
+	}
+
+	want := [][]string{{"zadd", "sadd", "zadd"}, {"zadd", "sadd", "zadd"}}
 	if trips := fixture.recorder.RoundTrips(); !reflect.DeepEqual(trips, want) {
 		t.Fatalf("affected-account round trips = %v, want %v", trips, want)
 	}

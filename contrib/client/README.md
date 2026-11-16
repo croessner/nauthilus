@@ -45,6 +45,9 @@ lists affected accounts. An unbounded account listing can exceed a reverse
 proxy response-header timeout. Use both filters for an incident, or inspect
 `page.has_more` and request `--limit 100 --offset 100` (then subsequent
 `next_offset` values) for additional pages. A page is not the complete list.
+Affected accounts age out: an account stays listed for at least
+`auth.controls.brute_force.affected_accounts.retention` (default 24h) after its
+last counted failed or blocked request, and while it still has an IP history.
 
 Repeated `--resolve` flags replace `NAUTHILUS_RESOLVE`; without CLI overrides,
 the process environment takes precedence over the env file. Comma-separated

@@ -348,7 +348,17 @@ func TestProcessPWHistIndexesNewAffectedAccount(t *testing.T) {
 	accountIndexKey := rediscli.GetAffectedAccountsIndexKey(prefix)
 	pwHistKey := bruteforce.GetPWHistIPsRedisKey(accountName, cfg)
 
-	// SADD and ZADD NX share one write pipeline without a membership pre-read.
+	retentionKey, err := rediscli.GetAffectedAccountsRetentionKey(prefix)
+	assert.NoError(t, err)
+
+	// ZADD GT (retention), SADD and ZADD NX share one write pipeline without a membership pre-read.
+	mock.CustomMatch(func(_ []any, actual []any) error {
+		if len(actual) != 5 || actual[1] != retentionKey || actual[2] != "gt" || actual[4] != accountName {
+			return fmt.Errorf("unexpected affected-account retention zadd: %v", actual)
+		}
+
+		return nil
+	}).ExpectZAddGT(retentionKey, redis.Z{Score: 0, Member: accountName}).SetVal(1)
 	mock.ExpectSAdd(affectedKey, accountName).SetVal(1)
 	mock.CustomMatch(func(_ []any, actual []any) error {
 		if len(actual) != 5 {
