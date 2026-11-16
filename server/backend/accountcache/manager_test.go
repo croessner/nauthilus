@@ -93,3 +93,31 @@ func TestManager_Disabled(t *testing.T) {
 	assert.False(t, ok)
 	assert.Empty(t, val)
 }
+
+func TestAccountMappingFieldUsernameRoundTrip(t *testing.T) {
+	cases := []struct {
+		username, protocol, oidcClientID string
+	}{
+		{"alice", "imap", ""},
+		{"alice|x", "imap", ""},
+		{"a|b|c", "oidc", "clientA"},
+		{"", "imap", ""},
+		{"bob", "", ""},
+	}
+
+	for _, tc := range cases {
+		field := GetAccountMappingField(tc.username, tc.protocol, tc.oidcClientID)
+		username, ok := AccountMappingFieldUsername(field)
+
+		assert.True(t, ok, field)
+		assert.Equal(t, tc.username, username, field)
+	}
+}
+
+func TestAccountMappingFieldUsernameRejectsForeignShapes(t *testing.T) {
+	for _, field := range []string{"", "alice", "alice|imap"} {
+		_, ok := AccountMappingFieldUsername(field)
+
+		assert.False(t, ok, field)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -69,6 +70,44 @@ func TestBruteForceListResponseMatchesOpenAPIContract(t *testing.T) {
 
 	if body.Object != definitions.CatBruteForce || body.Operation != definitions.ServList || len(body.Result) != 2 {
 		t.Fatalf("brute-force envelope = %#v, want brute-force list with two result entries", body)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet Redis expectations: %v", err)
+	}
+}
+
+func TestBruteForceListAccountResolutionResponseMatchesOpenAPIContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, mock := newBruteForceResponseContractRouter(t)
+	mock.MatchExpectationsInOrder(false)
+
+	for _, key := range rediscli.GetAllBruteForceBanIndexKeys(bruteForceContractRedisPrefix) {
+		mock.ExpectZRangeWithScores(key, 0, -1).SetVal([]redis.Z{})
+	}
+
+	login := "alice@example.test"
+	affectedKey := bruteForceContractRedisPrefix + definitions.RedisAffectedAccountsKey
+
+	mock.ExpectHScan(rediscli.GetUserHashKey(bruteForceContractRedisPrefix, login), 0, login+"|*", 512).
+		SetVal([]string{login + "|imap|", "alice"}, 0)
+	mock.ExpectSIsMember(affectedKey, login).SetVal(false)
+	mock.ExpectSIsMember(affectedKey, "alice").SetVal(false)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/bruteforce/list",
+		strings.NewReader(`{"accounts":["`+login+`"],"account_resolution":"account_mapping"}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	requesttest.AssertRecorderResponse(t, requesttest.NewManagementValidator(t), request, recorder, requesttest.ResponseValidation{
+		ExpectedMediaType: "application/json",
+	})
+
+	if !strings.Contains(recorder.Body.String(), `"status":"mapped"`) {
+		t.Fatalf("resolution missing from response: %s", recorder.Body.String())
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

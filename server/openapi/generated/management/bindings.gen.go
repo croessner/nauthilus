@@ -58,6 +58,24 @@ func (e AsyncJobStatusPayloadStatus) Valid() bool {
 	}
 }
 
+// Defines values for BruteForceFilterRequestAccountResolution.
+const (
+	BruteForceFilterRequestAccountResolutionAccountMapping BruteForceFilterRequestAccountResolution = "account_mapping"
+	BruteForceFilterRequestAccountResolutionNone           BruteForceFilterRequestAccountResolution = "none"
+)
+
+// Valid indicates whether the value is a known member of the BruteForceFilterRequestAccountResolution enum.
+func (e BruteForceFilterRequestAccountResolution) Valid() bool {
+	switch e {
+	case BruteForceFilterRequestAccountResolutionAccountMapping:
+		return true
+	case BruteForceFilterRequestAccountResolutionNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PolicyDecisionRequestVersion.
 const (
 	N1 PolicyDecisionRequestVersion = "1"
@@ -605,9 +623,14 @@ type AsyncJobStatusResult struct {
 
 // BruteForceFilterRequest defines model for BruteForceFilterRequest.
 type BruteForceFilterRequest struct {
-	Accounts    *[]string `json:"accounts,omitempty"`
-	IpAddresses *[]string `json:"ip_addresses,omitempty"`
+	// AccountResolution `none` checks `accounts` literally. `account_mapping` also checks the accounts stored for each login name and reports per-name `resolutions`; it requires 1 to 100 distinct `accounts` and does not link accounts to `ip_addresses`.
+	AccountResolution *BruteForceFilterRequestAccountResolution `json:"account_resolution,omitempty"`
+	Accounts          *[]string                                 `json:"accounts,omitempty"`
+	IpAddresses       *[]string                                 `json:"ip_addresses,omitempty"`
 }
+
+// BruteForceFilterRequestAccountResolution `none` checks `accounts` literally. `account_mapping` also checks the accounts stored for each login name and reports per-name `resolutions`; it requires 1 to 100 distinct `accounts` and does not link accounts to `ip_addresses`.
+type BruteForceFilterRequestAccountResolution string
 
 // BruteForceFlushPayload defines model for BruteForceFlushPayload.
 type BruteForceFlushPayload struct {

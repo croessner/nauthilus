@@ -63,6 +63,114 @@ class ManagementClientTest(unittest.TestCase):
                     self.assertEqual([item.address for item in ADMIN.build_config(args).resolve], ["192.0.2.3"])
 
 
+def list_payload(account_section: dict) -> bytes:
+    """Build a brute-force list envelope with an empty IP section."""
+    return json.dumps({"object": "bruteforce", "operation": "list", "result": [{"entries": []}, account_section]}).encode()
+
+
+def json_response(status: int, body: bytes) -> "ADMIN.Response":
+    """Wrap a JSON body as a decoded client response."""
+    headers = {"content-type": "application/json"}
+    return ADMIN.Response(status, "OK" if status < 400 else "Error", headers, body, ADMIN.parse_response_body(headers, body))
+
+
+MAPPED_SECTION = {
+    "accounts": {"alice": ["2001:db8::1"]}, "error": None, "account_resolution": "account_mapping",
+    "resolutions": [
+        {"input": "alice@example.test", "status": "mapped", "source": "account_mapping", "accounts": ["alice"],
+         "checked": ["alice@example.test", "alice"], "matched": ["alice"], "literal_match": False},
+        {"input": "shared@example.test", "status": "ambiguous", "source": "account_mapping", "accounts": ["alice", "bob"],
+         "checked": ["shared@example.test", "alice", "bob"], "matched": ["alice"], "literal_match": False},
+        {"input": "Nobody@example.test", "status": "unmapped", "source": "account_mapping", "accounts": [],
+         "checked": ["Nobody@example.test"], "matched": [], "literal_match": False},
+    ],
+}
+
+
+class AccountResolutionClientTest(unittest.TestCase):
+    """Keep alias resolution explicit, honest about undecided names, and compatible with older servers."""
+
+    def run_list(self, response: "ADMIN.Response", *extra: str) -> tuple[int, str, str, object]:
+        argv = ["--bearer-token", "synthetic", "--output", "json", "bruteforce", "list", "--account", "alice@example.test", *extra]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(ADMIN.NauthilusClient, "_send", return_value=response) as send, \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = ADMIN.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue(), send
+
+    def test_via_mapping_sends_explicit_mode_and_reports_each_name(self):
+        code, stdout, stderr, send = self.run_list(json_response(200, list_payload(MAPPED_SECTION)), "--via-mapping")
+        self.assertEqual(code, 0)
+        self.assertEqual(send.call_args.args, ("POST", ADMIN.DEFAULT_URL + "/api/v1/bruteforce/list?limit=100"))
+        self.assertEqual(json.loads(send.call_args.kwargs["body"]),
+                         {"accounts": ["alice@example.test"], "account_resolution": "account_mapping"})
+        self.assertEqual(json.loads(stdout)["result"][1]["accounts"], {"alice": ["2001:db8::1"]})
+        self.assertIn("alice@example.test: state found for alice; stored mapping -> alice", stderr)
+        self.assertIn("AMBIGUOUS mapping to alice, bob", stderr)
+        self.assertIn("Nobody@example.test: no brute-force state found; no stored mapping", stderr)
+
+    def test_without_via_mapping_the_literal_contract_is_unchanged(self):
+        code, _, stderr, send = self.run_list(json_response(200, list_payload({"accounts": {}, "error": None})))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(send.call_args.kwargs["body"]), {"accounts": ["alice@example.test"]})
+        self.assertEqual(stderr, "")
+
+    def test_older_server_that_ignores_the_mode_is_not_an_all_clear(self):
+        code, stdout, stderr, _ = self.run_list(json_response(200, list_payload({"accounts": {}, "error": None})), "--via-mapping")
+        self.assertEqual(code, 1)
+        self.assertIn("server ignored account_resolution", stderr)
+        self.assertIn("only the literal names were checked", stderr)
+        self.assertEqual(json.loads(stdout)["result"][1]["accounts"], {})
+
+    def test_older_server_with_request_validation_gets_a_hint(self):
+        response = json_response(400, b'{"error":"request contract validation failed"}')
+        code, _, stderr, _ = self.run_list(response, "--via-mapping")
+        self.assertEqual(code, 1)
+        self.assertIn("if this is an older server, it rejects account_resolution", stderr)
+
+    def test_current_server_validation_error_is_shown_without_old_server_hint(self):
+        response = json_response(400, b'{"errors":[{"field":"account_resolution","message":"accepts at most 100 distinct accounts"}]}')
+        code, _, stderr, _ = self.run_list(response, "--via-mapping")
+        self.assertEqual(code, 1)
+        self.assertIn("accepts at most 100", stderr)
+        self.assertNotIn("older server", stderr)
+
+    def test_undecided_names_from_a_failed_listing_are_rendered(self):
+        section = {"accounts": {}, "error": "account mapping lookup failed", "account_resolution": "account_mapping",
+                   "resolutions": [{"input": "alice@example.test", "status": "error", "source": "account_mapping",
+                                    "accounts": [], "checked": ["alice@example.test"], "matched": [],
+                                    "literal_match": False, "error": "context deadline exceeded"}]}
+        code, stdout, stderr, _ = self.run_list(json_response(500, list_payload(section)), "--via-mapping")
+        self.assertEqual(code, 1)
+        self.assertIn("alice@example.test: UNDECIDED, account mapping could not be read: context deadline exceeded", stderr)
+        self.assertIn("listing is incomplete (HTTP 500)", stderr)
+        self.assertEqual(json.loads(stdout)["result"][1]["resolutions"][0]["status"], "error")
+
+    def test_successful_response_with_undecided_or_missing_names_is_not_an_all_clear(self):
+        undecided = dict(MAPPED_SECTION, resolutions=[dict(MAPPED_SECTION["resolutions"][0], status="error", error="x")])
+        code, stdout, stderr, _ = self.run_list(json_response(200, list_payload(undecided)), "--via-mapping")
+        self.assertEqual(code, 1)
+        self.assertIn("undecided names despite a successful response: alice@example.test", stderr)
+        self.assertTrue(stdout)
+        missing = dict(MAPPED_SECTION, resolutions=[MAPPED_SECTION["resolutions"][1]])
+        code, _, stderr, _ = self.run_list(json_response(200, list_payload(missing)), "--via-mapping")
+        self.assertEqual(code, 1)
+        self.assertIn("server reported no resolution for: alice@example.test", stderr)
+        odd = dict(MAPPED_SECTION, resolutions=[dict(MAPPED_SECTION["resolutions"][0], accounts=[])])
+        code, _, stderr, _ = self.run_list(json_response(200, list_payload(odd)), "--via-mapping")
+        self.assertEqual(code, 0)
+        self.assertIn("alice@example.test: state found for alice", stderr)
+
+    def test_via_mapping_requires_accounts_and_keeps_global_resolve_override(self):
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(ADMIN.main(["--bearer-token", "synthetic", "bruteforce", "list", "--via-mapping"]), 1)
+        self.assertIn("--via-mapping requires at least one --account", stderr.getvalue())
+        args = ADMIN.build_parser().parse_args(
+            ["--resolve", "login.example:443:192.0.2.3", "bruteforce", "list", "--account", "a", "--via-mapping"])
+        self.assertEqual(args.resolve, ["login.example:443:192.0.2.3"])
+        self.assertTrue(args.via_mapping)
+
+
 class ReputationClientTest(unittest.TestCase):
     """Exercise the real parser, bearer selection and JSON HTTP boundary."""
 

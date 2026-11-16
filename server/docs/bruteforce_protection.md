@@ -385,6 +385,45 @@ The management listing reads the password-history IPs of the selected accounts w
 per round trip, `pipeline_affected_account_history`), sequentially and with a per-batch Redis read deadline. Every
 command result is checked; the first failing read ends the listing with an error.
 
+### 8.2 Account Identity Resolution for Listing and Cache Flush
+
+Brute-force state is attributed to the account that authentication stored for a login name: the user hash
+`<prefix>USER:{<shard>}` holds one field `username|protocol|oidc_client_id` per login context, written as soon as a
+backend finds the user (also on a wrong password). The list and the cache flush share one read-only resolver for
+these mappings (`backend.AccountMappingReader`):
+
+* **Reads only:** `HSCAN … MATCH <escaped username>|* COUNT 512` on the user-hash shard, pipelined for all requested
+  names per round. Every scan step runs on the primary that owns the shard, because a scan cursor must stay on one
+  node and replicas may lag behind authentication writes; with Redis Cluster the slot master's node client is used
+  directly, so `route_reads_to_replicas`, `route_by_latency`, and `route_randomly` do not apply to it. It neither
+  reads nor fills the in-process account cache and runs no hook. Fields are owned by a name when splitting at the
+  last two separators yields that exact name, so a username containing `|` never captures another user's fields (this assumes protocol and OIDC client IDs, which
+  are operator-controlled, contain no `|`). Mapped values are opaque; joined multi-value accounts are not split.
+* **Cost:** proportional to the requested names; Redis iterates one shard (about 1/256 of all mappings) per name but
+  returns only that name's fields. One Redis read deadline bounds the whole resolution.
+* **Limits:** a mapping is a non-expiring cache, not re-verified against the backend, and can be stale after
+  renames or removals. A name that was never used for a login (for example an alias address known only to LDAP)
+  has no mapping. Names are compared byte-exact, as authentication does; there is no case folding. The
+  affected-account membership check (`SISMEMBER`) still uses the read handle in both list modes and can lag on a
+  replica, as before.
+
+**Listing (`POST /api/v1/bruteforce/list`).** The default (`account_resolution` omitted or `none`) keeps the literal
+`SISMEMBER` check. With `"account_resolution": "account_mapping"` (1–100 distinct `accounts`, otherwise HTTP 400;
+also 400 without `accounts` or for unknown values), every name is checked literally *and* together with its mapped
+accounts in one `SISMEMBER` pipeline. The account section then echoes `account_resolution` and adds
+page-independent `resolutions` (`input`, `status`, `source`, `accounts`, `checked`, `matched`, `literal_match`,
+`error`). Status values: `mapped` (one stored account), `unmapped` (none; only the literal name was checked),
+`ambiguous` (several; all were checked), `error` (undecided; the listing sets `error` and returns HTTP 500).
+`accounts` keeps its meaning (affected account → IP history) and paging applies to the matched union. IP filters
+keep working on the separate IP section; no IP-to-account linkage is made. The configured cache-flush callback is a
+general extension point and is not called by the listing; nothing is flushed, counted, invalidated, or written.
+
+**Cache flush.** A Lua cache-flush callback that returns an account still takes precedence and skips the mapping
+read. Otherwise the shared resolver supplies the mapped accounts and the owned hash fields to remove. A mapping read
+failure now stops the flush before any account or brute-force cleanup with HTTP 503 `Account mapping lookup failed`
+(async: the job fails) instead of silently flushing only the literal name. The identity-cache fence and the Lua
+callback have already run at that point; a retry is idempotent.
+
 ## 9. CROSSSLOT & Cluster Considerations
 
 - **Ban keys** (`bf:ban:{network}`) are individual String keys — no CROSSSLOT issues with `GET`/`SET`/`DEL`.

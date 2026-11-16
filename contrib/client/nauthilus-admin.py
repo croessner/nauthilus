@@ -25,6 +25,8 @@ DEFAULT_URL = "https://nauthilus.example.invalid"
 DEFAULT_SCOPES = "nauthilus:authenticate nauthilus:admin nauthilus:security"
 DEFAULT_TIMEOUT = 15.0
 
+ACCOUNT_RESOLUTION_MAPPING = "account_mapping"
+
 REPUTATION_KINDS = ("ip", "network", "asn", "dns_domain", "account", "service")
 REPUTATION_BANDS = ("blocked", "trusted", "neutral")
 REPUTATION_MAX_TTL = 31536000
@@ -45,9 +47,10 @@ class ClientError(RuntimeError):
 class HTTPClientError(ClientError):
     """Preserve an acknowledged HTTP status without changing existing error handling."""
 
-    def __init__(self, message: str, status: int) -> None:
+    def __init__(self, message: str, status: int, response: "Response | None" = None) -> None:
         super().__init__(message)
         self.status = status
+        self.response = response
 
 
 @dataclass(frozen=True)
@@ -166,7 +169,7 @@ class NauthilusClient:
 
         response = self._send(method.upper(), url, body=data, headers=request_headers)
         if response.status >= 400:
-            raise HTTPClientError(format_http_error(method.upper(), url, response), response.status)
+            raise HTTPClientError(format_http_error(method.upper(), url, response), response.status, response)
 
         return response
 
@@ -818,10 +821,100 @@ def bruteforce_list(client: NauthilusClient, args: argparse.Namespace) -> Respon
     if args.ip:
         body["ip_addresses"] = args.ip
 
+    if args.via_mapping:
+        if not args.account:
+            raise ValueError("--via-mapping requires at least one --account")
+        body["account_resolution"] = ACCOUNT_RESOLUTION_MAPPING
+        return bruteforce_list_via_mapping(client, args, body, query)
+
     if body:
         return client.post("/api/v1/bruteforce/list", body, query=query)
 
     return client.get("/api/v1/bruteforce/list", query=query)
+
+
+def bruteforce_list_via_mapping(client: NauthilusClient, args: argparse.Namespace, body: dict[str, Any],
+                                query: dict[str, str]) -> Response:
+    """List brute-force state with account-mapping resolution and never report an undecided all-clear."""
+
+    try:
+        response = client.post("/api/v1/bruteforce/list", body, query=query)
+    except HTTPClientError as exc:
+        section = account_section(exc.response.parsed if exc.response else None)
+        if exc.status == 400 and "account_resolution" not in str(exc):
+            # A current server names the field in its own validation errors; an older server with
+            # OpenAPI request validation only reports a generic contract failure for the unknown field.
+            raise ClientError(f"{exc}\nhint: if this is an older server, it rejects account_resolution; "
+                              "retry without --via-mapping to check the literal names only") from exc
+        if not section or "resolutions" not in section:
+            raise
+        print_response(exc.response, args)
+        report_account_resolutions(section)
+        raise ClientError(f"brute-force listing is incomplete (HTTP {exc.status}); "
+                          "names marked undecided were not checked reliably") from exc
+
+    section = account_section(response.parsed)
+    if not section or section.get("account_resolution") != ACCOUNT_RESOLUTION_MAPPING:
+        print_response(response, args)
+        raise ClientError("server ignored account_resolution (older server?); "
+                          "only the literal names were checked, no alias was resolved")
+
+    report_account_resolutions(section)
+    problem = undecided_account_resolutions(section, args.account)
+    if problem:
+        print_response(response, args)
+        raise ClientError(problem)
+    return response
+
+
+def undecided_account_resolutions(section: dict[str, Any], requested: list[str]) -> str | None:
+    """Return why a successful listing still leaves requested names undecided, if it does."""
+
+    resolutions = [item for item in section.get("resolutions") or [] if isinstance(item, dict)]
+    undecided = [str(item.get("input", "")) for item in resolutions if item.get("status") == "error"]
+    reported = {item.get("input") for item in resolutions}
+    missing = [name for name in dict.fromkeys(requested) if name and name not in reported]
+
+    if undecided:
+        return "undecided names despite a successful response: " + ", ".join(undecided)
+    if missing:
+        return "server reported no resolution for: " + ", ".join(missing)
+    return None
+
+
+def account_section(payload: Any) -> dict[str, Any] | None:
+    """Return the blocked-account section of a brute-force list payload."""
+
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if isinstance(result, list) and len(result) == 2 and isinstance(result[1], dict):
+        return result[1]
+    return None
+
+
+def describe_account_resolution(resolution: dict[str, Any]) -> str:
+    """Render one per-name resolution, leading with whether state was found."""
+
+    name = resolution.get("input", "")
+    status = resolution.get("status", "")
+    matched = resolution.get("matched") or []
+    accounts = resolution.get("accounts") or []
+    found = f"state found for {', '.join(matched)}" if matched else "no brute-force state found"
+
+    if status == "error":
+        return f"{name}: UNDECIDED, account mapping could not be read: {resolution.get('error', 'unknown error')}"
+    if status == "ambiguous":
+        return f"{name}: {found}; AMBIGUOUS mapping to {', '.join(accounts)} (all checked; verify the owner)"
+    if status == "mapped" and accounts:
+        return f"{name}: {found}; stored mapping -> {accounts[0]} (not re-verified against the backend)"
+    return (f"{name}: {found}; no stored mapping, only the literal name was checked "
+            "(a never-used alias or different spelling may belong to an account listed under its canonical name)")
+
+
+def report_account_resolutions(section: dict[str, Any]) -> None:
+    """Print per-name resolution results to stderr so stdout stays machine-readable."""
+
+    for resolution in section.get("resolutions") or []:
+        print(describe_account_resolution(resolution), file=sys.stderr)
 
 
 def bruteforce_flush(client: NauthilusClient, args: argparse.Namespace) -> Any:
@@ -1298,6 +1391,10 @@ def build_parser() -> argparse.ArgumentParser:
     brute_list.add_argument("--ip", action="append", help="IP filter; repeatable")
     brute_list.add_argument("--limit", type=int, default=100, help="page size (default: 100); inspect page.has_more")
     brute_list.add_argument("--offset", type=int)
+    brute_list.add_argument(
+        "--via-mapping", action="store_true",
+        help="also check the accounts Nauthilus stored for each --account login name (needs a server with "
+             "account_resolution support); per-name results go to stderr")
     brute_list.set_defaults(func=bruteforce_list)
 
     brute_flush = brute_sub.add_parser("flush", help="flush one brute-force rule")

@@ -95,6 +95,7 @@ type restAdminDeps struct {
 	TokenFlusher         TokenFlusher
 	AuthCacheInvalidator AuthCacheInvalidator
 	CacheFlushRunner     userCacheFlushScriptRunner
+	AccountMappings      accountMappingReader
 }
 
 const (
@@ -839,7 +840,7 @@ func listBlockedAccounts(ctx context.Context, deps restAdminDeps, filterCmd *bf.
 	prefix := cfg.GetServer().GetRedis().GetPrefix()
 	key := rediscli.GetAffectedAccountsKey(prefix)
 
-	accounts, hasMore, err := listBlockedAccountNames(ctx, deps, filterCmd, pageQuery, key)
+	accounts, hasMore, err := selectBlockedAccountNames(ctx, deps, filterCmd, pageQuery, key, blockedAccounts)
 	if err != nil {
 		if !stderrors.Is(err, redis.Nil) {
 			_ = level.Error(logger).Log(
@@ -938,6 +939,27 @@ func populateBlockedAccountIPHistory(
 	return err
 }
 
+// selectBlockedAccountNames applies the requested account resolution mode and records its per-name
+// resolutions on the response; the default mode keeps the literal account filter contract.
+func selectBlockedAccountNames(
+	ctx context.Context,
+	deps restAdminDeps,
+	filterCmd *bf.FilterCmd,
+	pageQuery bruteForceListPageQuery,
+	key string,
+	blockedAccounts *bf.BlockedAccounts,
+) ([]string, bool, error) {
+	if !filterCmd.UsesAccountMapping() {
+		return listBlockedAccountNames(ctx, deps, filterCmd, pageQuery, key)
+	}
+
+	listing := listMappedBlockedAccountNames(ctx, deps, filterCmd.Accounts, key, pageQuery)
+	blockedAccounts.AccountResolution = bf.AccountResolutionAccountMapping
+	blockedAccounts.Resolutions = listing.resolutions
+
+	return listing.accounts, listing.hasMore, listing.err
+}
+
 // listBlockedAccountNames selects account names using filters, the legacy set, or the paged index.
 func listBlockedAccountNames(
 	ctx context.Context,
@@ -969,45 +991,51 @@ func listFilteredBlockedAccountNames(
 	key string,
 	pageQuery bruteForceListPageQuery,
 ) ([]string, bool, error) {
-	uniqueAccounts := uniqueStrings(wantedAccounts)
-	if len(uniqueAccounts) == 0 {
-		return []string{}, false, nil
+	accounts, err := readAffectedAccountMembers(ctx, deps, key, uniqueStrings(wantedAccounts))
+	if err != nil {
+		return nil, false, err
+	}
+
+	return pageStringSlice(accounts, pageQuery)
+}
+
+// readAffectedAccountMembers returns the given distinct names that are members of the affected-account
+// set, in input order, using one SISMEMBER pipeline.
+func readAffectedAccountMembers(ctx context.Context, deps restAdminDeps, key string, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return []string{}, nil
 	}
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, deps.effectiveCfg())
 	defer cancel()
 
 	pipe := deps.Redis.GetReadHandle().Pipeline()
-	memberCmds := make([]*redis.BoolCmd, len(uniqueAccounts))
+	memberCmds := make([]*redis.BoolCmd, len(names))
 
-	for index, account := range uniqueAccounts {
+	for index, account := range names {
 		memberCmds[index] = pipe.SIsMember(dCtx, key, account)
 	}
 
 	if _, err := pipe.Exec(dCtx); err != nil && !stderrors.Is(err, redis.Nil) {
-		return nil, false, err
+		return nil, err
 	}
 
 	stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	accounts := make([]string, 0, len(uniqueAccounts))
+	members := make([]string, 0, len(names))
 
 	for index, cmd := range memberCmds {
 		isMember, err := cmd.Result()
 		if err != nil && !stderrors.Is(err, redis.Nil) {
-			return nil, false, err
+			return nil, err
 		}
 
 		if isMember {
-			accounts = append(accounts, uniqueAccounts[index])
+			members = append(members, names[index])
 		}
 	}
 
-	if !pageQuery.Enabled() {
-		return accounts, false, nil
-	}
-
-	return pageStringSlice(accounts, pageQuery)
+	return members, nil
 }
 
 // listPagedBlockedAccountNames reads a bounded account page from the sorted account index.
@@ -1146,6 +1174,12 @@ func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 
 			return
 		}
+
+		if err = validateBruteForceAccountResolution(filterCmd); err != nil {
+			HandleJSONValidationError(ctx, bruteForceAccountResolutionField, err.Error())
+
+			return
+		}
 	}
 
 	blockedIPAddresses, err := listBlockedIPAddresses(ctx, deps, filterCmd, pageQuery, guid)
@@ -1210,7 +1244,7 @@ func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
 
 	removedKeys, noUserAccoundFound := processFlushCache(ctx, deps, userCmd, guid)
 	if len(ctx.Errors) > 0 {
-		ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "Identity cache invalidation failed"})
+		ctx.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": userFlushFailureMessage(ctx.Errors.Last().Err)})
 
 		return
 	}
@@ -1246,45 +1280,6 @@ func processFlushCache(ctx *gin.Context, deps restAdminDeps, userCmd *admin.Flus
 	return processUserCmd(ctx, deps, userCmd, guid)
 }
 
-func collectUserAccountMappings(ctx context.Context, deps restAdminDeps, username, guid string) (config.StringSet, config.StringSet) {
-	accountNames := config.NewStringSet()
-	fields := config.NewStringSet()
-
-	redisClient := deps.effectiveRedis()
-	logger := deps.effectiveLogger()
-	cfg := deps.effectiveCfg()
-
-	key := rediscli.GetUserHashKey(cfg.GetServer().GetRedis().GetPrefix(), username)
-
-	data, err := redisClient.GetReadHandle().HGetAll(ctx, key).Result()
-	if err != nil {
-		if !stderrors.Is(err, redis.Nil) {
-			level.Error(logger).Log(
-				definitions.LogKeyGUID, guid,
-				definitions.LogKeyMsg, "Error while retrieving user account mappings",
-				definitions.LogKeyError, err,
-			)
-		}
-
-		return accountNames, fields
-	}
-
-	fieldPrefix := username + "|"
-	for field, accountName := range data {
-		if _, ok := strings.CutPrefix(field, fieldPrefix); !ok {
-			continue
-		}
-
-		fields.Set(field)
-
-		if accountName != "" {
-			accountNames.Set(accountName)
-		}
-	}
-
-	return accountNames, fields
-}
-
 type userCacheFlushScope struct {
 	cleanupAccountNames []string
 	tokenAccountNames   []string
@@ -1301,7 +1296,20 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 	}
 
 	luaResult, luaAdditionalKeys := runUserCacheFlushScript(ctx.Request.Context(), deps, userCmd.User, guid)
-	scope := resolveUserCacheFlushScope(ctx.Request.Context(), deps, userCmd.User, guid, luaResult)
+
+	scope, err := resolveUserCacheFlushScope(ctx.Request.Context(), deps, userCmd.User, guid, luaResult)
+	if err != nil {
+		_ = ctx.Error(err)
+		_ = level.Error(deps.effectiveLogger()).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Cache flush stopped: account mappings could not be read",
+			definitions.LogKeyUsername, userCmd.User,
+			definitions.LogKeyError, err,
+		)
+
+		return nil, false
+	}
+
 	localRemoved := deps.effectiveAuthCacheInvalidator().InvalidateIdentities(scope.cleanupAccountNames...)
 	_ = level.Info(deps.effectiveLogger()).Log(
 		definitions.LogKeyGUID, guid,
@@ -1348,7 +1356,11 @@ func runUserCacheFlushScript(ctx context.Context, deps restAdminDeps, username s
 }
 
 // resolveUserCacheFlushScope resolves account names and hash fields affected by a cache flush.
-func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, username string, guid string, luaResult *cacheflush.Result) userCacheFlushScope {
+//
+// A Lua-provided account takes precedence; otherwise the shared read-only account-mapping resolver is
+// used. A mapping read failure is returned so the flush fails visibly instead of silently skipping the
+// canonical account.
+func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, username string, guid string, luaResult *cacheflush.Result) (userCacheFlushScope, error) {
 	logger := deps.effectiveLogger()
 	cleanupAccounts := config.NewStringSet()
 	tokenAccounts := config.NewStringSet()
@@ -1356,6 +1368,7 @@ func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, usernam
 	var (
 		mappedAccounts config.StringSet
 		hashFields     config.StringSet
+		err            error
 	)
 
 	// If the Lua script provided an account name, use it directly instead of looking up account mappings.
@@ -1370,8 +1383,8 @@ func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, usernam
 		mappedAccounts.Set(luaResult.AccountName)
 
 		hashFields = config.NewStringSet()
-	} else {
-		mappedAccounts, hashFields = collectUserAccountMappings(ctx, deps, username, guid)
+	} else if mappedAccounts, hashFields, err = collectUserAccountMappings(ctx, deps, username); err != nil {
+		return userCacheFlushScope{}, err
 	}
 
 	for _, accountName := range mappedAccounts.GetStringSlice() {
@@ -1396,7 +1409,7 @@ func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, usernam
 		cleanupAccountNames: cleanupAccountNames,
 		tokenAccountNames:   tokenAccountNames,
 		hashFields:          hashFields,
-	}
+	}, nil
 }
 
 // collectUserCacheFlushKeys gathers Redis cache keys and brute-force IPs for the flush scope.

@@ -17,6 +17,7 @@
 package accountcache
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -62,7 +63,29 @@ func (m *Manager) makeKey(username, protocol, oidcClientID string) string {
 // GetAccountMappingField returns a composite field name for username -> account mapping.
 // It combines username, protocol and oidcClientID to allow context-specific mappings.
 func GetAccountMappingField(username, protocol, oidcClientID string) string {
-	return username + "|" + protocol + "|" + oidcClientID
+	return username + accountMappingFieldSeparator + protocol + accountMappingFieldSeparator + oidcClientID
+}
+
+// accountMappingFieldSeparator joins the parts of an account-mapping field.
+const accountMappingFieldSeparator = "|"
+
+// AccountMappingFieldUsername returns the username that owns an account-mapping field.
+//
+// The protocol and OIDC client ID are trusted, operator-controlled parts, while the username is chosen by
+// the client and may itself contain the separator. The field is therefore split at its last two
+// separators, so a username such as "alice|x" never owns fields written for "alice" and vice versa.
+func AccountMappingFieldUsername(field string) (string, bool) {
+	clientSeparator := strings.LastIndex(field, accountMappingFieldSeparator)
+	if clientSeparator < 0 {
+		return "", false
+	}
+
+	protocolSeparator := strings.LastIndex(field[:clientSeparator], accountMappingFieldSeparator)
+	if protocolSeparator < 0 {
+		return "", false
+	}
+
+	return field[:protocolSeparator], true
 }
 
 // Get returns a cached account name for the given username (if present).

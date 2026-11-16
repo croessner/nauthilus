@@ -341,7 +341,7 @@ func TestCacheFlushSync_Minimal_OK(t *testing.T) {
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
 	// Read user account mappings
-	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
+	expectAccountMappingScan(mock, shardKey, user)
 
 	// getIPsFromPWHistSet may not be called in minimal path; do not assert SMEMBERS strictly
 	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
@@ -384,7 +384,7 @@ func TestCacheFlushSync_RemoteOnlyBackendFlushesLocalState(t *testing.T) {
 	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
-	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
+	expectAccountMappingScan(mock, shardKey, user)
 
 	pwHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
 	mock.ExpectUnlink(pwHistSet).SetVal(1)
@@ -427,9 +427,7 @@ func TestCacheFlushSync_WithMapping_OK(t *testing.T) {
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
-	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{
-		mappingField: mappedAccount,
-	})
+	expectAccountMappingScan(mock, shardKey, user, mappingField, mappedAccount)
 
 	// processUserCmd: UNLINK PW_HIST_IPS sets, SREM affected accounts
 	userHistSet := bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())
@@ -480,7 +478,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesUsernameOnly(t *testing.T) {
 	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 
-	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{})
+	expectAccountMappingScan(mock, shardKey, user)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, user).SetVal(1)
 	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), user).SetVal(1)
@@ -512,7 +510,7 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesForRedisAlias(t *testing.T) {
 	shardKey := rediscli.GetUserHashKey(prefix, user)
 	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
-	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{mappingField: alias})
+	expectAccountMappingScan(mock, shardKey, user, mappingField, alias)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
@@ -879,7 +877,7 @@ func expectExecutedAsyncAliasUserFlush(mock redismock.ClientMock, jobKey, shardK
 	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
 	expectQueuedUserFlushJob(mock, jobKey)
-	mock.ExpectHGetAll(shardKey).SetVal(map[string]string{mappingField: alias})
+	expectAccountMappingScan(mock, shardKey, user, mappingField, alias)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)

@@ -39,6 +39,16 @@ func TestBruteForceRequestsMatchOpenAPIContract(t *testing.T) {
 			WantValid: true,
 		},
 		{
+			Name:      "filtered list accepts account mapping resolution",
+			Request:   requesttest.NewJSONRequest(http.MethodPost, "/api/v1/bruteforce/list", `{"accounts":["alice@example.test"],"account_resolution":"account_mapping"}`),
+			WantValid: true,
+		},
+		{
+			Name:              "filtered list rejects unknown account resolution modes",
+			Request:           requesttest.NewJSONRequest(http.MethodPost, "/api/v1/bruteforce/list", `{"accounts":["alice@example.test"],"account_resolution":"ldap"}`),
+			WantErrorContains: "account_resolution",
+		},
+		{
 			Name:      "sync flush accepts rule body",
 			Request:   requesttest.NewJSONRequest(http.MethodDelete, "/api/v1/bruteforce/flush", validBruteForceFlushContractBody()),
 			WantValid: true,

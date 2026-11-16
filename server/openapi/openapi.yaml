@@ -2613,6 +2613,68 @@ components:
             - "null"
         page:
           $ref: "#/components/schemas/PageInfo"
+        account_resolution:
+          type: string
+          enum:
+            - account_mapping
+          description: >-
+            Echo of the applied account resolution mode. Present only when the request asked for
+            `account_mapping`; a missing echo means the server checked the names literally.
+        resolutions:
+          type: array
+          description: >-
+            Per requested name, independent of paging. Present only together with `account_resolution`.
+          items:
+            $ref: "#/components/schemas/BruteForceAccountResolution"
+    BruteForceAccountResolution:
+      type: object
+      description: >-
+        How one requested account filter name was resolved through the account mappings Nauthilus stores when a
+        backend finds a login name. A mapping is not re-verified against the backend and can be stale; a name that
+        was never used for a login has no mapping. The literal name is always checked as well.
+      required:
+        - input
+        - status
+        - source
+        - accounts
+        - checked
+        - matched
+        - literal_match
+      properties:
+        input:
+          type: string
+        status:
+          type: string
+          enum:
+            - mapped
+            - unmapped
+            - ambiguous
+            - error
+          description: >-
+            `mapped`: exactly one stored account. `unmapped`: no stored account, only the literal name was checked.
+            `ambiguous`: several stored accounts, all were checked. `error`: the stored accounts could not be read,
+            the result is undecided and the listing reports an error.
+        source:
+          type: string
+          description: Resolver that produced `accounts`, currently `account_mapping`.
+        accounts:
+          type: array
+          items:
+            type: string
+        checked:
+          type: array
+          description: Names tested against the affected-account state, the input first.
+          items:
+            type: string
+        matched:
+          type: array
+          description: Checked names that currently have affected-account state, before paging.
+          items:
+            type: string
+        literal_match:
+          type: boolean
+        error:
+          type: string
     BruteForceBlockedIPAddresses:
       type: object
       required:
@@ -2640,6 +2702,16 @@ components:
           type: array
           items:
             type: string
+        account_resolution:
+          type: string
+          enum:
+            - none
+            - account_mapping
+          default: none
+          description: >-
+            `none` checks `accounts` literally. `account_mapping` also checks the accounts stored for each login
+            name and reports per-name `resolutions`; it requires 1 to 100 distinct `accounts` and does not link
+            accounts to `ip_addresses`.
     BruteForceFlushPayload:
       type: object
       properties:

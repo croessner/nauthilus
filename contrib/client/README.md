@@ -49,6 +49,23 @@ Affected accounts age out: an account stays listed for at least
 `auth.controls.brute_force.affected_accounts.retention` (default 24h) after its
 last counted failed or blocked request, and while it still has an IP history.
 
+`--account` names are checked literally by default. With `--via-mapping` the
+client asks the server to also check the accounts Nauthilus stored for each
+login name (`account_resolution: account_mapping`, at most 100 names). The
+JSON response stays on stdout; one line per name goes to stderr, leading with
+whether brute-force state was found, followed by the mapping status (`mapped`,
+`unmapped`, `ambiguous`, or undecided). A stored mapping only exists for names
+that were used for a login and is not re-verified against the backend; an
+alias that was never used, or a different spelling, is reported as unmapped
+and only the literal name is checked. The client exits with status 1 when a
+name stays undecided (HTTP 500 body is still rendered), when the server
+ignores the mode (older server: only literal names were checked), or when an
+older server with request validation rejects it.
+
+```sh
+./nauthilus-admin.py bruteforce list --account alias@example.test --via-mapping
+```
+
 Repeated `--resolve` flags replace `NAUTHILUS_RESOLVE`; without CLI overrides,
 the process environment takes precedence over the env file. Comma-separated
 environment values remain supported.
