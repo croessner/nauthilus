@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +24,10 @@ type producer struct {
 
 	bufferedRecords int64
 	bufferedBytes   int64
+
+	// mergeOff is set if a merged batch ever exceeds its limit, which
+	// means the merge bound is wrong for some codec; see mergeSpan.
+	mergeOff atomic.Bool
 
 	cl *Client
 
@@ -44,6 +50,12 @@ type producer struct {
 
 	id           atomic.Value
 	producingTxn atomic.Bool
+
+	// recreatedInTxn holds topics the current transaction produced to
+	// before they were deleted and recreated. The transaction cannot
+	// commit; see EndTransaction. BeginTransaction clears it.
+	recreatedInTxnMu xsync.Mutex
+	recreatedInTxn   map[string]struct{}
 
 	// We must have a producer field for flushing; we cannot just have a
 	// field on recBufs that is toggled on flush. If we did, then a new
@@ -87,6 +99,12 @@ type producer struct {
 	// partition was marked addedToTxn client-side (marking happens only
 	// on produce success).
 	producedInTxn atomic.Bool
+
+	// addingToTxn counts built AddPartitionsToTxn requests that have not
+	// finished. Flush waits for it: a metadata load error can fail the
+	// batches of an add that is still retrying. We increment under the
+	// batch's recBuf.mu and decrement under mu.
+	addingToTxn atomic.Int32
 }
 
 // BufferedProduceRecords returns the number of records currently buffered for
@@ -172,18 +190,15 @@ func (cl *Client) EnsureProduceConnectionIsOpen(ctx context.Context, brokers ...
 		wg.Wait()
 	}
 
-	for _, br := range toOpen {
-		wg.Add(1)
-		br.do(ctx, &forceOpenReq{new(kmsg.ProduceRequest)}, func(_ kmsg.Response, err error) {
-			defer wg.Done()
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, fmt.Errorf("%d: %w", br.meta.NodeID, err))
-				mu.Unlock()
-			}
-		})
+	waits := make([]*respWaiter, len(toOpen))
+	for i, br := range toOpen {
+		waits[i] = br.issue(ctx, &forceOpenReq{new(kmsg.ProduceRequest)})
 	}
-	wg.Wait()
+	for i, w := range waits {
+		if _, err := w.wait(); err != nil {
+			errs = append(errs, fmt.Errorf("%d: %w", toOpen[i].meta.NodeID, err))
+		}
+	}
 
 	return errors.Join(errs...)
 }
@@ -237,7 +252,7 @@ func (p *producer) purgeTopics(topics []string) {
 	p.topicsMu.Lock()
 	defer p.topicsMu.Unlock()
 
-	// We sweep unknown-topic waiters AND store the cleaned topics map
+	// We sweep unknown-topic waiters and store the cleaned topics map
 	// while unknownTopicsMu is held. The store must not happen after the
 	// mu is released: partitionsForTopicProduce re-checks the topic's
 	// presence in p.topics under this mu before (re)creating an
@@ -277,38 +292,47 @@ func (p *producer) purgeTopics(topics []string) {
 
 	for _, d := range purged {
 		for _, p := range d.partitions {
-			r := p.records
-
-			// First we set purged, so that anything in the process
-			// of being buffered will immediately fail when it goes
-			// to buffer.
-			r.mu.Lock()
-			r.purged = true
-			r.mu.Unlock()
-
-			// Now we remove from the sink. When we do, the recBuf
-			// is effectively abandoned. Any active produces may
-			// finish before we fail the records; if they finish
-			// after they will no longer belong in the batch, but
-			// they may have been produced. This is the duplicate
-			// risk a user runs when purging.
-			//
-			// We do not need to lock for `r.sink` access because
-			// this is run in a blocking metadata fn, meaning the
-			// sink cannot change. We do not WANT to lock because
-			// r.mu => r.sink.recBufsMu would cause lock inversion.
-			r.sink.removeRecBuf(r)
-
-			// Once abandoned, we now need to fail anything that
-			// was buffered.
-			r.mu.Lock()
-			r.failAllRecords(errPurged)
-			r.mu.Unlock()
+			p.records.abandon(errPurged)
 		}
 	}
 }
 
 func (p *producer) isAborting() bool { return p.aborting.Load() > 0 }
+
+// noteRecreatedInTxn records that the current transaction produced to a
+// topic that was then recreated. A partition counts if it was added to the
+// transaction or has a request in flight: the buffer is abandoned, so the
+// response can no longer mark it added.
+func (p *producer) noteRecreatedInTxn(topic string, partitions []*topicPartition) {
+	for _, tp := range partitions {
+		recBuf := tp.records
+		recBuf.mu.Lock()
+		inflight := recBuf.inflight > 0
+		recBuf.mu.Unlock()
+		if !inflight && !recBuf.addedToTxn.Load() {
+			continue
+		}
+		p.recreatedInTxnMu.Lock()
+		if p.recreatedInTxn == nil {
+			p.recreatedInTxn = make(map[string]struct{})
+		}
+		p.recreatedInTxn[topic] = struct{}{}
+		p.recreatedInTxnMu.Unlock()
+		return
+	}
+}
+
+func (p *producer) topicsRecreatedInTxn() []string {
+	p.recreatedInTxnMu.Lock()
+	defer p.recreatedInTxnMu.Unlock()
+	return slices.Sorted(maps.Keys(p.recreatedInTxn))
+}
+
+func (p *producer) clearRecreatedInTxn() {
+	p.recreatedInTxnMu.Lock()
+	p.recreatedInTxn = nil
+	p.recreatedInTxnMu.Unlock()
+}
 
 func noPromise(*Record, error) {}
 
@@ -585,6 +609,15 @@ func (cl *Client) produce(
 	if r.Topic == "" || cl.cfg.defaultProduceTopicAlways {
 		r.Topic = cl.cfg.defaultProduceTopic
 	}
+	// We stamp the record before taking any lock: reading the clock can
+	// be slow on machines without vDSO, and the partition lock
+	// serializes every goroutine producing to a topic. We truncate to
+	// milliseconds to avoid some accumulated rounding error problems
+	// (see IBM/sarama#1455).
+	if r.Timestamp.IsZero() {
+		r.Timestamp = time.Now()
+	}
+	r.Timestamp = r.Timestamp.Truncate(time.Millisecond)
 
 	p := &cl.producer
 	if p.hooks != nil && len(p.hooks.buffered) > 0 {
@@ -774,6 +807,7 @@ func (p *producer) promiseRecordBeforeBuf(pr promisedRec, err error) {
 }
 
 func (p *producer) finishPromises(b batchPromise) {
+	growStack()
 	cl := p.cl
 	var more bool
 	var broadcast bool
@@ -810,7 +844,7 @@ start:
 	}
 
 	// We broadcast per batch, not per record (waking blocked producers on
-	// every record forces tiny one-record batches; see ead18d3c) - but
+	// every record forces tiny one-record batches) - but
 	// also not once per ring drain: while pre-buffer failure promises keep
 	// arriving from other goroutines, this loop never observes an empty
 	// ring and never exits, and a deferred-to-exit broadcast would starve
@@ -888,7 +922,6 @@ func (cl *Client) doPartition(parts *topicPartitions, partsData *topicPartitions
 	}
 
 	parts.partsMu.Lock()
-	defer parts.partsMu.Unlock()
 	if parts.partitioner == nil {
 		parts.partitioner = cl.cfg.partitioner.ForTopic(pr.Topic)
 	}
@@ -908,8 +941,26 @@ func (cl *Client) doPartition(parts *topicPartitions, partsData *topicPartitions
 		// with the partition's actual load error. The Java client
 		// falls back identically when no partition is available.
 		mapping = partsData.partitions
+	} else if cl.cfg.rackAwarePartitioning && cl.cfg.rack != "" {
+		// KIP-1123: prefer partitions whose leader is in our rack. We
+		// filter once per metadata update, which always stores a new
+		// partsData. If no leader is in our rack we use every writable
+		// partition, as the Java client does.
+		if parts.rackData != partsData {
+			racks := cl.brokerRacks()
+			parts.rackData, parts.rackParts = partsData, nil
+			for _, p := range mapping {
+				if racks[p.leader] == cl.cfg.rack {
+					parts.rackParts = append(parts.rackParts, p)
+				}
+			}
+		}
+		if len(parts.rackParts) > 0 {
+			mapping = parts.rackParts
+		}
 	}
 	if len(mapping) == 0 {
+		parts.partsMu.Unlock()
 		cl.producer.promiseRecord(pr, errors.New("unable to partition record due to no usable partitions"))
 		return
 	}
@@ -926,15 +977,25 @@ func (cl *Client) doPartition(parts *topicPartitions, partsData *topicPartitions
 		pick = parts.partitioner.Partition(pr.Record, len(mapping))
 	}
 	if pick < 0 || pick >= len(mapping) {
+		parts.partsMu.Unlock()
 		cl.producer.promiseRecord(pr, fmt.Errorf("invalid record partitioning choice of %d from %d available", pick, len(mapping)))
 		return
 	}
 
 	partition := mapping[pick]
 
+	// partsMu guards the partitioner's state. Only a partitioner with
+	// OnNewBatch is called again after bufferRecord, so for any other
+	// partitioner we unlock before buffering: holding partsMu while
+	// buffering would serialize every goroutine producing to this topic.
 	onNewBatch, _ := parts.partitioner.(TopicPartitionerOnNewBatch)
-	abortOnNewBatch := onNewBatch != nil
-	processed := partition.records.bufferRecord(pr, abortOnNewBatch) // KIP-480
+	if onNewBatch == nil {
+		parts.partsMu.Unlock()
+		partition.records.bufferRecord(pr, false)
+		return
+	}
+	defer parts.partsMu.Unlock()
+	processed := partition.records.bufferRecord(pr, true) // KIP-480
 	if !processed {
 		onNewBatch.OnNewBatch()
 
@@ -1142,9 +1203,9 @@ func (cl *Client) doInitProducerID(ctxFn func() context.Context, lastID int64, l
 		// doWithConcurrentTransactions retries in place: the
 		// coordinator replies with it while still completing (or
 		// fence-aborting) a previous transaction for this
-		// transactional ID. Notably, taking over a crashed
-		// incarnation's ongoing transaction ALWAYS receives it at
-		// least once: the broker internally aborts the old
+		// transactional ID. Taking over a crashed incarnation's
+		// ongoing transaction always receives it at least once: the
+		// broker internally aborts the old
 		// transaction and tells us to retry. Surfacing the error
 		// instead would bubble a routine, transient condition up as a
 		// BeginTransaction failure. All other response error codes
@@ -1159,13 +1220,9 @@ func (cl *Client) doInitProducerID(ctxFn func() context.Context, lastID int64, l
 			cl.cfg.logger.Log(LogLevelInfo, "unable to initialize a producer id because the broker is too old or the client is pinned to an old version, continuing without a producer id")
 			return &producerID{-1, -1, nil}, true
 		}
-		if errors.Is(err, errChosenBrokerDead) {
-			select {
-			case <-cl.ctx.Done():
-				cl.cfg.logger.Log(LogLevelInfo, "producer id initialization failure due to dying client", "err", err)
-				return &producerID{lastID, lastEpoch, ErrClientClosed}, true
-			default:
-			}
+		if cl.ctx.Err() != nil {
+			cl.cfg.logger.Log(LogLevelInfo, "producer id initialization failure due to dying client", "err", err)
+			return &producerID{lastID, lastEpoch, ErrClientClosed}, true
 		}
 		cl.cfg.logger.Log(LogLevelInfo, "producer id initialization failure, discarding initialization attempt", "err", err)
 		return &producerID{lastID, lastEpoch, err}, false
@@ -1429,7 +1486,7 @@ func (cl *Client) Flush(ctx context.Context) error {
 		defer p.mu.Unlock()
 		defer close(done)
 
-		for !quit && p.bufferedRecords+int64(p.blocked.Load()) > 0 {
+		for !quit && p.bufferedRecords+int64(p.blocked.Load())+int64(p.addingToTxn.Load()) > 0 {
 			p.c.Wait()
 		}
 	}()
