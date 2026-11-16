@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/internal/signerutil"
 )
 
 // JWTTrackedRequestCodec encodes TrackedRequests as signed JWTs
@@ -17,6 +18,10 @@ type JWTTrackedRequestCodec struct {
 	Issuer        string
 	MaxAge        time.Duration
 	Key           crypto.Signer
+
+	// Clock, if non-nil, is the time source for the times of the tokens it issues and for checking their expiry. If nil, the real
+	// clock is used (through the deprecated saml.TimeNow).
+	Clock *dsig.Clock
 }
 
 var _ TrackedRequestCodec = JWTTrackedRequestCodec{}
@@ -30,7 +35,7 @@ type JWTTrackedRequestClaims struct {
 
 // Encode returns an encoded string representing the TrackedRequest.
 func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
-	now := saml.TimeNow()
+	now := clockNow(s.Clock)
 	claims := JWTTrackedRequestClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Audience:  jwt.ClaimStrings{s.Audience},
@@ -44,14 +49,17 @@ func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
 		SAMLAuthnRequest: true,
 	}
 	token := jwt.NewWithClaims(s.SigningMethod, claims)
-	return token.SignedString(s.Key)
+	return signToken(token, s.Key)
 }
 
 // Decode returns a Tracked request from an encoded string.
 func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
+	if signerutil.IsNil(s.Key) {
+		return nil, fmt.Errorf("decoding key is nil")
+	}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{s.SigningMethod.Alg()}),
-		jwt.WithTimeFunc(saml.TimeNow),
+		jwt.WithTimeFunc(func() time.Time { return clockNow(s.Clock) }),
 		jwt.WithAudience(s.Audience),
 		jwt.WithIssuer(s.Issuer),
 	)
