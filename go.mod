@@ -7,12 +7,12 @@ toolchain go1.27.4
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/andybalholm/brotli v1.3.0
-	github.com/beevik/etree v1.7.1
+	github.com/beevik/etree v1.8.1
 	github.com/biter777/countries v1.7.5
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cjoudrey/gluahttp v0.0.0-20201111170219-25003d9adfa9
 	github.com/coreos/go-oidc/v3 v3.20.0
-	github.com/crewjam/saml v0.5.1
+	github.com/crewjam/saml v0.5.2
 	github.com/dspinhirne/netaddr-go v0.0.0-20211008142535-a4c5bccad224
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
@@ -122,7 +122,6 @@ require (
 	github.com/go-webauthn/x v0.3.0 // indirect
 	github.com/goccy/go-json v0.11.2 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect

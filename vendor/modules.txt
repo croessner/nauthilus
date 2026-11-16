@@ -79,7 +79,7 @@ github.com/aws/aws-sdk-go/service/sso/ssoiface
 github.com/aws/aws-sdk-go/service/ssooidc
 github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
-# github.com/beevik/etree v1.7.1
+# github.com/beevik/etree v1.8.1
 ## explicit; go 1.23.0
 github.com/beevik/etree
 # github.com/beorn7/perks v1.0.1
@@ -167,8 +167,8 @@ github.com/cloudwego/base64x/internal/rt
 # github.com/coreos/go-oidc/v3 v3.20.0
 ## explicit; go 1.25.0
 github.com/coreos/go-oidc/v3/oidc
-# github.com/crewjam/saml v0.5.1
-## explicit; go 1.22
+# github.com/crewjam/saml v0.5.2
+## explicit; go 1.26.0
 github.com/crewjam/saml
 github.com/crewjam/saml/logger
 github.com/crewjam/saml/samlsp
@@ -333,9 +333,6 @@ github.com/goccy/go-yaml/parser
 github.com/goccy/go-yaml/printer
 github.com/goccy/go-yaml/scanner
 github.com/goccy/go-yaml/token
-# github.com/golang-jwt/jwt/v4 v4.5.2
-## explicit; go 1.16
-github.com/golang-jwt/jwt/v4
 # github.com/golang-jwt/jwt/v5 v5.3.1
 ## explicit; go 1.21
 github.com/golang-jwt/jwt/v5
