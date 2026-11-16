@@ -16,6 +16,7 @@
 package cookie
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -136,14 +137,25 @@ func TestSecureCodec_TamperedData(t *testing.T) {
 		t.Fatalf("unexpected error encoding: %v", err)
 	}
 
-	// Tamper with the encoded data.
-	tampered := encoded[:len(encoded)-2] + "XX"
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("unexpected error decoding base64: %v", err)
+	}
 
-	var decoded string
+	// Flip bits in the decoded bytes: replacing trailing base64 characters can leave the bytes unchanged, because the
+	// last character of unpadded base64 may only carry ignored padding bits.
+	for name, index := range map[string]int{"first": 0, "middle": len(raw) / 2, "last": len(raw) - 1} {
+		t.Run(name, func(t *testing.T) {
+			tampered := append([]byte(nil), raw...)
+			tampered[index] ^= 0x01
 
-	err = codec.Decode("test_cookie", tampered, &decoded)
+			var decoded string
 
-	assert.Error(t, err)
+			err := codec.Decode("test_cookie", base64.RawURLEncoding.EncodeToString(tampered), &decoded)
+
+			assert.Error(t, err)
+		})
+	}
 }
 
 func TestSecureCodec_InvalidBase64(t *testing.T) {
