@@ -1139,7 +1139,12 @@ func TestSAMLHandler_validateInboundLogoutRequestProtocol_RegistryAndReplay(t *t
 	account := "alice@example.com"
 	spEntityID := "https://sp.example.com/saml/metadata"
 
-	for _, tc := range logoutRequestRegistryReplayCases(account, spEntityID) {
+	testCases := append(
+		logoutRequestRegistryReplayCases(account, spEntityID),
+		logoutRequestMultiSessionIndexCases(t, account, spEntityID)...,
+	)
+
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := redismock.NewClientMock()
 			redisClient := rediscli.NewTestClient(db)
@@ -1220,6 +1225,33 @@ func logoutRequestRegistryReplayCases(account, spEntityID string) []logoutReques
 	}
 }
 
+// logoutRequestMultiSessionIndexCases covers LogoutRequests that list several SessionIndex values.
+func logoutRequestMultiSessionIndexCases(t *testing.T, account, spEntityID string) []logoutRequestRegistryReplayCase {
+	t.Helper()
+
+	replayStored := true
+	participant := logoutRequestProtocolParticipant(account, spEntityID, "_idx-1")
+
+	return []logoutRequestRegistryReplayCase{
+		{
+			name: "success when a later session index matches participant",
+			request: newMultiIndexLogoutRequestProtocolTestRequest(
+				t, account, "id-protocol-later-session-index", spEntityID, "_idx-2", "_idx-1",
+			),
+			participants: []slodomain.ParticipantSession{participant},
+			replayStored: &replayStored,
+		},
+		{
+			name: "no listed session index matches participant",
+			request: newMultiIndexLogoutRequestProtocolTestRequest(
+				t, account, "id-protocol-no-listed-session-index", spEntityID, "_idx-2", "_idx-3",
+			),
+			participants: []slodomain.ParticipantSession{participant},
+			wantErr:      "session index \"_idx-2, _idx-3\"",
+		},
+	}
+}
+
 // newLogoutRequestProtocolTestRequest builds the protocol validation baseline request.
 func newLogoutRequestProtocolTestRequest(account, requestID, issuer string, sessionIndex *string) *saml.LogoutRequest {
 	request := &saml.LogoutRequest{
@@ -1240,6 +1272,37 @@ func newLogoutRequestProtocolTestRequest(account, requestID, issuer string, sess
 	}
 
 	return request
+}
+
+// newMultiIndexLogoutRequestProtocolTestRequest builds a LogoutRequest carrying several SessionIndex elements
+// and decodes it from XML, as an inbound message would be.
+func newMultiIndexLogoutRequestProtocolTestRequest(
+	t *testing.T,
+	account, requestID, issuer string,
+	sessionIndexes ...string,
+) *saml.LogoutRequest {
+	t.Helper()
+
+	request := newLogoutRequestProtocolTestRequest(account, requestID, issuer, nil)
+	for _, sessionIndex := range sessionIndexes {
+		request.AdditionalSessionIndexes = append(request.AdditionalSessionIndexes, saml.SessionIndex{Value: sessionIndex})
+	}
+
+	document := etree.NewDocument()
+	document.SetRoot(request.Element())
+
+	rawXML, err := document.WriteToBytes()
+	if err != nil {
+		t.Fatalf("failed to serialize multi-index logout request: %v", err)
+	}
+
+	var decoded saml.LogoutRequest
+
+	if err = xml.Unmarshal(rawXML, &decoded); err != nil {
+		t.Fatalf("failed to decode multi-index logout request: %v", err)
+	}
+
+	return &decoded
 }
 
 // logoutRequestProtocolParticipant builds one active participant fixture.
