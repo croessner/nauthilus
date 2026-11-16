@@ -179,13 +179,16 @@ marker. This is correct for `decision_sources` (brute force did not reject). The
 because it is the evidence of the suppressed trigger. The ban-write failure branch also sets the bucket but ends with
 `tempfail_reason = 'brute_force_error'`.
 
-Correction: toleration cannot become active on v4.x. Its positive/negative counters were only
+Correction: toleration could not become active on v4.x before this change. Its positive/negative counters were only
 written by the auth FSM dispatch that the Policy authority cutover (commit `f0233a5b3`, before v4.0.0) took out of the
 production path; commit `28a9db8a0` later removed the dead dispatch. Toleration and the
 reputation-scaled bucket limits require a positive count. The 13 production rows of 2026-11-16 therefore do not come
 from the toleration branch; their path stays unexplained on the legacy data (the ban-write failure branch is a
 candidate whose rows were projected as credential failures by the old terminal projection). Rows of contract version 1
-tell both apart through `outcome`, `tempfail_reason`, and `brute_force_tolerated`.
+tell both apart through `outcome`, `tempfail_reason`, and `brute_force_tolerated`. The accounting is restored in
+`server/core/authn_toleration_accounting.go`: an answered success backed by a verified credential is positive, an
+answered failure backed by a rejected credential is negative; tempfails, pre-auth rejections, lookups, and no-auth
+requests are not accounted.
 
 ## 6. Reputation projection
 
@@ -571,7 +574,8 @@ reload starts the export; the emitter set is fixed per process like every native
 host `plugin_auth_events_total{lane="bruteforce_*"}`.
 
 Tests: `server/core` `TestBruteForceEvents*` (shared IP with unknown claimed name, ban by a later request, affected
-request, RWP and allowlist not counted, release and re-ban, partial flush, IPv6 /64, multiple rules and protocol scope, toleration), `server/bruteforce` `TestConcurrentThresholdRequestsCreateOneBanInstance`,
+request, RWP and allowlist not counted, release and re-ban, partial flush, IPv6 /64, multiple rules and protocol scope, toleration
+with the restored accounting), `server/bruteforce` `TestConcurrentThresholdRequestsCreateOneBanInstance`,
 `server/pluginruntime` `TestBruteForceLanesKeepLifecycleUnderVolumeFlood`, the plugin unit test
 `TestBruteForceInlineFlushFailureKeepsRowsAndAdmitsEvent`, and the `clickhouse_integration` tests
 `TestClickHouseBruteForceEvidence*` that replay `testdata/diagnostic_contract/bruteforce_events.json` into a real
@@ -586,8 +590,8 @@ exercise brute-force bans.
 - Soft-allowlisted failures still feed the shared network bucket. Reported, not changed.
 - Lua scripts can write or delete ban keys without events; such bans appear as orphan hits. Redis eviction, restart,
   or failover can end a ban without any event as well.
-- Toleration and reputation-scaled limits are inert on v4.x because no request writes their counters (see 5.3).
-  Reported, not changed here.
+- Restoring toleration accounting activates toleration and reputation-scaled limits for the first time on v4.x; this
+  needs a release note: networks with recent successful logins get higher limits and suppressed bans.
 - The user cache flush reports only the removed keys of the last IP of the account history
   (`removedIPKeys = currentRemovedIPKeys` in `flushUserBruteForceIPKeys`); the brute-force events are emitted per IP
   and are not affected. Reported, not changed.

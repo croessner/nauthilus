@@ -53,8 +53,20 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
-## Unreleased: Brute-Force Ban Evidence
+## Unreleased: Brute-Force Toleration Accounting And Ban Evidence
 
+- **Behaviour change:** brute-force toleration works again. Since the Policy
+  authority cutover before v4.0.0 no request recorded positive or negative
+  toleration observations, so `tolerate_percent`, `custom_tolerations`, and
+  the reputation-scaled bucket limits (including `adaptive_toleration`) had
+  no effect on v4.x. Every authenticate request whose answer is backed by a
+  host-verified credential outcome now records one observation for the client
+  IP; tempfails, pre-auth rejections, identity lookups, and no-auth requests
+  are not recorded. Networks with recent successful logins therefore get
+  higher effective limits again, and over-limit buckets of tolerated networks
+  are not banned. Review `tolerate_percent`, `min_tolerate_percent`,
+  `max_tolerate_percent`, `adaptive_toleration`, and `custom_tolerations`
+  before the upgrade.
 - Native plugins can register a `BruteForceEventSink`. The ClickHouse plugin
   writes ban activations, releases, counter resets, counted increments,
   tolerated thresholds, and ban hits to the new `bruteforce_lifecycle` and

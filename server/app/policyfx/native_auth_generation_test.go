@@ -341,6 +341,20 @@ func newNativeAuthApplicationWithLogger(
 ) core.AuthApplicationService {
 	t.Helper()
 
+	return newNativeAuthApplicationWithDeps(t, configured, service, verifier, logger, nil)
+}
+
+// newNativeAuthApplicationWithDeps binds the production application and lets one test adjust its host dependencies.
+func newNativeAuthApplicationWithDeps(
+	t *testing.T,
+	configured config.File,
+	service *decisionservice.DecisionService,
+	verifier core.PasswordVerifier,
+	logger *slog.Logger,
+	adjust func(*core.AuthDeps),
+) core.AuthApplicationService {
+	t.Helper()
+
 	database, _ := redismock.NewClientMock()
 
 	hostServices, err := core.NewAuthnHostServices(core.AuthnHostServicesInput{
@@ -354,13 +368,18 @@ func newNativeAuthApplicationWithLogger(
 		t.Fatalf("NewAuthnHostServices() error = %v", err)
 	}
 
-	application, err := core.NewProductionAuthApplicationService(core.AuthDeps{
+	deps := core.AuthDeps{
 		Cfg: configured, Env: config.NewTestEnvironmentConfig(), Logger: logger,
 		Redis: rediscli.NewTestClient(database), AccountCache: accountcache.NewManager(configured),
 		HostServices: hostServices, NativeRuntime: pluginruntime.NewAuthnRequestRuntime(),
 		LDAPQueue:     priorityqueue.NewLDAPRequestQueue(logger),
 		LDAPAuthQueue: priorityqueue.NewLDAPAuthRequestQueue(logger),
-	}, service)
+	}
+	if adjust != nil {
+		adjust(&deps)
+	}
+
+	application, err := core.NewProductionAuthApplicationService(deps, service)
 	if err != nil {
 		t.Fatalf("NewProductionAuthApplicationService() error = %v", err)
 	}

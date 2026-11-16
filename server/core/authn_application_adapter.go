@@ -419,9 +419,11 @@ func (s *authnPolicyApplicationService) run(
 	}
 
 	var (
-		result    authnApplicationResult
-		execution *authnCandidateExecution
-		admitted  bool
+		result             authnApplicationResult
+		execution          *authnCandidateExecution
+		toleration         tolerationObservation
+		admitted           bool
+		tolerationObserved bool
 	)
 
 	err := s.withAuthnSession(ctx, input, operation, func(session decisionservice.DecisionSession) error {
@@ -451,6 +453,7 @@ func (s *authnPolicyApplicationService) run(
 
 		if traversalErr == nil && result.validFor(operation) {
 			execution.sealTerminalOutcome(result)
+			toleration, tolerationObserved = execution.tolerationObservation(result)
 		}
 
 		return traversalErr
@@ -461,6 +464,10 @@ func (s *authnPolicyApplicationService) run(
 
 	if !result.validFor(operation) {
 		return authnApplicationResult{}, ErrAuthOutcomeMissing
+	}
+
+	if tolerationObserved {
+		toleration.record(ctx)
 	}
 
 	return result, nil

@@ -144,6 +144,9 @@ windows.
   also handles **Adaptive Toleration** by scaling the `base_limit` based on the IP's reputation. It returns
   `{total, exceeded, effective_limit, current_window_count, previous_window_count}`; the two window counts feed the
   diagnostic brute-force events (`contrib/plugins/clickhouse/DIAGNOSTIC_CONTRACT.md` section 13).
+* **Toleration accounting:** every authenticate request whose answered result is backed by a host-verified credential
+  outcome records one positive (success) or negative (rejected credential) toleration observation for the client IP.
+  Tempfails, pre-auth rejections, identity lookups, and no-auth requests are not recorded.
 
 ### 3.4 Repeating Wrong Password (RWP)
 
