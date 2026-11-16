@@ -429,6 +429,9 @@ func (h *SAMLHandler) getSAMLIDP() (*saml.IdentityProvider, error) {
 		ServiceProviderProvider: h,
 		SignatureMethod:         samlCfg.GetSignatureMethod(),
 		Logger:                  &samlLogger{logger: h.deps.Logger},
+		// IdpAuthnRequest.Validate verifies AuthnRequest signatures itself; keep it aligned with the
+		// Nauthilus signature policy, which already refuses SHA-1 based XML and Redirect signatures.
+		RejectSHA1Signatures: true,
 	}, nil
 }
 
