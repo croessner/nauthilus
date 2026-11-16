@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ import (
 const defaultSLOReplayTTL = time.Hour
 
 func (h *SAMLHandler) validateInboundLogoutRequestProtocol(ctx context.Context, logoutRequest *saml.LogoutRequest) error {
-	requestID, issuer, nameID, sessionIndex, err := logoutRequestProtocolFields(logoutRequest)
+	requestID, issuer, nameID, sessionIndexes, err := logoutRequestProtocolFields(logoutRequest)
 	if err != nil {
 		return err
 	}
@@ -45,7 +46,7 @@ func (h *SAMLHandler) validateInboundLogoutRequestProtocol(ctx context.Context, 
 		return err
 	}
 
-	if err := h.validateLogoutRequestParticipantSession(ctx, nameID, issuer, sessionIndex); err != nil {
+	if err := h.validateLogoutRequestParticipantSession(ctx, nameID, issuer, sessionIndexes); err != nil {
 		return err
 	}
 
@@ -56,32 +57,48 @@ func (h *SAMLHandler) validateInboundLogoutRequestProtocol(ctx context.Context, 
 	return nil
 }
 
-// logoutRequestProtocolFields extracts required protocol identifiers.
-func logoutRequestProtocolFields(logoutRequest *saml.LogoutRequest) (requestID, issuer, nameID, sessionIndex string, err error) {
+// logoutRequestProtocolFields extracts required protocol identifiers and every listed SessionIndex.
+func logoutRequestProtocolFields(logoutRequest *saml.LogoutRequest) (requestID, issuer, nameID string, sessionIndexes []string, err error) {
 	if logoutRequest == nil {
-		return "", "", "", "", fmt.Errorf("logout request payload is missing")
+		return "", "", "", nil, fmt.Errorf("logout request payload is missing")
 	}
 
 	requestID = strings.TrimSpace(logoutRequest.ID)
 	if requestID == "" {
-		return "", "", "", "", fmt.Errorf("logout request id is missing")
+		return "", "", "", nil, fmt.Errorf("logout request id is missing")
 	}
 
 	issuer = samlIssuerValue(logoutRequest.Issuer)
 	if issuer == "" {
-		return "", "", "", "", fmt.Errorf("logout request issuer is missing")
+		return "", "", "", nil, fmt.Errorf("logout request issuer is missing")
 	}
 
 	nameID = samlLogoutRequestAccount(logoutRequest)
 	if nameID == "" {
-		return "", "", "", "", fmt.Errorf("logout request NameID is missing")
+		return "", "", "", nil, fmt.Errorf("logout request NameID is missing")
 	}
 
-	if logoutRequest.SessionIndex != nil {
-		sessionIndex = strings.TrimSpace(logoutRequest.SessionIndex.Value)
+	return requestID, issuer, nameID, logoutRequestSessionIndexes(logoutRequest), nil
+}
+
+// logoutRequestSessionIndexes returns the non-empty SessionIndex values in document order.
+// A LogoutRequest may carry several of them (saml-core-2.0-os §3.7.1).
+func logoutRequestSessionIndexes(logoutRequest *saml.LogoutRequest) []string {
+	allIndexes := logoutRequest.AllSessionIndexes()
+	sessionIndexes := make([]string, 0, len(allIndexes))
+
+	for _, sessionIndex := range allIndexes {
+		if value := strings.TrimSpace(sessionIndex.Value); value != "" {
+			sessionIndexes = append(sessionIndexes, value)
+		}
 	}
 
-	return requestID, issuer, nameID, sessionIndex, nil
+	return sessionIndexes
+}
+
+// sloSessionIndexMatches reports whether a participant session is named by the request; no index names every session.
+func sloSessionIndexMatches(sessionIndexes []string, participantSessionIndex string) bool {
+	return len(sessionIndexes) == 0 || slices.Contains(sessionIndexes, participantSessionIndex)
 }
 
 // validateLogoutRequestTimeWindow verifies IssueInstant and NotOnOrAfter bounds.
@@ -257,7 +274,9 @@ func normalizedSLOPath(path string) string {
 	return cleaned
 }
 
-func (h *SAMLHandler) validateLogoutRequestParticipantSession(ctx context.Context, nameID, issuer, sessionIndex string) error {
+// validateLogoutRequestParticipantSession requires an active participant session for the issuer and NameID
+// that matches one of the listed session indexes, if any are listed.
+func (h *SAMLHandler) validateLogoutRequestParticipantSession(ctx context.Context, nameID, issuer string, sessionIndexes []string) error {
 	registry := h.sloSessionRegistry()
 	if registry == nil {
 		return fmt.Errorf("slo session registry is not available")
@@ -281,18 +300,18 @@ func (h *SAMLHandler) validateLogoutRequestParticipantSession(ctx context.Contex
 			continue
 		}
 
-		if sessionIndex != "" && session.SessionIndex != sessionIndex {
+		if !sloSessionIndexMatches(sessionIndexes, session.SessionIndex) {
 			continue
 		}
 
 		return nil
 	}
 
-	if sessionIndex != "" {
+	if len(sessionIndexes) > 0 {
 		return fmt.Errorf(
 			"no active SLO participant session for issuer %q and session index %q",
 			issuer,
-			sessionIndex,
+			strings.Join(sessionIndexes, ", "),
 		)
 	}
 
