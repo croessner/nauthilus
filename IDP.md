@@ -399,7 +399,12 @@ The IdP metadata can be retrieved at `https://<domain>/saml/metadata`.
 - **AuthnRequest Signature Validation**: Redirect and POST-bound AuthnRequests are validated when signed, and can be
   required per SP.
 - **Per-SP SLO Signature Policy**: `logout_requests_signed` and `logout_responses_signed` allow interoperability with
-  Service Providers that do not sign logout messages. If omitted, both default to `false`.
+  Service Providers that do not sign logout messages. If omitted, both default to `false`. Inbound Redirect-bound
+  logout messages are accepted with a `SigAlg`/`Signature` query-string signature; a Redirect-bound LogoutResponse may
+  alternatively carry an enveloped XML signature. SHA-1 based signatures are rejected.
+- **Outbound SLO Signatures**: Nauthilus always signs the LogoutRequests and LogoutResponses it sends. With the
+  HTTP-Redirect binding the signature is carried in the `SigAlg`/`Signature` query parameters and the deflated XML
+  contains no `<ds:Signature>` (SAML bindings §3.4.4.1); with the HTTP-POST binding it is an enveloped XML signature.
 - **Delayed-Response**: Also available for SAML Service Providers to make account enumeration harder.
 
 ### 4.1 SAML Attribute Mapping

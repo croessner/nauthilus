@@ -102,7 +102,7 @@ func (h *SAMLHandler) resolveAuthnRequestSigningCerts(issuer string) ([]*x509.Ce
 
 // validateRedirectAuthnRequestSignature verifies a Redirect-binding AuthnRequest signature.
 func validateRedirectAuthnRequestSignature(rawQuery string, certs []*x509.Certificate) error {
-	parts, err := parseRedirectSLOSignatureParts(rawQuery, "SAMLRequest", true)
+	parts, err := parseRedirectSLOSignatureParts(rawQuery, samlRedirectRequestParam, true)
 	if err != nil {
 		return err
 	}

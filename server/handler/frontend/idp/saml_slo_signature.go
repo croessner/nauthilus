@@ -485,7 +485,7 @@ func parsePEMCertificates(certPEM string) ([]*x509.Certificate, error) {
 }
 
 func validateRedirectLogoutRequestSignature(rawQuery string, certs []*x509.Certificate) error {
-	parts, err := parseRedirectSLOSignatureParts(rawQuery, "SAMLRequest", true)
+	parts, err := parseRedirectSLOSignatureParts(rawQuery, samlRedirectRequestParam, true)
 	if err != nil {
 		return err
 	}
@@ -494,7 +494,7 @@ func validateRedirectLogoutRequestSignature(rawQuery string, certs []*x509.Certi
 }
 
 func validateRedirectLogoutResponseSignature(rawQuery string, responseXML []byte, certs []*x509.Certificate) error {
-	parts, err := parseRedirectSLOSignatureParts(rawQuery, "SAMLResponse", false)
+	parts, err := parseRedirectSLOSignatureParts(rawQuery, samlRedirectResponseParam, false)
 	if err != nil {
 		return err
 	}
@@ -521,7 +521,7 @@ func parseRedirectSLOSignatureParts(rawQuery, payloadKey string, signatureRequir
 		return redirectSLOSignatureParts{}, fmt.Errorf("redirect binding signature is malformed: missing %s", payloadKey)
 	}
 
-	rawRelayState, hasRelayState, err := rawQueryParameterStrictSLO(rawQuery, "RelayState")
+	rawRelayState, hasRelayState, err := rawQueryParameterStrictSLO(rawQuery, samlRedirectRelayStateParam)
 	if err != nil {
 		return redirectSLOSignatureParts{}, err
 	}
@@ -541,10 +541,10 @@ func parseRedirectSLOSignatureParts(rawQuery, payloadKey string, signatureRequir
 
 	signedContent := payloadKey + "=" + rawPayload
 	if hasRelayState {
-		signedContent += "&RelayState=" + rawRelayState
+		signedContent += "&" + samlRedirectRelayStateParam + "=" + rawRelayState
 	}
 
-	signedContent += "&SigAlg=" + rawSigAlg
+	signedContent += "&" + samlRedirectSigAlgParam + "=" + rawSigAlg
 
 	sigAlgValue, err := url.QueryUnescape(rawSigAlg)
 	if err != nil {
@@ -566,12 +566,12 @@ func parseRedirectSLOSignatureParts(rawQuery, payloadKey string, signatureRequir
 
 // redirectSLODetachedSignatureParams returns the raw Signature and SigAlg values.
 func redirectSLODetachedSignatureParams(rawQuery string) (rawSignature string, hasSignature bool, rawSigAlg string, err error) {
-	rawSignature, hasSignature, err = rawQueryParameterStrictSLO(rawQuery, "Signature")
+	rawSignature, hasSignature, err = rawQueryParameterStrictSLO(rawQuery, samlRedirectSignatureParam)
 	if err != nil {
 		return "", false, "", err
 	}
 
-	rawSigAlg, hasSigAlg, err := rawQueryParameterStrictSLO(rawQuery, "SigAlg")
+	rawSigAlg, hasSigAlg, err := rawQueryParameterStrictSLO(rawQuery, samlRedirectSigAlgParam)
 	if err != nil {
 		return "", false, "", err
 	}
@@ -627,22 +627,11 @@ func verifyRedirectSLOSignature(parts redirectSLOSignatureParts, certs []*x509.C
 	return fmt.Errorf("invalid redirect %s signature: %w", messageName, verifyErr)
 }
 
+// redirectSLOHasDetachedSignature reports whether a Redirect query carries a complete SigAlg/Signature pair.
 func redirectSLOHasDetachedSignature(rawQuery string) (bool, error) {
-	_, hasSignature, err := rawQueryParameterStrictSLO(rawQuery, "Signature")
-	if err != nil {
-		return false, err
-	}
+	_, hasSignature, _, err := redirectSLODetachedSignatureParams(rawQuery)
 
-	_, hasSigAlg, err := rawQueryParameterStrictSLO(rawQuery, "SigAlg")
-	if err != nil {
-		return false, err
-	}
-
-	if hasSignature != hasSigAlg {
-		return false, fmt.Errorf("redirect binding signature is malformed: require both Signature and SigAlg")
-	}
-
-	return hasSignature, nil
+	return hasSignature, err
 }
 
 // validateXMLLogoutRequestSignature validates an enveloped XML signature on a LogoutRequest.

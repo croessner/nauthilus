@@ -920,6 +920,7 @@ func (h *SAMLHandler) resolveLogoutRequestDestination(spEntityID string) (string
 	return parsedEntityID.String(), nil
 }
 
+// newSLOSigningServiceProvider wraps the IdP key and certificate in a signer shared by all outbound SLO messages.
 func (h *SAMLHandler) newSLOSigningServiceProvider(idpObj *saml.IdentityProvider) (*saml.ServiceProvider, error) {
 	if idpObj == nil {
 		return nil, fmt.Errorf("idp context is missing")
@@ -944,7 +945,7 @@ func (h *SAMLHandler) newSLOSigningServiceProvider(idpObj *saml.IdentityProvider
 	}
 
 	if isWeakSHA1SignatureMethodSLO(signatureMethod) {
-		return nil, fmt.Errorf("unsupported SAML logout request signature algorithm %q", signatureMethod)
+		return nil, fmt.Errorf("unsupported SAML logout signature algorithm %q", signatureMethod)
 	}
 
 	return &saml.ServiceProvider{
@@ -952,58 +953,4 @@ func (h *SAMLHandler) newSLOSigningServiceProvider(idpObj *saml.IdentityProvider
 		Certificate:     idpObj.Certificate,
 		SignatureMethod: signatureMethod,
 	}, nil
-}
-
-func buildSignedRedirectLogoutRequestURL(
-	logoutRequest *saml.LogoutRequest,
-	relayState string,
-	signingSP *saml.ServiceProvider,
-) (string, error) {
-	if logoutRequest == nil {
-		return "", fmt.Errorf("logout request payload is missing")
-	}
-
-	if signingSP == nil {
-		return "", fmt.Errorf("logout request signer is missing")
-	}
-
-	deflated, err := logoutRequest.Deflate()
-	if err != nil {
-		return "", err
-	}
-
-	rawSAMLRequest := url.QueryEscape(base64.StdEncoding.EncodeToString(deflated))
-	rawSigAlg := url.QueryEscape(signingSP.SignatureMethod)
-
-	signedContent := "SAMLRequest=" + rawSAMLRequest
-	if relayState != "" {
-		signedContent += "&RelayState=" + url.QueryEscape(relayState)
-	}
-
-	signedContent += "&SigAlg=" + rawSigAlg
-
-	signingContext, err := saml.GetSigningContext(signingSP)
-	if err != nil {
-		return "", err
-	}
-
-	signature, err := signingContext.SignString(signedContent)
-	if err != nil {
-		return "", err
-	}
-
-	query := signedContent + "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(signature))
-
-	target, err := parseAbsoluteURL(logoutRequest.Destination)
-	if err != nil {
-		return "", err
-	}
-
-	if target.RawQuery != "" {
-		target.RawQuery += "&" + query
-	} else {
-		target.RawQuery = query
-	}
-
-	return target.String(), nil
 }

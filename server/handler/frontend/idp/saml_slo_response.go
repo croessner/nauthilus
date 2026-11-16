@@ -16,7 +16,6 @@
 package idp
 
 import (
-	"crypto"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -49,14 +48,24 @@ func (h *SAMLHandler) respondToLogoutRequest(
 		return fmt.Errorf("logout request routing context is missing")
 	}
 
-	status := samlLogoutResponseStatusFromCleanup(cleanupResult)
-
-	response, err := h.buildSignedLogoutResponse(logoutRequest, status)
+	idpObj, err := h.getSAMLIDP()
 	if err != nil {
 		return err
 	}
 
-	return h.writeSignedLogoutResponse(ctx, response, inboundMessage.Binding, inboundMessage.RelayState)
+	signingSP, err := h.newSLOSigningServiceProvider(idpObj)
+	if err != nil {
+		return err
+	}
+
+	status := samlLogoutResponseStatusFromCleanup(cleanupResult)
+
+	response, err := h.buildLogoutResponse(logoutRequest, status, idpObj)
+	if err != nil {
+		return err
+	}
+
+	return writeSignedLogoutResponse(ctx, response, signingSP, inboundMessage.Binding, inboundMessage.RelayState)
 }
 
 func samlLogoutResponseStatusFromCleanup(cleanupResult sloLocalCleanupResult) saml.Status {
@@ -92,7 +101,12 @@ func samlLogoutResponseStatusFromCleanup(cleanupResult sloLocalCleanupResult) sa
 	}
 }
 
-func (h *SAMLHandler) buildSignedLogoutResponse(logoutRequest *saml.LogoutRequest, status saml.Status) (*saml.LogoutResponse, error) {
+// buildLogoutResponse creates the unsigned LogoutResponse; the binding writer applies the matching signature.
+func (h *SAMLHandler) buildLogoutResponse(
+	logoutRequest *saml.LogoutRequest,
+	status saml.Status,
+	idpObj *saml.IdentityProvider,
+) (*saml.LogoutResponse, error) {
 	if logoutRequest == nil {
 		return nil, fmt.Errorf("logout request payload is missing")
 	}
@@ -116,9 +130,8 @@ func (h *SAMLHandler) buildSignedLogoutResponse(logoutRequest *saml.LogoutReques
 		return nil, err
 	}
 
-	idpObj, err := h.getSAMLIDP()
-	if err != nil {
-		return nil, err
+	if idpObj == nil {
+		return nil, fmt.Errorf("idp context is missing")
 	}
 
 	if strings.TrimSpace(idpObj.MetadataURL.String()) == "" {
@@ -138,52 +151,15 @@ func (h *SAMLHandler) buildSignedLogoutResponse(logoutRequest *saml.LogoutReques
 		Status: status,
 	}
 
-	if err = h.signLogoutResponse(response, idpObj); err != nil {
-		return nil, err
-	}
-
 	return response, nil
 }
 
-func (h *SAMLHandler) signLogoutResponse(response *saml.LogoutResponse, idpObj *saml.IdentityProvider) error {
-	if response == nil {
-		return fmt.Errorf("logout response payload is missing")
-	}
-
-	if idpObj == nil {
-		return fmt.Errorf("idp context is missing")
-	}
-
-	signer, ok := idpObj.Key.(crypto.Signer)
-	if !ok {
-		return fmt.Errorf("idp key type %T does not support signing", idpObj.Key)
-	}
-
-	signatureMethod := strings.TrimSpace(idpObj.SignatureMethod)
-	if signatureMethod == "" {
-		signatureMethod = h.deps.Cfg.GetIDP().SAML2.GetSignatureMethod()
-	}
-
-	if isWeakSHA1SignatureMethodSLO(signatureMethod) {
-		return fmt.Errorf("unsupported SAML logout response signature algorithm %q", signatureMethod)
-	}
-
-	spSigner := &saml.ServiceProvider{
-		Key:             signer,
-		Certificate:     idpObj.Certificate,
-		SignatureMethod: signatureMethod,
-	}
-
-	if err := spSigner.SignLogoutResponse(response); err != nil {
-		return fmt.Errorf("cannot sign LogoutResponse: %w", err)
-	}
-
-	return nil
-}
-
-func (h *SAMLHandler) writeSignedLogoutResponse(
+// writeSignedLogoutResponse signs and writes a LogoutResponse for its binding: HTTP-Redirect carries a
+// detached query-string signature (saml-bindings-2.0-os §3.4.4.1), HTTP-POST an enveloped XML signature.
+func writeSignedLogoutResponse(
 	ctx *gin.Context,
 	response *saml.LogoutResponse,
+	signingSP *saml.ServiceProvider,
 	binding slodomain.Binding,
 	relayState string,
 ) error {
@@ -195,17 +171,25 @@ func (h *SAMLHandler) writeSignedLogoutResponse(
 		return fmt.Errorf("logout response payload is missing")
 	}
 
+	if signingSP == nil {
+		return fmt.Errorf("logout response signer is missing")
+	}
+
 	binding = resolveLogoutResponseBinding(binding)
 
 	switch binding {
 	case slodomain.SLOBindingRedirect:
-		redirectTarget := response.Redirect(relayState)
-		if redirectTarget == nil {
-			return fmt.Errorf("cannot encode redirect LogoutResponse target")
+		redirectTarget, err := buildSignedRedirectLogoutResponseURL(response, relayState, signingSP)
+		if err != nil {
+			return fmt.Errorf("cannot encode redirect LogoutResponse target: %w", err)
 		}
 
-		ctx.Redirect(http.StatusFound, redirectTarget.String())
+		ctx.Redirect(http.StatusFound, redirectTarget)
 	case slodomain.SLOBindingPost:
+		if err := signingSP.SignLogoutResponse(response); err != nil {
+			return fmt.Errorf("cannot sign LogoutResponse: %w", err)
+		}
+
 		ctx.Data(http.StatusOK, "text/html; charset=utf-8", response.Post(relayState))
 	default:
 		return fmt.Errorf("unsupported SLO response binding %q", binding)
