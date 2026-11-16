@@ -18,6 +18,8 @@ package core
 import (
 	"log/slog"
 
+	"github.com/croessner/nauthilus/v4/server/bruteforce"
+
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
@@ -28,11 +30,13 @@ import (
 
 // AuthDeps bundles dependencies required by authentication request paths.
 type AuthDeps struct {
-	Cfg                        config.File
-	Logger                     *slog.Logger
-	Env                        config.Environment
-	Redis                      rediscli.Client
-	Tolerate                   tolerate.Tolerate
+	Cfg      config.File
+	Logger   *slog.Logger
+	Env      config.Environment
+	Redis    rediscli.Client
+	Tolerate tolerate.Tolerate
+	// BruteForceEvents receives diagnostic brute-force events; nil disables them.
+	BruteForceEvents           bruteforce.EventEmitter
 	Resp                       ResponseWriter
 	AccountCache               *accountcache.Manager
 	Channel                    backend.Channel

@@ -132,26 +132,26 @@ func TestRetryBackoffRecoveryAndReload(t *testing.T) {
 
 	for _, want := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, time.Minute} {
 		harness.plugin.mu.Lock()
-		harness.plugin.retryAfter = time.Time{}
+		harness.plugin.logins.retryAfter = time.Time{}
 		harness.plugin.mu.Unlock()
 
 		_, _ = harness.enqueuePostAction(context.Background(), testRequest(t, requestOptions{}))
-		if got := harness.plugin.retryDelay; got != want {
+		if got := harness.plugin.logins.retryDelay; got != want {
 			t.Fatalf("retry delay = %v, want %v", got, want)
 		}
 	}
 
 	reconfigureBatching(t, harness, map[string]any{"max_buffer_rows": 2})
 
-	if harness.plugin.pendingRows != 2 {
-		t.Fatalf("buffer after lowering limit = %d, want 2", harness.plugin.pendingRows)
+	if harness.plugin.logins.pendingRows != 2 {
+		t.Fatalf("buffer after lowering limit = %d, want 2", harness.plugin.logins.pendingRows)
 	}
 
 	transport.statusCode = http.StatusOK
-	harness.plugin.retryAfter = time.Time{}
+	harness.plugin.logins.retryAfter = time.Time{}
 	harness.plugin.flushOnTick(context.Background())
 
-	if harness.plugin.retryDelay != 0 || !harness.plugin.retryAfter.IsZero() || harness.plugin.pendingRows != 0 {
+	if harness.plugin.logins.retryDelay != 0 || !harness.plugin.logins.retryAfter.IsZero() || harness.plugin.logins.pendingRows != 0 {
 		t.Fatal("successful recovery did not clear buffer and backoff")
 	}
 }
@@ -180,5 +180,38 @@ func TestBufferLimitValidation(t *testing.T) {
 		if cfg.MaxBufferRows != want {
 			t.Fatalf("buffer limit = %d, want %d", cfg.MaxBufferRows, want)
 		}
+	}
+}
+
+// TestBruteForceInlineFlushFailureKeepsRowsAndAdmitsEvent pins that a failing inline flush of a full counted batch
+// keeps the rows for the ticker worker and never reports the admitted event as a delivery failure.
+func TestBruteForceInlineFlushFailureKeepsRowsAndAdmitsEvent(t *testing.T) {
+	transport := &recordingTransport{statusCode: http.StatusServiceUnavailable}
+
+	harness := startTestRunner(t, batchingModule(map[string]any{
+		"batch_size":                      1,
+		"bruteforce_lifecycle_insert_url": testInsertURL,
+		"bruteforce_attempts_insert_url":  testInsertURL,
+	}), testRunnerOptions{transport: transport})
+	defer harness.stop(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	event := pluginapi.BruteForceEvent{
+		Kind: pluginapi.BruteForceCounted, EventID: "inline-flush-1", Network: "198.51.100.0/24", Version: 1,
+		ObservedAt: time.Now(),
+	}
+
+	if err := (bruteForceEventTarget{plugin: harness.plugin}).ObserveBruteForceEvent(ctx, event); err != nil {
+		t.Fatalf("ObserveBruteForceEvent() error = %v, want nil for an admitted event", err)
+	}
+
+	if got := transport.requestCount(); got != 1 {
+		t.Fatalf("inline flush attempts = %d, want 1", got)
+	}
+
+	if rows := popCachedRows(t, harness.host, defaultBruteForceCountedCacheKey); len(rows) != 1 {
+		t.Fatalf("counted rows kept after failed inline flush = %d, want 1", len(rows))
 	}
 }

@@ -4,7 +4,6 @@
 package idp
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -66,7 +65,7 @@ func (h *FrontendHandler) completeCanonicalTOTP(ctx *gin.Context) {
 		return
 	}
 
-	if !h.admitCanonicalMFACode(ctx, selection) {
+	if !h.admitCanonicalMFACode(ctx, selection, definitions.MFAMethodTOTP) {
 		return
 	}
 
@@ -78,6 +77,7 @@ func (h *FrontendHandler) completeCanonicalTOTP(ctx *gin.Context) {
 	valid, err := verifier(ctx, selection, code)
 	if err != nil {
 		h.observeCanonicalTOTP(ctx, selection, false, err)
+		h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodTOTP, mfaOutcomeVerifierError)
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return
@@ -85,43 +85,30 @@ func (h *FrontendHandler) completeCanonicalTOTP(ctx *gin.Context) {
 
 	if !valid {
 		h.observeCanonicalTOTP(ctx, selection, false, nil)
+		h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodTOTP, mfaOutcomeInvalidCode)
 		h.renderCanonicalTOTP(ctx, true)
 
 		return
 	}
 
-	if completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodTOTP) {
+	if h.completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodTOTP) {
 		return
 	}
 
-	completion, err := selection.session.CompleteStepUp(
-		ctx.Request.Context(),
-		selection.stepUp.Value.Handle,
-		definitions.MFAMethodTOTP,
-		mfaAssuranceFreshness,
-	)
-	if err != nil {
-		if errors.Is(err, sessionstate.ErrBindingMismatch) ||
-			errors.Is(err, sessionstate.ErrRevisionConflict) ||
-			errors.Is(err, sessionstate.ErrExpired) {
-			ctx.AbortWithStatus(http.StatusConflict)
-
-			return
-		}
-
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-
+	completion, completed := h.completeCanonicalStepUp(ctx, selection, definitions.MFAMethodTOTP)
+	if !completed {
 		return
 	}
 
 	target, selfService, err := canonicalSelfServiceCompletionTarget(ctx, completion)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		h.answerCanonicalResumeConflict(ctx, selection, definitions.MFAMethodTOTP)
 
 		return
 	}
 
 	h.observeCanonicalTOTP(ctx, selection, true, nil)
+	h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodTOTP, mfaOutcomeVerified)
 
 	if selfService {
 		ctx.Redirect(http.StatusFound, target)

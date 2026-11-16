@@ -273,6 +273,7 @@ if limit >= 0 and total > limit then
     exceeded = 1
 end
 
-return {tostring(total), exceeded, tostring(limit)}
+-- current_cnt and prev_cnt let diagnostics prove which increments fed a decision; readers ignore extra elements.
+return {tostring(total), exceeded, tostring(limit), current_cnt, prev_cnt}
 `,
 }

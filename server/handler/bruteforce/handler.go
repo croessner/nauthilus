@@ -21,6 +21,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,6 +44,6 @@ func (h *Handler) Register(router gin.IRouter) {
 
 	bg.GET("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
 	bg.POST("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-	bg.DELETE("/"+definitions.ServFlush, core.NewBruteForceFlushHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-	bg.DELETE("/"+definitions.ServFlush+"/async", core.NewBruteForceFlushAsyncHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+	bg.DELETE("/"+definitions.ServFlush, core.NewBruteForceFlushHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner)))
+	bg.DELETE("/"+definitions.ServFlush+"/async", core.NewBruteForceFlushAsyncHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner)))
 }

@@ -61,6 +61,12 @@ const (
 	// FeatureBlocklist identifies external blocklist policy decisions.
 	FeatureBlocklist = "blocklist"
 
+	// FeatureTLSEncryption identifies the built-in control that detected a request without transport encryption.
+	FeatureTLSEncryption = "tls_encryption"
+
+	// FeatureRelayDomains identifies the built-in control that detected an unknown relay domain in the login name.
+	FeatureRelayDomains = "relay_domains"
+
 	// FeatureRBL identifies built-in RBL policy decisions.
 	FeatureRBL = "rbl"
 
@@ -119,6 +125,8 @@ const (
 
 var featureOrder = []string{
 	FeatureBlocklist,
+	FeatureTLSEncryption,
+	FeatureRelayDomains,
 	FeatureRBL,
 	FeatureBruteForce,
 	FeatureGeoIPPolicy,

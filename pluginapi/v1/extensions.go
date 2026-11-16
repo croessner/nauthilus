@@ -152,6 +152,10 @@ type PostActionRequest struct {
 	PasswordHash      string
 	Args              ArgsView
 	Facts             []PolicyFact
+	// Outcome is the host-sealed terminal result, bound when the detached work executes after the response boundary.
+	Outcome AuthOutcome
+	// FactsTrimmed reports that the host dropped record-valued facts to keep the request within its work bounds.
+	FactsTrimmed bool
 }
 
 // PostActionEnqueueResult is returned after detached post-action work is accepted or skipped.

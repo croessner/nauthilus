@@ -975,7 +975,7 @@ func assertNoBrowserAggregateInApplicationInput(t *testing.T, input core.AuthInp
 		"Request": {}, "IdentityAttributeRequest": {}, "ExistingBackendRef": {},
 	})
 	assertExactApplicationBoundaryFields(t, input.IDP.Request, "AuthIDPRequestContext", map[string]struct{}{
-		"GrantType": {}, "RedirectURI": {}, "RequestedScopes": {},
+		"GrantType": {}, "RedirectURI": {}, "RequestedScopes": {}, "FlowRef": {},
 	})
 
 	serialized := fmt.Sprintf("%#v", input)

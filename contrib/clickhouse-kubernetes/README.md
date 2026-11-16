@@ -12,15 +12,34 @@ It assumes a standalone ClickHouse server is running inside your Kubernetes clus
 - Table: `nauthilus.logins`
   - Column schema: `ts` is `DateTime64(3, 'UTC')`, repeated low-cardinality dimensions use `LowCardinality(String)`, counters use nullable numeric types, and boolean flags use nullable booleans.
   - Engine: `MergeTree` with `ORDER BY (ts)`.
+- Table: `nauthilus.auth_events` (second-factor step events)
+  - Engine: `ReplacingMergeTree` with `ORDER BY (event_type, ts, event_id)`; replays of one `event_id` collapse.
 
-Schema file: `schema.sql`
+Schema file: `schema.sql`. Data contract: `contrib/plugins/clickhouse/DIAGNOSTIC_CONTRACT.md`.
+
+## Diagnostic data contract rollout
+
+Existing installations apply the additive, repeatable `migrations/diagnostic-contract.sql` before deploying a plugin
+that writes `contract_version = 1`. `CREATE TABLE IF NOT EXISTS` in `schema.sql` never migrates an existing table.
+ClickHouse 25.8 accepts unknown JSONEachRow fields by default (`input_format_skip_unknown_fields = 1`) and drops them
+silently, so verify the columns first with the queries at the end of the migration file. After the migration, append
+`&input_format_skip_unknown_fields=0` to both insert URLs to turn later schema drift into visible insert errors.
+Legacy rows keep `contract_version = 0`; they are not rewritten, reinterpreted, or deleted. Report the first `ts` with
+`contract_version = 1` per `deployment`/`instance` as the cutover boundary.
+
+Isolated verification against a real ClickHouse of the production version:
+
+```bash
+contrib/clickhouse-kubernetes/run-integration-tests.sh
+```
 
 ## Privacy intelligence schema rollout
 
 Apply the additive schema before deploying GeoIP and ClickHouse plugin artifacts that emit `geoip_privacy_*` or
 `geoip_is_*` JSONEachRow fields. Existing plugin versions continue to insert rows after the columns are added and the
-new columns receive their defaults. Deploying the new writer against an old schema is unsupported because ClickHouse
-can reject unknown JSONEachRow fields. The plugin does not perform schema discovery or DDL.
+new columns receive their defaults. Deploying the new writer against an old schema is unsupported: with the
+ClickHouse default the unknown JSONEachRow fields are dropped silently, and with
+`input_format_skip_unknown_fields=0` the inserts fail. The plugin does not perform schema discovery or DDL.
 
 After applying `schema.sql`, verify exact column types:
 

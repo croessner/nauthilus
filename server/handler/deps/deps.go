@@ -73,6 +73,7 @@ func (d *Deps) Auth() core.AuthDeps {
 		AccountCache:         d.AccountCache,
 		Channel:              d.Channel,
 		Tolerate:             d.Tolerate,
+		BruteForceEvents:     pluginruntime.BruteForceEventEmitter(d.PluginRunner),
 		PluginBackendFactory: pluginruntime.NewBackendManagerFactory(d.PluginRunner),
 		NativeRuntime:        pluginruntime.NewAuthnRequestRuntime(),
 		HostServices:         hostServices,

@@ -4,9 +4,7 @@
 package idp
 
 import (
-	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
 
@@ -44,28 +42,6 @@ type canonicalMFASelectionState struct {
 	failLatched  bool
 }
 
-// admitCanonicalMFACode reserves the account budget before any local or remote verifier is dispatched.
-func (h *FrontendHandler) admitCanonicalMFACode(ctx *gin.Context, selection canonicalMFASelectionState) bool {
-	if h == nil || h.deps == nil {
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-		return false
-	}
-
-	err := core.ConsumeMFAAttempt(ctx.Request.Context(), h.deps.Auth(), selection.identity.Reference)
-	if err == nil {
-		return true
-	}
-
-	if errors.Is(err, core.ErrMFAAttemptLimit) {
-		ctx.Header("Retry-After", "300")
-		ctx.AbortWithStatus(http.StatusTooManyRequests)
-	} else {
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-	}
-
-	return false
-}
-
 // canonicalGlobalMFAMethodLevels returns the effective global policy or the built-in compatibility baseline.
 func (h *FrontendHandler) canonicalGlobalMFAMethodLevels() map[string]int {
 	if h == nil || h.deps == nil || h.deps.Cfg == nil || h.deps.Cfg.GetIDP() == nil {
@@ -89,38 +65,6 @@ func canonicalMFAProtocol(selection canonicalMFASelectionState) string {
 	}
 
 	return selection.identity.Protocol
-}
-
-func completeCanonicalFailLatchedMFA(
-	ctx *gin.Context,
-	selection canonicalMFASelectionState,
-	method string,
-) bool {
-	if !selection.failLatched {
-		return false
-	}
-
-	_, err := selection.session.ConsumeFailLatchedStepUp(
-		ctx.Request.Context(), selection.stepUp.Value.Handle, method,
-	)
-	if err != nil {
-		if errors.Is(err, sessionstate.ErrBindingMismatch) ||
-			errors.Is(err, sessionstate.ErrRevisionConflict) ||
-			errors.Is(err, sessionstate.ErrNotFound) ||
-			errors.Is(err, sessionstate.ErrExpired) {
-			ctx.AbortWithStatus(http.StatusConflict)
-
-			return true
-		}
-
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-
-		return true
-	}
-
-	ctx.AbortWithStatus(http.StatusUnauthorized)
-
-	return true
 }
 
 func (h *FrontendHandler) observeCanonicalMFA(

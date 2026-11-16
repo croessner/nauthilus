@@ -55,21 +55,24 @@ func (r *dedupWriter) SetNX(_ context.Context, key string, _ any, _ time.Duratio
 func TestDedupSeparatesLoginContexts(t *testing.T) {
 	cases := []struct {
 		name   string
-		change func(*pluginapi.RequestSnapshot)
+		change func(*pluginapi.PostActionRequest)
 	}{
-		{"protocol", func(s *pluginapi.RequestSnapshot) { s.Protocol = "smtp" }},
-		{"service", func(s *pluginapi.RequestSnapshot) { s.Service = "idp" }},
-		{"method", func(s *pluginapi.RequestSnapshot) { s.Method = "oauthbearer" }},
-		{"OIDC client", func(s *pluginapi.RequestSnapshot) { s.IDP.ClientID = "another-client" }},
-		{"grant", func(s *pluginapi.RequestSnapshot) { s.IDP.GrantType = "refresh_token" }},
-		{"client", func(s *pluginapi.RequestSnapshot) { s.ClientID = "other-client" }},
-		{"OIDC projection", func(s *pluginapi.RequestSnapshot) { s.OIDCCID = "other-oidc" }},
-		{"SAML service", func(s *pluginapi.RequestSnapshot) { s.SAMLEntityID = "other-saml" }},
-		{"MFA method", func(s *pluginapi.RequestSnapshot) { s.IDP.MFAMethod = "webauthn" }},
-		{"MFA outcome", func(s *pluginapi.RequestSnapshot) { s.IDP.MFACompleted = true }},
-		{"authorization", func(s *pluginapi.RequestSnapshot) { s.Runtime.Authorized = true }},
-		{"status", func(s *pluginapi.RequestSnapshot) { s.Diagnostics.HTTPStatus = 403 }},
-		{"reason", func(s *pluginapi.RequestSnapshot) { s.Diagnostics.StatusMessage = "denied" }},
+		{"protocol", func(r *pluginapi.PostActionRequest) { r.Snapshot.Protocol = "smtp" }},
+		{"service", func(r *pluginapi.PostActionRequest) { r.Snapshot.Service = "idp" }},
+		{"method", func(r *pluginapi.PostActionRequest) { r.Snapshot.Method = "oauthbearer" }},
+		{"OIDC client", func(r *pluginapi.PostActionRequest) { r.Snapshot.IDP.ClientID = "another-client" }},
+		{"grant", func(r *pluginapi.PostActionRequest) { r.Snapshot.IDP.GrantType = "refresh_token" }},
+		{"client", func(r *pluginapi.PostActionRequest) { r.Snapshot.ClientID = "other-client" }},
+		{"OIDC projection", func(r *pluginapi.PostActionRequest) { r.Snapshot.OIDCCID = "other-oidc" }},
+		{"SAML service", func(r *pluginapi.PostActionRequest) { r.Snapshot.SAMLEntityID = "other-saml" }},
+		{"MFA method", func(r *pluginapi.PostActionRequest) { r.Snapshot.IDP.MFAMethod = "webauthn" }},
+		{"MFA outcome", func(r *pluginapi.PostActionRequest) { r.Snapshot.IDP.MFACompleted = true }},
+		{"authorization", func(r *pluginapi.PostActionRequest) { r.Snapshot.Runtime.Authorized = true }},
+		{"status", func(r *pluginapi.PostActionRequest) { r.Snapshot.Diagnostics.HTTPStatus = 403 }},
+		{"reason", func(r *pluginapi.PostActionRequest) { r.Snapshot.Diagnostics.StatusMessage = "denied" }},
+		{"flow", func(r *pluginapi.PostActionRequest) { r.Snapshot.IDP.FlowRef = "0123456789abcdef0123456789abcdef" }},
+		{"outcome marker", func(r *pluginapi.PostActionRequest) { r.Outcome.OutcomeMarker = "auth.outcome.other" }},
+		{"rule", func(r *pluginapi.PostActionRequest) { r.Outcome.PolicyRule = "other_rule" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,20 +82,20 @@ func TestDedupSeparatesLoginContexts(t *testing.T) {
 			}
 
 			state := pluginState{config: cfg, redis: &dedupRedis{writer: dedupWriter{keys: map[string]bool{}}}}
-			snapshot := testRequest(t, requestOptions{authenticated: true}).Snapshot
-			assertDedupAdmission(t, state, snapshot, true)
-			assertDedupAdmission(t, state, snapshot, false)
-			tc.change(&snapshot)
-			assertDedupAdmission(t, state, snapshot, true)
+			request := testRequest(t, requestOptions{authenticated: true})
+			assertDedupAdmission(t, state, request, true)
+			assertDedupAdmission(t, state, request, false)
+			tc.change(&request)
+			assertDedupAdmission(t, state, request, true)
 		})
 	}
 }
 
 // assertDedupAdmission checks that the admission decision did not fail open.
-func assertDedupAdmission(t *testing.T, state pluginState, snapshot pluginapi.RequestSnapshot, want bool) {
+func assertDedupAdmission(t *testing.T, state pluginState, request pluginapi.PostActionRequest, want bool) {
 	t.Helper()
 
-	allowed, err := allowLoginWrite(context.Background(), state, snapshot)
+	allowed, err := allowLoginWrite(context.Background(), state, request)
 	if err != nil || allowed != want {
 		t.Fatalf("dedup allowed=%v error=%v, want %v", allowed, err, want)
 	}
@@ -110,15 +113,15 @@ func TestDedupOutcomeConfiguration(t *testing.T) {
 			state := pluginState{config: cfg, redis: &dedupRedis{writer: dedupWriter{keys: map[string]bool{}}}}
 
 			for _, authenticated := range []bool{true, false} {
-				snapshot := testRequest(t, requestOptions{authenticated: authenticated}).Snapshot
+				request := testRequest(t, requestOptions{authenticated: authenticated})
 
 				enabled := failure
 				if authenticated {
 					enabled = success
 				}
 
-				assertDedupAdmission(t, state, snapshot, true)
-				assertDedupAdmission(t, state, snapshot, !enabled)
+				assertDedupAdmission(t, state, request, true)
+				assertDedupAdmission(t, state, request, !enabled)
 			}
 		}
 	}
@@ -136,18 +139,39 @@ func TestDedupDefaultsAndRequestMetadata(t *testing.T) {
 	}
 
 	state := pluginState{config: cfg, redis: &dedupRedis{writer: dedupWriter{keys: map[string]bool{}}}}
-	snapshot := testRequest(t, requestOptions{authenticated: true}).Snapshot
-	assertDedupAdmission(t, state, snapshot, true)
-	snapshot.Session = "new-request"
-	snapshot.ExternalSessionID = "new-external-session"
-	snapshot.ClientPort = "54321"
-	snapshot.Diagnostics.LatencyMillis++
-	assertDedupAdmission(t, state, snapshot, false)
+	request := testRequest(t, requestOptions{authenticated: true})
+	assertDedupAdmission(t, state, request, true)
+	request.Snapshot.Session = "new-request"
+	request.Snapshot.ExternalSessionID = "new-external-session"
+	request.Snapshot.ClientPort = "54321"
+	request.Snapshot.Diagnostics.LatencyMillis++
+	assertDedupAdmission(t, state, request, false)
 
 	state.redis = nil
-	snapshot.Runtime.Authenticated = false
-	assertDedupAdmission(t, state, snapshot, true)
+	request.Outcome.Decision = pluginapi.AuthOutcomeFail
+	assertDedupAdmission(t, state, request, true)
 	state.config.DedupSuccess = false
-	snapshot.Runtime.Authenticated = true
-	assertDedupAdmission(t, state, snapshot, true)
+	request.Outcome.Decision = pluginapi.AuthOutcomeOK
+	assertDedupAdmission(t, state, request, true)
+}
+
+// TestDedupNeverAggregatesTempFailOrUnknownOutcomes pins that diagnostic evidence of temporary failures and unsealed
+// outcomes is kept even when both dedup switches are enabled; the switch follows the sealed outcome, not the
+// capture-time Authenticated flag.
+func TestDedupNeverAggregatesTempFailOrUnknownOutcomes(t *testing.T) {
+	cfg, err := decodeModuleConfig(pluginregistry.NewConfigView(map[string]any{"dedup_success": true, "dedup_failure": true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state := pluginState{config: cfg, redis: &dedupRedis{writer: dedupWriter{keys: map[string]bool{}}}}
+
+	for _, outcome := range []pluginapi.AuthOutcome{
+		{Decision: pluginapi.AuthOutcomeTempFail, Known: true},
+		{Decision: pluginapi.AuthOutcomeUnknown},
+	} {
+		request := testRequest(t, requestOptions{authenticated: true, outcome: &outcome})
+		assertDedupAdmission(t, state, request, true)
+		assertDedupAdmission(t, state, request, true)
+	}
 }

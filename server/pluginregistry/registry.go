@@ -73,6 +73,12 @@ const (
 	// ComponentKindPostActionTarget identifies a post-action target component.
 	ComponentKindPostActionTarget ComponentKind = "post_action_target"
 
+	// ComponentKindAuthEventSink identifies a host step-event sink component.
+	ComponentKindAuthEventSink ComponentKind = "auth_event_sink"
+
+	// ComponentKindBruteForceEventSink identifies a host brute-force event sink component.
+	ComponentKindBruteForceEventSink ComponentKind = "bruteforce_event_sink"
+
 	// ComponentKindHook identifies a hook component.
 	ComponentKindHook ComponentKind = "hook"
 
@@ -245,6 +251,16 @@ func (r *Registry) ObligationTargets() []Component {
 	return r.ComponentsByKind(ComponentKindObligationTarget)
 }
 
+// AuthEventSinks returns registered step-event sink components.
+func (r *Registry) AuthEventSinks() []Component {
+	return r.ComponentsByKind(ComponentKindAuthEventSink)
+}
+
+// BruteForceEventSinks returns registered brute-force event sink components.
+func (r *Registry) BruteForceEventSinks() []Component {
+	return r.ComponentsByKind(ComponentKindBruteForceEventSink)
+}
+
 // PostActionTargets returns registered post-action target components.
 func (r *Registry) PostActionTargets() []Component {
 	return r.ComponentsByKind(ComponentKindPostActionTarget)
@@ -391,6 +407,8 @@ type Registrar struct {
 }
 
 var _ pluginapi.Registrar = (*Registrar)(nil)
+var _ pluginapi.AuthEventRegistrar = (*Registrar)(nil)
+var _ pluginapi.BruteForceEventRegistrar = (*Registrar)(nil)
 
 // Config returns the plugin-owned configuration subtree for the module instance.
 func (r *Registrar) Config() pluginapi.ConfigView {
@@ -534,6 +552,36 @@ func (r *Registrar) RegisterPostActionTarget(target pluginapi.PostActionTarget) 
 		LocalName:               target.Name(),
 		Kind:                    ComponentKindPostActionTarget,
 		Origin:                  ComponentOriginNative,
+	})
+}
+
+// RegisterAuthEventSink records a host step-event sink declaration.
+func (r *Registrar) RegisterAuthEventSink(sink pluginapi.AuthEventSink) error {
+	if sink == nil {
+		return ErrNilComponent
+	}
+
+	return r.registerComponent(Component{
+		Value:      sink,
+		ModuleName: r.module.Name,
+		LocalName:  sink.Name(),
+		Kind:       ComponentKindAuthEventSink,
+		Origin:     ComponentOriginNative,
+	})
+}
+
+// RegisterBruteForceEventSink records a host brute-force event sink declaration.
+func (r *Registrar) RegisterBruteForceEventSink(sink pluginapi.BruteForceEventSink) error {
+	if sink == nil {
+		return ErrNilComponent
+	}
+
+	return r.registerComponent(Component{
+		Value:      sink,
+		ModuleName: r.module.Name,
+		LocalName:  sink.Name(),
+		Kind:       ComponentKindBruteForceEventSink,
+		Origin:     ComponentOriginNative,
 	})
 }
 

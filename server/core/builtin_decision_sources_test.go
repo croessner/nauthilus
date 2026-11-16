@@ -43,7 +43,9 @@ func TestTriggeredBuiltinControlsPublishDecisionSources(t *testing.T) {
 		{name: "brute force", controls: []string{definitions.ControlBruteForce}, want: []string{exchange.FeatureBruteForce}},
 		{name: "both in exchange order", controls: []string{definitions.ControlBruteForce, definitions.ControlRBL},
 			want: []string{exchange.FeatureRBL, exchange.FeatureBruteForce}},
-		{name: "other controls publish no source", controls: []string{definitions.ControlTLSEncryption, definitions.ControlRelayDomains}},
+		{name: "tls and relay domains", controls: []string{definitions.ControlRelayDomains, definitions.ControlTLSEncryption},
+			want: []string{exchange.FeatureTLSEncryption, exchange.FeatureRelayDomains}},
+		{name: "lua control publishes no source", controls: []string{definitions.ControlLua}},
 	}
 
 	for _, test := range tests {
@@ -117,6 +119,41 @@ func TestRBLEvaluationPublishesDecisionSourceOnlyAtThreshold(t *testing.T) {
 
 			if got := slices.Equal(auth.Runtime.RBLPolicy.MatchedLists, matched); got != test.wantMatched {
 				t.Fatalf("matched lists = %#v, want present=%v", auth.Runtime.RBLPolicy.MatchedLists, test.wantMatched)
+			}
+		})
+	}
+}
+
+// TestRelayDomainControlPublishesDecisionSourceOnlyOnRejection pins that relay_domains appears in decision_sources
+// only for a present, unknown domain, never for a configured match or a login name without a domain part.
+func TestRelayDomainControlPublishesDecisionSourceOnlyOnRejection(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		want     bool
+	}{
+		{name: "unknown domain", username: "user@relay.invalid", want: true},
+		{name: "configured domain", username: "user@example.test"},
+		{name: "configured domain ignores case", username: "user@EXAMPLE.test"},
+		{name: "missing domain part", username: "user"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			auth := &AuthState{deps: AuthDeps{Cfg: &config.FileSettings{
+				RelayDomains: &config.RelayDomainsSection{StaticDomains: []string{"example.test"}},
+			}}}
+			auth.Runtime.Context = lualib.NewContext()
+			auth.Request.Username = test.username
+
+			triggered := auth.ControlRelayDomains()
+			got := slices.Contains(
+				exchange.NewSnapshotFromValues(auth.Runtime.Context.Snapshot(), nil).DecisionSources(),
+				exchange.FeatureRelayDomains,
+			)
+
+			if triggered != test.want || got != test.want {
+				t.Fatalf("triggered/source = %v/%v, want %v", triggered, got, test.want)
 			}
 		})
 	}

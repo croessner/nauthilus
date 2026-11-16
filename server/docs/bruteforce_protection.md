@@ -141,7 +141,9 @@ windows.
 * **Logic:**
   `EstimatedCount = current_window_count + (previous_window_count * (1 - fraction_of_current_window_elapsed))`.
 * **Lua Implementation:** Encapsulated in the `SlidingWindowCounter` script within `server/rediscli/lua_scripts.go`. It
-  also handles **Adaptive Toleration** by scaling the `base_limit` based on the IP's reputation.
+  also handles **Adaptive Toleration** by scaling the `base_limit` based on the IP's reputation. It returns
+  `{total, exceeded, effective_limit, current_window_count, previous_window_count}`; the two window counts feed the
+  diagnostic brute-force events (`contrib/plugins/clickhouse/DIAGNOSTIC_CONTRACT.md` section 13).
 
 ### 3.4 Repeating Wrong Password (RWP)
 

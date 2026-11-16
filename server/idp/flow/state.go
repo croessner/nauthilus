@@ -211,3 +211,20 @@ func (s *State) UpdateAuthOutcome(next AuthOutcome) error {
 
 	return nil
 }
+
+// flowRefDomain separates analytics flow references from every other digest of a flow identifier.
+const flowRefDomain = "nauthilus.flow_ref.v1\x00"
+
+// DiagnosticFlowRef derives the non-authorizing analytics reference of one browser flow. The flow identifier is a
+// random capability handle; the domain-separated, truncated digest cannot resume the flow and is never a storage key.
+// It returns an empty string for an empty flow identifier.
+func DiagnosticFlowRef(flowID string) string {
+	flowID = strings.TrimSpace(flowID)
+	if flowID == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(flowRefDomain + flowID))
+
+	return hex.EncodeToString(sum[:16])
+}

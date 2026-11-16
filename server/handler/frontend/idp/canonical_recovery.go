@@ -4,7 +4,6 @@
 package idp
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -63,7 +62,7 @@ func (h *FrontendHandler) completeCanonicalRecovery(ctx *gin.Context) {
 		return
 	}
 
-	if !h.admitCanonicalMFACode(ctx, selection) {
+	if !h.admitCanonicalMFACode(ctx, selection, definitions.MFAMethodRecoveryCodes) {
 		return
 	}
 
@@ -75,6 +74,7 @@ func (h *FrontendHandler) completeCanonicalRecovery(ctx *gin.Context) {
 	valid, err := verifier(ctx, selection, code)
 	if err != nil {
 		h.observeCanonicalRecovery(ctx, selection, false, err)
+		h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodRecoveryCodes, mfaOutcomeVerifierError)
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return
@@ -82,43 +82,30 @@ func (h *FrontendHandler) completeCanonicalRecovery(ctx *gin.Context) {
 
 	if !valid {
 		h.observeCanonicalRecovery(ctx, selection, false, nil)
+		h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodRecoveryCodes, mfaOutcomeInvalidCode)
 		h.renderCanonicalRecovery(ctx, true)
 
 		return
 	}
 
-	if completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodRecoveryCodes) {
+	if h.completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodRecoveryCodes) {
 		return
 	}
 
-	completion, err := selection.session.CompleteStepUp(
-		ctx.Request.Context(),
-		selection.stepUp.Value.Handle,
-		definitions.MFAMethodRecoveryCodes,
-		mfaAssuranceFreshness,
-	)
-	if err != nil {
-		if errors.Is(err, sessionstate.ErrBindingMismatch) ||
-			errors.Is(err, sessionstate.ErrRevisionConflict) ||
-			errors.Is(err, sessionstate.ErrExpired) {
-			ctx.AbortWithStatus(http.StatusConflict)
-
-			return
-		}
-
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-
+	completion, completed := h.completeCanonicalStepUp(ctx, selection, definitions.MFAMethodRecoveryCodes)
+	if !completed {
 		return
 	}
 
 	target, selfService, err := canonicalSelfServiceCompletionTarget(ctx, completion)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		h.answerCanonicalResumeConflict(ctx, selection, definitions.MFAMethodRecoveryCodes)
 
 		return
 	}
 
 	h.observeCanonicalRecovery(ctx, selection, true, nil)
+	h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodRecoveryCodes, mfaOutcomeVerified)
 
 	if selfService {
 		ctx.Redirect(http.StatusFound, target)

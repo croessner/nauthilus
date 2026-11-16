@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
@@ -67,10 +68,15 @@ type debugRegistryHost interface {
 
 // Runner coordinates plugin lifecycle and request-time readiness.
 type Runner struct {
-	host             pluginapi.Host
-	observer         Observer
-	registry         *pluginregistry.Registry
-	pluginConfig     *config.PluginsSection
+	host         pluginapi.Host
+	observer     Observer
+	registry     *pluginregistry.Registry
+	pluginConfig *config.PluginsSection
+	// authEvents delivers host step events to registered sinks while the runner is ready. It is read without the
+	// runner lock, so emitting never waits for a lifecycle transition.
+	authEvents atomic.Pointer[AuthEventDispatcher]
+	// bruteForceEvents holds the brute-force event lanes, read without the runner lock like authEvents.
+	bruteForceEvents atomic.Pointer[bruteForceEventLanes]
 	modules          []moduleRuntime
 	startedModules   []string
 	startedInitTasks []pluginregistry.Component
@@ -208,8 +214,27 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 
 	r.ready = true
+	dispatcher := NewAuthEventDispatcher(r, DefaultAuthEventQueueCapacity)
+	dispatcher.Start()
+	r.authEvents.Store(dispatcher)
+	r.bruteForceEvents.Store(newBruteForceEventLanes(r))
 
 	return nil
+}
+
+// EmitAuthEvent hands one host step event to the registered sinks without blocking the caller. It is a no-op when no
+// sink is registered or the runner is not started.
+func (r *Runner) EmitAuthEvent(ctx context.Context, event pluginapi.AuthEvent) {
+	if r == nil {
+		return
+	}
+
+	r.authEvents.Load().EmitAuthEvent(ctx, event)
+}
+
+// drainAuthEvents stops step-event intake and delivers queued events while sinks are still ready.
+func (r *Runner) drainAuthEvents(ctx context.Context) error {
+	return errors.Join(r.authEvents.Swap(nil).Stop(ctx), r.bruteForceEvents.Swap(nil).stop(ctx))
 }
 
 // Stop stops init tasks before plugin runtime instances.
@@ -220,6 +245,9 @@ func (r *Runner) Stop(ctx context.Context) error {
 
 	r.stopMu.Lock()
 	defer r.stopMu.Unlock()
+
+	// Queued step events are delivered before sinks lose readiness; an expired drain only loses those events.
+	_ = r.drainAuthEvents(ctx)
 
 	r.mu.Lock()
 	if r.stopped {

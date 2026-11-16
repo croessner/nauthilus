@@ -25,9 +25,12 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 )
 
-// loginDedupKey identifies a login context and outcome without exposing its fields in Redis keys.
-// JSON encodes string boundaries unambiguously; request IDs and source ports are deliberately excluded.
-func loginDedupKey(snapshot pluginapi.RequestSnapshot) string {
+// loginDedupKey identifies a login context and terminal outcome without exposing its fields in Redis keys.
+// JSON encodes string boundaries unambiguously; request IDs and source ports are deliberately excluded. The IdP flow
+// reference keeps the password row of every browser flow, so later step events of that flow can be joined.
+func loginDedupKey(request pluginapi.PostActionRequest) string {
+	snapshot := request.Snapshot
+	outcome := request.Outcome
 	fields := []string{
 		strings.TrimSpace(snapshot.Username), strings.TrimSpace(snapshot.ClientIP),
 		snapshot.Protocol, snapshot.Service, snapshot.Method,
@@ -36,10 +39,12 @@ func loginDedupKey(snapshot pluginapi.RequestSnapshot) string {
 		snapshot.IDP.MFAMethod, strconv.FormatBool(snapshot.IDP.MFACompleted),
 		strconv.FormatBool(snapshot.Runtime.Authenticated), strconv.FormatBool(snapshot.Runtime.Authorized),
 		strconv.Itoa(snapshot.Diagnostics.HTTPStatus), snapshot.Diagnostics.StatusMessage,
+		string(outcome.Decision), outcome.Operation, outcome.OutcomeMarker, outcome.ResponseMarker, outcome.PolicyRule,
+		snapshot.IDP.FlowRef,
 	}
 	// A slice of strings is always JSON-serializable.
 	encoded, _ := json.Marshal(fields)
 	digest := sha256.Sum256(encoded)
 
-	return dedupKeyPrefix + "v2:" + hex.EncodeToString(digest[:])
+	return dedupKeyPrefix + "v3:" + hex.EncodeToString(digest[:])
 }

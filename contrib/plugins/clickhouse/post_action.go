@@ -68,7 +68,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		return pluginapi.PostActionEnqueueResult{Enqueued: false}, nil
 	}
 
-	allowed, err := allowLoginWrite(ctx, state, request.Snapshot)
+	allowed, err := allowLoginWrite(ctx, state, request)
 	if err != nil {
 		recordDedupFailOpen(ctx, state, span, err)
 	}
@@ -99,7 +99,7 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 		span.SetAttributes(pluginapi.TraceAttribute{Key: traceAttrResult, Value: resultDropped})
 
 		// A full analytics buffer must not fail the authentication post-action.
-		t.plugin.flushPending(ctx, "size")
+		t.plugin.flushPending(ctx, &t.plugin.logins, "size")
 
 		return pluginapi.PostActionEnqueueResult{Enqueued: false}, nil
 	}
@@ -120,10 +120,10 @@ func (t postActionTarget) Enqueue(ctx context.Context, request pluginapi.PostAct
 	}
 
 	if length < min(state.config.BatchSize, state.config.MaxBufferRows) {
-		return pluginapi.PostActionEnqueueResult{QueuedID: state.config.CacheKey, Enqueued: true}, nil
+		return pluginapi.PostActionEnqueueResult{QueuedID: state.cacheKey, Enqueued: true}, nil
 	}
 
-	return pluginapi.PostActionEnqueueResult{QueuedID: state.config.CacheKey, Enqueued: true}, flushBatch(ctx, state)
+	return pluginapi.PostActionEnqueueResult{QueuedID: state.cacheKey, Enqueued: true}, flushBatch(ctx, state)
 }
 
 // encodeRequestRow builds and encodes a ClickHouse row for module-cache storage.
@@ -184,15 +184,12 @@ func shouldSkipNoAuth(snapshot pluginapi.RequestSnapshot) bool {
 }
 
 // allowLoginWrite applies optional, outcome-specific Redis SET NX EX deduplication.
-func allowLoginWrite(ctx context.Context, state pluginState, snapshot pluginapi.RequestSnapshot) (bool, error) {
-	enabled := state.config.DedupFailure
-	if snapshot.Runtime.Authenticated {
-		enabled = state.config.DedupSuccess
-	}
-
-	if !enabled {
+func allowLoginWrite(ctx context.Context, state pluginState, request pluginapi.PostActionRequest) (bool, error) {
+	if !dedupEnabledFor(state.config, request.Outcome) {
 		return true, nil
 	}
+
+	snapshot := request.Snapshot
 
 	identity := strings.TrimSpace(snapshot.Username)
 	clientIP := strings.TrimSpace(snapshot.ClientIP)
@@ -205,7 +202,7 @@ func allowLoginWrite(ctx context.Context, state pluginState, snapshot pluginapi.
 		return true, fmt.Errorf("redis facade unavailable")
 	}
 
-	key := loginDedupKey(snapshot)
+	key := loginDedupKey(request)
 	if keys := state.redis.Keys(); keys != nil {
 		key = keys.Key(key)
 	}
@@ -216,6 +213,23 @@ func allowLoginWrite(ctx context.Context, state pluginState, snapshot pluginapi.
 	}
 
 	return ok, nil
+}
+
+// dedupEnabledFor selects the dedup switch from the host-sealed terminal outcome. Temporary failures and unknown
+// outcomes are diagnostic evidence and are never aggregated.
+func dedupEnabledFor(config moduleConfig, outcome pluginapi.AuthOutcome) bool {
+	if !outcome.Known {
+		return false
+	}
+
+	switch outcome.Decision {
+	case pluginapi.AuthOutcomeOK:
+		return config.DedupSuccess
+	case pluginapi.AuthOutcomeFail:
+		return config.DedupFailure
+	default:
+		return false
+	}
 }
 
 // recordDedupFailOpen logs and traces a Redis dedup failure without exposing keys or identities.
@@ -236,12 +250,12 @@ func flushBatch(ctx context.Context, state pluginState) (err error) {
 		return nil
 	}
 
-	defer func() { state.queue.finishFlush(err != nil || state.config.InsertURL == "") }()
+	defer func() { state.queue.finishFlush(err != nil || state.insertURL == "") }()
 
 	ctx, span := startPostActionSpan(ctx, state.tracer, operationFlush, len(rows))
 	defer span.End()
 
-	if state.config.InsertURL == "" {
+	if state.insertURL == "" {
 		requeueRows(ctx, state, rows)
 		recordFlush(ctx, state, span, resultNoURL, 0)
 
@@ -304,7 +318,7 @@ func postRows(ctx context.Context, state pluginState, rows []any) (pluginapi.HTT
 
 	return state.http.Do(ctx, pluginapi.HTTPRequest{
 		Method:           http.MethodPost,
-		URL:              state.config.InsertURL,
+		URL:              state.insertURL,
 		Service:          pluginName,
 		Headers:          headers,
 		Body:             body,

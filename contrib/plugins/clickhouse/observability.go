@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	metricQueuedRows      = "clickhouse_queued_rows_total"
-	metricFlushBatches    = "clickhouse_flush_batches_total"
-	metricFlushDuration   = "clickhouse_flush_duration_seconds"
+	flushWorkerLogins     = "logins"
+	flushWorkerEvents     = "events"
+	flushWorkerBruteForce = "bruteforce"
+	logFieldStream        = "stream"
 	metricLabelResult     = "result"
 	traceAttrBatchSize    = "clickhouse.batch_size"
 	traceAttrComponent    = "plugin.component"
@@ -61,6 +62,35 @@ var queueResults = []string{resultQueued, resultSkipped, resultDedupSkipped, res
 // flushResults lists every result label recorded on metricFlushBatches.
 var flushResults = []string{resultSuccess, resultHTTPError, resultStatusError, resultNoURL, resultRequeued}
 
+// metricNames names the metric family of one row stream.
+type metricNames struct {
+	queuedRows    string
+	flushBatches  string
+	flushDuration string
+}
+
+var (
+	// loginMetricNames keeps the established authentication-row metric names.
+	loginMetricNames = metricNames{
+		queuedRows: "clickhouse_queued_rows_total", flushBatches: "clickhouse_flush_batches_total",
+		flushDuration: "clickhouse_flush_duration_seconds",
+	}
+	// eventMetricNames counts the step-event stream separately, so event loss stays visible on its own.
+	eventMetricNames = metricNames{
+		queuedRows: "clickhouse_event_queued_rows_total", flushBatches: "clickhouse_event_flush_batches_total",
+		flushDuration: "clickhouse_event_flush_duration_seconds",
+	}
+)
+
+// streamMetricNames derives the metric family of one additional event stream.
+func streamMetricNames(stream string) metricNames {
+	return metricNames{
+		queuedRows:    "clickhouse_" + stream + "_queued_rows_total",
+		flushBatches:  "clickhouse_" + stream + "_flush_batches_total",
+		flushDuration: "clickhouse_" + stream + "_flush_duration_seconds",
+	}
+}
+
 type pluginMetrics struct {
 	queuedRows    pluginapi.Counter
 	flushBatches  pluginapi.Counter
@@ -68,13 +98,13 @@ type pluginMetrics struct {
 }
 
 // registerMetrics creates low-cardinality plugin-owned metrics.
-func registerMetrics(metrics pluginapi.Metrics) (pluginMetrics, error) {
+func registerMetrics(metrics pluginapi.Metrics, names metricNames) (pluginMetrics, error) {
 	if metrics == nil {
 		return pluginMetrics{}, nil
 	}
 
 	queuedRows, err := metrics.Counter(pluginapi.MetricDefinition{
-		Name:   metricQueuedRows,
+		Name:   names.queuedRows,
 		Help:   "ClickHouse post-action row enqueue outcomes.",
 		Labels: []string{metricLabelResult},
 	})
@@ -83,7 +113,7 @@ func registerMetrics(metrics pluginapi.Metrics) (pluginMetrics, error) {
 	}
 
 	flushBatches, err := metrics.Counter(pluginapi.MetricDefinition{
-		Name:   metricFlushBatches,
+		Name:   names.flushBatches,
 		Help:   "ClickHouse post-action batch flush outcomes.",
 		Labels: []string{metricLabelResult},
 	})
@@ -92,7 +122,7 @@ func registerMetrics(metrics pluginapi.Metrics) (pluginMetrics, error) {
 	}
 
 	flushDuration, err := metrics.Histogram(pluginapi.MetricDefinition{
-		Name:    metricFlushDuration,
+		Name:    names.flushDuration,
 		Help:    "ClickHouse post-action batch flush duration.",
 		Labels:  []string{metricLabelResult},
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},

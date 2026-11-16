@@ -91,6 +91,8 @@ func contextWithPostActionExecutionGate(
 		return ctx
 	}
 
+	ctx = contextWithPostActionTransportRecorder(ctx, gate)
+
 	return context.WithValue(ctx, postActionExecutionGateContextKey{}, gate)
 }
 
@@ -199,6 +201,7 @@ func postActionResponseCompletionMiddleware() gin.HandlerFunc {
 			recovered := recover()
 			if recovered == nil {
 				ctx.Writer.WriteHeaderNow()
+				PostActionTransportRecorderFromContext(ctx.Request.Context()).RecordStatus(ctx.Writer.Status())
 				gate.Complete()
 			}
 

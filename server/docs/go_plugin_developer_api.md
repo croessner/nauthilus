@@ -283,6 +283,23 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 Use `Registrar.Config()` for plugin-owned module config. Nauthilus passes the root `plugins.modules[].config` subtree as
 a read-only `ConfigView`. `Decode` is strict and should be treated as part of plugin startup validation.
 
+Host step-event sinks are registered through the additive `pluginapi.AuthEventRegistrar` interface
+(`RegisterAuthEventSink(AuthEventSink)`). Assert it the same way as `DecisionRegistrar` and keep the post-action-only
+contract when the host does not implement it. The host observes second-factor verifications at the IdP handlers and
+delivers `pluginapi.AuthEvent` values (type `mfa.verification`, version `1`) from one bounded per-process queue to every
+registered sink; a full queue drops the event and counts it in `nauthilus_plugin_auth_events_total`. `ObserveAuthEvent`
+must only enqueue: the host never lets a sink delay a request, contains sink errors and panics, and drains queued
+events on shutdown before sinks stop. Events carry no credentials, OTP values, recovery codes, tokens, authorizing
+handles, or WebAuthn payloads; `FlowRef` is a non-authorizing digest of the IdP flow.
+
+Brute-force event sinks are registered through the additive `pluginapi.BruteForceEventRegistrar`
+(`RegisterBruteForceEventSink(BruteForceEventSink)`). The host emits `pluginapi.BruteForceEvent` values (version `1`)
+at the counting and ban decision points: `counted`, `threshold_tolerated`, `ban_hit`, `ban_activated`,
+`ban_activation_unconfirmed`, `ban_released`, and `counters_reset`. Lifecycle kinds, counted/tolerated kinds, and hits
+use three independent bounded lanes. Events never contain passwords, password hashes, or repeated-wrong-password
+state; `ClaimedUsername` is the login name as entered and only appears on volume kinds. Sinks are called on a host
+lane goroutine, never on a request, and must return within the deadline of the passed context.
+
 Generic decision providers are registered through the additive `pluginapi.DecisionRegistrar` interface. Assert that
 optional interface inside `Register`; do not require a change to the base `Plugin` or `Registrar` method set. A generic
 descriptor declares a capability only. Registration does not activate a target, schedule a provider, or authorize an
@@ -1394,6 +1411,17 @@ The bundled Lua and native ClickHouse row builders validate this full value and 
 hex characters for their established analytics schema; no other post-action surface receives that short export.
 Post-action results report post-decision diagnostics only; they do not emit additional policy facts into the
 already-selected decision and cannot mutate the client response.
+
+Policy prepares a post-action while it selects the effect, before the response is finalized. The host therefore binds
+`PostActionRequest.Outcome` (`pluginapi.AuthOutcome`) when the detached work executes after the response boundary:
+the transport-independent decision (`ok`, `fail`, `tempfail`, `unknown`), the Policy operation, the presenting rule's
+stage, outcome marker, response marker, and name, the bounded tempfail cause, the terminal auth FSM state, the client
+status text, the host status code configured for the decision, and the transport with its committed HTTP status. The
+host refreshes `Snapshot.Diagnostics.HTTPStatus` and `StatusMessage` from the same outcome. `Outcome.Known = false`
+means the run never sealed an outcome; consumers must not substitute a credential-failure default. Other snapshot
+values, such as `Runtime.Authenticated`, keep their capture-time meaning. Record-valued facts arrive as
+`pluginapi.DecisionRecordList`. When a post-action request would exceed the host work bounds, the host drops the
+largest record-valued facts first and sets `PostActionRequest.FactsTrimmed`; scalar facts are kept.
 
 Nauthilus collects policy-selected native and Lua post-actions into one detached plan and executes the plan steps in
 final-obligation order. `PostActionEnqueueResult.RuntimeDelta` is host-validated and merged into the plan runtime so

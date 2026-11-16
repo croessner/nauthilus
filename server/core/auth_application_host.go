@@ -119,9 +119,11 @@ func applyAuthIDPContext(auth *AuthState, idpContext AuthIDPContext) {
 	auth.Runtime.RemoteBackendRef = idpContext.ExistingBackendRef
 }
 
-// idpRequestContextIsZero reports whether no bounded protocol request value was supplied.
+// idpRequestContextIsZero reports whether no bounded protocol request value was supplied. A flow reference alone keeps
+// the context, so SAML password requests without OAuth facts still carry their analytics flow correlation.
 func idpRequestContextIsZero(request AuthIDPRequestContext) bool {
-	return request.GrantType == "" && request.RedirectURI == "" && len(request.RequestedScopes) == 0
+	return request.GrantType == "" && request.RedirectURI == "" && len(request.RequestedScopes) == 0 &&
+		request.FlowRef == ""
 }
 
 // newContext builds the private Gin context used only inside an admitted Decision Session.

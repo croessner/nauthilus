@@ -53,6 +53,23 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## Unreleased: Brute-Force Ban Evidence
+
+- Native plugins can register a `BruteForceEventSink`. The ClickHouse plugin
+  writes ban activations, releases, counter resets, counted increments,
+  tolerated thresholds, and ban hits to the new `bruteforce_lifecycle` and
+  `bruteforce_attempts` tables. Apply
+  `contrib/clickhouse-kubernetes/migrations/bruteforce-evidence.sql` before
+  setting `bruteforce_lifecycle_insert_url` or
+  `bruteforce_attempts_insert_url`. Bans created before the upgrade have no
+  evidence rows; the export cannot reconstruct them.
+- The `SlidingWindowCounter` Redis script returns two additional values
+  (current and previous window counts). Mixed-version instances keep working:
+  each version calls the script by the SHA of its own script text, so old and
+  new replies never mix.
+- A brute-force flush that fails after deleting some keys still reports the
+  keys it removed.
+
 ## v4.0.9: Backend Tempfail Causes And Empty Credentials With Subject Providers
 
 - A request the host settles without a backend result no longer fails the

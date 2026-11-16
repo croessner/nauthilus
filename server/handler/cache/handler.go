@@ -21,6 +21,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
+	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -51,6 +52,6 @@ func (h *Handler) Register(router gin.IRouter) {
 		flushOpts = append(flushOpts, h.deps.TokenFlusher)
 	}
 
-	cg.DELETE("/"+definitions.ServFlush, core.NewUserFlushHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis, flushOpts...))
-	cg.DELETE("/"+definitions.ServFlush+"/async", core.NewUserFlushAsyncHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis, flushOpts...))
+	cg.DELETE("/"+definitions.ServFlush, core.NewUserFlushHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner), flushOpts...))
+	cg.DELETE("/"+definitions.ServFlush+"/async", core.NewUserFlushAsyncHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner), flushOpts...))
 }

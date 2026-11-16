@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy"
 	policycollection "github.com/croessner/nauthilus/v4/server/policy/collection"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	"github.com/croessner/nauthilus/v4/server/policy/decision/pluginvalue"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
 	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
@@ -64,6 +66,8 @@ type authnNativePostActionProgram interface {
 
 type authnNativePostActionWork struct {
 	program authnNativePostActionProgram
+	// outcome resolves the answered terminal result when the work executes after the finalization gate.
+	outcome postActionOutcomeBinding
 	request pluginapi.PostActionRequest
 	target  decision.Target
 	once    sync.Once
@@ -142,13 +146,15 @@ func (e *authnCandidateExecution) PrepareAuthnNativePostAction(
 
 	request.BackendOutcome = e.backendOutcome
 
-	if err = effectsupervisor.ValidateBoundedValue(request, effectsupervisor.DefaultWorkBounds()); err != nil {
+	if err = boundAuthnNativePostActionRequest(&request); err != nil {
 		e.recordNativeEffectFailure(execution.EffectID(), "authn_native_post_action_bounds")
 
 		return nil, err
 	}
 
-	return &authnNativePostActionWork{program: owner, request: request, target: execution.Target()}, nil
+	return &authnNativePostActionWork{
+		program: owner, request: request, target: execution.Target(), outcome: e.outcomeBinding(),
+	}, nil
 }
 
 type nativeEffectFailure struct {
@@ -199,6 +205,8 @@ func (w *authnNativePostActionWork) Execute(ctx context.Context) effectsuperviso
 	result := effectsupervisor.Failed("authn_native_post_action_reused")
 
 	w.once.Do(func() {
+		w.outcome.bind(&w.request)
+
 		response, err := w.program.EnqueuePostAction(ctx, w.request, w.target)
 		switch {
 		case err != nil && response.Enqueued:
@@ -223,6 +231,7 @@ func (w *authnNativePostActionWork) Cleanup() {
 
 	w.program = nil
 	w.request = pluginapi.PostActionRequest{}
+	w.outcome = postActionOutcomeBinding{}
 }
 
 // authnNativeObligationRequest maps immutable selected parameters, facts, and the capability-gated credentials.
@@ -289,7 +298,7 @@ func authnNativePublicFacts(input decision.FactSet) []pluginapi.PolicyFact {
 			continue
 		}
 
-		value, ok := fact.Value().Any()
+		value, ok := authnNativePublicFactValue(fact.Value())
 		if !ok {
 			continue
 		}
@@ -298,6 +307,21 @@ func authnNativePublicFacts(input decision.FactSet) []pluginapi.PolicyFact {
 	}
 
 	return result
+}
+
+// authnNativePublicFactValue detaches one fact value in the public vocabulary. Record lists are converted to
+// pluginapi.DecisionRecordList, because the internal record type is not decodable by public plugins.
+func authnNativePublicFactValue(value decision.Value) (any, bool) {
+	if records, ok := value.Records(); ok {
+		converted, err := pluginvalue.RecordsToPlugin(records)
+		if err != nil {
+			return nil, false
+		}
+
+		return converted, true
+	}
+
+	return value.Any()
 }
 
 // applyAuthnNativeObligationResult applies synchronous public mutations to the live request only.
@@ -813,4 +837,44 @@ func applyAuthnNativeLogs(auth *AuthState, fields []pluginapi.LogField) {
 
 		auth.Runtime.AdditionalLogs = append(auth.Runtime.AdditionalLogs, field.Key, field.Value)
 	}
+}
+
+// boundAuthnNativePostActionRequest keeps a detached post-action request within the host work bounds. Record-valued
+// facts (for example reputation assessments) are analytics evidence and must not turn an authentication decision
+// indeterminate, so the largest ones are dropped first until the request fits; FactsTrimmed then tells consumers that
+// evidence is missing. A request that still exceeds the bound without record facts fails as before.
+func boundAuthnNativePostActionRequest(request *pluginapi.PostActionRequest) error {
+	bounds := effectsupervisor.DefaultWorkBounds()
+
+	err := effectsupervisor.ValidateBoundedValue(*request, bounds)
+	for err != nil {
+		index := largestRecordFactIndex(request.Facts)
+		if index < 0 {
+			return err
+		}
+
+		request.Facts = slices.Delete(slices.Clone(request.Facts), index, index+1)
+		request.FactsTrimmed = true
+		err = effectsupervisor.ValidateBoundedValue(*request, bounds)
+	}
+
+	return nil
+}
+
+// largestRecordFactIndex returns the record-valued fact with the most records, or -1 when none is left.
+func largestRecordFactIndex(facts []pluginapi.PolicyFact) int {
+	index, largest := -1, -1
+
+	for position, fact := range facts {
+		records, ok := fact.Value.(pluginapi.DecisionRecordList)
+		if !ok {
+			continue
+		}
+
+		if count := len(records.Records()); count > largest {
+			index, largest = position, count
+		}
+	}
+
+	return index
 }

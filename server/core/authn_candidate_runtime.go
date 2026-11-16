@@ -63,7 +63,13 @@ type authnCandidateExecution struct {
 	ginCtx         *gin.Context
 	capture        *CaptureResponseWriter
 	selected       map[string]*report.FinalDecision
-	accounts       AccountList
+	// presented is the presentation the latest finalized checkpoint answered with.
+	presented *report.FinalDecision
+	// transport records how the client request of this run was answered.
+	transport *PostActionTransportRecorder
+	// outcome holds the terminal result of this run; detached post-actions keep only this cell, not the execution.
+	outcome  *authnTerminalOutcomeCell
+	accounts AccountList
 	// backendSkipped lists the provider instances skipped because the backend settled without a result.
 	backendSkipped []string
 	backendPlan    backendExecutionPlan
@@ -122,6 +128,8 @@ func (s *authApplicationService) prepareAuthnCandidateExecution(
 		capture:   capture,
 		selected:  make(map[string]*report.FinalDecision),
 		operation: operation,
+		transport: PostActionTransportRecorderFromContext(hostCtx),
+		outcome:   &authnTerminalOutcomeCell{},
 	}
 	hostCtx = decisionservice.ContextWithAuthnDecisionSource(hostCtx, execution)
 	hostCtx = contextWithAuthnPolicyEffectOwner(hostCtx, execution)
@@ -1024,11 +1032,14 @@ func (e *authnCandidateExecution) finalize(
 	}
 
 	if final == nil {
+		e.recordPresentedDecision(nil)
+
 		return e.finalizeUnselected(checkpoint, effect, current)
 	}
 
 	presentation, acceptanceFailure := e.authnCandidatePresentation(response, final)
 	effect, presentation = e.guardAuthnPermit(checkpoint, effect, presentation)
+	e.recordPresentedDecision(presentation)
 
 	if effect == decision.EffectIndeterminate {
 		e.auth.recordTempFailCause(e.auth.Runtime.tempFailCause.withPresentation(presentation))

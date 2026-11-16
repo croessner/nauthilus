@@ -152,6 +152,16 @@ func BeginCanonicalWebAuthnLogin(
 	return options, handle, nil
 }
 
+// Typed canonical WebAuthn login failures. They classify step events only; the HTTP answer of each path is unchanged.
+var (
+	// ErrWebAuthnCeremonyUnavailable reports a missing, consumed, expired, or foreign login ceremony.
+	ErrWebAuthnCeremonyUnavailable = errors.New("canonical WebAuthn ceremony unavailable")
+	// ErrWebAuthnAssertionRejected reports an assertion that did not verify, including sign-count rollback.
+	ErrWebAuthnAssertionRejected = errors.New("canonical WebAuthn assertion rejected")
+	// ErrWebAuthnStateUnavailable reports a technical failure of ceremony or credential state.
+	ErrWebAuthnStateUnavailable = errors.New("canonical WebAuthn state unavailable")
+)
+
 // CompleteCanonicalWebAuthnLogin consumes and verifies one typed login ceremony.
 func CompleteCanonicalWebAuthnLogin(
 	ctx *gin.Context,
@@ -164,10 +174,10 @@ func CompleteCanonicalWebAuthnLogin(
 	protocolContext IDPMFAProtocolContext,
 	user *backend.User,
 	authState *AuthState,
-) (*backend.User, bool) {
+) (*backend.User, error) {
 	if ctx == nil || session == nil || session.Stores == nil || ceremony == "" || flow == "" ||
 		identity == "" || user == nil || authState == nil {
-		return nil, false
+		return nil, ErrWebAuthnStateUnavailable
 	}
 
 	store := newCanonicalWebAuthnCeremonyStore(session.Stores, nil, session.Handle)
@@ -191,7 +201,7 @@ func CompleteCanonicalWebAuthnLogin(
 			false,
 		)
 
-		return nil, false
+		return nil, canonicalWebAuthnCeremonyError(err)
 	}
 
 	_, span := monittrace.New("nauthilus/core/webauthn").Start(
@@ -203,13 +213,25 @@ func CompleteCanonicalWebAuthnLogin(
 	assertion, ok := finishWebAuthnLoginAssertion(
 		ctx, deps, protocolContext, authState, user, data, span,
 	)
-	if !ok || !persistWebAuthnLoginCredentialUpdate(
-		ctx, deps, protocolContext, authState, user, assertion,
-	) {
-		return nil, false
+	if !ok {
+		return nil, ErrWebAuthnAssertionRejected
 	}
 
-	return user, true
+	if !persistWebAuthnLoginCredentialUpdate(ctx, deps, protocolContext, authState, user, assertion) {
+		return nil, ErrWebAuthnStateUnavailable
+	}
+
+	return user, nil
+}
+
+// canonicalWebAuthnCeremonyError separates an unusable ceremony from a technical store failure.
+func canonicalWebAuthnCeremonyError(err error) error {
+	if errors.Is(err, sessionstate.ErrNotFound) || errors.Is(err, sessionstate.ErrExpired) ||
+		errors.Is(err, sessionstate.ErrBindingMismatch) || errors.Is(err, sessionstate.ErrRevisionConflict) {
+		return ErrWebAuthnCeremonyUnavailable
+	}
+
+	return fmt.Errorf("%w: %w", ErrWebAuthnStateUnavailable, err)
 }
 
 // BeginCanonicalWebAuthnRegistration creates one typed, enrollment-bound registration ceremony.

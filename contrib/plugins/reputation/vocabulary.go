@@ -1,5 +1,7 @@
 package main
 
+import view "github.com/croessner/nauthilus/v4/contrib/plugins/internal/reputationview"
+
 const (
 	fieldPrimary         = "primary"
 	componentObservation = "observation_context"
@@ -25,8 +27,8 @@ const (
 	fieldSubjects        = "subjects"
 	fieldMagnitude       = "magnitude"
 	fieldCorrelationID   = "correlation_id"
-	fieldRole            = "role"
-	fieldKind            = "kind"
+	fieldRole            = view.FieldRole
+	fieldKind            = view.FieldKind
 	fieldValue           = "value"
 	fieldSubjectTag      = "subject_tag"
 	fieldWeight          = "weight"

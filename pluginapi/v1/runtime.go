@@ -28,7 +28,10 @@ type IDPInfo struct {
 	ClientName              string
 	RedirectURI             string
 	MFAMethod               string
-	MFACompleted            bool
+	// FlowRef is a non-authorizing digest of the IdP browser flow that lets analytics join the password request with
+	// later step events of the same flow. It is empty outside IdP browser flows and never equals a flow handle.
+	FlowRef      string
+	MFACompleted bool
 }
 
 // RequestDiagnostics contains bounded request outcome and diagnostic metadata.
@@ -43,6 +46,9 @@ type RequestDiagnostics struct {
 	LatencyMillis     int64
 	BruteForceCounter uint
 	HTTPStatus        int
+	// BruteForceTolerated reports that a toleration policy suppressed the block of the triggered bucket named in
+	// BruteForceName. It is only meaningful when BruteForceName is set.
+	BruteForceTolerated bool
 }
 
 // RequestSnapshot contains immutable, redacted request metadata visible to plugins.

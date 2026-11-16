@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/bruteforce"
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -96,6 +97,10 @@ type restAdminDeps struct {
 	AuthCacheInvalidator AuthCacheInvalidator
 	CacheFlushRunner     userCacheFlushScriptRunner
 	AccountMappings      accountMappingReader
+	// BruteForceEvents receives ban release and counter reset events of flushes; nil disables them.
+	BruteForceEvents bruteforce.EventEmitter
+	// flushAudit is the operator reference of the flush request being served.
+	flushAudit bruteForceFlushAudit
 }
 
 const (
@@ -294,7 +299,17 @@ func parseBruteForceListNonNegativeInt(rawValue string, name string) (int64, err
 // NewBruteForceFlushHandler constructs a Gin handler for the BruteForce flush endpoint
 // using injected dependencies.
 func NewBruteForceFlushHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+	return NewBruteForceFlushHandlerWithEvents(cfg, logger, redisClient, nil)
+}
+
+// NewBruteForceFlushHandlerWithEvents constructs the BruteForce flush handler that reports released bans.
+func NewBruteForceFlushHandlerWithEvents(
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	events bruteforce.EventEmitter,
+) gin.HandlerFunc {
+	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient, BruteForceEvents: events}
 
 	return func(ctx *gin.Context) {
 		deps.HandleBruteForceFlush(ctx)
@@ -304,7 +319,17 @@ func NewBruteForceFlushHandler(cfg config.File, logger *slog.Logger, redisClient
 // NewBruteForceFlushAsyncHandler constructs a Gin handler for the BruteForce flush async endpoint
 // using injected dependencies.
 func NewBruteForceFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+	return NewBruteForceFlushAsyncHandlerWithEvents(cfg, logger, redisClient, nil)
+}
+
+// NewBruteForceFlushAsyncHandlerWithEvents constructs the async BruteForce flush handler that reports released bans.
+func NewBruteForceFlushAsyncHandlerWithEvents(
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	events bruteforce.EventEmitter,
+) gin.HandlerFunc {
+	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient, BruteForceEvents: events}
 
 	return func(ctx *gin.Context) {
 		deps.HandleBruteForceRuleFlushAsync(ctx)
@@ -1230,6 +1255,7 @@ func bindOptionalBruteForceFilter(ctx *gin.Context) (*bf.FilterCmd, error) {
 // Flush User
 
 func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
+	deps = deps.withBruteForceFlushAudit(ctx, pluginapi.BruteForceReleaseUserFlush)
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &admin.FlushUserCmd{}
 	logger := deps.effectiveLogger()
@@ -1261,15 +1287,39 @@ func (deps restAdminDeps) HandleUserFlush(ctx *gin.Context) {
 // NewUserFlushHandler constructs a Gin handler for the user cache flush endpoint
 // using injected dependencies.
 func NewUserFlushHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, tokenFlusher ...TokenFlusher) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+	return NewUserFlushHandlerWithEvents(cfg, logger, redisClient, nil, tokenFlusher...)
+}
+
+// NewUserFlushHandlerWithEvents constructs the user flush handler that reports released bans.
+func NewUserFlushHandlerWithEvents(
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	events bruteforce.EventEmitter,
+	tokenFlusher ...TokenFlusher,
+) gin.HandlerFunc {
+	deps := newUserFlushDeps(cfg, logger, redisClient, events, tokenFlusher...)
+
+	return func(ctx *gin.Context) {
+		deps.HandleUserFlush(ctx)
+	}
+}
+
+// newUserFlushDeps builds the shared dependencies of the synchronous and asynchronous user flush handlers.
+func newUserFlushDeps(
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	events bruteforce.EventEmitter,
+	tokenFlusher ...TokenFlusher,
+) restAdminDeps {
+	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient, BruteForceEvents: events}
 
 	if len(tokenFlusher) > 0 {
 		deps.TokenFlusher = tokenFlusher[0]
 	}
 
-	return func(ctx *gin.Context) {
-		deps.HandleUserFlush(ctx)
-	}
+	return deps
 }
 
 // processFlushCache takes a user command and a GUID and processes the
@@ -1841,6 +1891,8 @@ func sendCacheStatus(ctx *gin.Context, logger *slog.Logger, guid string, userCmd
 }
 
 func (deps restAdminDeps) HandleBruteForceFlush(ctx *gin.Context) {
+	deps = deps.withBruteForceFlushAudit(ctx, pluginapi.BruteForceReleaseAdminFlush)
+
 	var (
 		removedKeys []string
 		err         error
@@ -2209,11 +2261,18 @@ func (deps asyncJobDeps) HandleAsyncJobStatus(ctx *gin.Context) {
 // NewUserFlushAsyncHandler constructs a Gin handler for the async user cache flush endpoint
 // using injected dependencies.
 func NewUserFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisClient rediscli.Client, tokenFlusher ...TokenFlusher) gin.HandlerFunc {
-	deps := restAdminDeps{Cfg: cfg, Logger: logger, Redis: redisClient}
+	return NewUserFlushAsyncHandlerWithEvents(cfg, logger, redisClient, nil, tokenFlusher...)
+}
 
-	if len(tokenFlusher) > 0 {
-		deps.TokenFlusher = tokenFlusher[0]
-	}
+// NewUserFlushAsyncHandlerWithEvents constructs the async user flush handler that reports released bans.
+func NewUserFlushAsyncHandlerWithEvents(
+	cfg config.File,
+	logger *slog.Logger,
+	redisClient rediscli.Client,
+	events bruteforce.EventEmitter,
+	tokenFlusher ...TokenFlusher,
+) gin.HandlerFunc {
+	deps := newUserFlushDeps(cfg, logger, redisClient, events, tokenFlusher...)
 
 	return func(ctx *gin.Context) {
 		deps.HandleUserFlushAsync(ctx)
@@ -2221,6 +2280,7 @@ func NewUserFlushAsyncHandler(cfg config.File, logger *slog.Logger, redisClient 
 }
 
 func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
+	deps = deps.withBruteForceFlushAudit(ctx, pluginapi.BruteForceReleaseUserFlush)
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	userCmd := &admin.FlushUserCmd{}
 	logger := deps.effectiveLogger()
@@ -2265,6 +2325,7 @@ func (deps restAdminDeps) HandleUserFlushAsync(ctx *gin.Context) {
 }
 
 func (deps restAdminDeps) HandleBruteForceRuleFlushAsync(ctx *gin.Context) {
+	deps = deps.withBruteForceFlushAudit(ctx, pluginapi.BruteForceReleaseAdminFlush)
 	guid := ctx.GetString(definitions.CtxGUIDKey)
 	ipCmd := &bf.FlushRuleCmd{}
 
@@ -2336,20 +2397,32 @@ func isRuleApplicable(r config.BruteForceRule, isIPv4 bool, cmd *bf.FlushRuleCmd
 }
 
 type bruteForceBanFlushTarget struct {
+	rule     *config.BruteForceRule
 	key      string
 	network  string
 	ruleName string
 }
 
+// storedRule returns the rule a selective flush verified as the ban value; a wildcard flush does not read it.
+func (t bruteForceBanFlushTarget) storedRule() string {
+	if t.ruleName == "*" {
+		return ""
+	}
+
+	return t.ruleName
+}
+
 type bruteForceFlushPlan struct {
-	banTargets map[string]bruteForceBanFlushTarget
-	bucketKeys config.StringSet
+	banTargets    map[string]bruteForceBanFlushTarget
+	bucketTargets map[string]bruteForceBucketFlushTarget
+	bucketKeys    config.StringSet
 }
 
 func newBruteForceFlushPlan() *bruteForceFlushPlan {
 	return &bruteForceFlushPlan{
-		banTargets: make(map[string]bruteForceBanFlushTarget),
-		bucketKeys: config.NewStringSet(),
+		banTargets:    make(map[string]bruteForceBanFlushTarget),
+		bucketTargets: make(map[string]bruteForceBucketFlushTarget),
+		bucketKeys:    config.NewStringSet(),
 	}
 }
 
@@ -2381,11 +2454,20 @@ func collectBruteForceFlushTargets(plan *bruteForceFlushPlan, bm bruteforce.Buck
 	}
 
 	plan.addBanTarget(bruteForceBanFlushTarget{
+		rule:     rule,
 		key:      banKey,
 		network:  network,
 		ruleName: ruleName,
 	})
-	plan.addBucketKeys(bm.GetBucketKeys(rule))
+
+	bucketKeys := bm.GetBucketKeys(rule)
+	plan.addBucketKeys(bucketKeys)
+
+	for _, key := range bucketKeys {
+		if _, found := plan.bucketTargets[key]; !found && key != "" {
+			plan.bucketTargets[key] = bruteForceBucketFlushTarget{rule: rule, network: network}
+		}
+	}
 
 	return nil
 }
@@ -2470,16 +2552,14 @@ func bulkUnlink(ctx context.Context, deps restAdminDeps, guid string, keys []str
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 	defer cancel()
 
+	// A failed pipeline can still have removed some keys; those are returned with the error so callers report them.
 	cmds, err := pipe.Exec(dCtx)
-	if err != nil {
-		return nil, err
-	}
 
 	removed := make([]string, 0, len(keys))
 	for i, k := range keys {
 		if i < len(cmds) {
 			if intCmd, ok := cmds[i].(*redis.IntCmd); ok {
-				if n, _ := intCmd.Result(); n > 0 {
+				if n, resultErr := intCmd.Result(); resultErr == nil && n > 0 {
 					removed = append(removed, k)
 					level.Info(logger).Log(definitions.LogKeyGUID, guid, "key", k, "status", "flushed")
 				}
@@ -2487,7 +2567,7 @@ func bulkUnlink(ctx context.Context, deps restAdminDeps, guid string, keys []str
 		}
 	}
 
-	return removed, nil
+	return removed, err
 }
 
 func removeBruteForceBansFromIndex(ctx context.Context, deps restAdminDeps, guid string, removedTargets []bruteForceBanFlushTarget) {
@@ -2540,10 +2620,8 @@ func bulkDeleteBruteForceBanTargets(ctx context.Context, deps restAdminDeps, gui
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, cfg)
 	defer cancel()
 
+	// A failed pipeline can still have deleted some bans; those are returned with the error so callers report them.
 	cmds, err := pipe.Exec(dCtx)
-	if err != nil {
-		return nil, err
-	}
 
 	stats.GetMetrics().GetRedisWriteCounter().Inc()
 
@@ -2569,7 +2647,7 @@ func bulkDeleteBruteForceBanTargets(ctx context.Context, deps restAdminDeps, gui
 
 	removeBruteForceBansFromIndex(ctx, deps, guid, removedTargets)
 
-	return removed, nil
+	return removed, err
 }
 
 func deleteMatchingBruteForceBanTargets(ctx context.Context, deps restAdminDeps, guid string, targets []bruteForceBanFlushTarget) ([]string, error) {
@@ -2640,42 +2718,30 @@ func flushBruteForceBanTargets(ctx context.Context, deps restAdminDeps, guid str
 		}
 	}
 
-	removed := make([]string, 0, len(sortedTargets))
-
-	if removedWildcard, err := bulkDeleteBruteForceBanTargets(ctx, deps, guid, wildcardTargets); err != nil {
-		return nil, err
-	} else if len(removedWildcard) > 0 {
-		removed = append(removed, removedWildcard...)
+	removed, err := bulkDeleteBruteForceBanTargets(ctx, deps, guid, wildcardTargets)
+	if err != nil {
+		return removed, err
 	}
 
-	if removedSelective, err := deleteMatchingBruteForceBanTargets(ctx, deps, guid, selectiveTargets); err != nil {
-		return nil, err
-	} else if len(removedSelective) > 0 {
-		removed = append(removed, removedSelective...)
-	}
+	removedSelective, err := deleteMatchingBruteForceBanTargets(ctx, deps, guid, selectiveTargets)
 
-	return removed, nil
+	return append(removed, removedSelective...), err
 }
 
+// executeBruteForceFlushPlan deletes the planned bans and counters. On error it still returns every key that was
+// removed before the failure, so the caller can report releases that really happened.
 func executeBruteForceFlushPlan(ctx context.Context, deps restAdminDeps, guid string, plan *bruteForceFlushPlan) ([]string, error) {
-	removed := make([]string, 0)
-
-	if removedBans, err := flushBruteForceBanTargets(ctx, deps, guid, plan.banTargets); err != nil {
-		return nil, err
-	} else if len(removedBans) > 0 {
-		removed = append(removed, removedBans...)
+	removed, err := flushBruteForceBanTargets(ctx, deps, guid, plan.banTargets)
+	if err != nil {
+		return removed, err
 	}
 
 	bucketKeys := plan.bucketKeys.GetStringSlice()
 	sort.Strings(bucketKeys)
 
-	if removedBucketKeys, err := bulkUnlink(ctx, deps, guid, bucketKeys); err != nil {
-		return nil, err
-	} else if len(removedBucketKeys) > 0 {
-		removed = append(removed, removedBucketKeys...)
-	}
+	removedBucketKeys, err := bulkUnlink(ctx, deps, guid, bucketKeys)
 
-	return removed, nil
+	return append(removed, removedBucketKeys...), err
 }
 
 // processBruteForceRules processes and flushes brute force rules based on the provided command and context.
@@ -2719,7 +2785,10 @@ func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushR
 
 	plan.addBucketKeys(keys)
 
-	if removed, err = executeBruteForceFlushPlan(ctx.Request.Context(), deps, guid, plan); err != nil {
+	removed, err = executeBruteForceFlushPlan(ctx.Request.Context(), deps, guid, plan)
+	reportBruteForceFlush(ctx.Request.Context(), deps, plan, removed)
+
+	if err != nil {
 		return true, nil, err
 	}
 

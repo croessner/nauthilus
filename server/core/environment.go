@@ -86,8 +86,10 @@ func (a *AuthState) updateLuaContext(environmentName string) {
 // builtinDecisionSourceFeatures maps triggered built-in controls to the standard exchange feature markers that
 // native analytics plugins report in decision_sources.
 var builtinDecisionSourceFeatures = map[string]string{
-	definitions.ControlRBL:        exchange.FeatureRBL,
-	definitions.ControlBruteForce: exchange.FeatureBruteForce,
+	definitions.ControlTLSEncryption: exchange.FeatureTLSEncryption,
+	definitions.ControlRelayDomains:  exchange.FeatureRelayDomains,
+	definitions.ControlRBL:           exchange.FeatureRBL,
+	definitions.ControlBruteForce:    exchange.FeatureBruteForce,
 }
 
 // publishBuiltinDecisionSource sets the host-owned exchange feature marker of one triggered built-in control.

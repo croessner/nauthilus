@@ -4,7 +4,7 @@
 #   /usr/local/lib/nauthilus/plugins/clickhouse.so
 #   /usr/local/lib/nauthilus/plugins/clickhouse.so.minisig
 #
-# This module registers the authentication-shaped `PostActionTarget` only. The
+# This module registers the authentication-shaped `PostActionTarget` and a host step-event sink. The
 # authn generation exposes the exact Policy effect
 # `authn/plugin.clickhouse.post_action`; it does not expose a generic
 # `DecisionEffectProvider` to any other target namespace.
@@ -40,6 +40,15 @@ plugins:
         dedup_success: true
         dedup_failure: false
         auth_dedup_ttl: 300s
+        # Optional step-event stream for second-factor verifications (nauthilus.auth_events).
+        events_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.auth_events%20FORMAT%20JSONEachRow
+        events_cache_key: clickhouse:batch:auth_events
+        # Always positive: step events rarely fill a batch.
+        events_flush_interval: 10s
+        # Optional brute-force evidence (nauthilus.bruteforce_lifecycle / nauthilus.bruteforce_attempts).
+        bruteforce_lifecycle_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.bruteforce_lifecycle%20FORMAT%20JSONEachRow
+        bruteforce_attempts_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.bruteforce_attempts%20FORMAT%20JSONEachRow
+        bruteforce_flush_interval: 10s
 
 policy:
   namespaces:

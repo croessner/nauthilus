@@ -451,7 +451,7 @@ func TestFailedInsertRequeuesRows(t *testing.T) {
 
 func TestAuthenticatedRedisDedupSkipsDuplicates(t *testing.T) {
 	db, mock := redismock.NewClientMock()
-	mock.ExpectSetNX(loginDedupKey(testRequest(t, requestOptions{authenticated: true}).Snapshot), "1", defaultAuthDedupTTL).SetVal(false)
+	mock.ExpectSetNX(loginDedupKey(testRequest(t, requestOptions{authenticated: true})), "1", defaultAuthDedupTTL).SetVal(false)
 
 	harness := startTestRunner(t, testModule(map[string]any{
 		"insert_url": testInsertURL,
@@ -481,7 +481,7 @@ func TestAuthenticatedRedisDedupSkipsDuplicates(t *testing.T) {
 
 func TestRedisDedupErrorFailsOpen(t *testing.T) {
 	db, mock := redismock.NewClientMock()
-	mock.ExpectSetNX(loginDedupKey(testRequest(t, requestOptions{authenticated: true}).Snapshot), "1", defaultAuthDedupTTL).SetErr(errors.New("redis unavailable"))
+	mock.ExpectSetNX(loginDedupKey(testRequest(t, requestOptions{authenticated: true})), "1", defaultAuthDedupTTL).SetErr(errors.New("redis unavailable"))
 
 	harness := startTestRunner(t, testModule(map[string]any{
 		"insert_url": testInsertURL,
@@ -575,12 +575,14 @@ func TestStartRegistersBoundedConnectionTarget(t *testing.T) {
 }
 
 type testRunnerOptions struct {
-	transport *recordingTransport
-	redis     pluginapi.Redis
-	logger    *slog.Logger
-	targets   *recordingConnectionTargetRegistrar
-	metrics   pluginapi.Metrics
-	tickers   *manualTickerFactory
+	// roundTripper replaces the recording transport, for example to reach a real ClickHouse in integration tests.
+	roundTripper http.RoundTripper
+	transport    *recordingTransport
+	redis        pluginapi.Redis
+	logger       *slog.Logger
+	targets      *recordingConnectionTargetRegistrar
+	metrics      pluginapi.Metrics
+	tickers      *manualTickerFactory
 }
 
 type testHarness struct {
@@ -649,8 +651,13 @@ func testHostOptions(options testRunnerOptions, transport *recordingTransport) [
 
 	tracer := &recordingTracer{}
 
+	var roundTripper http.RoundTripper = transport
+	if options.roundTripper != nil {
+		roundTripper = options.roundTripper
+	}
+
 	hostOptions := []pluginruntime.HostOption{
-		pluginruntime.WithHTTPClient(&http.Client{Transport: transport}),
+		pluginruntime.WithHTTPClient(&http.Client{Transport: roundTripper}),
 		pluginruntime.WithConnectionTargets(pluginruntime.NewConnectionTargetFacade(targets)),
 		pluginruntime.WithMetricsFactory(func(string) pluginapi.Metrics {
 			return metrics
@@ -763,6 +770,8 @@ func singleRowForRequest(t *testing.T, options requestOptions) map[string]any {
 }
 
 type requestOptions struct {
+	// outcome overrides the sealed terminal outcome derived from authenticated.
+	outcome         *pluginapi.AuthOutcome
 	runtimeValues   map[string]any
 	facts           []pluginapi.PolicyFact
 	rblMatchedLists []string
@@ -857,6 +866,24 @@ func testRequest(t *testing.T, options requestOptions) pluginapi.PostActionReque
 		Runtime:      runtimeContext,
 		PasswordHash: options.passwordHash,
 		Facts:        options.facts,
+		Outcome:      testOutcome(options, statusMessage),
+	}
+}
+
+// testOutcome returns the sealed terminal outcome the host binds before a post-action executes.
+func testOutcome(options requestOptions, statusMessage string) pluginapi.AuthOutcome {
+	if options.outcome != nil {
+		return *options.outcome
+	}
+
+	decision := pluginapi.AuthOutcomeFail
+	if options.authenticated {
+		decision = pluginapi.AuthOutcomeOK
+	}
+
+	return pluginapi.AuthOutcome{
+		Decision: decision, Operation: "authenticate", HTTPStatus: 200, StatusMessage: statusMessage,
+		Transport: pluginapi.AuthTransportHTTP, TransportStatus: 200, Known: true,
 	}
 }
 

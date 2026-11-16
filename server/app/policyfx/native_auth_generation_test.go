@@ -614,12 +614,14 @@ func (p *nativeAuthTestPlugin) Register(registrar pluginapi.Registrar) error {
 
 type nativeAuthExecutionProbe struct {
 	// subjectErr is returned by the subject source when set before the generation is committed.
-	subjectErr       error
-	environmentCalls atomic.Int32
-	subjectCalls     atomic.Int32
-	obligationCalls  atomic.Int32
-	postActionCalls  atomic.Int32
-	sawScoreFact     atomic.Bool
+	subjectErr error
+	// postActionRequests receives each executed post-action request when the test needs to inspect it.
+	postActionRequests chan pluginapi.PostActionRequest
+	environmentCalls   atomic.Int32
+	subjectCalls       atomic.Int32
+	obligationCalls    atomic.Int32
+	postActionCalls    atomic.Int32
+	sawScoreFact       atomic.Bool
 }
 
 type nativeAuthTestEnvironment struct {
@@ -704,11 +706,15 @@ func (nativeAuthTestPostAction) Name() string { return "post_action" }
 
 // Enqueue returns one successful detached enqueue outcome.
 func (a nativeAuthTestPostAction) Enqueue(
-	context.Context,
-	pluginapi.PostActionRequest,
+	_ context.Context,
+	request pluginapi.PostActionRequest,
 ) (pluginapi.PostActionEnqueueResult, error) {
 	if a.probe != nil {
 		a.probe.postActionCalls.Add(1)
+
+		if a.probe.postActionRequests != nil {
+			a.probe.postActionRequests <- request
+		}
 	}
 
 	return pluginapi.PostActionEnqueueResult{Enqueued: true}, nil

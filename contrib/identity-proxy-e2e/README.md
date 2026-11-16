@@ -18,6 +18,9 @@ The profile is intentionally local and repeatable. It uses Docker Compose, gener
 - Required TOTP, recovery-code, and WebAuthn flows work through the edge and persist on the authority, including rejection of wrong-password delayed responses before enrollment and normal delayed-response checks for existing factors.
 - Negative WebAuthn checks reject missing credentials, tampered assertions, wrong challenges/origins, unknown credentials, replayed assertions, and sign-count rollback.
 - WebAuthn browser automation uses a CDP virtual authenticator.
+- Both edges record every second-factor verification of the browser smoke as secret-free `nauthilus.auth_events`
+  rows in a disposable ClickHouse (`clickhouse-events` check): verified, invalid, rate-limited, and fail-latched
+  outcomes per method, unique event IDs, and a `flow_ref` for every protocol flow.
 - WebAuthn sign-count updates are visible through authority-side state.
 - A flow can start on `edge-a` and complete on `edge-b` through shared edge Redis.
 - SAML SSO and SP-initiated SLO work through a local test SP by default.

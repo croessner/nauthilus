@@ -20,6 +20,8 @@ import (
 	"net"
 	"strings"
 
+	"github.com/croessner/nauthilus/v4/server/bruteforce"
+
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/errors"
@@ -116,7 +118,7 @@ func handleProtectedPreAuthBruteForce(ctx *gin.Context, auth *AuthState) bool {
 	}
 
 	auth.markEnvironmentRejected(ctx)
-	auth.UpdateBruteForceBucketsCounter(ctx)
+	auth.updateBruteForceBucketsCounter(ctx, "", bruteforce.CountSourceProtectedEndpoint)
 
 	auth.AuthFail(ctx)
 	ctx.Abort()

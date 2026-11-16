@@ -389,6 +389,9 @@ func prepareHTTPServerRuntime(ctx context.Context, store *contextStore) (httpSer
 	store.server = newContextTuple(ctx)
 	store.signals = core.NewDefaultServerSignals(cfg.GetServer().IsHTTP3Enabled())
 
+	// One explicit runner owns plugin backends and brute-force diagnostic events of the auth application.
+	pluginRunner := store.pluginRunner
+
 	authApplication, err := core.NewProductionAuthApplicationService(core.AuthDeps{
 		Cfg:                  cfg,
 		Env:                  env,
@@ -397,7 +400,8 @@ func prepareHTTPServerRuntime(ctx context.Context, store *contextStore) (httpSer
 		AccountCache:         store.accountCache,
 		Channel:              store.channel,
 		Tolerate:             store.bruteForceTolerate,
-		PluginBackendFactory: pluginruntime.NewBackendManagerFactory(store.pluginRunner),
+		BruteForceEvents:     pluginruntime.BruteForceEventEmitter(pluginRunner),
+		PluginBackendFactory: pluginruntime.NewBackendManagerFactory(pluginRunner),
 		NativeRuntime:        pluginruntime.NewAuthnRequestRuntime(),
 		HostServices:         hostServices,
 		LDAPQueue:            priorityqueue.LDAPQueue,
@@ -596,6 +600,8 @@ func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {
 		RouteArtifacts: runtime.routeArtifacts,
 		LDAPQueue:      priorityqueue.LDAPQueue,
 		LDAPAuthQueue:  priorityqueue.LDAPAuthQueue,
+		// The IdP MFA handlers emit second-factor step events through the native plugin runner.
+		PluginRunner: runtime.store.pluginRunner,
 	}
 	deps.AuthApplication = runtime.authApplication
 	deps.Svc = handlerdeps.NewDefaultServices(deps)

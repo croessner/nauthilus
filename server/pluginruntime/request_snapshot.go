@@ -275,6 +275,8 @@ func diagnosticsFromAuthState(auth *core.AuthState) pluginapi.RequestDiagnostics
 		LatencyMillis:     latencyMillis(auth.Runtime.StartTime),
 		BruteForceCounter: bruteForceCounter(auth),
 		HTTPStatus:        httpStatus(auth),
+		// A bucket name with a suppressed block means the bucket went over its limit but toleration kept it open.
+		BruteForceTolerated: auth.Security.BruteForceName != "" && auth.Runtime.BruteForceToleration.SuppressedBlock,
 	}
 }
 
@@ -308,6 +310,10 @@ func idPInfoFromAuthState(auth *core.AuthState) pluginapi.IDPInfo {
 	info := pluginapi.IDPInfo{
 		ClientID:   auth.Request.OIDCCID,
 		UserGroups: cloneStrings(auth.GetGroups()),
+	}
+
+	if typed := auth.Runtime.IDPContext; typed != nil {
+		info.FlowRef = typed.FlowRef
 	}
 
 	if auth.Cfg() == nil {

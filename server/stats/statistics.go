@@ -377,6 +377,9 @@ type Metrics interface {
 	// GetIdpMfaOperationsTotal tracks the total number of IDP MFA operations.
 	GetIdpMfaOperationsTotal() *prometheus.CounterVec
 
+	// GetPluginAuthEventsTotal tracks host step-event delivery outcomes (delivered, dropped, failed).
+	GetPluginAuthEventsTotal() *prometheus.CounterVec
+
 	// GetIdpDynamicClientRegistrationsTotal tracks bounded dynamic-registration outcomes.
 	GetIdpDynamicClientRegistrationsTotal() *prometheus.CounterVec
 	// GetIdpDynamicClientRegistrationDurationSeconds tracks DCR request latency without unbounded labels.
@@ -485,6 +488,7 @@ type metricsImpl struct {
 	idpTokensIssuedTotal           *prometheus.CounterVec
 	idpConsentTotal                *prometheus.CounterVec
 	idpMfaOperationsTotal          *prometheus.CounterVec
+	pluginAuthEventsTotal          *prometheus.CounterVec
 	idpDynamicRegistrations        *prometheus.CounterVec
 	idpDynamicRegistrationDuration prometheus.Histogram
 	webAuthnCeremonyCookieSize     prometheus.Histogram
@@ -811,6 +815,11 @@ func (m *metricsImpl) GetIdpConsentTotal() *prometheus.CounterVec {
 	return m.idpConsentTotal
 }
 
+// GetPluginAuthEventsTotal returns the pluginAuthEventsTotal field.
+func (m *metricsImpl) GetPluginAuthEventsTotal() *prometheus.CounterVec {
+	return m.pluginAuthEventsTotal
+}
+
 // GetIdpMfaOperationsTotal returns the idpMfaOperationsTotal field.
 func (m *metricsImpl) GetIdpMfaOperationsTotal() *prometheus.CounterVec {
 	return m.idpMfaOperationsTotal
@@ -1048,6 +1057,7 @@ func (m *metricsImpl) initIDPMetrics() {
 	m.idpTokensIssuedTotal = newCounterVecMetric("idp_tokens_issued_total", "The total number of IDP tokens issued", metricProtocolLabel, metricClientIDLabel, metricGrantTypeLabel)
 	m.idpConsentTotal = newCounterVecMetric("idp_consent_total", "The total number of IDP consent operations", metricClientIDLabel, metricStatusLabel)
 	m.idpMfaOperationsTotal = newCounterVecMetric("idp_mfa_operations_total", "The total number of IDP MFA operations", metricTypeLabel, metricMethodLabel, metricStatusLabel)
+	m.pluginAuthEventsTotal = newCounterVecMetric("plugin_auth_events_total", "The total number of host diagnostic events by delivery outcome and lane", metricOutcomeLabel, "lane")
 	m.idpDynamicRegistrations = newCounterVecMetric("idp_dynamic_client_registrations_total", "The total number of dynamic OIDC client registration outcomes", metricOutcomeLabel, metricCodeLabel)
 	m.idpDynamicRegistrationDuration = newHistogramMetric("idp_dynamic_client_registration_duration_seconds", "Duration of dynamic OIDC client registration requests", prometheus.ExponentialBuckets(0.001, 1.7, 15))
 	m.webAuthnCeremonyCookieSize = newHistogramMetric(

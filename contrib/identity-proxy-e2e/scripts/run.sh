@@ -8,6 +8,18 @@ PGO_DIR="${ROOT_DIR}/.work/pgo"
 PLUGIN_RELOAD_DIR="${ROOT_DIR}/.work/plugin-reload"
 PLUGIN_RELOAD_URL="http://127.0.0.1:38083"
 PGO_PIDS=()
+# Second-factor outcomes the browser smoke must leave in nauthilus.auth_events as method|result|reason|flow_effect.
+CLICKHOUSE_EXPECTED_EVENTS=(
+  "totp|success|verified|step_up_completed"
+  "totp|success|verified|primary_failure_kept"
+  "totp|invalid|invalid_code|none"
+  "totp|rate_limited|attempt_limit|none"
+  "recovery_codes|success|verified|step_up_completed"
+  "recovery_codes|success|verified|primary_failure_kept"
+  "recovery_codes|invalid|invalid_code|none"
+  "webauthn|success|verified|step_up_completed"
+  "webauthn|invalid|assertion_rejected|none"
+)
 
 usage() {
   cat <<'USAGE'
@@ -22,6 +34,7 @@ Commands:
   redis-check    Prove authority and edge Redis are isolated at the Compose network layer.
   browser        Run the Playwright browser smoke against the running stack.
   plugin-reload  Prove that SIGHUP applies native plugin config and refuses artifact changes.
+  clickhouse-events  Prove that browser MFA flows produced the expected auth_events rows in ClickHouse.
   smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks.
   down           Stop and remove the E2E stack.
 
@@ -333,6 +346,55 @@ plugin_reload() {
   echo "ok plugin-reload-without-restart"
 }
 
+# Query the disposable E2E ClickHouse and print tab-separated rows.
+clickhouse_query() {
+  "${COMPOSE[@]}" exec -T clickhouse clickhouse-client --query "$1" --format TSV
+}
+
+# Prove that the browser MFA flows produced secret-free auth_events rows with the expected outcome vocabulary.
+clickhouse_events_check() {
+  local evidence="${ROOT_DIR}/.work/clickhouse-auth-events.tsv"
+  local summary=""
+  local previous=""
+
+  # Wait until two polls past the event flush interval return the same summary.
+  for _ in $(seq 1 30); do
+    summary="$(clickhouse_query "SELECT method, result, reason, flow_effect, fail_latched, protocol, count() FROM nauthilus.auth_events GROUP BY method, result, reason, flow_effect, fail_latched, protocol ORDER BY method, result, reason, fail_latched, protocol")"
+    if [[ -n "${summary}" && "${summary}" == "${previous}" ]]; then
+      break
+    fi
+    previous="${summary}"
+    sleep 2
+  done
+
+  mkdir -p "${ROOT_DIR}/.work"
+  printf '%s\n' "${summary}" > "${evidence}"
+  echo "auth_events summary (method result reason flow_effect fail_latched protocol count):"
+  printf '%s\n' "${summary}"
+
+  if [[ -z "${summary}" ]]; then
+    echo "The browser MFA flows left no auth_events rows in ClickHouse." >&2
+    return 1
+  fi
+
+  local expected
+  for expected in "${CLICKHOUSE_EXPECTED_EVENTS[@]}"; do
+    if ! awk -F '\t' -v want="${expected}" '($1 "|" $2 "|" $3 "|" $4) == want { found = 1 } END { exit !found }' <<<"${summary}"; then
+      echo "Missing auth_events outcome: ${expected}" >&2
+      return 1
+    fi
+  done
+
+  local invalid
+  invalid="$(clickhouse_query "SELECT count() FROM nauthilus.auth_events WHERE length(event_id) != 32 OR event_version != 1 OR (protocol IN ('oidc', 'saml') AND length(flow_ref) != 32) OR (protocol = 'account' AND flow_ref != '')")"
+  if [[ "${invalid}" != "0" ]]; then
+    echo "auth_events contains ${invalid} rows that violate the event identity or flow_ref contract." >&2
+    return 1
+  fi
+
+  echo "ok clickhouse-auth-events"
+}
+
 reset_stack() {
   "${COMPOSE[@]}" down -v --remove-orphans
 }
@@ -353,6 +415,9 @@ smoke() {
   fi
   if [[ "${status}" -eq 0 ]]; then
     browser || status=$?
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    clickhouse_events_check || status=$?
   fi
   if [[ "${status}" -eq 0 ]]; then
     rpc_post_browser || status=$?
@@ -401,6 +466,9 @@ case "${command}" in
     ;;
   plugin-reload)
     plugin_reload
+    ;;
+  clickhouse-events)
+    clickhouse_events_check
     ;;
   smoke)
     smoke

@@ -300,11 +300,11 @@ func TestStartExposesZeroValuedResultSeries(t *testing.T) {
 		t.Fatalf("Gather() error = %v", err)
 	}
 
-	assertZeroCounterSeries(t, families, metricQueuedRows, []string{"queued", "skipped", "dedup_skipped", "encode_error", "dropped"})
-	assertZeroCounterSeries(t, families, metricFlushBatches, []string{"success", "http_error", "status_error", "no_url", "requeued"})
+	assertZeroCounterSeries(t, families, loginMetricNames.queuedRows, []string{"queued", "skipped", "dedup_skipped", "encode_error", "dropped"})
+	assertZeroCounterSeries(t, families, loginMetricNames.flushBatches, []string{"success", "http_error", "status_error", "no_url", "requeued"})
 
 	for _, family := range families {
-		if strings.HasSuffix(family.GetName(), metricFlushDuration) && len(family.GetMetric()) != 0 {
+		if strings.HasSuffix(family.GetName(), loginMetricNames.flushDuration) && len(family.GetMetric()) != 0 {
 			t.Fatalf("flush duration histogram has %d pre-created series, want 0", len(family.GetMetric()))
 		}
 	}

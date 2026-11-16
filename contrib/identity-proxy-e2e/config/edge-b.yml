@@ -367,3 +367,20 @@ identity:
         allowed_attributes:
           - uid
           - displayName
+
+plugins:
+  # The E2E image builds the bundled plugins without a signing key.
+  verification_policy: "off"
+  allowed_dirs:
+    - /usr/local/lib/nauthilus/plugins
+  modules:
+    # Records second-factor step events of the browser MFA flows into the disposable ClickHouse.
+    - name: clickhouse
+      type: go
+      path: /usr/local/lib/nauthilus/plugins/clickhouse.so
+      allow_capabilities: [password_hash]
+      config:
+        deployment: "e2e"
+        instance: "edge-b"
+        events_insert_url: "http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.auth_events%20FORMAT%20JSONEachRow&input_format_skip_unknown_fields=0"
+        events_flush_interval: 1s

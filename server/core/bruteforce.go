@@ -250,6 +250,10 @@ func (a *AuthState) runBruteForceRuleCheck(
 		return true, false
 	}
 
+	// The check decided whether this request hits an existing ban; later counter events carry that fact.
+	banActive := eval.alreadyTriggered
+	a.Runtime.BruteForceBanActive = &banActive
+
 	if !eval.alreadyTriggered && !eval.ruleTriggered {
 		return false, eval.ruleTriggered
 	}
@@ -378,7 +382,7 @@ func (a *AuthState) markBruteForceWhitelist(value string) {
 
 // newBruteForceBucketManager builds the bucket manager with request identity attributes.
 func (a *AuthState) newBruteForceBucketManager(ctx *gin.Context) bruteforce.BucketManager {
-	bm := a.newBruteForceRequestBucketManager(ctx)
+	bm := a.newBruteForceRequestBucketManager(ctx, bruteforce.DiagnosticContext{})
 
 	accountName := backend.GetUserAccountFromCache(ctx.Request.Context(), a.Cfg(), a.Logger(), a.deps.Redis, a.AccountCache(), a.Request.Username, a.Request.Protocol.Get(), a.Request.OIDCCID, a.Runtime.GUID)
 
@@ -627,11 +631,67 @@ func bruteForceLearningEnabled(bfCfg *config.BruteForceSection, featureName stri
 
 // UpdateBruteForceBucketsCounter updates brute force protection rules based on client and protocol details.
 func (a *AuthState) UpdateBruteForceBucketsCounter(ctx *gin.Context) {
-	a.updateBruteForceBucketsCounter(ctx, "")
+	a.updateBruteForceBucketsCounter(ctx, "", bruteforce.CountSourceBackendFailure)
 }
 
-// updateBruteForceBucketsCounter updates buckets with optional policy learning-source context.
-func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSource string) {
+// bruteForceUpdateEnabled reports whether a failed request may change brute-force counters at all.
+func (a *AuthState) bruteForceUpdateEnabled(ctx *gin.Context) bool {
+	cfg := a.cfg()
+
+	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
+		return false
+	}
+
+	bfCfg := cfg.GetBruteForce()
+	if bfCfg == nil {
+		return false
+	}
+
+	a.logBruteForceDebug(ctx.Request.Context())
+
+	if a.Request.NoAuth || a.Request.ListAccounts {
+		return false
+	}
+
+	if !bruteForceProtocolEnabled(a.cfg(), a.Request.Protocol.Get()) {
+		return false
+	}
+
+	return !a.isBruteForceUpdateIPWhitelisted(bfCfg)
+}
+
+// skipUndecidedRWPCount records an unavailable RWP verdict and leaves the counters untouched.
+//
+// The verdict is unknown, not negative. Counting here would let a storage outage turn a repeating password into an
+// attack signal and ban the address it came from. This is deliberately fail-open for the counter. It is only safe
+// because applyBackendResult turns BruteForceError into a temporary failure, which never grants access. Callers that
+// reject before authentication answer on their own and are unaffected. Watch
+// bruteforce_rwp_decisions_total{verdict="undecided"} against "counted": a sustained rise means accounting is blind,
+// not that traffic is clean.
+func (a *AuthState) skipUndecidedRWPCount(err error) {
+	a.markBruteForceError(err)
+	a.Runtime.BFRWP = false
+
+	stats.GetMetrics().GetRWPDecisionsTotal().WithLabelValues("undecided").Inc()
+	level.Warn(a.Logger()).Log(
+		definitions.LogKeyGUID, a.Runtime.GUID,
+		definitions.LogKeyMsg, "RWP verdict unavailable; not counting this request",
+		definitions.LogKeyError, err,
+	)
+}
+
+// policyBruteForceCountSource names the Policy brute_force_update obligation with its learning feature.
+func policyBruteForceCountSource(featureName string) string {
+	if featureName == "" {
+		return bruteforce.CountSourcePolicyUpdatePrefix
+	}
+
+	return bruteforce.CountSourcePolicyUpdatePrefix + ":" + featureName
+}
+
+// updateBruteForceBucketsCounter updates buckets with optional policy learning-source context. countSource names the
+// decision point for diagnostic counted events.
+func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSource string, countSource string) {
 	tr := monittrace.New("nauthilus/auth")
 	uctx, uspan := tr.Start(ctx.Request.Context(), "auth.bruteforce.update",
 		attribute.String("service", a.Request.Service),
@@ -653,56 +713,19 @@ func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSou
 		defer stop()
 	}
 
-	cfg := a.cfg()
-
-	if !cfg.HasRuntimeModule(definitions.ControlBruteForce) {
-		return
-	}
-
-	bfCfg := cfg.GetBruteForce()
-	if bfCfg == nil {
-		return
-	}
-
-	a.logBruteForceDebug(ctx.Request.Context())
-
-	if a.Request.NoAuth || a.Request.ListAccounts {
-		return
-	}
-
-	if !bruteForceProtocolEnabled(a.cfg(), a.Request.Protocol.Get()) {
-		return
-	}
-
-	if a.isBruteForceUpdateIPWhitelisted(bfCfg) {
+	if !a.bruteForceUpdateEnabled(ctx) {
 		return
 	}
 
 	matchedPeriod := a.matchedBruteForceUpdatePeriod(uspan)
-	bm := a.newBruteForceUpdateBucketManager(ctx)
+	bm := a.newBruteForceUpdateBucketManager(ctx, bruteforce.DiagnosticContext{
+		CountSource: countSource, BanActive: a.Runtime.BruteForceBanActive,
+	})
 
 	// The commit classifies the confirmed failure atomically; precheck hints are not authoritative.
 	repeated, err := a.commitRWPIfAllowed(ctx, bm, learningSource)
 	if err != nil {
-		// The verdict is unknown, not negative. Counting here would let a storage
-		// outage turn a repeating password into an attack signal and ban the
-		// address it came from.
-		//
-		// This is deliberately fail-open for the counter. It is only safe
-		// because applyBackendResult turns BruteForceError into a temporary
-		// failure, which never grants access. Callers that reject before
-		// authentication answer on their own and are unaffected. Watch
-		// bruteforce_rwp_decisions_total{verdict="undecided"} against "counted":
-		// a sustained rise means accounting is blind, not that traffic is clean.
-		a.markBruteForceError(err)
-		a.Runtime.BFRWP = false
-
-		stats.GetMetrics().GetRWPDecisionsTotal().WithLabelValues("undecided").Inc()
-		level.Warn(a.Logger()).Log(
-			definitions.LogKeyGUID, a.Runtime.GUID,
-			definitions.LogKeyMsg, "RWP verdict unavailable; not counting this request",
-			definitions.LogKeyError, err,
-		)
+		a.skipUndecidedRWPCount(err)
 
 		return
 	}
@@ -748,9 +771,16 @@ func (a *AuthState) matchedBruteForceUpdatePeriod(span trace.Span) time.Duration
 	return matchedPeriod
 }
 
-// newBruteForceRequestBucketManager shares request context and dependencies between reads and writes.
-func (a *AuthState) newBruteForceRequestBucketManager(ctx *gin.Context) bruteforce.BucketManager {
-	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{Cfg: a.Cfg(), Logger: a.Logger(), Redis: a.Redis(), Tolerate: a.deps.Tolerate})
+// newBruteForceRequestBucketManager shares request context and dependencies between reads and writes. diagnostic
+// carries the request facts of diagnostic brute-force events.
+func (a *AuthState) newBruteForceRequestBucketManager(
+	ctx *gin.Context,
+	diagnostic bruteforce.DiagnosticContext,
+) bruteforce.BucketManager {
+	bm := bruteforce.NewBucketManagerWithDeps(ctx.Request.Context(), a.Runtime.GUID, a.Request.ClientIP, bruteforce.BucketManagerDeps{
+		Cfg: a.Cfg(), Logger: a.Logger(), Redis: a.Redis(), Tolerate: a.deps.Tolerate,
+		Events: a.deps.BruteForceEvents, Diagnostic: diagnostic,
+	})
 	if a.Request.Protocol != nil {
 		bm = bm.WithProtocol(a.Request.Protocol.Get())
 	}
@@ -762,8 +792,11 @@ func (a *AuthState) newBruteForceRequestBucketManager(ctx *gin.Context) brutefor
 }
 
 // newBruteForceUpdateBucketManager resolves the post-authentication account for failed-result accounting.
-func (a *AuthState) newBruteForceUpdateBucketManager(ctx *gin.Context) bruteforce.BucketManager {
-	return a.newBruteForceRequestBucketManager(ctx).WithAccountName(a.bruteForceUpdateAccountName(ctx))
+func (a *AuthState) newBruteForceUpdateBucketManager(
+	ctx *gin.Context,
+	diagnostic bruteforce.DiagnosticContext,
+) bruteforce.BucketManager {
+	return a.newBruteForceRequestBucketManager(ctx, diagnostic).WithAccountName(a.bruteForceUpdateAccountName(ctx))
 }
 
 // bruteForceUpdateAccountName resolves account name without Redis when local state already knows it.

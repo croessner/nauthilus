@@ -1,0 +1,76 @@
+{
+  "contract_version": 1,
+  "description": "Terminal outcomes the host binds to native post-actions for the production rule shapes in DIAGNOSTIC_CONTRACT.md section 4. Produced by server/app/policyfx TestNativePostActionSeesAnsweredTerminalOutcome over gRPC and replayed into a real ClickHouse by the clickhouse_integration tests.",
+  "cases": [
+    {
+      "name": "tls required tempfail",
+      "outcome": {
+        "Decision": "tempfail",
+        "Operation": "authenticate",
+        "Stage": "pre_auth",
+        "OutcomeMarker": "auth.outcome.tls_required",
+        "ResponseMarker": "auth.response.tempfail.no_tls",
+        "PolicyRule": "standard_tls_enforcement",
+        "TempFailReason": "policy_indeterminate",
+        "TempFailCheckpoint": "pre_auth",
+        "PolicyStatus": "evaluation_failed",
+        "FSMState": "auth_tempfail",
+        "StatusMessage": "TLS transport encryption required",
+        "Transport": "grpc",
+        "HTTPStatus": 500,
+        "Known": true
+      }
+    },
+    {
+      "name": "backend tempfail",
+      "outcome": {
+        "Decision": "tempfail",
+        "Operation": "authenticate",
+        "Stage": "auth_decision",
+        "OutcomeMarker": "auth.outcome.backend_tempfail",
+        "ResponseMarker": "auth.response.tempfail",
+        "PolicyRule": "standard_backend_tempfail",
+        "TempFailReason": "backend_tempfail",
+        "TempFailCheckpoint": "auth_decision",
+        "PolicyStatus": "evaluation_failed",
+        "FSMState": "auth_tempfail",
+        "StatusMessage": "Temporary server problem, try again later",
+        "Transport": "grpc",
+        "HTTPStatus": 500,
+        "Known": true
+      }
+    },
+    {
+      "name": "credential failure",
+      "outcome": {
+        "Decision": "fail",
+        "Operation": "authenticate",
+        "Stage": "auth_decision",
+        "OutcomeMarker": "auth.outcome.auth_failure",
+        "ResponseMarker": "auth.response.fail",
+        "PolicyRule": "standard_auth_failure",
+        "FSMState": "auth_fail",
+        "StatusMessage": "Invalid login or password",
+        "Transport": "grpc",
+        "HTTPStatus": 403,
+        "Known": true
+      }
+    },
+    {
+      "name": "success",
+      "outcome": {
+        "Decision": "ok",
+        "Operation": "authenticate",
+        "Stage": "auth_decision",
+        "OutcomeMarker": "auth.outcome.auth_success",
+        "ResponseMarker": "auth.response.ok",
+        "PolicyRule": "standard_auth_success",
+        "FSMState": "auth_ok",
+        "StatusMessage": "OK",
+        "Transport": "grpc",
+        "HTTPStatus": 200,
+        "Known": true
+      }
+    }
+  ]
+}

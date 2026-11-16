@@ -96,6 +96,8 @@ func TestAuthIDPContextContainsNoBrowserStateCarrier(t *testing.T) {
 		"GrantType":       reflect.TypeOf(""),
 		"RedirectURI":     reflect.TypeOf(""),
 		"RequestedScopes": reflect.TypeOf([]string(nil)),
+		// FlowRef is a domain-separated digest for analytics joins, never an authorizing flow handle.
+		"FlowRef": reflect.TypeOf(""),
 	}
 
 	if requestType.NumField() != len(requestFields) {

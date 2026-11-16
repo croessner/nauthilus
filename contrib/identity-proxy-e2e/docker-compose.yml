@@ -25,6 +25,21 @@ services:
     networks:
       - edge-data
 
+  # Disposable analytics store for the diagnostic data contract; the owner schema is applied on first start.
+  clickhouse:
+    image: ${NAUTHILUS_E2E_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:25.8}
+    restart: "no"
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ../clickhouse-kubernetes/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    networks:
+      - edge-data
+
   authority:
     <<: *nauthilus-service
     depends_on:
@@ -55,12 +70,16 @@ services:
     depends_on:
       - edge-redis
       - authority
+      - clickhouse
     command:
       - /usr/app/nauthilus
       - -config
       - /etc/nauthilus/nauthilus.yml
       - -config-format
       - yaml
+    tmpfs:
+      # The plugin loader stages the verified ClickHouse artifact here and opens it with dlopen.
+      - /tmp:exec
     volumes:
       - ./config/edge-a.yml:/etc/nauthilus/nauthilus.yml:ro
       - ./.work/certs:/etc/nauthilus/e2e/certs:ro
@@ -76,12 +95,16 @@ services:
     depends_on:
       - edge-redis
       - authority
+      - clickhouse
     command:
       - /usr/app/nauthilus
       - -config
       - /etc/nauthilus/nauthilus.yml
       - -config-format
       - yaml
+    tmpfs:
+      # The plugin loader stages the verified ClickHouse artifact here and opens it with dlopen.
+      - /tmp:exec
     volumes:
       - ./config/edge-b.yml:/etc/nauthilus/nauthilus.yml:ro
       - ./.work/certs:/etc/nauthilus/e2e/certs:ro

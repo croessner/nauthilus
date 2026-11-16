@@ -4,8 +4,6 @@
 package idp
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/croessner/nauthilus/v4/server/backend"
@@ -141,6 +139,7 @@ func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 	_, err = finish(ctx, selection, ceremony)
 	if err != nil {
 		h.observeCanonicalWebAuthn(ctx, selection, false, err)
+		h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodWebAuthn, canonicalWebAuthnFailureOutcome(err))
 
 		if !ctx.Writer.Written() {
 			ctx.AbortWithStatus(http.StatusServiceUnavailable)
@@ -150,38 +149,24 @@ func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 	}
 
 	if err = selection.session.RefreshAnchor(ctx.Request.Context()); err != nil {
+		h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodWebAuthn, mfaOutcomeStateError)
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return
 	}
 
-	if completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodWebAuthn) {
+	if h.completeCanonicalFailLatchedMFA(ctx, selection, definitions.MFAMethodWebAuthn) {
 		return
 	}
 
-	completion, err := selection.session.CompleteStepUp(
-		ctx.Request.Context(),
-		selection.stepUp.Value.Handle,
-		definitions.MFAMethodWebAuthn,
-		mfaAssuranceFreshness,
-	)
-	if err != nil {
-		if errors.Is(err, sessionstate.ErrBindingMismatch) ||
-			errors.Is(err, sessionstate.ErrRevisionConflict) ||
-			errors.Is(err, sessionstate.ErrExpired) {
-			ctx.AbortWithStatus(http.StatusConflict)
-
-			return
-		}
-
-		ctx.AbortWithStatus(http.StatusServiceUnavailable)
-
+	completion, completed := h.completeCanonicalStepUp(ctx, selection, definitions.MFAMethodWebAuthn)
+	if !completed {
 		return
 	}
 
 	target, selfService, err := canonicalSelfServiceCompletionTarget(ctx, completion)
 	if err != nil {
-		ctx.AbortWithStatus(http.StatusConflict)
+		h.answerCanonicalResumeConflict(ctx, selection, definitions.MFAMethodWebAuthn)
 
 		return
 	}
@@ -189,13 +174,14 @@ func (h *FrontendHandler) completeCanonicalWebAuthn(ctx *gin.Context) {
 	if !selfService {
 		target, err = canonicalWebAuthnResumeTarget(ctx, selection)
 		if err != nil {
-			ctx.AbortWithStatus(http.StatusConflict)
+			h.answerCanonicalResumeConflict(ctx, selection, definitions.MFAMethodWebAuthn)
 
 			return
 		}
 	}
 
 	h.observeCanonicalWebAuthn(ctx, selection, true, nil)
+	h.emitCanonicalMFAEvent(ctx, selection, definitions.MFAMethodWebAuthn, mfaOutcomeVerified)
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("idp", "success").Inc()
 
 	ctx.JSON(http.StatusOK, webAuthnFinishResponse{Redirect: target})
@@ -246,7 +232,7 @@ func (h *FrontendHandler) finishCanonicalWebAuthn(
 		return nil, err
 	}
 
-	user, ok := core.CompleteCanonicalWebAuthnLogin(
+	return core.CompleteCanonicalWebAuthnLogin(
 		ctx,
 		h.deps.Auth(),
 		selection.session,
@@ -258,11 +244,6 @@ func (h *FrontendHandler) finishCanonicalWebAuthn(
 		data.WebAuthnUser,
 		data.AuthState,
 	)
-	if !ok {
-		return nil, fmt.Errorf("canonical WebAuthn finish: verification failed")
-	}
-
-	return user, nil
 }
 
 // canonicalWebAuthnBackendData resolves the exact typed identity and authority binding.

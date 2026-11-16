@@ -78,6 +78,7 @@ type FrontendHandler struct {
 	canonicalRecoveryVerifier             canonicalRecoveryVerifier
 	canonicalWebAuthnBegin                canonicalWebAuthnBegin
 	canonicalWebAuthnFinish               canonicalWebAuthnFinish
+	canonicalAuthEventEmitter             canonicalAuthEventEmitter
 	canonicalTOTPEnrollmentStarter        canonicalTOTPEnrollmentStarter
 	canonicalTOTPEnrollmentFinisher       canonicalTOTPEnrollmentFinisher
 	canonicalRecoveryEnrollmentGenerator  canonicalRecoveryEnrollmentGenerator
@@ -1083,6 +1084,7 @@ func (h *FrontendHandler) authenticateCanonicalPassword(
 			GrantType:       flowContext.grantType,
 			RedirectURI:     flowContext.state.Metadata[flowdomain.FlowMetadataRedirectURI],
 			RequestedScopes: strings.Fields(flowContext.state.Metadata[flowdomain.FlowMetadataScope]),
+			FlowRef:         flowdomain.DiagnosticFlowRef(flowContext.state.FlowID),
 		},
 	)
 

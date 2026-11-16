@@ -157,7 +157,7 @@ func (a *AuthState) executeBruteForceUpdateObligation(ctx *gin.Context, request 
 		a.Runtime.EnvironmentName = request.environmentName
 	}
 
-	a.updateBruteForceBucketsCounter(ctx, request.featureName)
+	a.updateBruteForceBucketsCounter(ctx, request.featureName, policyBruteForceCountSource(request.featureName))
 
 	return true
 }

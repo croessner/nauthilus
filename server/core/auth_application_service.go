@@ -85,6 +85,8 @@ type AuthIDPRequestContext struct {
 	RequestedScopes []string
 	GrantType       string
 	RedirectURI     string
+	// FlowRef is the non-authorizing analytics digest of the browser flow.
+	FlowRef string
 }
 
 // newAuthIDPRequestContext copies only generic protocol facts from the domain-owned request.
@@ -93,6 +95,7 @@ func newAuthIDPRequestContext(request IDPRequestContext) AuthIDPRequestContext {
 		RequestedScopes: append([]string(nil), request.RequestedScopes...),
 		GrantType:       request.GrantType,
 		RedirectURI:     request.RedirectURI,
+		FlowRef:         request.FlowRef,
 	}
 }
 
@@ -109,6 +112,7 @@ func (c AuthIDPRequestContext) toIDPRequestContext() *IDPRequestContext {
 		GrantType:       c.GrantType,
 		RedirectURI:     c.RedirectURI,
 		RequestedScopes: append([]string(nil), c.RequestedScopes...),
+		FlowRef:         c.FlowRef,
 	}
 }
 

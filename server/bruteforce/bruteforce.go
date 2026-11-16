@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v4/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
@@ -244,6 +245,11 @@ type BucketPolicyFact struct {
 	OverLimit      bool
 	AlreadyBanned  bool
 	Repeating      bool
+
+	// window and result keep the counter reply of the pre-check for diagnostic events; counted marks them valid.
+	window  slidingWindow
+	result  slidingWindowResult
+	counted bool
 }
 
 type bucketManagerImpl struct {
@@ -419,8 +425,15 @@ func bucketWindowSeconds(period time.Duration) int64 {
 
 // getSlidingWindowKeys resolves adjacent windows using the same period as their Redis retention.
 func (bm *bucketManagerImpl) getSlidingWindowKeys(rule *config.BruteForceRule, network *net.IPNet) (currentKey, prevKey string, weight float64) {
+	window := bm.slidingWindowFor(rule, network)
+
+	return window.currentKey, window.prevKey, window.weight
+}
+
+// slidingWindowFor resolves keys, weight, and window index of one bucket at a single instant.
+func (bm *bucketManagerImpl) slidingWindowFor(rule *config.BruteForceRule, network *net.IPNet) slidingWindow {
 	if rule == nil || network == nil {
-		return
+		return slidingWindow{}
 	}
 
 	baseKey := bm.getBruteForceBucketBaseKey(rule, network)
@@ -428,14 +441,14 @@ func (bm *bucketManagerImpl) getSlidingWindowKeys(rule *config.BruteForceRule, n
 
 	now := time.Now().Unix()
 	currentWindow := now / period
-	prevWindow := currentWindow - 1
 
-	currentKey = fmt.Sprintf("%s:win:%d", baseKey, currentWindow)
-	prevKey = fmt.Sprintf("%s:win:%d", baseKey, prevWindow)
-
-	weight = 1.0 - (float64(now%period) / float64(period))
-
-	return
+	return slidingWindow{
+		baseKey:    baseKey,
+		currentKey: fmt.Sprintf("%s:win:%d", baseKey, currentWindow),
+		prevKey:    fmt.Sprintf("%s:win:%d", baseKey, currentWindow-1),
+		weight:     1.0 - (float64(now%period) / float64(period)),
+		index:      currentWindow,
+	}
 }
 
 // parsedIPFamily reports the parsed client IP family for tracing attributes.
@@ -990,6 +1003,8 @@ func (bm *bucketManagerImpl) applyRepeatingL1Decision(
 		bm.bruteForceName = dec.Rule
 		*message = "Brute force attack detected (L1 engine)"
 
+		bm.emitBanHitEvent(&rules[i], *network, pluginapi.BruteForceHitL1)
+
 		stats.GetMetrics().GetBruteForceCacheHitsTotal().WithLabelValues("micro").Inc()
 		sp.SetAttributes(
 			attribute.Bool("micro_cache.hit", true),
@@ -1125,6 +1140,8 @@ func (bm *bucketManagerImpl) applyRepeatingBanHit(
 		if _, resolved, err := net.ParseCIDR(candidates[i].field); err == nil {
 			*network = resolved
 		}
+
+		bm.emitBanHitEvent(&rules[ruleNumber], *network, pluginapi.BruteForceHitRedis)
 
 		sp.SetAttributes(
 			attribute.Bool("triggered", true),
@@ -1435,7 +1452,9 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 
 	stats.GetMetrics().GetRedisRoundtripsTotal().WithLabelValues("pipeline_eval_bucket_counter").Inc()
 
-	cmds, errP := bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+	windows := bm.candidateWindows(cands, rules)
+
+	cmds, errP := bm.execBucketCounterPipeline(cands, windows, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
 	if errP != nil && strings.Contains(errP.Error(), "NOSCRIPT") {
 		_ = level.Warn(logger).Log(
 			definitions.LogKeyGUID, bm.guid,
@@ -1446,7 +1465,7 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 
 		scriptSHA, errUpload = rediscli.UploadScript(bm.ctx, bm.redis(), "SlidingWindowCounter", rediscli.LuaScripts["SlidingWindowCounter"])
 		if errUpload == nil {
-			cmds, errP = bm.execBucketCounterPipeline(cands, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
+			cmds, errP = bm.execBucketCounterPipeline(cands, windows, rules, scriptSHA, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive)
 		}
 	}
 
@@ -1466,7 +1485,7 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 			return err
 		}
 
-		bm.applyBucketPolicyCounterResult(cands[i].idx, res, rules, facts)
+		bm.applyBucketPolicyCounterResult(cands[i].idx, windows[i], res, rules, facts)
 	}
 
 	return nil
@@ -1474,38 +1493,26 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 
 func (bm *bucketManagerImpl) applyBucketPolicyCounterResult(
 	index int,
+	window slidingWindow,
 	result any,
 	rules []config.BruteForceRule,
 	facts []BucketPolicyFact,
 ) {
-	resParts, ok := result.([]any)
-	if !ok || len(resParts) < 2 {
+	decoded, ok := parseSlidingWindowResult(result, math.Max(0, float64(rules[index].FailedRequests)-1))
+	if !ok {
 		return
 	}
 
-	totalStr, _ := resParts[0].(string)
-	exceeded, _ := resParts[1].(int64)
+	total, effectiveLimit, exceeded := decoded.total, decoded.limit, decoded.exceeded
 
-	total, err := strconv.ParseFloat(totalStr, 64)
-	if err != nil {
-		return
-	}
-
-	effectiveLimit := math.Max(0, float64(rules[index].FailedRequests)-1)
-
-	if len(resParts) >= 3 {
-		if effectiveLimitStr, ok := resParts[2].(string); ok {
-			if parsed, parseErr := strconv.ParseFloat(effectiveLimitStr, 64); parseErr == nil {
-				effectiveLimit = parsed
-			}
-		}
-	}
-
+	facts[index].window = window
+	facts[index].result = decoded
+	facts[index].counted = true
 	facts[index].Count = total
 	facts[index].EffectiveLimit = effectiveLimit
 	facts[index].Remaining = math.Max(0, effectiveLimit-total)
 	facts[index].Ratio = bucketPolicyRatio(total, effectiveLimit)
-	facts[index].OverLimit = exceeded == 1
+	facts[index].OverLimit = exceeded
 	facts[index].Repeating = facts[index].Repeating || facts[index].OverLimit
 	bm.bruteForceCounter[rules[index].Name] = uint(math.Round(total))
 }
@@ -1532,7 +1539,7 @@ type bkcand struct {
 // for each brute-force candidate on a read handle. It returns the resulting commands
 // and any pipeline execution error.
 func (bm *bucketManagerImpl) execBucketCounterPipeline(
-	cands []bkcand, rules []config.BruteForceRule, scriptSHA string,
+	cands []bkcand, windows []slidingWindow, rules []config.BruteForceRule, scriptSHA string,
 	adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64,
 ) ([]*redis.Cmd, error) {
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
@@ -1541,9 +1548,9 @@ func (bm *bucketManagerImpl) execBucketCounterPipeline(
 	pipe := bm.redis().GetReadHandle().Pipeline()
 	cmds := make([]*redis.Cmd, 0, len(cands))
 
-	for _, c := range cands {
+	for i, c := range cands {
 		rule := &rules[c.idx]
-		currentKey, prevKey, weight := bm.getSlidingWindowKeys(rule, c.network)
+		currentKey, prevKey, weight := windows[i].currentKey, windows[i].prevKey, windows[i].weight
 		ttl := 2 * bucketWindowSeconds(rule.Period)
 		limit := int64(rule.FailedRequests) - 1
 
@@ -1556,6 +1563,16 @@ func (bm *bucketManagerImpl) execBucketCounterPipeline(
 	_, errP := pipe.Exec(dCtx)
 
 	return cmds, errP
+}
+
+// candidateWindows resolves the window pair of every counter candidate once, so keys and diagnostics agree.
+func (bm *bucketManagerImpl) candidateWindows(cands []bkcand, rules []config.BruteForceRule) []slidingWindow {
+	windows := make([]slidingWindow, len(cands))
+	for i, c := range cands {
+		windows[i] = bm.slidingWindowFor(&rules[c.idx], c.network)
+	}
+
+	return windows
 }
 
 // bfBurstKey builds a short, privacy-safe Redis key for burst gating by hashing
@@ -1693,6 +1710,9 @@ func (bm *bucketManagerImpl) processTriggeredBruteForce(
 	logBucketRuleDebug(bm, network, rule)
 
 	if !alreadyTriggered && bm.blockSuppressedByToleration() {
+		// Over limit, but toleration keeps the network open: evidence of a suppressed trigger, never a ban.
+		bm.emitFactEvent(pluginapi.BruteForceThresholdTolerated, rule, network, nil)
+
 		return false
 	}
 
@@ -1868,12 +1888,11 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCounterToRedis(rule *config.Bru
 
 // bucketCounterWrite is one prepared sliding-window counter increment of a failed request.
 type bucketCounterWrite struct {
-	rule       *config.BruteForceRule
-	currentKey string
-	prevKey    string
-	weight     float64
-	increment  int
-	call       *rediscli.ScriptCall
+	rule      *config.BruteForceRule
+	network   *net.IPNet
+	call      *rediscli.ScriptCall
+	window    slidingWindow
+	increment int
 }
 
 // SaveBruteForceBucketCountersToRedis increments the sliding-window counters of all given rules.
@@ -1910,8 +1929,8 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCountersToRedis(rules []config.
 			limit := int64(write.rule.FailedRequests) - 1
 
 			write.call = pipeline.EvalSha(pctx, pipe, slidingWindowCounterScriptName,
-				[]string{write.currentKey, write.prevKey},
-				write.increment, write.weight, ttl, limit,
+				[]string{write.window.currentKey, write.window.prevKey},
+				write.increment, write.window.weight, ttl, limit,
 				adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive, rwpFloor)
 		}
 	})
@@ -1924,7 +1943,27 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCountersToRedis(rules []config.
 				definitions.LogKeyMsg, "Failed to update brute force bucket via Lua",
 				definitions.LogKeyError, err,
 			)
+
+			continue
 		}
+
+		bm.reportCounterWrite(&writes[i])
+	}
+}
+
+// reportCounterWrite emits the counted event of one applied increment from the reply the pipeline already returned.
+func (bm *bucketManagerImpl) reportCounterWrite(write *bucketCounterWrite) {
+	if !bm.diagnosticsEnabled() || write.increment <= 0 {
+		return
+	}
+
+	reply, err := write.call.Result()
+	if err != nil {
+		return
+	}
+
+	if result, ok := parseSlidingWindowResult(reply, float64(write.rule.FailedRequests)-1); ok {
+		bm.emitCountedEvent(write, result)
 	}
 }
 
@@ -1935,12 +1974,12 @@ func (bm *bucketManagerImpl) prepareBucketCounterWrites(rules []config.BruteForc
 	for i := range rules {
 		rule := &rules[i]
 
-		currentKey, prevKey, weight, ok := bm.prepareSlidingWindow(rule)
+		window, network, ok := bm.prepareSlidingWindowState(rule)
 		if !ok {
 			continue
 		}
 
-		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", currentKey)
+		util.DebugModuleWithCfg(bm.ctx, bm.cfg(), bm.logger(), definitions.DbgBf, definitions.LogKeyGUID, bm.guid, "store_key", window.currentKey)
 
 		// Only increment if not already triggered by this rule
 		increment := 0
@@ -1949,11 +1988,10 @@ func (bm *bucketManagerImpl) prepareBucketCounterWrites(rules []config.BruteForc
 		}
 
 		writes = append(writes, bucketCounterWrite{
-			rule:       rule,
-			currentKey: currentKey,
-			prevKey:    prevKey,
-			weight:     weight,
-			increment:  increment,
+			rule:      rule,
+			network:   network,
+			window:    window,
+			increment: increment,
 		})
 	}
 
@@ -2822,13 +2860,22 @@ func (bm *bucketManagerImpl) setPreResultBruteForceRedis(rule *config.BruteForce
 			definitions.LogKeyError, err,
 		)
 
-		return bm.verifyBanKeyAfterSetError(ctx, logger, banKey, err)
+		banActive, verifyErr := bm.verifyBanKeyAfterSetError(ctx, logger, banKey, err)
+		if banActive {
+			bm.emitBanActivatedEvent(pluginapi.BruteForceBanActivationUnconfirmed, rule, network, time.Now())
+		}
+
+		return banActive, verifyErr
 	}
 
 	if !set {
-		// Ban already exists — nothing to do.
+		// Ban already exists: a concurrent request created it; this request only hits it.
+		bm.emitBanHitEvent(rule, network, pluginapi.BruteForceHitActivationRace)
+
 		return true, nil
 	}
+
+	bm.emitBanActivatedEvent(pluginapi.BruteForceBanActivated, rule, network, time.Now())
 
 	// Best-effort: add network to sharded ZSET index.
 	bm.addBanToIndex(dCtx, prefix, networkStr, logger)
@@ -3034,6 +3081,13 @@ func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptive
 }
 
 func (bm *bucketManagerImpl) prepareSlidingWindow(rule *config.BruteForceRule) (currentKey, prevKey string, weight float64, ok bool) {
+	window, _, ok := bm.prepareSlidingWindowState(rule)
+
+	return window.currentKey, window.prevKey, window.weight, ok
+}
+
+// prepareSlidingWindowState resolves the network and window pair of one rule for counter writes.
+func (bm *bucketManagerImpl) prepareSlidingWindowState(rule *config.BruteForceRule) (window slidingWindow, network *net.IPNet, ok bool) {
 	if !bm.cfg().HasRuntimeModule(definitions.ControlBruteForce) {
 		return
 	}
@@ -3046,11 +3100,11 @@ func (bm *bucketManagerImpl) prepareSlidingWindow(rule *config.BruteForceRule) (
 			definitions.LogKeyError, err,
 		)
 
-		return
+		return slidingWindow{}, nil, false
 	}
 
-	currentKey, prevKey, weight = bm.getSlidingWindowKeys(rule, network)
-	if currentKey == "" {
+	window = bm.slidingWindowFor(rule, network)
+	if window.currentKey == "" {
 		return
 	}
 
@@ -3061,10 +3115,14 @@ func (bm *bucketManagerImpl) prepareSlidingWindow(rule *config.BruteForceRule) (
 
 // BucketManagerDeps bundles dependencies for BucketManager.
 type BucketManagerDeps struct {
-	Cfg      config.File
-	Logger   *slog.Logger
-	Redis    rediscli.Client
-	Tolerate tolerate.Tolerate
+	// Events receives diagnostic brute-force events; nil disables them.
+	Events EventEmitter
+	// Diagnostic carries request facts for those events.
+	Diagnostic DiagnosticContext
+	Cfg        config.File
+	Logger     *slog.Logger
+	Redis      rediscli.Client
+	Tolerate   tolerate.Tolerate
 }
 
 // NewBucketManagerWithDeps creates a new BucketManager instance.

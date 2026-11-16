@@ -30,7 +30,15 @@ plugins:
         dedup_success: true
         dedup_failure: false
         auth_dedup_ttl: 300s
+        # Optional step-event stream (second-factor verifications) into nauthilus.auth_events.
+        events_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.auth_events%20FORMAT%20JSONEachRow
+        events_cache_key: clickhouse:batch:auth_events
+        events_flush_interval: 10s
 ```
+
+The stored data, its NULL/default semantics, the terminal outcome, the step events, and the version and migration
+rules are defined in [DIAGNOSTIC_CONTRACT.md](DIAGNOSTIC_CONTRACT.md). Rows written under that contract carry
+`contract_version = 1`; older rows read `0`.
 
 The plugin writes newline-delimited JSONEachRow payloads with the same row field names as the Lua action. It uses the
 module-scoped host cache for batching, the host Redis facade for configurable login-context deduplication, and the host HTTP
@@ -39,18 +47,21 @@ facade for inserts.
 ## Login Deduplication
 
 `dedup_success` (default `true`) and `dedup_failure` (default `false`) independently enable deduplication for requests
-whose `Runtime.Authenticated` flag is true or false. Set both to `false` to retain every login event, or both to `true`
+whose host-sealed terminal outcome (`PostActionRequest.Outcome`) is `ok` or `fail`. Temporary failures and unknown
+outcomes are never deduplicated, because they are diagnostic evidence. Set both to `false` to retain every login event, or both to `true`
 to aggregate successes and failures separately. Both settings reload on SIGHUP. The existing `auth_dedup_ttl`
 (default `300s`) applies to either enabled outcome; it is a fixed window starting at the first accepted event, not
 extended by skipped repetitions.
 
 The key combines username, client IP, protocol, service, authentication method, client ID, OIDC client projections,
 SAML entity ID, OIDC grant, MFA method/completion, authentication and authorization outcomes, HTTP status, and status
-message. Different contexts or failure reasons therefore remain separate. Request/session IDs, source ports and timing
+message, the terminal outcome with its Policy operation, outcome marker, response marker, and presenting rule, and the
+IdP flow reference. Different contexts or failure reasons therefore remain separate, and the password row of every IdP
+browser flow is kept so that its step events can be joined. Request/session IDs, source ports and timing
 are excluded deliberately: equivalent new requests inside the window still aggregate. Missing username or client IP
 bypasses deduplication. Credentials and password hashes are never part of this key.
 
-The fields are encoded with unambiguous boundaries and SHA-256 hashed under `clickhouse:authdedup:v2:`, with the host
+The fields are encoded with unambiguous boundaries and SHA-256 hashed under `clickhouse:authdedup:v3:`, with the host
 Redis prefix applied as usual. Older keys are not reused and expire naturally; deployment starts a fresh dedup window.
 Redis errors continue to fail open so analytics can proceed. The reservation still happens before buffer admission and
 HTTP delivery; it is not a delivery acknowledgement or an exactly-once guarantee.
@@ -102,15 +113,19 @@ The optional `deployment` and `instance` module config fields are serialized int
 can be separated in analytics. Kubernetes deployments should normally set them from `${NAUTHILUS_ENV}` and
 `${NAUTHILUS_RUNTIME_INSTANCE_NAME}`.
 
-`decision_sources` also lists the host-owned built-in controls: `rbl` when the RBL threshold was reached and
-`brute_force` when a brute-force bucket triggered. The host publishes them as the standard
-`plugin.exchange.feature.rbl` and `plugin.exchange.feature.brute_force` markers, so other exchange consumers see them
-too. Like the Lua builtin set, a marker records that the control fired, even when a configured policy still lets the
-request continue; allowlisted, tolerated, or failed checks publish no marker. `tls_encryption` and `relay_domains` are
-not reported by the native plugin.
+`decision_sources` also lists the host-owned built-in controls: `tls_encryption` when a request arrived without TLS
+context outside the cleartext networks, `relay_domains` when the login name carries a domain part that is not a
+configured relay domain, `rbl` when the RBL threshold was reached, and `brute_force` when a brute-force bucket
+triggered. The host publishes them as the standard `plugin.exchange.feature.<name>` markers, so other exchange
+consumers see them too. Like the Lua builtin set, a marker records that the control fired, even when a configured
+policy still lets the request continue; allowlisted, soft-allowlisted, tolerated, skipped, or failed checks publish no
+marker. A login name without domain part or with a configured domain never publishes `relay_domains`.
 
-`decision_sources` keeps explicit exchange entries first, then feature markers in the standard order (`rbl` before
-`brute_force`), then sources derived from exchange maps and policy facts. The order can differ from rows written by
+A brute-force bucket can be over its limit while a toleration policy suppresses the block. Such rows keep
+`brute_force_bucket`, carry no `brute_force` source, and set `brute_force_tolerated = true`.
+
+`decision_sources` keeps explicit exchange entries first, then feature markers in the standard order (`blocklist`,
+`tls_encryption`, `relay_domains`, `rbl`, `brute_force`, …), then sources derived from exchange maps and policy facts. The order can differ from rows written by
 the retired Lua action, so query membership instead of exact strings, for example
 `has(splitByChar(',', decision_sources), 'rbl')`.
 
@@ -119,8 +134,12 @@ configuration order and also below the RBL threshold, from `RequestSnapshot.Diag
 without RBL matches write an empty array. Existing tables need the repeatable
 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS rbl_lists` statement from `contrib/clickhouse-kubernetes/schema.sql`.
 
-`status_msg` is taken from the core request snapshot, which preserves selected policy/failure text and fills terminal
-success or authentication-failure defaults before native post-actions run. `client_net` is the brute-force client
+`status_msg` and `http_status` describe the answered terminal result. Native post-actions are prepared while Policy
+selects their effect, before the response is finalized, so the host binds the sealed terminal outcome when the
+post-action executes after the response boundary (`PostActionRequest.Outcome`) and refreshes the snapshot diagnostics
+from it. A TLS-required or backend temporary failure therefore reads `outcome = 'tempfail'`, `http_status = 500` and
+its tempfail text instead of a credential failure. `transport_status` holds the committed HTTP status separately,
+because header and nginx modes answer rejections with HTTP 200. `client_net` is the brute-force client
 network selected by the core brute-force path, with post-action fallback from brute-force policy-report details.
 `geoip_guid` is populated only when an input exchange producer supplies that legacy analytics field; the generic GeoIP
 provider does not synthesize a request GUID.
@@ -138,9 +157,29 @@ The typed columns are `geoip_privacy_lookup_state`, `geoip_privacy_detected`, `g
 authority lists remain non-null empty arrays. Bounded mapping diagnostics contain only malformed field names and never
 raw values.
 
-Apply and verify the additive privacy columns from `contrib/clickhouse-kubernetes/schema.sql` before deploying a plugin
-version that emits them. ClickHouse can accept rows from the old plugin after the schema grows, while a new JSONEachRow
-writer can fail against an old schema. The Kubernetes ClickHouse README contains the schema and row readback queries.
+Apply and verify the additive columns from `contrib/clickhouse-kubernetes/migrations/diagnostic-contract.sql` (and the
+earlier ALTER statements in `contrib/clickhouse-kubernetes/schema.sql`) before deploying a plugin version that emits
+them. ClickHouse accepts rows from the old plugin after the schema grows. A new JSONEachRow writer against an old schema
+is accepted too, but ClickHouse drops the unknown fields silently (`input_format_skip_unknown_fields = 1` is the
+default); append `&input_format_skip_unknown_fields=0` to the insert URLs after the migration to turn future schema
+drift into visible insert errors. The Kubernetes ClickHouse README contains the schema and row readback queries.
+
+Reputation assessments published by the native reputation plugin as decision records are projected into
+`reputation_assessments` (one named tuple per fact and subject, NULL measurements for `not_found` and `unavailable`,
+at most 64 tuples). When the host dropped record facts to keep the post-action within its work bounds, or the plugin
+reached the tuple cap, `reputation_truncated` is `true`. The ten legacy `reputation_*` columns describe the removed
+GeoIP reputation map and stay NULL.
+
+## Step Events
+
+With `events_insert_url` set, the plugin also registers a host step-event sink and writes second-factor verification
+events (TOTP, recovery codes, WebAuthn) into `nauthilus.auth_events`: one row per observed attempt with result,
+stable reason, flow effect, fail-latched state, and the non-authorizing `flow_ref` that joins the password row of the
+same IdP flow. The host delivers events from a bounded queue (1024 events per process); a full queue drops events and
+counts them in `nauthilus_plugin_auth_events_total{outcome="dropped"}`. The plugin buffers events in their own stream
+and flushes them every `events_flush_interval` (default `10s`, must be positive); events never flush inline and are
+never deduplicated. The event payload never contains credentials, OTPs, recovery codes, tokens, handles, or WebAuthn
+data.
 
 ## Top-Level Policy Boundary
 
@@ -164,6 +203,25 @@ Observability is host-integrated: the plugin registers the remote ClickHouse end
 metrics and spans. Logs, labels, and spans do not include row bodies, raw SQL query strings, usernames, client IPs, or
 credentials.
 
+## Brute-Force Evidence
+
+With `bruteforce_lifecycle_insert_url` and/or `bruteforce_attempts_insert_url` set, the plugin registers a host
+brute-force event sink. Ban activations, unconfirmed activations, administrative releases, and counter resets go to
+`nauthilus.bruteforce_lifecycle` (400 days, no claimed login names and no client address). Counted increments, tolerated thresholds, and ban
+hits go to `nauthilus.bruteforce_attempts` (14 days, raw) with an hourly materialized summary
+(`nauthilus.bruteforce_attempt_summary`, 400 days, distinct-name counts as HLL states). Each kind uses its own bounded
+host lane and plugin stream buffer. Counted and hit streams flush inline from their host lane goroutine once a stream
+holds `batch_size` rows, within the host delivery deadline; failed rows stay for the ticker worker, and
+`bruteforce_flush_interval` (default `10s`) flushes quiet streams. Apply
+`contrib/clickhouse-kubernetes/migrations/bruteforce-evidence.sql` first. The data contract, attribution rules, and
+completeness proof are in [DIAGNOSTIC_CONTRACT.md](DIAGNOSTIC_CONTRACT.md) section 13.
+
+```yaml
+        bruteforce_lifecycle_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.bruteforce_lifecycle%20FORMAT%20JSONEachRow
+        bruteforce_attempts_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.bruteforce_attempts%20FORMAT%20JSONEachRow
+        bruteforce_flush_interval: 10s
+```
+
 ## Metrics
 
 The plugin registers these metrics through the host metrics facade, which adds the `nauthilus_plugin_clickhouse_`
@@ -174,6 +232,12 @@ prefix and the `plugin_scope` label:
 | `clickhouse_queued_rows_total` | counter | `queued`, `skipped` (no-auth request), `dedup_skipped` (Redis deduplication), `encode_error`, `dropped` (buffer full) |
 | `clickhouse_flush_batches_total` | counter | `success`, `http_error`, `status_error`, `no_url`, `requeued` |
 | `clickhouse_flush_duration_seconds` | histogram | same as the flush counter |
+| `clickhouse_event_queued_rows_total` | counter | step-event stream: `queued`, `skipped` (no `events_insert_url`), `encode_error`, `dropped` |
+| `clickhouse_event_flush_batches_total` | counter | step-event stream flush results, same values as the login flush counter |
+| `clickhouse_event_flush_duration_seconds` | histogram | step-event stream flush duration |
+| `clickhouse_bruteforce_{lifecycle,counted,hits}_queued_rows_total` | counter | brute-force stream enqueue outcomes, same values as the event stream |
+| `clickhouse_bruteforce_{lifecycle,counted,hits}_flush_batches_total` | counter | brute-force stream flush results |
+| `clickhouse_bruteforce_{lifecycle,counted,hits}_flush_duration_seconds` | histogram | brute-force stream flush duration |
 
 Every `result` series of both counters exists from startup with value `0`, so `increase()` and `rate()` also see the
 first flush after a restart and alerts such as "no successful flush in the last hour" do not misfire after a rollout.

@@ -324,3 +324,13 @@ func assertTrue(t *testing.T, got bool, label string) {
 		t.Fatalf("%s = false, want true", label)
 	}
 }
+
+// TestRequestSnapshotCarriesIDPFlowRef pins that the analytics flow reference reaches the post-action snapshot.
+func TestRequestSnapshotCarriesIDPFlowRef(t *testing.T) {
+	auth := &core.AuthState{}
+	auth.Runtime.IDPContext = &core.IDPRequestContext{FlowRef: "0123456789abcdef0123456789abcdef"}
+
+	if got := NewRequestSnapshotFromAuthState(auth).IDP.FlowRef; got != auth.Runtime.IDPContext.FlowRef {
+		t.Fatalf("snapshot IDP.FlowRef = %q, want %q", got, auth.Runtime.IDPContext.FlowRef)
+	}
+}

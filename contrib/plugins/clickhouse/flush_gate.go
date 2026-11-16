@@ -15,53 +15,9 @@
 
 package main
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 const (
 	initialRetryDelay = time.Second
 	maximumRetryDelay = time.Minute
 )
-
-// beginFlush atomically claims the current batch without waiting for an active insert.
-func (p *Plugin) beginFlush(ctx context.Context) []any {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.cache == nil || p.flushing || time.Now().Before(p.retryAfter) {
-		return nil
-	}
-
-	rows := p.cache.PopAll(ctx, p.config.CacheKey)
-
-	p.pendingRows = 0
-	if len(rows) != 0 {
-		p.flushing = true
-	}
-
-	return rows
-}
-
-// finishFlush releases the insert slot and backs off failures, resetting after success.
-func (p *Plugin) finishFlush(failed bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.flushing = false
-	if !failed {
-		p.retryDelay = 0
-		p.retryAfter = time.Time{}
-
-		return
-	}
-
-	if p.retryDelay == 0 {
-		p.retryDelay = initialRetryDelay
-	} else {
-		p.retryDelay = min(2*p.retryDelay, maximumRetryDelay)
-	}
-
-	p.retryAfter = time.Now().Add(p.retryDelay)
-}

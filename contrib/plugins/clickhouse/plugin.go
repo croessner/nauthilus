@@ -52,27 +52,41 @@ func NauthilusPlugin() (pluginapi.Plugin, error) {
 
 // Plugin coordinates ClickHouse post-action lifecycle and host services.
 type Plugin struct {
-	host        pluginapi.Host
-	logger      pluginapi.Logger
-	debugLogger pluginapi.Logger
-	tracer      pluginapi.Tracer
-	http        pluginapi.HTTPClient
-	redis       pluginapi.Redis
-	cache       pluginapi.Cache
-	flushes     flushScheduler
-	metrics     pluginMetrics
-	config      moduleConfig
-	retryAfter  time.Time
-	pendingRows int
-	retryDelay  time.Duration
-	flushing    bool
+	host         pluginapi.Host
+	logger       pluginapi.Logger
+	debugLogger  pluginapi.Logger
+	tracer       pluginapi.Tracer
+	http         pluginapi.HTTPClient
+	redis        pluginapi.Redis
+	cache        pluginapi.Cache
+	flushes      flushScheduler
+	eventFlushes flushScheduler
+	bfFlushes    flushScheduler
+	config       moduleConfig
+	// logins batches authentication rows; events batches host step events into their own table.
+	logins rowStream
+	events rowStream
+	// bfLifecycle, bfCounted, and bfHits batch brute-force events with independent buffers, so a hammered banned
+	// network cannot evict counted contributions or lifecycle transitions.
+	bfLifecycle rowStream
+	bfCounted   rowStream
+	bfHits      rowStream
 	mu          sync.RWMutex
 	lifecycleMu sync.Mutex
 }
 
 // NewPlugin creates a ClickHouse native post-action plugin instance.
 func NewPlugin() *Plugin {
-	return &Plugin{flushes: flushScheduler{newTicker: newTimeTicker}}
+	return &Plugin{
+		flushes:      flushScheduler{newTicker: newTimeTicker},
+		eventFlushes: flushScheduler{newTicker: newTimeTicker},
+		bfFlushes:    flushScheduler{newTicker: newTimeTicker},
+		logins:       rowStream{target: loginStreamTarget, names: loginMetricNames},
+		events:       rowStream{target: eventStreamTarget, names: eventMetricNames},
+		bfLifecycle:  rowStream{target: bruteForceLifecycleStreamTarget, names: streamMetricNames("bruteforce_lifecycle")},
+		bfCounted:    rowStream{target: bruteForceCountedStreamTarget, names: streamMetricNames("bruteforce_counted")},
+		bfHits:       rowStream{target: bruteForceHitsStreamTarget, names: streamMetricNames("bruteforce_hits")},
+	}
 }
 
 // Metadata returns the public plugin identity and API contract.
@@ -90,6 +104,8 @@ func (p *Plugin) Metadata() pluginapi.Metadata {
 			"clickhouse_json_each_row",
 			"redis_dedup",
 			"batch_cache",
+			"auth_events",
+			"bruteforce_events",
 			"reconfigure",
 		},
 	}
@@ -121,7 +137,22 @@ func (p *Plugin) Register(registrar pluginapi.Registrar) error {
 		return err
 	}
 
-	return registrar.RegisterPostActionTarget(postActionTarget{plugin: p})
+	if err := registrar.RegisterPostActionTarget(postActionTarget{plugin: p}); err != nil {
+		return err
+	}
+
+	// Hosts without the additive event registrars keep the post-action-only contract.
+	if eventRegistrar, ok := registrar.(pluginapi.AuthEventRegistrar); ok {
+		if err := eventRegistrar.RegisterAuthEventSink(authEventTarget{plugin: p}); err != nil {
+			return err
+		}
+	}
+
+	if bruteForceRegistrar, ok := registrar.(pluginapi.BruteForceEventRegistrar); ok {
+		return bruteForceRegistrar.RegisterBruteForceEventSink(bruteForceEventTarget{plugin: p})
+	}
+
+	return nil
 }
 
 // Start captures host facades, registers ClickHouse observability, and starts the optional flush worker.
@@ -137,12 +168,17 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	debugLogger := host.Logger(debugModuleBatch)
 	tracer := host.Tracer(pluginName)
 
-	metrics, err := registerMetrics(host.Metrics(pluginName))
-	if err != nil {
-		return err
-	}
+	streamMetrics := make([]pluginMetrics, 0, len(p.allStreams()))
 
-	metrics.initializeResultSeries(ctx)
+	for _, stream := range p.allStreams() {
+		metrics, err := registerMetrics(host.Metrics(pluginName), stream.names)
+		if err != nil {
+			return err
+		}
+
+		metrics.initializeResultSeries(ctx)
+		streamMetrics = append(streamMetrics, metrics)
+	}
 
 	cache, err := host.Cache(pluginName)
 	if err != nil {
@@ -157,7 +193,11 @@ func (p *Plugin) Start(ctx context.Context, host pluginapi.Host) error {
 	p.http = host.HTTP(debugModuleBatch)
 	p.redis = host.Redis()
 	p.cache = cache
-	p.metrics = metrics
+
+	for index, stream := range p.allStreams() {
+		stream.metrics = streamMetrics[index]
+	}
+
 	config := p.config
 	p.mu.Unlock()
 
@@ -175,9 +215,11 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	p.lifecycleMu.Lock()
 	defer p.lifecycleMu.Unlock()
 
-	if err := p.flushes.stop(ctx); err != nil {
-		warnBounded(ctx, p.snapshot().logger, "clickhouse flush worker did not stop before the shutdown deadline",
-			pluginapi.LogField{Key: logFieldResult, Value: resultWorkerTimeout})
+	for _, scheduler := range []*flushScheduler{&p.flushes, &p.eventFlushes, &p.bfFlushes} {
+		if err := scheduler.stop(ctx); err != nil {
+			warnBounded(ctx, p.snapshot().logger, "clickhouse flush worker did not stop before the shutdown deadline",
+				pluginapi.LogField{Key: logFieldResult, Value: resultWorkerTimeout})
+		}
 	}
 
 	p.flushOnStop(ctx)
@@ -191,7 +233,11 @@ func (p *Plugin) Stop(ctx context.Context) error {
 	p.http = nil
 	p.redis = nil
 	p.cache = nil
-	p.metrics = pluginMetrics{}
+
+	for _, stream := range p.allStreams() {
+		stream.metrics = pluginMetrics{}
+	}
+
 	p.mu.Unlock()
 
 	if logger != nil {
@@ -221,9 +267,11 @@ func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) err
 
 	p.mu.Lock()
 	host := p.host
-	previousKey := p.config.CacheKey
+	previous := p.config
 	p.config = config
-	p.movePendingRowsLocked(ctx, previousKey)
+	for _, stream := range p.allStreams() {
+		p.movePendingRowsLocked(ctx, stream, previous)
+	}
 	p.mu.Unlock()
 
 	if host == nil {
@@ -236,59 +284,101 @@ func (p *Plugin) Reconfigure(ctx context.Context, view pluginapi.ConfigView) err
 	return nil
 }
 
-// applyFlushWorker aligns the periodic flush worker with config and logs when its state changed.
+// applyFlushWorker aligns both periodic flush workers with config and logs when a state changed. The step-event
+// worker always runs while an events insert URL is configured, because event volume rarely reaches batch_size.
 // The caller holds the lifecycle mutex.
 func (p *Plugin) applyFlushWorker(ctx context.Context, host pluginapi.Host, config moduleConfig) {
-	if !p.flushes.apply(ctx, host, config.FlushInterval, p.flushOnTick) {
+	p.applyStreamFlushWorker(ctx, host, &p.flushes, config.FlushInterval, p.flushOnTick, flushWorkerLogins)
+
+	eventInterval := time.Duration(0)
+	if config.EventsInsertURL != "" {
+		eventInterval = config.EventsFlushInterval
+	}
+
+	p.applyStreamFlushWorker(ctx, host, &p.eventFlushes, eventInterval, p.flushEventsOnTick, flushWorkerEvents)
+
+	bruteForceInterval := time.Duration(0)
+	if config.BruteForceLifecycleInsertURL != "" || config.BruteForceAttemptsInsertURL != "" {
+		bruteForceInterval = config.BruteForceFlushInterval
+	}
+
+	p.applyStreamFlushWorker(ctx, host, &p.bfFlushes, bruteForceInterval, p.flushBruteForceOnTick, flushWorkerBruteForce)
+}
+
+// allStreams lists every row stream in a stable order for lifecycle handling.
+func (p *Plugin) allStreams() []*rowStream {
+	return []*rowStream{&p.logins, &p.events, &p.bfLifecycle, &p.bfCounted, &p.bfHits}
+}
+
+// bruteForceStreams lists the brute-force event streams that share one flush worker.
+func (p *Plugin) bruteForceStreams() []*rowStream {
+	return []*rowStream{&p.bfLifecycle, &p.bfCounted, &p.bfHits}
+}
+
+// flushBruteForceOnTick flushes every brute-force stream for their periodic flush worker.
+func (p *Plugin) flushBruteForceOnTick(ctx context.Context) {
+	for _, stream := range p.bruteForceStreams() {
+		p.flushPending(ctx, stream, flushTriggerInterval)
+	}
+}
+
+// applyStreamFlushWorker starts, replaces, or stops one stream's interval worker and logs the change.
+func (p *Plugin) applyStreamFlushWorker(
+	ctx context.Context,
+	host pluginapi.Host,
+	scheduler *flushScheduler,
+	interval time.Duration,
+	flush func(context.Context),
+	stream string,
+) {
+	if !scheduler.apply(ctx, host, interval, flush) {
 		return
 	}
 
 	state := "stopped"
-	if p.flushes.running() {
+	if scheduler.running() {
 		state = "running"
 	}
 
 	if logger := p.snapshot().logger; logger != nil {
-		logger.Info(ctx, "clickhouse flush worker updated", pluginapi.LogField{Key: logFieldFlushWorker, Value: state})
+		logger.Info(ctx, "clickhouse flush worker updated",
+			pluginapi.LogField{Key: logFieldFlushWorker, Value: state},
+			pluginapi.LogField{Key: logFieldStream, Value: stream})
 	}
 }
 
-// movePendingRowsLocked migrates the buffer and applies a reduced limit while holding the write lock.
-func (p *Plugin) movePendingRowsLocked(ctx context.Context, previousKey string) {
+// movePendingRowsLocked migrates one stream's buffer and applies a reduced limit while holding the write lock.
+func (p *Plugin) movePendingRowsLocked(ctx context.Context, stream *rowStream, previous moduleConfig) {
+	_, previousKey := stream.target(previous)
 	if p.cache == nil || previousKey == "" {
 		return
 	}
 
 	rows := p.cache.PopAll(ctx, previousKey)
-	p.pendingRows = 0
-	p.pushRowsLocked(ctx, rows...)
+	stream.pendingRows = 0
+	p.pushRowsLocked(ctx, stream, rows...)
 }
 
-// pushRows admits rows under the current key up to the buffer limit; -1 means none were admitted.
-func (p *Plugin) pushRows(ctx context.Context, rows ...any) int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	return p.pushRowsLocked(ctx, rows...)
-}
-
-// pushRowsLocked applies the shared admission policy while the caller holds the write lock.
-func (p *Plugin) pushRowsLocked(ctx context.Context, rows ...any) int {
-	length := p.pendingRows
+// pushRowsLocked admits rows into one stream under its current key up to the buffer limit while the caller holds
+// the write lock; -1 means none were admitted. Drops are counted in the stream's own metrics.
+func (p *Plugin) pushRowsLocked(ctx context.Context, stream *rowStream, rows ...any) int {
+	length := stream.pendingRows
 	accepted := 0
 
 	if p.cache == nil {
 		return -1
 	}
 
+	_, cacheKey := stream.target(p.config)
+
 	for _, row := range rows {
-		if p.pendingRows >= p.config.MaxBufferRows {
-			p.metrics.recordQueueResult(ctx, resultDropped)
+		if stream.pendingRows >= p.config.MaxBufferRows {
+			stream.metrics.recordQueueResult(ctx, resultDropped)
 			continue
 		}
 
-		length = p.cache.Push(ctx, p.config.CacheKey, row)
-		p.pendingRows = length
+		length = p.cache.Push(ctx, cacheKey, row)
+		stream.pendingRows = length
 		accepted++
 	}
 
@@ -299,9 +389,14 @@ func (p *Plugin) pushRowsLocked(ctx context.Context, rows ...any) int {
 	return length
 }
 
-// flushOnTick flushes the pending local batch for the periodic flush worker.
+// flushOnTick flushes the pending local login batch for the periodic flush worker.
 func (p *Plugin) flushOnTick(ctx context.Context) {
-	p.flushPending(ctx, flushTriggerInterval)
+	p.flushPending(ctx, &p.logins, flushTriggerInterval)
+}
+
+// flushEventsOnTick flushes the pending local step-event batch for its periodic flush worker.
+func (p *Plugin) flushEventsOnTick(ctx context.Context) {
+	p.flushPending(ctx, &p.events, flushTriggerInterval)
 }
 
 // flushOnStop flushes the pending local batch once, bounded by the configured request timeout.
@@ -313,13 +408,15 @@ func (p *Plugin) flushOnStop(ctx context.Context) {
 	flushCtx, cancel := context.WithTimeout(ctx, p.snapshot().config.Timeout)
 	defer cancel()
 
-	p.flushPending(flushCtx, flushTriggerStop)
+	for _, stream := range p.allStreams() {
+		p.flushPending(flushCtx, stream, flushTriggerStop)
+	}
 }
 
 // flushPending flushes whatever the local batch holds and logs a bounded failure record.
 // It is a no-op before Start, after Stop, and when the batch is empty.
-func (p *Plugin) flushPending(ctx context.Context, trigger string) {
-	state := p.snapshot()
+func (p *Plugin) flushPending(ctx context.Context, stream *rowStream, trigger string) {
+	state := p.snapshotFor(stream)
 	if state.cache == nil {
 		return
 	}
@@ -342,13 +439,22 @@ func warnBounded(ctx context.Context, logger pluginapi.Logger, message string, f
 	logger.Warn(ctx, message, fields...)
 }
 
-// snapshot returns the current lifecycle state needed by request-time code.
+// snapshot returns the current lifecycle state of the login stream needed by request-time code.
 func (p *Plugin) snapshot() pluginState {
+	return p.snapshotFor(&p.logins)
+}
+
+// snapshotFor captures the shared lifecycle state bound to one stream's queue, target, and metrics.
+func (p *Plugin) snapshotFor(stream *rowStream) pluginState {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
+	insertURL, cacheKey := stream.target(p.config)
+
 	return pluginState{
-		queue:       p,
+		queue:       streamQueue{plugin: p, stream: stream},
+		insertURL:   insertURL,
+		cacheKey:    cacheKey,
 		config:      p.config,
 		logger:      p.logger,
 		debugLogger: p.debugLogger,
@@ -356,7 +462,7 @@ func (p *Plugin) snapshot() pluginState {
 		http:        p.http,
 		redis:       p.redis,
 		cache:       p.cache,
-		metrics:     p.metrics,
+		metrics:     stream.metrics,
 	}
 }
 
@@ -400,6 +506,8 @@ type rowQueue interface {
 
 type pluginState struct {
 	queue       rowQueue
+	insertURL   string
+	cacheKey    string
 	config      moduleConfig
 	logger      pluginapi.Logger
 	debugLogger pluginapi.Logger

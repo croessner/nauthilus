@@ -449,6 +449,10 @@ func (s *authnPolicyApplicationService) run(
 		result, traversalErr = s.runCheckpointPlan(evaluationCtx, session, input, operation, execution)
 		result.attachMessageResolver(messageResolver)
 
+		if traversalErr == nil && result.validFor(operation) {
+			execution.sealTerminalOutcome(result)
+		}
+
 		return traversalErr
 	})
 	if err != nil {

@@ -455,6 +455,9 @@ type AuthRuntime struct {
 	// BruteForceToleration contains the request-local toleration fact collected for policy evaluation.
 	BruteForceToleration tolerate.PolicyFact
 
+	// BruteForceBanActive reports whether the brute-force check found an existing ban; nil when it did not run.
+	BruteForceBanActive *bool
+
 	// RelayDomainPolicy contains the request-local relay-domain facts collected for policy evaluation.
 	RelayDomainPolicy RelayDomainPolicyFact
 
@@ -585,6 +588,8 @@ type IDPRequestContext struct {
 	RequestedScopes []string
 	MFACompleted    bool
 	MFAMethod       string
+	// FlowRef is the non-authorizing analytics digest of the browser flow; never the flow handle itself.
+	FlowRef string
 }
 
 // AuthSecurity manages counters, managers and history related to brute-force and security.
@@ -4114,7 +4119,7 @@ func (a *AuthState) rejectDefaultPreAuthBruteForce(ctx *gin.Context, span trace.
 		return
 	}
 	a.markEnvironmentRejected(ctx)
-	a.UpdateBruteForceBucketsCounter(ctx)
+	a.updateBruteForceBucketsCounter(ctx, "", bruteforce.CountSourcePreAuthReject)
 
 	a.AuthFail(ctx)
 
