@@ -14,10 +14,11 @@ type precheckTolerationProbe struct {
 	reads int
 }
 
-// GetReputationKey records reputation reads without external state.
-func (p *precheckTolerationProbe) GetReputationKey(_ string) string {
+// PositiveWindow records reputation reads without external state.
+func (p *precheckTolerationProbe) PositiveWindow(_ string) tolerate.WindowQuery {
 	p.reads++
-	return "test:reputation"
+
+	return tolerate.WindowQuery{Key: "test:reputation", Min: "(0"}
 }
 
 // TestPrecheckUsesInjectedToleration exercises the actual precheck builder and counter collector.
@@ -32,7 +33,7 @@ func TestPrecheckUsesInjectedToleration(t *testing.T) {
 	mock.Regexp().ExpectExists(".*").SetVal(0)
 	mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("review-sha")
 	mock.Regexp().ExpectEvalSha("review-sha", []string{".*", ".*"}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").SetVal([]any{"0", int64(0), "4"})
-	mock.ExpectHGet("test:reputation", "positive").SetVal("100")
+	mock.ExpectZCount("test:reputation", "(0", "+inf").SetVal(100)
 	mock.Regexp().ExpectHGet(".*", ".*").RedisNil()
 
 	bm := a.newBruteForceBucketManager(ctx)

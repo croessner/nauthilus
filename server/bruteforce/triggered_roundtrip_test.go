@@ -34,6 +34,8 @@ func newTriggeredFixture(t *testing.T, clientIP string) *preAuthFixture {
 	settings := fixture.cfg.(*config.FileSettings)
 	settings.Server.MaxPasswordHistoryEntries = 10
 	settings.Server.Redis.NegCacheTTL = time.Hour
+	// The triggered write shape is pinned without the toleration read that an enabled window adds.
+	settings.BruteForce.TolerateTTL = 0
 
 	return fixture
 }

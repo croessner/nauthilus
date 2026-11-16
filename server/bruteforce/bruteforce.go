@@ -71,9 +71,6 @@ const (
 
 	// addToSetAndExpireLimitScriptName is the Lua script that stores failed password hashes in bounded sets.
 	addToSetAndExpireLimitScriptName = "AddToSetAndExpireLimit"
-
-	// reputationPositiveField is the reputation hash field that scales brute-force bucket limits.
-	reputationPositiveField = "positive"
 )
 
 // containsString reports whether s is present in the slice.
@@ -1446,7 +1443,7 @@ func (bm *bucketManagerImpl) readBucketPolicyCounters(
 		return errUpload
 	}
 
-	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
+	adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 	defer stats.GetMetrics().GetRedisReadCounter().Inc()
 
@@ -1905,8 +1902,8 @@ func (bm *bucketManagerImpl) SaveBruteForceBucketCountersToRedis(rules []config.
 		return
 	}
 
-	// Reputation key for the client IP and adaptive scaling configuration
-	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
+	// Reputation count for the client IP and adaptive scaling configuration
+	adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 	// Every first-seen failed password is counted directly; no catch-up is needed.
 	rwpFloor := 0
@@ -2778,8 +2775,8 @@ func (bm *bucketManagerImpl) loadBruteForceBucketCounter(rule *config.BruteForce
 	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, bm.cfg())
 	defer cancel()
 
-	// Reputation key for the client IP and adaptive scaling configuration
-	_, adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
+	// Reputation count for the client IP and adaptive scaling configuration
+	adaptiveEnabled, minPct, maxPct, scaleFactor, staticPct, positive := bm.getAdaptiveScalingConfig()
 
 	ttl := 2 * bucketWindowSeconds(rule.Period)
 	limit := int64(rule.FailedRequests) - 1
@@ -3057,10 +3054,11 @@ func (bm *bucketManagerImpl) resolveAccountNameForHistory() string {
 	return ""
 }
 
-func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (repKey string, adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64) {
+// getAdaptiveScalingConfig returns the global adaptive scaling settings and the windowed count of distinct successful
+// accounts that raise the bucket limits.
+func (bm *bucketManagerImpl) getAdaptiveScalingConfig() (adaptiveEnabled int, minPct, maxPct uint8, scaleFactor float64, staticPct uint8, positive int64) {
 	if bm.tolerate() != nil {
-		repKey = bm.tolerate().GetReputationKey(bm.clientIP)
-		positive = bm.reputationPositive(repKey)
+		positive = bm.reputationPositive(bm.tolerate().PositiveWindow(bm.clientIP))
 	}
 
 	bfCfg := bm.cfg().GetBruteForce()

@@ -424,8 +424,8 @@ func assertIPOverLimit(t *testing.T, cfg config.File) {
 	_, network, _ := net.ParseCIDR(bruteForceLogicIP + "/32")
 	currentKey, prevKey, _ := bm.GetSlidingWindowKeys(rule, network)
 
+	// Tolerations are disabled in this configuration, so no reputation count is read.
 	mock.MatchExpectationsInOrder(false)
-	mock.Regexp().ExpectHGet(".*", "positive").RedisNil()
 	mock.ExpectScriptLoad(rediscli.LuaScripts["SlidingWindowCounter"]).SetVal("sha1")
 	mock.Regexp().ExpectEvalSha("sha1", []string{currentKey, prevKey}, ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*", ".*").
 		SetVal([]any{"15", int64(1), "4"})

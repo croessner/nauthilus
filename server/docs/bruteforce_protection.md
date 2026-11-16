@@ -38,7 +38,7 @@ flowchart TD
     D --> E[Prepare Netcalc]
     E --> PF{L1 Engine Block?}
     PF -- Yes --> RWP_EARLY
-    PF -- No --> PF_PIPE[PrefetchPreAuthState: one pipeline with RWP check, ban EXISTS and reputation HGET]
+    PF -- No --> PF_PIPE[PrefetchPreAuthState: one pipeline with RWP check, ban EXISTS and reputation ZCOUNT]
     PF_PIPE --> RWP_EARLY[ShouldEnforceBucketUpdate]
 
     subgraph RWP_Cache [Early RWP Check & Context Cache]
@@ -109,7 +109,7 @@ U_PERIOD -- No --> U_NEXT[Next Rule]
 U_SELECT --> U_NEXT
 end
 
-U_NEXT --> U_SAVE[SaveBruteForceBucketCountersToRedis: one reputation HGET, one SlidingWindowCounter pipeline with a normal +1 increment per rule]
+U_NEXT --> U_SAVE[SaveBruteForceBucketCountersToRedis: one reputation ZCOUNT, one SlidingWindowCounter pipeline with a normal +1 increment per rule]
 U_SAVE --> U_DONE
 U_SKIP --> U_DONE
 ```
@@ -146,7 +146,9 @@ windows.
   diagnostic brute-force events (`contrib/plugins/clickhouse/DIAGNOSTIC_CONTRACT.md` section 13).
 * **Toleration accounting:** every authenticate request whose answered result is backed by a host-verified credential
   outcome records one positive (success) or negative (rejected credential) toleration observation for the client IP.
-  Tempfails, pre-auth rejections, identity lookups, and no-auth requests are not recorded.
+  Positives count distinct accounts, negatives count failed attempts regardless of the account, both within
+  `tolerate_ttl`. A repeating wrong password (see 3.4) is not a negative observation. Tempfails, pre-auth rejections,
+  identity lookups, and no-auth requests are not recorded. See `adaptive_toleration.md` for the counting semantics.
 
 ### 3.4 Repeating Wrong Password (RWP)
 
@@ -190,8 +192,8 @@ because a pipeline only reports its first error.
   requests skip the account reads; a password-less request skips the membership read. The pipeline never carries
   Lua, so a cluster keeps routing it to read replicas.
 * **Pre-authentication check (`pipeline_preauth_check`):** `PrefetchPreAuthState` queues the
-  `RWPSlidingWindowCheck` script, `EXISTS` of every candidate ban key and `HGET` of the reputation `positive`
-  counter into one pipeline. With the RWP script the pipeline runs on the write handle, because the script trims its
+  `RWPSlidingWindowCheck` script, `EXISTS` of every candidate ban key and the windowed `ZCOUNT` of the reputation
+  `positive` set into one pipeline; the count is skipped when tolerations are disabled for the address. With the RWP script the pipeline runs on the write handle, because the script trims its
   window and `EVALSHA` is routed to masters anyway; account-less requests keep it on the read handle. The following
   checks consume these values, so a normal check needs this pipeline plus the bucket-counter pipeline
   (`pipeline_eval_bucket_counter`) instead of four sequential round trips. The reputation value is a request-scoped
@@ -259,7 +261,7 @@ sequenceDiagram
     BM->>L1: Get(BurstKey)
     L1-->>BM: Miss
     Note over BM, R: One pre-authentication pipeline
-    BM ->> R: EVALSHA (RWPSlidingWindowCheck) + EXISTS (Ban Keys) + HGET (Reputation)
+    BM ->> R: EVALSHA (RWPSlidingWindowCheck) + EXISTS (Ban Keys) + ZCOUNT (Reputation)
     R -->> BM: Enforce=true, 0 (no active ban), positive
     BM ->> Ctx: Set(CtxRWPResultKey, true)
     Note over BM, R: Rule evaluation reuses the prefetched values
@@ -278,7 +280,7 @@ sequenceDiagram
     C ->> BM: UpdateBruteForceBucketsCounter()
     BM ->> R: EVAL (RWPSlidingWindowCommit)
     R -->> BM: distinct failure (enforce)
-    BM ->> R: HGET (Reputation)
+    BM ->> R: ZCOUNT (Reputation)
     BM ->> R: EVALSHA (SlidingWindowCounter, increment=1, one per selected rule via Pipeline)
     R -->> BM: OK
 ```
@@ -293,9 +295,8 @@ All keys are prefixed with the configured Redis prefix.
 | `bf:ban:{network}`                    | String | Per-network ban key. Value = bucket name. Has TTL = `ban_time` (default 8h). Written with `SET NX EX`.            |
 | `bf:bans:X` (X = 0–F)                 | ZSet   | Sharded ban index (16 shards). Member = network, Score = Unix timestamp.                                          |
 | `bf:rwp:allow:{scoped_ip}:{account}`  | ZSet   | Stores hashes of unique wrong passwords with timestamps for RWP detection.                                        |
-| `bf:tr:{ip}`                          | Hash   | Reputation data (`positive` and `negative` counters).                                                             |
-| `bf:tr:{ip}:P`                        | ZSet   | Time-series of positive authentication events.                                                                    |
-| `bf:tr:{ip}:N`                        | ZSet   | Time-series of negative authentication events.                                                                    |
+| `bf:tr:{ip}:P`                        | ZSet   | Distinct accounts with a success, scored by time.                                                                 |
+| `bf:tr:{ip}:N`                        | ZSet   | One member per counted failed attempt, scored by time.                                                            |
 | `affected_accounts`                   | Set    | Accounts with a counted failed login or a blocked request. No key TTL; members age out per account (8.1). |
 | `affected_accounts:index`             | ZSet   | Same members, score = first-seen Unix timestamp; used for paged listings.                                         |
 | `<prefix>{<prefix>affected_accounts}:retention` | ZSet | Same slot as the set (hash tag = full set key). Score = retain-until Unix timestamp per account. |

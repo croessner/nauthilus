@@ -31,6 +31,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/backend/accountcache"
 	"github.com/croessner/nauthilus/v4/server/bruteforce"
+	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/localcache"
@@ -194,10 +195,9 @@ func TestBruteForceFlushSync_OK(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 
 	// Expect bulk unlink of tolerate keys for the given IP (phase 4)
-	base := config.GetFile().GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + "1.2.3.4"
+	base := tolerate.RedisKey(config.GetFile().GetServer().GetRedis().GetPrefix(), "1.2.3.4")
 
 	// The implementation issues UNLINK in a pipeline; redismock matches commands irrespective of pipeline grouping
-	mock.ExpectUnlink(base).SetVal(1)
 	mock.ExpectUnlink(base + ":P").SetVal(1)
 	mock.ExpectUnlink(base + ":N").SetVal(1)
 
@@ -243,14 +243,13 @@ func TestProcessBruteForceRules_WildcardSkipsBanRead(t *testing.T) {
 
 	bucketKeys := bm.GetBucketKeys(&rules[0])
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
-	tolerationBase := prefix + definitions.RedisBFTolerationPrefix + "1.2.3.4"
+	tolerationBase := tolerate.RedisKey(prefix, "1.2.3.4")
 	shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, rediscli.GetBanIndexShard(network))
 
 	mock.ExpectDel(banKey).SetVal(1)
 	mock.ExpectZRem(shardKey, network).SetVal(1)
 	mock.ExpectUnlink(bucketKeys[0]).SetVal(1)
 	mock.ExpectUnlink(bucketKeys[1]).SetVal(1)
-	mock.ExpectUnlink(tolerationBase).SetVal(1)
 	mock.ExpectUnlink(tolerationBase + ":P").SetVal(1)
 	mock.ExpectUnlink(tolerationBase + ":N").SetVal(1)
 
@@ -266,8 +265,8 @@ func TestProcessBruteForceRules_WildcardSkipsBanRead(t *testing.T) {
 		t.Fatal("expected no error flag")
 	}
 
-	if len(removed) != 6 {
-		t.Fatalf("expected 6 removed keys, got %d: %v", len(removed), removed)
+	if len(removed) != 5 {
+		t.Fatalf("expected 5 removed keys, got %d: %v", len(removed), removed)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -299,14 +298,13 @@ func TestProcessBruteForceRules_DeduplicatesDerivedTargets(t *testing.T) {
 
 	bucketKeys := bm.GetBucketKeys(&rules[0])
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
-	tolerationBase := prefix + definitions.RedisBFTolerationPrefix + "1.2.3.4"
+	tolerationBase := tolerate.RedisKey(prefix, "1.2.3.4")
 	shardKey := rediscli.GetBruteForceBanIndexShardKey(prefix, rediscli.GetBanIndexShard(network))
 
 	mock.ExpectDel(banKey).SetVal(1)
 	mock.ExpectZRem(shardKey, network).SetVal(1)
 	mock.ExpectUnlink(bucketKeys[0]).SetVal(1)
 	mock.ExpectUnlink(bucketKeys[1]).SetVal(1)
-	mock.ExpectUnlink(tolerationBase).SetVal(1)
 	mock.ExpectUnlink(tolerationBase + ":P").SetVal(1)
 	mock.ExpectUnlink(tolerationBase + ":N").SetVal(1)
 
@@ -322,8 +320,8 @@ func TestProcessBruteForceRules_DeduplicatesDerivedTargets(t *testing.T) {
 		t.Fatal("expected no error flag")
 	}
 
-	if len(removed) != 6 {
-		t.Fatalf("expected deduplicated 6 removed keys, got %d: %v", len(removed), removed)
+	if len(removed) != 5 {
+		t.Fatalf("expected deduplicated 5 removed keys, got %d: %v", len(removed), removed)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

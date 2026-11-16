@@ -571,6 +571,9 @@ type AuthRuntime struct {
 	// A pre-auth candidate is cleared after successful authentication, so final logs retain true only for failures
 	// whose brute-force bucket counters were not increased.
 	BFRWP bool
+	// BFRWPCommitted marks that this request already committed its wrong password to the RWP window. A second commit
+	// would find its own hash and report a repeat, so later bucket updates of the same request are skipped.
+	BFRWPCommitted bool
 	// BruteForceError marks unavailable protection, distinct from an attack.
 	BruteForceError bool
 

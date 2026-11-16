@@ -20,6 +20,7 @@ import (
 	"slices"
 
 	"github.com/croessner/nauthilus/v4/server/bruteforce/l1"
+	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/stats"
@@ -44,12 +45,12 @@ type preAuthPrefetch struct {
 	rwp        *rediscli.ScriptCall
 	banFields  []string
 	banCmds    []*redis.IntCmd
-	reputation *redis.StringCmd
+	reputation *redis.IntCmd
 }
 
 // PrefetchPreAuthState reads the data-independent pre-authentication state in one Redis round trip.
 //
-// It queues the RWP check script, the EXISTS reads of every candidate ban key and the reputation HGET into
+// It queues the RWP check script, the EXISTS reads of every candidate ban key and the reputation ZCOUNT into
 // one pipeline. A cached L1 block decision does not skip the pipeline: the RWP precheck still runs, and the
 // policy-fact collection that follows an L1 hit reads the same ban keys and the same reputation counter, so
 // it consumes the prefetched values instead of issuing its own reads. All reads happen before any write of
@@ -93,12 +94,12 @@ func (bm *bucketManagerImpl) PrefetchPreAuthState(rules []config.BruteForceRule)
 func (bm *bucketManagerImpl) execPreAuthPrefetch(ctx context.Context, sp trace.Span, prefetch *preAuthPrefetch) {
 	rwpArgs := bm.preAuthRWPArgs()
 	banFields := prefetch.banCandidateFields()
-	reputationKey := bm.preAuthReputationKey(banFields)
+	reputation := bm.preAuthReputationQuery(banFields)
 
 	sp.SetAttributes(
 		attribute.Bool("rwp", rwpArgs != nil),
 		attribute.Int("ban_keys", len(banFields)),
-		attribute.Bool("reputation", reputationKey != ""),
+		attribute.Bool("reputation", reputation.Valid()),
 	)
 
 	if rwpArgs == nil && len(banFields) == 0 {
@@ -133,8 +134,8 @@ func (bm *bucketManagerImpl) execPreAuthPrefetch(ctx context.Context, sp trace.S
 			prefetch.banCmds = append(prefetch.banCmds, pipe.Exists(pctx, rediscli.GetBruteForceBanKey(prefix, field)))
 		}
 
-		if reputationKey != "" {
-			prefetch.reputation = pipe.HGet(pctx, reputationKey, reputationPositiveField)
+		if reputation.Valid() {
+			prefetch.reputation = pipe.ZCount(pctx, reputation.Key, reputation.Min, "+inf")
 		}
 	})
 
@@ -151,13 +152,13 @@ func (bm *bucketManagerImpl) preAuthRWPArgs() *rwpScriptArgs {
 	return bm.buildRWPScriptArgs()
 }
 
-// preAuthReputationKey returns the reputation key to prefetch when bucket counters will be evaluated.
-func (bm *bucketManagerImpl) preAuthReputationKey(banFields []string) string {
+// preAuthReputationQuery returns the reputation count to prefetch when bucket counters will be evaluated.
+func (bm *bucketManagerImpl) preAuthReputationQuery(banFields []string) tolerate.WindowQuery {
 	if bm.tolerate() == nil || len(banFields) == 0 {
-		return ""
+		return tolerate.WindowQuery{}
 	}
 
-	return bm.tolerate().GetReputationKey(bm.clientIP)
+	return bm.tolerate().PositiveWindow(bm.clientIP)
 }
 
 // l1Blocks reports whether the cached L1 decision blocks the request for one of the prefetched rules.
@@ -215,8 +216,8 @@ func (p *preAuthPrefetch) banKeyStates(networks []string) ([]*redis.IntCmd, bool
 	return p.banCmds, true, nil
 }
 
-// reputationCmd returns the prefetched reputation HGET, or nil when it was not prefetched.
-func (p *preAuthPrefetch) reputationCmd() *redis.StringCmd {
+// reputationCmd returns the prefetched reputation ZCOUNT, or nil when it was not prefetched.
+func (p *preAuthPrefetch) reputationCmd() *redis.IntCmd {
 	if p == nil {
 		return nil
 	}
@@ -251,17 +252,22 @@ func (bm *bucketManagerImpl) existsBanKeys(ctx context.Context, networks []strin
 	return bm.pipelineExistsBanKeys(ctx, networks, metricLabel)
 }
 
-// reputationPositive returns the positive reputation counter, preferring the request's prefetched value.
-func (bm *bucketManagerImpl) reputationPositive(reputationKey string) int64 {
+// reputationPositive returns the windowed count of distinct successful accounts, preferring the request's prefetched
+// value. Tolerations disabled for the address yield zero.
+func (bm *bucketManagerImpl) reputationPositive(query tolerate.WindowQuery) int64 {
 	cmd := bm.preAuth.reputationCmd()
 	if cmd == nil {
+		if !query.Valid() {
+			return 0
+		}
+
 		dCtx, cancel := util.GetCtxWithDeadlineRedisRead(bm.ctx, bm.cfg())
 		defer cancel()
 
-		cmd = bm.redis().GetReadHandle().HGet(dCtx, reputationKey, reputationPositiveField)
+		cmd = bm.redis().GetReadHandle().ZCount(dCtx, query.Key, query.Min, "+inf")
 	}
 
-	if val, err := cmd.Int64(); err == nil {
+	if val, err := cmd.Result(); err == nil {
 		return val
 	}
 

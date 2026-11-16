@@ -67,6 +67,30 @@ and signature, and immutable plugin directory as one compatible release.
   are not banned. Review `tolerate_percent`, `min_tolerate_percent`,
   `max_tolerate_percent`, `adaptive_toleration`, and `custom_tolerations`
   before the upgrade.
+- **Security fix:** toleration negatives now count every failed login attempt
+  behind an address instead of distinct failing accounts. Before, valid logins
+  of a few accounts kept an address tolerated while a single other account was
+  attacked without limit, because all failures against one account counted
+  once. Positives still count distinct accounts with a successful login.
+  Repeating wrong passwords are not counted, like in the buckets. Shared
+  addresses therefore reach the end of their toleration sooner; review
+  `tolerate_percent`, `max_tolerate_percent`, and `tolerate_ttl` for proxies
+  with many users.
+- The toleration counters are counted on read from the `bf:tr:{<scoped ip>}:P`
+  and `:N` sorted sets over exactly `tolerate_ttl`, so every instance sees the
+  same exact values and recorded successes can no longer outlive the window.
+  The `bf:tr:{<scoped ip>}` counter hash, the `CalculateAdaptiveToleration`
+  and `ZAddCountAndExpire` scripts, and the per-instance toleration
+  housekeeping are removed; idle sets expire with their key. Leftover counter
+  hashes from earlier versions are no longer read and expire on their own.
+- Toleration positives are keyed by the resolved account, so aliases of one
+  mailbox no longer count as several accounts. A request that runs a second
+  brute-force update (for example a custom `brute_force_update` obligation
+  after a backend failure) is counted once and keeps its first repeating wrong
+  password verdict.
+- The brute-force and user flush endpoints now delete the real toleration
+  sets (`bf:tr:{<scoped ip>}:P` and `:N`); they used to target keys without
+  the cluster hash tag that were never written.
 - Native plugins can register a `BruteForceEventSink`. The ClickHouse plugin
   writes ban activations, releases, counter resets, counted increments,
   tolerated thresholds, and ban hits to the new `bruteforce_lifecycle` and

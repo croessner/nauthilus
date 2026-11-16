@@ -117,3 +117,27 @@ func newRWPPrecheckFixture(t *testing.T) rwpPrecheckFixture {
 		logs: logs,
 	}
 }
+
+// TestSecondBucketUpdateKeepsFirstRWPVerdict keeps a second bucket update of one request, for example a policy
+// brute_force_update obligation after the backend failure, from classifying the request's own hash as a repeat.
+func TestSecondBucketUpdateKeepsFirstRWPVerdict(t *testing.T) {
+	cfg := hardCutBruteForceConfig(t)
+	auth, ctx, mock := newCurrentBehaviorAuthState(t, cfg)
+	auth.Runtime.AccountName = auth.Request.Username
+
+	ctx.Set(definitions.CtxRWPResultKey, false)
+
+	mock.MatchExpectationsInOrder(false)
+	rediscli.ClearScriptCache()
+	mock.Regexp().ExpectSIsMember(".*pw_hist_ips.*", auth.Request.ClientIP).SetVal(true)
+	mock.ExpectScriptLoad(rediscli.LuaScripts["RWPSlidingWindowCommit"]).SetVal("sha-rwp-commit")
+	mock.Regexp().ExpectEvalSha("sha-rwp-commit", []string{".*bf:rwp:allow:.*"}, ".*", ".*", ".*", ".*").SetVal(int64(0))
+	mock.Regexp().ExpectEvalSha("sha-rwp-commit", []string{".*bf:rwp:allow:.*"}, ".*", ".*", ".*", ".*").SetVal(int64(1))
+
+	auth.UpdateBruteForceBucketsCounter(ctx)
+	auth.updateBruteForceBucketsCounter(ctx, "", "policy_update")
+
+	if auth.Runtime.BFRWP {
+		t.Fatal("a second update in the same request turned a new wrong password into a repeating one")
+	}
+}

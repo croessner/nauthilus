@@ -73,16 +73,19 @@ func newBruteForceRoundTripFixture(t *testing.T, cfg *config.FileSettings) *brut
 }
 
 func TestCheckBruteForceUsesTwoRedisRoundTrips(t *testing.T) {
-	fixture := newBruteForceRoundTripFixture(t, hardCutBruteForceConfig(t))
+	cfg := hardCutBruteForceConfig(t)
+	cfg.BruteForce.TolerateTTL = time.Hour
+
+	fixture := newBruteForceRoundTripFixture(t, cfg)
 
 	if fixture.auth.CheckBruteForce(fixture.ctx) {
 		t.Fatal("clean request was blocked")
 	}
 
 	want := [][]string{
-		{"hget"},                      // account mapping, outside brute-force accounting
-		{"evalsha", "exists", "hget"}, // RWP precheck, cached ban and reputation
-		{"evalsha"},                   // bucket counters
+		{"hget"},                        // account mapping, outside brute-force accounting
+		{"evalsha", "exists", "zcount"}, // RWP precheck, cached ban and reputation
+		{"evalsha"},                     // bucket counters
 	}
 
 	if trips := fixture.recorder.RoundTrips(); !reflect.DeepEqual(trips, want) {
@@ -97,6 +100,7 @@ func TestCheckBruteForceUsesTwoRedisRoundTrips(t *testing.T) {
 
 func TestFailedLoginWritesAllBucketCountersInTwoRoundTrips(t *testing.T) {
 	cfg := hardCutBruteForceConfig(t)
+	cfg.BruteForce.TolerateTTL = time.Hour
 	cfg.BruteForce.Buckets = nil
 
 	for minutes := 1; minutes <= 6; minutes++ {
@@ -118,7 +122,7 @@ func TestFailedLoginWritesAllBucketCountersInTwoRoundTrips(t *testing.T) {
 
 	want := [][]string{
 		{"evalsha"}, // RWP commit classifies the failure
-		{"hget"},    // reputation for adaptive scaling
+		{"zcount"},  // reputation for adaptive scaling
 		{"evalsha", "evalsha", "evalsha", "evalsha"}, // bucket-3m to bucket-6m
 	}
 

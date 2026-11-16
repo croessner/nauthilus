@@ -35,6 +35,7 @@ import (
 	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/bruteforce"
+	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/ipscoper"
@@ -1680,12 +1681,11 @@ func addPasswordHistoryKeys(userKeys config.StringSet, prefix string, accountNam
 	userKeys.Set(fmt.Sprintf("%s%s:{%s}:%s", prefix, definitions.RedisPwHashKey, identifier, identifier))
 }
 
-// addTolerationKeys adds raw or scoped toleration hash and ZSET keys.
+// addTolerationKeys adds the toleration hash and ZSET keys of one scoped identifier.
 func addTolerationKeys(userKeys config.StringSet, prefix string, identifier string) {
-	base := prefix + definitions.RedisBFTolerationPrefix + identifier
-	userKeys.Set(base)
-	userKeys.Set(base + ":P")
-	userKeys.Set(base + ":N")
+	for _, key := range tolerate.RedisKeys(prefix, identifier) {
+		userKeys.Set(key)
+	}
 }
 
 // addRWPAllowanceKey adds one repeating-wrong-password allowance key.
@@ -1705,11 +1705,7 @@ func addIPScopedUserKeys(userKeys config.StringSet, cfg config.File, prefix stri
 		addPasswordHistoryKeys(userKeys, prefix, accountName, scopedRWP)
 	}
 
-	addTolerationKeys(userKeys, prefix, ip)
-
-	if scopedTol != ip {
-		addTolerationKeys(userKeys, prefix, scopedTol)
-	}
+	addTolerationKeys(userKeys, prefix, scopedTol)
 
 	addRWPAllowanceKey(userKeys, prefix, accountName, ip)
 
@@ -2750,8 +2746,6 @@ func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushR
 	cfg := deps.effectiveCfg()
 	plan := newBruteForceFlushPlan()
 
-	var trSuffixes = []string{":P", ":N"}
-
 	// Detect address family once – saves many To4() calls later
 	ip := net.ParseIP(cmd.IPAddress)
 	isIPv4 := ip.To4() != nil
@@ -2774,16 +2768,9 @@ func processBruteForceRules(ctx *gin.Context, deps restAdminDeps, cmd *bf.FlushR
 		}
 	}
 
-	// Phase 4: always drop tolerate-bucket keys for the IP using a single pipeline
-	base := cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + cmd.IPAddress
-	keys := make([]string, 0, 1+len(trSuffixes))
-	keys = append(keys, base)
-
-	for _, s := range trSuffixes {
-		keys = append(keys, base+s)
-	}
-
-	plan.addBucketKeys(keys)
+	// Phase 4: always drop the toleration keys of the scoped IP in the same pipeline
+	scopedTol := ipscoper.NewIPScoper().WithCfg(cfg).Scope(ipscoper.ScopeTolerations, cmd.IPAddress)
+	plan.addBucketKeys(tolerate.RedisKeys(cfg.GetServer().GetRedis().GetPrefix(), scopedTol))
 
 	removed, err = executeBruteForceFlushPlan(ctx.Request.Context(), deps, guid, plan)
 	reportBruteForceFlush(ctx.Request.Context(), deps, plan, removed)

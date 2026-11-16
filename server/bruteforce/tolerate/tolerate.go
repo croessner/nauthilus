@@ -17,8 +17,11 @@ package tolerate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"slices"
 	"strconv"
@@ -26,7 +29,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v4/server/bruteforce/l1"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/ipscoper"
@@ -36,16 +38,12 @@ import (
 	"github.com/croessner/nauthilus/v4/server/stats"
 	"github.com/croessner/nauthilus/v4/server/svcctx"
 	"github.com/croessner/nauthilus/v4/server/util"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
 var tolerate Tolerate
-
-var (
-	cleaner     *houseKeeper
-	initCleaner sync.Once
-)
 
 const (
 	tolerateAdaptiveMode = "adaptive"
@@ -53,76 +51,56 @@ const (
 	tolerateNegativeFlag = ":N"
 	toleratePositiveFlag = ":P"
 	tolerateStaticMode   = "static"
+
+	// tolerationNegativeCap bounds the retained failed-attempt events per scoped address. A count at the cap is
+	// saturated and never tolerated, so the bound cannot turn into an unlimited allowance for large proxies.
+	tolerationNegativeCap = 10000
+
+	tolerationEventPositive = PositiveField
+	tolerationEventNegative = NegativeField
 )
+
+const (
+	// PositiveField names the windowed count of distinct accounts with a verified success. It also scales the
+	// brute-force bucket limits.
+	PositiveField = "positive"
+
+	// NegativeField names the windowed count of counted failed attempts.
+	NegativeField = "negative"
+)
+
+// RedisKey returns the toleration key base of an already scoped identifier. The braces keep both sorted sets in one
+// Redis Cluster slot.
+func RedisKey(prefix string, scoped string) string {
+	return prefix + definitions.RedisBFTolerationPrefix + "{" + scoped + "}"
+}
+
+// RedisKeys returns the positive and negative sorted-set keys of an already scoped identifier.
+func RedisKeys(prefix string, scoped string) []string {
+	key := RedisKey(prefix, scoped)
+
+	return []string{key + toleratePositiveFlag, key + tolerateNegativeFlag}
+}
+
+// WindowQuery names one windowed toleration count: the sorted set and the exclusive lower score bound for ZCOUNT.
+type WindowQuery struct {
+	Key string
+	Min string
+}
+
+// Valid reports whether the query names a counter; tolerations disabled for an address yield an invalid query.
+func (q WindowQuery) Valid() bool {
+	return q.Key != ""
+}
+
+// windowCounts holds the windowed toleration counters of one address.
+type windowCounts struct {
+	positive int64
+	negative int64
+}
 
 // Shared IP scoper for tolerations context
 var tolScoper = ipscoper.NewIPScoper()
-
-// houseKeeper manages a collection of IP addresses and ensures thread-safe operations.
-type houseKeeper struct {
-	ctx        context.Context
-	ipMap      map[string]struct{}
-	mu         sync.Mutex
-	ipAddressC chan string
-}
-
-// getIPsToClean retrieves a list of all IP addresses currently stored in the houseKeeper's ipMap in a thread-safe manner.
-func (c *houseKeeper) getIPsToClean() []string {
-	c.mu.Lock()
-
-	defer c.mu.Unlock()
-
-	var ips []string
-
-	for ip := range c.ipMap {
-		ips = append(ips, ip)
-	}
-
-	return ips
-}
-
-// setIPAddress adds the specified IP address to the ipMap in a thread-safe manner.
-func (c *houseKeeper) setIPAddress(ipAddress string) {
-	c.ipAddressC <- ipAddress
-}
-
-// removeIPAddress removes the specified IP address from the ipMap in a thread-safe manner.
-func (c *houseKeeper) removeIPAddress(ipAddress string) {
-	c.mu.Lock()
-
-	defer c.mu.Unlock()
-
-	delete(c.ipMap, ipAddress)
-}
-
-// newHouseKeeper initializes and returns a new instance of houseKeeper with a given context and an empty IP map.
-func newHouseKeeper(ctx context.Context, cfg config.File) *houseKeeper {
-	maxConcurrentRequests := cfg.GetServer().GetMaxConcurrentRequests()
-	if maxConcurrentRequests == 0 {
-		maxConcurrentRequests = 1000
-	}
-
-	keeper := &houseKeeper{
-		ctx:        ctx,
-		ipMap:      make(map[string]struct{}),
-		ipAddressC: make(chan string, maxConcurrentRequests),
-	}
-
-	go keeper.runIPWorker()
-
-	return keeper
-}
-
-// runIPWorker processes IP addresses from the channel and adds them to the ipMap in a thread-safe manner.
-func (c *houseKeeper) runIPWorker() {
-	for ip := range c.ipAddressC {
-		c.mu.Lock()
-
-		c.ipMap[ip] = struct{}{}
-
-		c.mu.Unlock()
-	}
-}
 
 // Tolerate represents an interface for managing IP-based tolerance mechanisms for authentication attempts.
 type Tolerate interface {
@@ -138,10 +116,7 @@ type Tolerate interface {
 	// GetCustomTolerations retrieves the list of configured IP-based toleration settings, including percentage and TTL.
 	GetCustomTolerations() []config.Tolerate
 
-	// StartHouseKeeping initiates a periodic housekeeping routine to clean up expired IP tolerance data in Redis storage.
-	StartHouseKeeping(ctx context.Context)
-
-	// SetIPAddress tracks and updates authentication behavior for a given IP address.
+	// SetIPAddress records one verified authentication outcome for a given IP address.
 	SetIPAddress(ctx context.Context, ipAddress string, username string, authenticated bool)
 
 	// IsTolerated checks if an IP address is within the allowed tolerance based on past interactions.
@@ -150,11 +125,11 @@ type Tolerate interface {
 	// PolicyFact returns the policy-visible toleration state for the IP address.
 	PolicyFact(ctx context.Context, ipAddress string) PolicyFact
 
-	// GetTolerateMap retrieves a map containing toleration data as key-value pairs for a specific IP address.
+	// GetTolerateMap returns the windowed positive and negative counters of an IP address.
 	GetTolerateMap(ctx context.Context, ipAddress string) map[string]int64
 
-	// GetReputationKey returns the Redis key used for reputation data for the given IP address.
-	GetReputationKey(ipAddress string) string
+	// PositiveWindow returns the ZCOUNT query of distinct successful accounts that scales the bucket limits.
+	PositiveWindow(ipAddress string) WindowQuery
 }
 
 // PolicyFact is the request-local policy view of one toleration calculation.
@@ -184,14 +159,14 @@ type tolerateDeps struct {
 	cfg    config.File
 	logger *slog.Logger
 	redis  rediscli.Client
+	clock  func() time.Time
 }
 
 type tolerateImpl struct {
-	houseKeeperContext context.Context
-	pctTolerated       uint8
-	customTolerates    []config.Tolerate
-	mu                 sync.Mutex
-	// sg dedupliziert parallele identische Redis-Script-Aufrufe pro IP (logikgleich, weniger RTT)
+	customTolerates []config.Tolerate
+	pctTolerated    uint8
+	mu              sync.Mutex
+	// sg deduplicates concurrent identical counter reads per address.
 	sg singleflight.Group
 
 	deps tolerateDeps
@@ -199,6 +174,15 @@ type tolerateImpl struct {
 
 func (t *tolerateImpl) effectiveRedis() rediscli.Client {
 	return t.deps.redis
+}
+
+// now returns the event and window clock; tests inject one that follows a simulated Redis clock.
+func (t *tolerateImpl) now() time.Time {
+	if t.deps.clock != nil {
+		return t.deps.clock()
+	}
+
+	return time.Now()
 }
 
 // SetCustomTolerations replaces the list with a manager-owned copy.
@@ -307,6 +291,7 @@ func (t *tolerateImpl) GetCustomTolerations() []config.Tolerate {
 	return slices.Clone(t.customTolerates)
 }
 
+// SetIPAddress records one verified authentication outcome in the windowed toleration sets of the address.
 func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, username string, authenticated bool) {
 	tr := monittrace.New("nauthilus/tolerate")
 	sctx, sp := tr.Start(ctx, "tolerate.set_ip",
@@ -321,16 +306,14 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 		return
 	}
 
-	// Track scoped identifier in housekeeping to avoid per-/128 duplicates for IPv6
-	scoped := tolScoper.WithCfg(t.deps.cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
-	t.getHouseKeeper().setIPAddress(scoped)
-
 	tolerateTTL := t.tolerateTTLForIP(ipAddress)
 	if tolerateTTL == 0 {
 		return
 	}
 
-	result, err := t.recordTolerationEvent(sctx, ipAddress, username, authenticated, tolerateTTL)
+	event, member := tolerationEvent(username, authenticated)
+
+	result, err := t.recordTolerationEvent(sctx, ipAddress, event, member, tolerateTTL)
 	if err != nil {
 		t.logRedisError(t.deps.logger, ipAddress, err)
 
@@ -339,15 +322,38 @@ func (t *tolerateImpl) SetIPAddress(ctx context.Context, ipAddress string, usern
 
 	// Log the result for debugging if needed
 	util.DebugModuleWithCfg(sctx, t.deps.cfg, t.deps.logger, definitions.DbgTolerate,
-		definitions.LogKeyMsg, fmt.Sprintf("ZAddCountAndExpire result: %v", result),
+		definitions.LogKeyMsg, fmt.Sprintf("RecordTolerationEvent result: %v", result),
 		"ip", ipAddress,
 		"username", username,
 	)
 }
 
+// tolerationEvent maps one credential outcome onto its event kind and sorted-set member. A success is keyed by the
+// account, so repeated logins of one account count once and cannot inflate the allowance. A failure gets a unique
+// member, so every failed attempt counts regardless of the attacked account.
+func tolerationEvent(username string, authenticated bool) (string, string) {
+	if authenticated {
+		return tolerationEventPositive, strings.ToLower(username)
+	}
+
+	return tolerationEventNegative, uniqueTolerationMember()
+}
+
+// uniqueTolerationMember returns a sorted-set member that no other failed attempt shares.
+func uniqueTolerationMember() string {
+	var random [8]byte
+
+	_, _ = rand.Read(random[:])
+
+	return strconv.FormatInt(time.Now().UnixNano(), 36) + ":" + hex.EncodeToString(random[:])
+}
+
 // tolerateTTLForIP resolves the configured toleration TTL for an IP address.
 func (t *tolerateImpl) tolerateTTLForIP(ipAddress string) time.Duration {
 	tolerateTTL := t.deps.cfg.GetBruteForce().GetTolerateTTL()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	for _, customTolerate := range t.customTolerates {
 		if !t.findIP(customTolerate.IPAddress, ipAddress) {
@@ -360,17 +366,14 @@ func (t *tolerateImpl) tolerateTTLForIP(ipAddress string) time.Duration {
 	return tolerateTTL
 }
 
-// recordTolerationEvent writes one positive or negative toleration event via Lua.
+// recordTolerationEvent adds one event and purges both windowed sorted sets of one address via Lua.
 func (t *tolerateImpl) recordTolerationEvent(
 	ctx context.Context,
 	ipAddress string,
-	username string,
-	authenticated bool,
+	event string,
+	member string,
 	tolerateTTL time.Duration,
 ) (any, error) {
-	flag, label := tolerationFlagAndLabel(authenticated)
-	redisKey := t.getRedisKey(ipAddress)
-
 	defer stats.GetMetrics().GetRedisWriteCounter().Inc()
 
 	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(ctx, t.deps.cfg)
@@ -379,23 +382,21 @@ func (t *tolerateImpl) recordTolerationEvent(
 	return rediscli.ExecuteScript(
 		dCtx,
 		t.effectiveRedis(),
-		"ZAddCountAndExpire",
-		rediscli.LuaScripts["ZAddCountAndExpire"],
-		[]string{redisKey + flag, redisKey},
-		float64(time.Now().Unix()),
-		strings.ToLower(username),
-		label,
-		int(tolerateTTL.Seconds()),
+		"RecordTolerationEvent",
+		rediscli.LuaScripts["RecordTolerationEvent"],
+		RedisKeys(t.deps.cfg.GetServer().GetRedis().GetPrefix(), t.scopedAddress(ipAddress)),
+		t.now().Unix(),
+		windowSeconds(tolerateTTL),
+		event,
+		member,
+		tolerationNegativeCap,
 	)
 }
 
-// tolerationFlagAndLabel returns the Redis suffix and script label for an event.
-func tolerationFlagAndLabel(authenticated bool) (string, string) {
-	if authenticated {
-		return toleratePositiveFlag, "positive"
-	}
-
-	return tolerateNegativeFlag, "negative"
+// tolerationActive reports whether the windowed counters allow suppressing a block. A saturated negative count is
+// never tolerated, because the cap hides how many failures really happened.
+func tolerationActive(positive int64, negative int64, maxNegative int64) bool {
+	return positive > 0 && negative < tolerationNegativeCap && negative <= maxNegative
 }
 
 // IsTolerated checks if the specified IP address is tolerated based on positive and negative interaction thresholds.
@@ -444,15 +445,22 @@ func (t *tolerateImpl) PolicyFact(ctx context.Context, ipAddress string) (fact P
 		return fact
 	}
 
-	if settings.adaptive {
-		if adaptiveFact, ok := t.adaptivePolicyFact(tctx, ipAddress, settings); ok {
-			return adaptiveFact
-		}
+	counts, err := t.sharedWindowCounts(tctx, ipAddress, settings.ttl)
+	if err != nil {
+		t.logRedisError(t.deps.logger, ipAddress, err)
+
+		fact.Mode = tolerateStaticMode
+
+		return fact
 	}
 
-	return t.staticPolicyFact(tctx, ipAddress, settings)
+	fact = policyFactFromCounts(settings, counts)
+	t.logDbgTolerate(tctx, ipAddress, fact.Positive, fact.Negative, fact.MaxNegative, fact.Percent, fact.Mode)
+
+	return fact
 }
 
+// policySettingsForIP resolves the global or matching custom toleration settings of an address.
 func (t *tolerateImpl) policySettingsForIP(ipAddress string) policySettings {
 	bruteForce := t.deps.cfg.GetBruteForce()
 	settings := policySettings{
@@ -489,225 +497,44 @@ func (t *tolerateImpl) policySettingsForIP(ipAddress string) policySettings {
 	return settings
 }
 
-func (t *tolerateImpl) adaptivePolicyFact(
-	ctx context.Context,
-	ipAddress string,
-	settings policySettings,
-) (PolicyFact, bool) {
-	resultArray, ok := t.adaptiveTolerationResult(ctx, ipAddress, settings)
-	if !ok {
-		return PolicyFact{}, false
-	}
-
-	return t.adaptivePolicyFactFromResult(ctx, ipAddress, settings, resultArray), true
-}
-
-func (t *tolerateImpl) adaptivePolicyFactFromResult(
-	ctx context.Context,
-	ipAddress string,
-	settings policySettings,
-	resultArray []int64,
-) PolicyFact {
-	calculatedPct := uint8(resultArray[0])
-	maxNegative := resultArray[1]
-	positive := resultArray[2]
-	negative := resultArray[3]
-
+// policyFactFromCounts applies the static or adaptive percentage to the windowed counters. Adaptive scaling needs at
+// least one successful account; without one the static percentage is reported.
+func policyFactFromCounts(settings policySettings, counts windowCounts) PolicyFact {
+	percent := settings.percent
 	mode := tolerateStaticMode
-	if resultArray[4] == 1 {
+
+	if settings.adaptive && counts.positive > 0 {
+		percent = adaptivePercent(counts.positive, settings)
 		mode = tolerateAdaptiveMode
 	}
 
-	fact := PolicyFact{
+	maxNegative := (int64(percent) * counts.positive) / 100
+
+	return PolicyFact{
 		TTL:         settings.ttl,
 		Mode:        mode,
-		Positive:    positive,
-		Negative:    negative,
+		Positive:    counts.positive,
+		Negative:    counts.negative,
 		MaxNegative: maxNegative,
-		Percent:     calculatedPct,
+		Percent:     percent,
+		Active:      tolerationActive(counts.positive, counts.negative, maxNegative),
 		Custom:      settings.custom,
 	}
-
-	if positive == 0 {
-		t.logDbgTolerate(ctx, ipAddress, positive, negative, 0, calculatedPct, mode)
-
-		return fact
-	}
-
-	l1.GetEngine().SetReputation(ctx, l1.KeyReputation(ipAddress), l1.Reputation{
-		Positive: positive,
-		Negative: negative,
-	}, 0)
-
-	fact.Active = negative <= maxNegative
-	t.logDbgTolerate(ctx, ipAddress, positive, negative, maxNegative, calculatedPct, mode)
-
-	return fact
 }
 
-func (t *tolerateImpl) adaptiveTolerationResult(
-	ctx context.Context,
-	ipAddress string,
-	settings policySettings,
-) ([]int64, bool) {
-	redisKey := t.getRedisKey(ipAddress)
+// adaptivePercent scales the toleration percentage logarithmically between the configured bounds. It mirrors the
+// bucket-limit scaling in the SlidingWindowCounter script, so both decisions use the same percentage.
+func adaptivePercent(positive int64, settings policySettings) uint8 {
+	minPercent := float64(settings.minPercent)
+	maxPercent := float64(settings.maxPercent)
+	factor := math.Min(1, math.Log(float64(positive+1))/math.Log(100)*settings.scale)
+	percent := math.Floor(minPercent + (maxPercent-minPercent)*factor)
 
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, t.deps.cfg)
-	resultAny, err, _ := t.sg.Do("tol:"+redisKey, func() (any, error) {
-		return rediscli.ExecuteScript(
-			dCtx,
-			t.effectiveRedis(),
-			"CalculateAdaptiveToleration",
-			rediscli.LuaScripts["CalculateAdaptiveToleration"],
-			[]string{redisKey},
-			settings.minPercent,
-			settings.maxPercent,
-			settings.scale,
-			settings.percent,
-			1,
-		)
-	})
-
-	cancel()
-
-	if err != nil {
-		t.logRedisError(t.deps.logger, ipAddress, err)
-
-		return nil, false
-	}
-
-	return tolerateResultArray(resultAny)
+	return uint8(math.Max(minPercent, math.Min(maxPercent, percent)))
 }
 
-func tolerateResultArray(result any) ([]int64, bool) {
-	arr, ok := result.([]any)
-	if !ok || len(arr) != 5 {
-		return nil, false
-	}
-
-	resultArray := make([]int64, len(arr))
-	for i, v := range arr {
-		if n, ok := v.(int64); ok {
-			resultArray[i] = n
-		}
-	}
-
-	return resultArray, true
-}
-
-func (t *tolerateImpl) staticPolicyFact(
-	ctx context.Context,
-	ipAddress string,
-	settings policySettings,
-) PolicyFact {
-	ipMap := t.GetTolerateMap(ctx, ipAddress)
-	positive := ipMap["positive"]
-	negative := ipMap["negative"]
-	maxNegative := (int64(settings.percent) * positive) / 100
-
-	fact := PolicyFact{
-		TTL:         settings.ttl,
-		Mode:        "static",
-		Positive:    positive,
-		Negative:    negative,
-		MaxNegative: maxNegative,
-		Percent:     settings.percent,
-		Custom:      settings.custom,
-	}
-
-	if positive == 0 {
-		return fact
-	}
-
-	fact.Active = negative <= maxNegative
-	t.logDbgTolerate(ctx, ipAddress, positive, negative, maxNegative, settings.percent, "static")
-
-	return fact
-}
-
-// StartHouseKeeping initiates a periodic cleanup process to remove expired tolerance data for IP addresses from Redis.
-func (t *tolerateImpl) StartHouseKeeping(ctx context.Context) {
-	tr := monittrace.New("nauthilus/tolerate")
-	_, hsp := tr.Start(ctx, "tolerate.housekeeping")
-
-	defer hsp.End()
-
-	t.houseKeeperContext = ctx
-
-	ticker := time.NewTicker(time.Second * 60)
-
-	defer ticker.Stop()
-
-	for range ticker.C {
-		for _, ipAddress := range t.getHouseKeeper().getIPsToClean() {
-			t.cleanTolerationIPAddress(ipAddress, time.Now().Unix())
-		}
-	}
-}
-
-// cleanTolerationIPAddress removes expired positive and negative records for one IP.
-func (t *tolerateImpl) cleanTolerationIPAddress(ipAddress string, now int64) {
-	redisKey := t.getRedisKey(ipAddress)
-	tolerateTTL := t.tolerateTTLForIP(ipAddress)
-
-	for _, flag := range []string{toleratePositiveFlag, tolerateNegativeFlag} {
-		removed, ok := t.cleanTolerationFlag(ipAddress, redisKey, flag, now, tolerateTTL)
-		if !ok {
-			break
-		}
-
-		if removed > 0 {
-			t.logDbgRemovedRecords(t.houseKeeperContext, removed)
-		}
-	}
-}
-
-// cleanTolerationFlag removes expired sorted-set entries for one event type.
-func (t *tolerateImpl) cleanTolerationFlag(ipAddress, redisKey, flag string, now int64, tolerateTTL time.Duration) (int64, bool) {
-	if !t.tolerationFlagExists(redisKey, flag) {
-		t.getHouseKeeper().removeIPAddress(ipAddress)
-
-		return 0, true
-	}
-
-	removed, err := t.removeExpiredTolerationRecords(redisKey, flag, now, tolerateTTL)
-	if err != nil {
-		t.logRedisError(t.deps.logger, ipAddress, err)
-
-		return 0, false
-	}
-
-	return removed, true
-}
-
-// tolerationFlagExists reports whether a positive or negative toleration key exists.
-func (t *tolerateImpl) tolerationFlagExists(redisKey, flag string) bool {
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(t.houseKeeperContext, t.deps.cfg)
-	defer cancel()
-
-	return t.deps.redis.GetReadHandle().Exists(dCtx, redisKey+flag).Val() != 0
-}
-
-// removeExpiredTolerationRecords deletes records older than the configured TTL.
-func (t *tolerateImpl) removeExpiredTolerationRecords(redisKey, flag string, now int64, tolerateTTL time.Duration) (int64, error) {
-	stats.GetMetrics().GetRedisWriteCounter().Inc()
-
-	dCtx, cancel := util.GetCtxWithDeadlineRedisWrite(t.houseKeeperContext, t.deps.cfg)
-	defer cancel()
-
-	return t.deps.redis.GetWriteHandle().ZRemRangeByScore(
-		dCtx,
-		redisKey+flag,
-		"-inf",
-		strconv.FormatInt(now-int64(tolerateTTL.Seconds()), 10),
-	).Result()
-}
-
-// GetTolerateMap retrieves a map of toleration data from Redis for the specified IP address.
+// GetTolerateMap returns the windowed positive and negative counters of an address. It is empty when tolerations are
+// disabled for the address or the counters cannot be read.
 func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map[string]int64 {
 	tr := monittrace.New("nauthilus/tolerate")
 	gctx, gsp := tr.Start(ctx, "tolerate.get_map",
@@ -716,59 +543,97 @@ func (t *tolerateImpl) GetTolerateMap(ctx context.Context, ipAddress string) map
 
 	defer gsp.End()
 
-	var (
-		counter int64
-		err     error
-		result  map[string]string
-	)
-
-	defer stats.GetMetrics().GetRedisReadCounter().Inc()
-
 	ipMap := make(map[string]int64)
 
-	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(gctx, t.deps.cfg)
-
-	result, err = t.deps.redis.GetReadHandle().HGetAll(dCtx, t.getRedisKey(ipAddress)).Result()
-
-	cancel()
-
-	if err != nil {
+	tolerateTTL := t.tolerateTTLForIP(ipAddress)
+	if tolerateTTL == 0 {
 		return ipMap
 	}
 
-	for k, v := range result {
-		counter, err = strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			continue
-		}
+	counts, err := t.sharedWindowCounts(gctx, ipAddress, tolerateTTL)
+	if err != nil {
+		t.logRedisError(t.deps.logger, ipAddress, err)
 
-		ipMap[k] = counter
+		return ipMap
 	}
+
+	ipMap[PositiveField] = counts.positive
+	ipMap[NegativeField] = counts.negative
 
 	return ipMap
 }
 
-func (t *tolerateImpl) GetReputationKey(ipAddress string) string {
-	return t.getRedisKey(ipAddress)
+// PositiveWindow returns the ZCOUNT query of distinct successful accounts within the address's toleration window.
+func (t *tolerateImpl) PositiveWindow(ipAddress string) WindowQuery {
+	tolerateTTL := t.tolerateTTLForIP(ipAddress)
+	if tolerateTTL == 0 {
+		return WindowQuery{}
+	}
+
+	return WindowQuery{Key: t.getRedisKey(ipAddress) + toleratePositiveFlag, Min: t.windowMin(tolerateTTL)}
+}
+
+// sharedWindowCounts deduplicates concurrent counter reads of one address.
+func (t *tolerateImpl) sharedWindowCounts(ctx context.Context, ipAddress string, tolerateTTL time.Duration) (windowCounts, error) {
+	minScore := t.windowMin(tolerateTTL)
+	key := t.getRedisKey(ipAddress)
+
+	result, err, _ := t.sg.Do("tol:"+key+":"+minScore, func() (any, error) {
+		return t.windowCounts(ctx, key, minScore)
+	})
+	if err != nil {
+		return windowCounts{}, err
+	}
+
+	counts, _ := result.(windowCounts)
+
+	return counts, nil
+}
+
+// windowCounts counts both sorted sets of one address within the window in a single read pipeline. Counting on read
+// keeps every instance exact without background refreshes; expired members are purged by the next write or expire
+// with their key.
+func (t *tolerateImpl) windowCounts(ctx context.Context, key string, minScore string) (windowCounts, error) {
+	stats.GetMetrics().GetRedisReadCounter().Inc()
+
+	dCtx, cancel := util.GetCtxWithDeadlineRedisRead(ctx, t.deps.cfg)
+	defer cancel()
+
+	var positive, negative *redis.IntCmd
+
+	_, err := t.deps.redis.GetReadHandle().Pipelined(dCtx, func(pipe redis.Pipeliner) error {
+		positive = pipe.ZCount(dCtx, key+toleratePositiveFlag, minScore, "+inf")
+		negative = pipe.ZCount(dCtx, key+tolerateNegativeFlag, minScore, "+inf")
+
+		return nil
+	})
+	if err != nil {
+		return windowCounts{}, err
+	}
+
+	return windowCounts{positive: positive.Val(), negative: negative.Val()}, nil
+}
+
+// windowMin returns the exclusive ZCOUNT lower bound of the window; it matches the purge cutoff of the write script.
+func (t *tolerateImpl) windowMin(tolerateTTL time.Duration) string {
+	return "(" + strconv.FormatInt(t.now().Unix()-windowSeconds(tolerateTTL), 10)
+}
+
+// windowSeconds converts a toleration TTL into whole window seconds, at least one.
+func windowSeconds(tolerateTTL time.Duration) int64 {
+	return max(int64(1), int64(tolerateTTL.Seconds()))
 }
 
 var _ Tolerate = (*tolerateImpl)(nil)
 
-// getHouseKeeper initializes and returns a singleton instance of houseKeeper in a thread-safe manner.
-func (t *tolerateImpl) getHouseKeeper() *houseKeeper {
-	initCleaner.Do(func() {
-		cleaner = newHouseKeeper(t.houseKeeperContext, t.deps.cfg)
-	})
-
-	return cleaner
-}
-
 // getRedisKey constructs a Redis key using the configured prefix and the given IP address.
 func (t *tolerateImpl) getRedisKey(ipAddress string) string {
-	cfg := t.deps.cfg
-	scoped := tolScoper.WithCfg(cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
+	return RedisKey(t.deps.cfg.GetServer().GetRedis().GetPrefix(), t.scopedAddress(ipAddress))
+}
 
-	return cfg.GetServer().GetRedis().GetPrefix() + definitions.RedisBFTolerationPrefix + "{" + scoped + "}"
+// scopedAddress returns the toleration-scoped identifier of a raw client address.
+func (t *tolerateImpl) scopedAddress(ipAddress string) string {
+	return tolScoper.WithCfg(t.deps.cfg).Scope(ipscoper.ScopeTolerations, ipAddress)
 }
 
 // logDbgTolerate logs debug information about tolerance evaluation, including interaction counts and thresholds.
@@ -781,13 +646,6 @@ func (t *tolerateImpl) logDbgTolerate(ctx context.Context, address string, posit
 		"max_negatives", maxNegatives,
 		"tolerated", tolerated,
 		"mode", mode,
-	)
-}
-
-func (t *tolerateImpl) logDbgRemovedRecords(ctx context.Context, removed int64) {
-	util.DebugModuleWithCfg(ctx, t.deps.cfg, t.deps.logger,
-		definitions.DbgTolerate,
-		"removed", removed,
 	)
 }
 

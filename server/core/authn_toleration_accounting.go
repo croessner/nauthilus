@@ -36,7 +36,9 @@ type tolerationObservation struct {
 // toleration and the reputation-scaled bucket limits; the auth FSM dispatch that wrote them was retired with the
 // Policy authority cutover without a replacement. Only host-verified credential outcomes count: an answered success
 // backed by a verified credential is positive, an answered failure backed by a rejected credential is negative.
-// Temporary failures, pre-auth rejections, lookups, and no-auth requests are not accounted.
+// A failure that repeats an already recorded wrong password (RWP) is not negative, mirroring the bucket counters, so a
+// client retrying one stale password cannot exhaust the toleration of a shared address. Temporary failures, pre-auth
+// rejections, lookups, and no-auth requests are not accounted.
 func (e *authnCandidateExecution) tolerationObservation(result authnApplicationResult) (tolerationObservation, bool) {
 	if e == nil || e.auth == nil || e.operation != policy.OperationAuthenticate || e.auth.Request.NoAuth {
 		return tolerationObservation{}, false
@@ -47,7 +49,7 @@ func (e *authnCandidateExecution) tolerationObservation(result authnApplicationR
 		return tolerationObservation{}, false
 	}
 
-	authenticated, accounted := tolerationVerdict(result.currentDecision(), e.hostEvidenceSnapshot().credential)
+	authenticated, accounted := tolerationVerdict(result.currentDecision(), e.hostEvidenceSnapshot().credential, e.auth.Runtime.BFRWP)
 	if !accounted {
 		return tolerationObservation{}, false
 	}
@@ -55,9 +57,19 @@ func (e *authnCandidateExecution) tolerationObservation(result authnApplicationR
 	return tolerationObservation{
 		toleration:    toleration,
 		clientIP:      e.auth.Request.ClientIP,
-		username:      e.auth.Request.Username,
+		username:      tolerationAccount(e.auth),
 		authenticated: authenticated,
 	}, true
+}
+
+// tolerationAccount names the account a toleration observation is keyed by. The resolved account keeps aliases of one
+// mailbox from counting as several distinct successful accounts; the typed username is the fallback.
+func tolerationAccount(auth *AuthState) string {
+	if account := auth.GetAccount(); account != "" {
+		return account
+	}
+
+	return auth.Request.Username
 }
 
 // record writes the captured outcome into the toleration counters. It runs outside the decision session so the Redis
@@ -66,12 +78,17 @@ func (o tolerationObservation) record(ctx context.Context) {
 	o.toleration.SetIPAddress(ctx, o.clientIP, o.username, o.authenticated)
 }
 
-// tolerationVerdict maps the answered decision and the frozen host credential verdict onto one toleration observation.
-func tolerationVerdict(decision AuthDecision, credential definitions.AuthResult) (authenticated bool, accounted bool) {
+// tolerationVerdict maps the answered decision, the frozen host credential verdict and the request's RWP allowance onto
+// one toleration observation.
+func tolerationVerdict(
+	decision AuthDecision,
+	credential definitions.AuthResult,
+	repeatedWrongPassword bool,
+) (authenticated bool, accounted bool) {
 	switch {
 	case decision == AuthDecisionOK && credential == definitions.AuthResultOK:
 		return true, true
-	case decision == AuthDecisionFail && credential == definitions.AuthResultFail:
+	case decision == AuthDecisionFail && credential == definitions.AuthResultFail && !repeatedWrongPassword:
 		return false, true
 	default:
 		return false, false

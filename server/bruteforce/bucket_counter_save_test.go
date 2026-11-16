@@ -36,7 +36,7 @@ func newBucketCounterSaveFixture(t *testing.T, clientIP string) *preAuthFixture 
 		{Name: "three-hours", Period: 3 * time.Hour, CIDR: 16, IPv4: true, FailedRequests: 30},
 	}
 
-	fixture.storage.HSet(fixture.manager(passwordHistoryCommandAccount).tolerate().GetReputationKey(clientIP), reputationPositiveField, "5")
+	fixture.seedReputation(5)
 	fixture.recorder.Reset()
 
 	return fixture
@@ -76,7 +76,7 @@ func TestSaveBruteForceBucketCountersMatchSequentialWritesInTwoRoundTrips(t *tes
 		t.Fatalf("per-rule writes used %d round trips, want %d", got, 2*len(rules))
 	}
 
-	want := [][]string{{"hget"}, {"evalsha", "evalsha", "evalsha"}}
+	want := [][]string{{"zcount"}, {"evalsha", "evalsha", "evalsha"}}
 	if trips := batched.recorder.RoundTrips(); !reflect.DeepEqual(trips, want) {
 		t.Fatalf("batched writes round trips = %v, want %v", trips, want)
 	}
@@ -117,7 +117,7 @@ func TestSaveBruteForceBucketCountersEvaluateEachRuleOnItsOwn(t *testing.T) {
 		}
 	}
 
-	if trips := fixture.recorder.RoundTrips(); len(trips) != 2 || !slices.Equal(trips[0], []string{"hget"}) {
+	if trips := fixture.recorder.RoundTrips(); len(trips) != 2 || !slices.Equal(trips[0], []string{"zcount"}) {
 		t.Fatalf("round trips = %v, want reputation read and one script pipeline", trips)
 	}
 }

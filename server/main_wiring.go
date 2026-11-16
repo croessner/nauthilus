@@ -765,8 +765,6 @@ func configureRuntimeDefaults(p *runtimeLifecycleParams, cfg config.File) error 
 		return fmt.Errorf("brute-force tolerate owner is unavailable")
 	}
 
-	go p.Store.bruteForceTolerate.StartHouseKeeping(p.Ctx)
-
 	if err := configureRuntimeI18N(p, cfg); err != nil {
 		return err
 	}

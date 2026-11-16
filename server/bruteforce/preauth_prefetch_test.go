@@ -17,10 +17,12 @@ package bruteforce
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/croessner/nauthilus/v4/server/bruteforce/l1"
@@ -69,6 +71,7 @@ func newPreAuthFixture(t *testing.T, clientIP string) *preAuthFixture {
 	t.Cleanup(func() { _ = client.Close() })
 
 	cfg := passwordHistoryCommandConfig(0)
+	cfg.(*config.FileSettings).BruteForce.TolerateTTL = time.Hour
 	redisClient := rediscli.NewTestClient(client)
 
 	rediscli.ClearScriptCache()
@@ -84,6 +87,23 @@ func newPreAuthFixture(t *testing.T, clientIP string) *preAuthFixture {
 		recorder: redisroundtrip.Attach(client),
 		cfg:      cfg,
 		clientIP: clientIP,
+	}
+}
+
+// seedReputation records count distinct successful accounts in the address's toleration window.
+func (f *preAuthFixture) seedReputation(count int) {
+	f.seedTolerationEvents(0, "account", count)
+}
+
+// seedTolerationEvents adds count members to the positive (index 0) or negative (index 1) toleration set.
+func (f *preAuthFixture) seedTolerationEvents(index int, prefix string, count int) {
+	key := tolerate.RedisKeys(f.cfg.GetServer().GetRedis().GetPrefix(), f.clientIP)[index]
+	now := float64(time.Now().Unix())
+
+	for member := range count {
+		if _, err := f.storage.ZAdd(key, now, fmt.Sprintf("%s%d", prefix, member)); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -158,7 +178,9 @@ func (f *preAuthFixture) seedFailures(t *testing.T, failures int) {
 		t.Fatalf("seed RWP window: %v", err)
 	}
 
-	f.storage.HSet(seed.tolerate().GetReputationKey(f.clientIP), reputationPositiveField, "3")
+	// Counted failures are negative toleration events, so the seeded successes do not tolerate the address.
+	f.seedReputation(3)
+	f.seedTolerationEvents(1, "failure", failures)
 }
 
 // preAuthPrefetchScenario describes one pre-authentication state with its expected round trips.
@@ -181,7 +203,7 @@ func preAuthPrefetchScenarios() []preAuthPrefetchScenario {
 			clientIP:        "198.51.100.10",
 			accountName:     passwordHistoryCommandAccount,
 			failures:        1,
-			wantTrips:       [][]string{{"evalsha", "exists", "hget"}, {"evalsha"}},
+			wantTrips:       [][]string{{"evalsha", "exists", "zcount"}, {"evalsha"}},
 			sequentialTrips: 4,
 			wantOutcome:     preAuthOutcome{ruleNumber: -1},
 		},
@@ -190,7 +212,7 @@ func preAuthPrefetchScenarios() []preAuthPrefetchScenario {
 			clientIP:        "198.51.100.11",
 			accountName:     passwordHistoryCommandAccount,
 			failures:        6,
-			wantTrips:       [][]string{{"evalsha", "exists", "hget"}, {"evalsha"}},
+			wantTrips:       [][]string{{"evalsha", "exists", "zcount"}, {"evalsha"}},
 			sequentialTrips: 4,
 			wantOutcome:     preAuthOutcome{ruleTriggered: true},
 		},
@@ -198,7 +220,7 @@ func preAuthPrefetchScenarios() []preAuthPrefetchScenario {
 			name:            "unknown account stays on the read handle without the RWP script",
 			clientIP:        "198.51.100.12",
 			failures:        1,
-			wantTrips:       [][]string{{"exists", "hget"}, {"evalsha"}},
+			wantTrips:       [][]string{{"exists", "zcount"}, {"evalsha"}},
 			sequentialTrips: 3,
 			wantOutcome:     preAuthOutcome{enforce: true, ruleNumber: -1},
 		},
@@ -207,7 +229,7 @@ func preAuthPrefetchScenarios() []preAuthPrefetchScenario {
 			clientIP:        "198.51.100.13",
 			accountName:     passwordHistoryCommandAccount,
 			ban:             true,
-			wantTrips:       [][]string{{"evalsha", "exists", "hget"}, {"evalsha"}},
+			wantTrips:       [][]string{{"evalsha", "exists", "zcount"}, {"evalsha"}},
 			sequentialTrips: 5,
 			wantOutcome:     preAuthOutcome{alreadyTriggered: true},
 		},
@@ -274,7 +296,7 @@ func TestPreAuthPrefetchServesPolicyFactsOnL1Block(t *testing.T) {
 
 	// Without the prefetch the RWP precheck runs alone and the policy-fact collection after the L1 hit
 	// reads bans, reputation and counters one by one.
-	wantSequential := [][]string{{"evalsha"}, {"exists"}, {"hget"}, {"evalsha"}}
+	wantSequential := [][]string{{"evalsha"}, {"exists"}, {"zcount"}, {"evalsha"}}
 	if trips := fixture.recorder.RoundTrips(); !reflect.DeepEqual(trips, wantSequential) {
 		t.Fatalf("sequential L1 block round trips = %v, want %v", trips, wantSequential)
 	}
@@ -288,7 +310,7 @@ func TestPreAuthPrefetchServesPolicyFactsOnL1Block(t *testing.T) {
 
 	// The prefetch serves the RWP precheck, the ban states and the reputation of the policy facts; only
 	// the counter script remains.
-	want := [][]string{{"evalsha", "exists", "hget"}, {"evalsha"}}
+	want := [][]string{{"evalsha", "exists", "zcount"}, {"evalsha"}}
 	if trips := fixture.recorder.RoundTrips(); !reflect.DeepEqual(trips, want) {
 		t.Fatalf("prefetched L1 block round trips = %v, want %v", trips, want)
 	}
@@ -315,7 +337,7 @@ func TestPreAuthPrefetchRetriesOnlyTheRWPScriptAfterNoScript(t *testing.T) {
 	bm.PrefetchPreAuthState(fixture.rules())
 
 	trips := fixture.recorder.RoundTrips()
-	if len(trips) < 3 || !slices.Equal(trips[0], []string{"evalsha", "exists", "hget"}) ||
+	if len(trips) < 3 || !slices.Equal(trips[0], []string{"evalsha", "exists", "zcount"}) ||
 		!slices.Equal(trips[len(trips)-1], []string{"evalsha"}) {
 		t.Fatalf("NOSCRIPT prefetch round trips = %v, want pipeline, script upload, RWP-only retry", trips)
 	}

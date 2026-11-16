@@ -34,11 +34,14 @@ func TestTolerationVerdictAccountsOnlyHostVerifiedCredentialOutcomes(t *testing.
 		name          string
 		decision      AuthDecision
 		credential    definitions.AuthResult
+		repeated      bool
 		authenticated bool
 		accounted     bool
 	}{
 		{name: "verified success", decision: AuthDecisionOK, credential: definitions.AuthResultOK, authenticated: true, accounted: true},
 		{name: "rejected credential", decision: AuthDecisionFail, credential: definitions.AuthResultFail, accounted: true},
+		{name: "repeated wrong password", decision: AuthDecisionFail, credential: definitions.AuthResultFail, repeated: true},
+		{name: "verified success clears a stale RWP candidate", decision: AuthDecisionOK, credential: definitions.AuthResultOK, repeated: true, authenticated: true, accounted: true},
 		{name: "policy deny of a verified credential", decision: AuthDecisionFail, credential: definitions.AuthResultOK},
 		{name: "pre-auth deny without credential check", decision: AuthDecisionFail, credential: definitions.AuthResultUnset},
 		{name: "tempfail", decision: AuthDecisionTempFail, credential: definitions.AuthResultTempFail},
@@ -46,7 +49,7 @@ func TestTolerationVerdictAccountsOnlyHostVerifiedCredentialOutcomes(t *testing.
 	}
 
 	for _, testCase := range testCases {
-		authenticated, accounted := tolerationVerdict(testCase.decision, testCase.credential)
+		authenticated, accounted := tolerationVerdict(testCase.decision, testCase.credential, testCase.repeated)
 		if authenticated != testCase.authenticated || accounted != testCase.accounted {
 			t.Fatalf("%s: verdict = %v/%v, want %v/%v", testCase.name, authenticated, accounted,
 				testCase.authenticated, testCase.accounted)

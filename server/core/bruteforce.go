@@ -607,7 +607,7 @@ func bruteForceBucketFactsRepeat(facts []bruteforce.BucketPolicyFact) bool {
 
 // commitRWPIfAllowed commits the RWP sliding window write unless an environment control rejected the request
 // without learning being active for that environment control. In that case, the password was never verified,
-// so recording it in the RWP window would be incorrect.
+// so recording it in the RWP window would be incorrect. A successful commit marks the request as committed.
 func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketManager, learningSource string) (bool, error) {
 	if ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
 		bfCfg := a.cfg().GetBruteForce()
@@ -617,7 +617,12 @@ func (a *AuthState) commitRWPIfAllowed(ctx *gin.Context, bm bruteforce.BucketMan
 		}
 	}
 
-	return bm.CommitRWPSlidingWindow()
+	repeated, err := bm.CommitRWPSlidingWindow()
+	if err == nil {
+		a.Runtime.BFRWPCommitted = true
+	}
+
+	return repeated, err
 }
 
 // bruteForceLearningEnabled checks the configured feature and concrete environment aliases.
@@ -714,6 +719,12 @@ func (a *AuthState) updateBruteForceBucketsCounter(ctx *gin.Context, learningSou
 	}
 
 	if !a.bruteForceUpdateEnabled(ctx) {
+		return
+	}
+
+	// One request is one failure: a repeated update would classify the request's own committed hash as a repeat and
+	// rewrite the verdict that toleration accounting reads.
+	if a.Runtime.BFRWPCommitted {
 		return
 	}
 

@@ -36,60 +36,51 @@ redis.call("EXPIRE", KEYS[1], ARGV[2])
 return result
 `,
 
-	// ZAddCountAndExpire adds a member to a sorted set, counts the elements, and sets an expiration time
-	// KEYS[1] - The sorted set key
-	// KEYS[2] - The hash key to store the count
-	// ARGV[1] - The score for the sorted set member
-	// ARGV[2] - The member to add to the sorted set
-	// ARGV[3] - The hash field to store the count
-	// ARGV[4] - The expiration time in seconds
-	"ZAddCountAndExpire": `
-redis.call("ZADD", KEYS[1], ARGV[1], ARGV[2])
-local count = redis.call("ZCOUNT", KEYS[1], "-inf", "+inf")
-redis.call("EXPIRE", KEYS[1], ARGV[4])
-redis.call("HSET", KEYS[2], ARGV[3], count)
-redis.call("EXPIRE", KEYS[2], ARGV[4])
-return count
-`,
+	// RecordTolerationEvent adds one toleration event and purges both sorted sets to the window.
+	// Positive members are account names, so the positive set holds distinct accounts with a verified success.
+	// Negative members are unique per failed attempt, so the negative set holds every counted failed login behind the
+	// address. Events older than the window are purged; the negative set is capped to its newest entries, so a count
+	// equal to the cap means "saturated". Readers count both sets with ZCOUNT over the window.
+	// KEYS[1] - The positive sorted set
+	// KEYS[2] - The negative sorted set
+	// ARGV[1] - The current time in seconds
+	// ARGV[2] - The window and expiration in seconds
+	// ARGV[3] - The event kind: "positive" or "negative"
+	// ARGV[4] - The member to add for the event
+	// ARGV[5] - The maximum number of retained negative events
+	// Returns: {positive, negative}
+	"RecordTolerationEvent": `
+local now = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local cap = tonumber(ARGV[5])
 
-	// CalculateAdaptiveToleration calculates the adaptive toleration percentage based on positive authentication attempts
-	// KEYS[1] - The hash key containing the counts
-	// ARGV[1] - The minimum toleration percentage
-	// ARGV[2] - The maximum toleration percentage
-	// ARGV[3] - The scale factor
-	// ARGV[4] - The static toleration percentage (fallback if adaptive is disabled)
-	// ARGV[5] - Whether adaptive toleration is enabled (1 for true, 0 for false)
-	"CalculateAdaptiveToleration": `
-local positive = tonumber(redis.call("HGET", KEYS[1], "positive") or "0")
-local negative = tonumber(redis.call("HGET", KEYS[1], "negative") or "0")
-local min_percent = tonumber(ARGV[1])
-local max_percent = tonumber(ARGV[2])
-local scale_factor = tonumber(ARGV[3])
-local static_percent = tonumber(ARGV[4])
-local adaptive_enabled = tonumber(ARGV[5]) == 1
-
--- If adaptive toleration is disabled or there are no positive attempts, use static percentage
-if not adaptive_enabled or positive == 0 then
-    local max_negative = math.floor((static_percent * positive) / 100)
-    return {static_percent, max_negative, positive, negative, 0}
+if ARGV[3] == "positive" then
+    redis.call("ZADD", KEYS[1], now, ARGV[4])
+else
+    redis.call("ZADD", KEYS[2], now, ARGV[4])
 end
 
--- Calculate adaptive percentage based on positive attempts and scale factor
-local percent = min_percent
+local cutoff = now - ttl
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", cutoff)
+redis.call("ZREMRANGEBYSCORE", KEYS[2], "-inf", cutoff)
+
+local negative = redis.call("ZCARD", KEYS[2])
+if negative > cap then
+    redis.call("ZREMRANGEBYRANK", KEYS[2], 0, negative - cap - 1)
+    negative = cap
+end
+
+local positive = redis.call("ZCARD", KEYS[1])
+
 if positive > 0 then
-    -- Calculate percentage between min and max based on positive attempts and scale factor
-    local factor = math.min(1, math.log(positive + 1) / math.log(100) * scale_factor)
-    percent = math.floor(min_percent + (max_percent - min_percent) * factor)
-
-    -- Ensure percent is within bounds
-    percent = math.max(min_percent, math.min(max_percent, percent))
+    redis.call("EXPIRE", KEYS[1], ttl)
 end
 
--- Calculate maximum allowed negative attempts
-local max_negative = math.floor((percent * positive) / 100)
+if negative > 0 then
+    redis.call("EXPIRE", KEYS[2], ttl)
+end
 
--- Return the calculated percentage, max negative attempts, positive count, positive count, and factor
-return {percent, max_negative, positive, negative, 1}
+return {positive, negative}
 `,
 
 	// AddToSetAndExpireLimit adds a hash to a set and sets an expiration time,
