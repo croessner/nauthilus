@@ -262,7 +262,8 @@ func applyPresentedDecision(outcome *pluginapi.AuthOutcome, presented *report.Fi
 	outcome.PolicyRule = presented.PolicyName
 }
 
-// applyTempFailCause copies the bounded temporary-failure cause that the terminal tempfail log line reports.
+// applyTempFailCause copies the bounded temporary-failure cause that the terminal tempfail log line reports. A
+// tempfail without a presenting rule takes the failed checkpoint as its stage, so every completion names one.
 func applyTempFailCause(outcome *pluginapi.AuthOutcome, cause authTempFailCause) {
 	if outcome == nil {
 		return
@@ -271,6 +272,10 @@ func applyTempFailCause(outcome *pluginapi.AuthOutcome, cause authTempFailCause)
 	outcome.TempFailReason = cause.reason
 	outcome.TempFailCheckpoint = cause.checkpoint
 	outcome.PolicyStatus = cause.statusCode
+
+	if outcome.Stage == "" {
+		outcome.Stage = cause.checkpoint
+	}
 
 	if outcome.PolicyRule == "" {
 		outcome.PolicyRule = cause.policyRule
