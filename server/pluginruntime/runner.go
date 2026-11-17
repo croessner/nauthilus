@@ -72,9 +72,9 @@ type Runner struct {
 	observer     Observer
 	registry     *pluginregistry.Registry
 	pluginConfig *config.PluginsSection
-	// authEvents delivers host step events to registered sinks while the runner is ready. It is read without the
-	// runner lock, so emitting never waits for a lifecycle transition.
-	authEvents atomic.Pointer[AuthEventDispatcher]
+	// authEvents holds the step-event lanes that deliver host step events to registered sinks while the runner is
+	// ready. It is read without the runner lock, so emitting never waits for a lifecycle transition.
+	authEvents atomic.Pointer[authEventLanes]
 	// bruteForceEvents holds the brute-force event lanes, read without the runner lock like authEvents.
 	bruteForceEvents atomic.Pointer[bruteForceEventLanes]
 	modules          []moduleRuntime
@@ -214,9 +214,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 
 	r.ready = true
-	dispatcher := NewAuthEventDispatcher(r, DefaultAuthEventQueueCapacity)
-	dispatcher.Start()
-	r.authEvents.Store(dispatcher)
+	lanes := newAuthEventLanes(r)
+	lanes.start()
+	r.authEvents.Store(lanes)
 	r.bruteForceEvents.Store(newBruteForceEventLanes(r))
 
 	return nil
@@ -229,12 +229,12 @@ func (r *Runner) EmitAuthEvent(ctx context.Context, event pluginapi.AuthEvent) {
 		return
 	}
 
-	r.authEvents.Load().EmitAuthEvent(ctx, event)
+	r.authEvents.Load().route(event.Type).EmitAuthEvent(ctx, event)
 }
 
 // drainAuthEvents stops step-event intake and delivers queued events while sinks are still ready.
 func (r *Runner) drainAuthEvents(ctx context.Context) error {
-	return errors.Join(r.authEvents.Swap(nil).Stop(ctx), r.bruteForceEvents.Swap(nil).stop(ctx))
+	return errors.Join(r.authEvents.Swap(nil).stop(ctx), r.bruteForceEvents.Swap(nil).stop(ctx))
 }
 
 // Stop stops init tasks before plugin runtime instances.

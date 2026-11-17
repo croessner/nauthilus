@@ -74,7 +74,7 @@ func projectLogin(record LoginRecord, input attemptInput) projectedEvent {
 	}
 
 	if record.ContractVersion >= 1 {
-		event.Decision = decisionOf(record)
+		event.Decision = decisionOf(record, !event.Identity.Redacted)
 	}
 
 	event.Reputation = reputationOf(record)
@@ -82,9 +82,15 @@ func projectLogin(record LoginRecord, input attemptInput) projectedEvent {
 	return projectedEvent{event: event, reading: reading}
 }
 
-// decisionOf copies the recorded Policy result of a contract row.
-func decisionOf(record LoginRecord) *Decision {
+// decisionOf copies the recorded Policy result of a contract row. The answered status text is free text that can
+// name the identity it was answered to, so it is released only together with that identity.
+func decisionOf(record LoginRecord, identityReleased bool) *Decision {
 	sources := append([]string{}, record.DecisionSources...)
+	code, message := answeredStatusOf(record)
+
+	if !identityReleased {
+		message = nil
+	}
 
 	return &Decision{
 		Operation: record.Operation, Outcome: record.Outcome, OutcomeStage: record.OutcomeStage,
@@ -92,7 +98,27 @@ func decisionOf(record LoginRecord) *Decision {
 		TempFailReason: record.TempFailReason, TempFailCheckpoint: record.TempFailCheckpoint,
 		PolicyStatus: record.PolicyStatus, FSMState: record.FSMState, DecisionSources: sources,
 		BruteForceBucket: optional(record.BruteForceBucket), BruteForceTolerated: record.BruteForceTolerated,
+		AnsweredStatusCode: code, AnsweredStatusMessage: message,
 	}
+}
+
+// answeredStatusOf returns the stored answered status of a sealed terminal decision. Without a sealed decision
+// (contract §4.3: outcome unknown writes 0 and an empty text) both stay null, so no default can read as success.
+func answeredStatusOf(record LoginRecord) (*int, *string) {
+	switch record.Outcome {
+	case outcomeOK, outcomeFail, outcomeTempfail:
+	default:
+		return nil, nil
+	}
+
+	var code *int
+
+	if record.AnsweredStatusCode > 0 {
+		value := record.AnsweredStatusCode
+		code = &value
+	}
+
+	return code, optional(record.AnsweredStatusMessage)
 }
 
 // reputationOf reports structured reputation evidence; an empty projection is "none recorded", never neutral,
@@ -111,7 +137,7 @@ func reputationOf(record LoginRecord) *Reputation {
 		Assessments: append([]ReputationAssessment{}, record.Reputation...)}
 }
 
-// projectAuthEvent interprets and projects one visible step event.
+// projectAuthEvent interprets and projects one visible step event; only second-factor events carry a factor block.
 func projectAuthEvent(record AuthEventRecord, input attemptInput) projectedEvent {
 	reading := interpretAuthEvent(record)
 	matched, by := input.matcher.identityOfEvent(record)
@@ -125,8 +151,11 @@ func projectAuthEvent(record AuthEventRecord, input attemptInput) projectedEvent
 		Identity: identityProjection(input, matched, by, "", record.Account, nil),
 		Context: EventContext{ClientIP: optional(record.ClientIP), Protocol: optional(record.Protocol),
 			OIDCClientID: optional(record.ClientID), SAMLEntityID: optional(record.SAMLEntityID)},
-		Factor: &Factor{Result: record.Result, Reason: record.Reason, FlowEffect: record.FlowEffect,
-			FailLatched: record.FailLatched},
+	}
+
+	if record.EventType == eventTypeMFA {
+		event.Factor = &Factor{Result: record.Result, Reason: record.Reason, FlowEffect: record.FlowEffect,
+			FailLatched: record.FailLatched}
 	}
 
 	return projectedEvent{event: event, reading: reading}

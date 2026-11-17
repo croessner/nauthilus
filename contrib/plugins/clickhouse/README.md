@@ -31,7 +31,8 @@ plugins:
         dedup_success: true
         dedup_failure: false
         auth_dedup_ttl: 300s
-        # Optional step-event stream (second-factor verifications) into nauthilus.auth_events.
+        # Optional step-event stream (second-factor verifications, OIDC code issuance and redemption) into
+        # nauthilus.auth_events.
         events_insert_url: http://clickhouse.auth.svc.cluster.local:8123/?query=INSERT%20INTO%20nauthilus.auth_events%20FORMAT%20JSONEachRow
         events_cache_key: clickhouse:batch:auth_events
         events_flush_interval: 10s
@@ -185,13 +186,16 @@ tables that keep these columns. Fresh tables from `contrib/clickhouse-kubernetes
 ## Step Events
 
 With `events_insert_url` set, the plugin also registers a host step-event sink and writes second-factor verification
-events (TOTP, recovery codes, WebAuthn) into `nauthilus.auth_events`: one row per observed attempt with result,
-stable reason, flow effect, fail-latched state, and the non-authorizing `flow_ref` that joins the password row of the
-same IdP flow. The host delivers events from a bounded queue (1024 events per process); a full queue drops events and
-counts them in `nauthilus_plugin_auth_events_total{outcome="dropped"}`. The plugin buffers events in their own stream
-and flushes them every `events_flush_interval` (default `10s`, must be positive); events never flush inline and are
-never deduplicated. The event payload never contains credentials, OTPs, recovery codes, tokens, handles, or WebAuthn
-data.
+events (TOTP, recovery codes, WebAuthn) and OIDC authorization-code completion events (code issuance to the browser,
+code redemption at the token endpoint) into `nauthilus.auth_events`: one row per observed step with result, stable
+reason, flow effect, fail-latched state, and the non-authorizing `flow_ref` that joins the password row of the same
+IdP flow. The completion events need no schema change (`DIAGNOSTIC_CONTRACT.md` section 7.6). The host delivers
+second-factor and completion events from two separate bounded queues (1024 events each per process), so a burst of
+silent SSO renewals never evicts second-factor evidence; a full queue drops events and counts them in
+`nauthilus_plugin_auth_events_total{outcome="dropped",lane="mfa|oidc_completion"}`. The plugin buffers all step events
+in one stream (`max_buffer_rows`) and flushes them every `events_flush_interval` (default `10s`, must be positive);
+events never flush inline and are never deduplicated. The event payload never contains credentials, OTPs, recovery
+codes, authorization codes, PKCE verifiers, tokens, cookies, handles, or WebAuthn data.
 
 ## Top-Level Policy Boundary
 

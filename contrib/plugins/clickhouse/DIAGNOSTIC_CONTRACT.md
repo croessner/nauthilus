@@ -11,8 +11,9 @@ this contract; they must not invent identifiers, stages, or causes that this con
 - ClickHouse is the only durable history store. Nauthilus stays operable without ClickHouse; historical diagnosis is
   then unavailable, not degraded into a Redis or in-memory fallback.
 - The `nauthilus.logins` table remains the authentication-request projection. It is extended additively.
-- A new, purpose-bound `nauthilus.auth_events` table records step events that are not authentication requests, first of
-  all second-factor verifications. It never duplicates login rows.
+- A new, purpose-bound `nauthilus.auth_events` table records step events that are not authentication requests:
+  second-factor verifications (section 7.1–7.5) and the OIDC authorization-code completion steps (section 7.6). It
+  never duplicates login rows.
 - Analytics is not a complete attempt history: success deduplication, buffer overflow, process loss, and the one-week
   TTL remove rows. A login row exists only when the selected Policy rule carries `authn/plugin.clickhouse.post_action`;
   tempfails decided without a selected presentation (`finalizeUnselected`), effect-acceptance failures, panics, and
@@ -257,9 +258,14 @@ events:
 - The sink set is fixed for the process lifetime, like every registered plugin component: adding or removing a module
   requires a restart, while SIGHUP reconfigures the plugin in place. On shutdown the dispatcher drains the queue
   within the stop timeout before sinks stop.
-- Events are emitted only by the canonical IdP MFA handlers (`server/handler/frontend/idp/canonical_mfa_events.go`),
-  next to the existing metric/log call or at the step-up state transitions, never inside `core.LogIDPMFAuthResult` or
-  the core WebAuthn helpers, which log separately. Verification is never re-run to produce an event.
+- Second-factor events are emitted only by the canonical IdP MFA handlers
+  (`server/handler/frontend/idp/canonical_mfa_events.go`), next to the existing metric/log call or at the step-up state
+  transitions, never inside `core.LogIDPMFAuthResult` or the core WebAuthn helpers, which log separately. Verification
+  is never re-run to produce an event. OIDC completion events are emitted only by the authorization and token
+  handlers (section 7.6).
+- The dispatcher keeps two bounded lanes of 1024 events each: `mfa` for `mfa.verification` and `oidc_completion` for
+  the completion types. Silent SSO renewals and forced authorize navigations can issue many codes; they fill only
+  their own lane and never evict second-factor evidence (`plugin_auth_events_total{lane}`).
 - The dispatcher is owned by the native plugin runner: it starts with the runner and drains before sinks lose readiness
   on shutdown. The plugin API registration is the additive `pluginapi.AuthEventRegistrar`.
 
@@ -343,6 +349,74 @@ TTL toDateTime(ts) + INTERVAL 1 WEEK DELETE;
 `FINAL`. Different attempts always have different `event_id`s. `logins` stays a plain `MergeTree`, so its duplicates
 are identifiable by `event_id` but not collapsed.
 
+### 7.6 OIDC authorization-code completion events
+
+Goal: record what Nauthilus itself observes after authentication in the OIDC authorization-code flow, so the history
+can tell where Nauthilus finished its part. Scope is the `authorization_code` grant only; refresh, device-code, and
+client-credentials grants, SAML assertions, and relying-party (webmail) sessions are not recorded.
+
+**Where Nauthilus's part ends.** Nauthilus has finished its part of an authorization-code login when the token
+endpoint handed a successful token response for the flow's code to the transport (`oidc.code_redemption` with
+`result = 'success'`). The milestones before it are separate facts and are never equated: primary step succeeded
+(logins row), second factor accepted (`mfa.verification` with `step_up_completed`), authorization code issued to the
+browser (`oidc.code_issuance`). A token response does not prove that the relying party established a session.
+
+Both types use the existing columns of section 7.2; no column is added. A new JSONEachRow field would fail whole
+batches, including second-factor rows, on installations that set `input_format_skip_unknown_fields=0` (section 9).
+
+| Column | `oidc.code_issuance` | `oidc.code_redemption` |
+|---|---|---|
+| `event_version` | `1` | `1` |
+| `request_id` | browser request (`Runtime.GUID`) | token request (`Runtime.GUID`) |
+| `flow_ref` | `DiagnosticFlowRef` of the typed OIDC flow | the same value, carried by the code session (below) |
+| `protocol`, `client_id` | `oidc`, the client of the flow | `oidc`, the client the code was issued to |
+| `account` | authenticated session identity | account the code was issued for |
+| `client_ip` | browser address | empty: the token requester is the relying-party backend for confidential clients and would read as a user address |
+| `factor_role`, `method`, `fail_latched` | empty, empty, `false` | empty, empty, `false` |
+| `result` / `reason` / `flow_effect` | `success` / authentication source / `code_issued` | see below |
+
+Issuance `reason` is the authentication source persisted on the typed flow record (`sessionstate.OIDCFlow.Authentication`):
+`authenticated_in_flow` (the primary login completed on this flow), `existing_session` (`/authorize` started the flow
+for an already authenticated SSO session; a later step-up keeps the value), or `not_recorded` (a flow record written by
+an older release). The source is diagnostic only and never gates a transition.
+
+| Token endpoint path (after the atomic consume) | result | reason | flow_effect |
+|---|---|---|---|
+| Tokens issued, response handed to the transport | `success` | `tokens_issued` | `tokens_issued` |
+| Requesting client is not the client of the code | `rejected` | `client_mismatch` | `code_consumed` |
+| `redirect_uri` differs from the authorization request | `rejected` | `redirect_uri_mismatch` | `code_consumed` |
+| PKCE verifier missing, malformed, or wrong | `rejected` | `pkce_mismatch` | `code_consumed` |
+| Requested resource outside the grant at issuance (`invalid_target`) | `rejected` | `invalid_target` | `code_consumed` |
+| Token issuance failed | `error` | `token_issue_error` | `code_consumed` |
+| Dynamic-client bookkeeping failed; issued tokens were deleted | `error` | `client_state_error` | `code_consumed` |
+
+Emission points: the issuance event is emitted after the code session is stored, the dynamic-client touch and
+`RecordOIDCClient` succeeded, and the callback URL was built, immediately before the 302 to the client
+(`authorizeCanonicalAuthenticated` without consent page, `ConsentPOSTCanonical` after "allow"). The redemption event
+is emitted only after `ConsumeSession` (atomic `GETDEL`) returned the code session.
+
+Correlation: the authorization-code session (`idp.OIDCSession`) stores `diagnostic_flow_ref`, the same non-authorizing
+digest as `flow_ref`, never the flow handle. The token handler moves it out of the session before token issuance, so
+access and refresh token state never carries it. One flow issues at most one code (the flow is consumed before the
+code is stored), and `GETDEL` returns a code at most once, so one flow has at most one redemption event.
+
+Not recorded, because no safe attribution exists or the code stays redeemable:
+
+- token requests that never resolve a code: client authentication failures, unknown, expired, or already redeemed
+  codes. Every replay after a successful redemption is such a miss, so a replay can never turn a completed flow into a
+  failure;
+- resource pre-check rejections before the consume (the code stays redeemable once);
+- a code session that cannot be decrypted after `GETDEL` (the code is consumed without event);
+- code sessions stored by an older release without `diagnostic_flow_ref` (attributable to an account, not to a flow;
+  only during a rolling update, at most one code lifetime);
+- authorization errors and denials (consent denied, `login_required`, `consent_required`, `interaction_required`,
+  state conflicts), browser aborts, and whatever the relying party does after the token response.
+
+Code lifetime: version 1 of `oidc.code_issuance` defines that the code cannot be redeemed later than ten minutes after
+the observed issuance (the code is stored before the event is observed, so this is a safe upper bound). The IdP code
+TTL (`canonicalOIDCAuthorizationCodeTTL`) is pinned to it by a test; a different lifetime requires a new
+`event_version`, and the history keeps a lifetime per version so old rows are never re-dated.
+
 ## 8. Delivery semantics
 
 - Login rows and events use separate bounded in-memory streams in the plugin (separate cache keys, buffer limits,
@@ -356,6 +430,8 @@ are identifiable by `event_id` but not collapsed.
   deduplicated.
 - Requeued rows keep their `event_id`; an ambiguous insert failure can produce duplicates that `event_id` identifies.
   No exactly-once claim.
+- Second-factor and completion events share the plugin's event stream and `max_buffer_rows`; only the host queues are
+  separate lanes (section 7.1).
 - Storage failures never change an authentication decision. The size-triggered inline flush of login rows runs inside
   the post-action `Enqueue` after the gate, so it occupies a supervisor worker, not the request. Event sinks never
   flush inline.
@@ -383,6 +459,14 @@ are identifiable by `event_id` but not collapsed.
    types and defaults, not the values. The retired Lua writer still sends them.
 6. The repository `schema.sql` gains the `deployment` and `instance` columns that the writer has always emitted and that
    the Kubernetes mirror already has; both files carry the same statements.
+7. OIDC completion events (section 7.6) need no migration: they use the existing `auth_events` columns, and readers
+   select them by `event_type`. Rollout order: any order of writer and reader releases is compatible. An old reader
+   filters `event_type = 'mfa.verification'` and ignores the new rows; a new reader before the first completion event
+   reports `oidc_completion_events_since = null` and keeps `FLOW_COMPLETION_NEVER_RECORDED`. Rollback: deploy the
+   older release; the rows already written expire with the one-week TTL, nothing has to be dropped. The new optional
+   fields of the code session (`diagnostic_flow_ref`) and the typed OIDC flow (`Authentication`) are ignored by older
+   releases, which also drop them on re-save; the history then reads `not_recorded` or no redemption event, never a
+   guessed value.
 
 ## 10. Verification
 
@@ -400,6 +484,10 @@ Executed locally on 2026-11-16 (see the task report for the exact commands and o
 | Bounded event dispatch | `server/pluginruntime` `TestAuthEventDispatcher*` (race detector) | unit |
 | Stored ClickHouse rows, migration, fresh/migrated equivalence, replay, schema drift, dashboard queries | `contrib/plugins/clickhouse` build tag `clickhouse_integration` (`contrib/clickhouse-kubernetes/run-integration-tests.sh`) | real ClickHouse 25.8 |
 | Browser MFA flows into ClickHouse | `contrib/identity-proxy-e2e/scripts/run.sh clickhouse-events` after the browser smoke | Playwright, virtual WebAuthn authenticator, real ClickHouse |
+| OIDC completion events per handler path (SSO and in-flow issuance, consent, redemption success and rejections, replay, older code sessions, secret-free payload) | `server/handler/frontend/idp` `TestSSOAuthorizationRecordsIssuanceAndRedemptionOnce`, `TestFlowLoginIssuanceNamesTheRecordedAuthenticationSource`, `TestRejectedRedemptionsReportTheConsumedCode`, `TestOIDCConsentCanonicalGETAndPOSTBindTypedFlowAndIgnorePostedState`, `TestCodeTTLMatchesTheIssuanceEventContract` | real handlers, miniredis code storage |
+| Separate completion lane | `server/pluginruntime` `TestAuthEventLanesKeepMFAEvidenceFromCompletionFloods` | unit (race detector) |
+| Authentication source on the typed flow | `server/core/cookie` `TestLoginCompletionAdvancesOnlySelectedProtocolFlow`, `server/idp/flow` `TestTypedStorePartitionsParallelOIDCAndSAMLFlows` | miniredis |
+| Completion events through the plugin into ClickHouse and back through the read-only reader | `contrib/plugins/clickhouse` `TestClickHouseHistoryAnswersWhatTheWriterRecorded` | real ClickHouse 25.8 |
 
 ## 11. Handover to the history task
 
@@ -408,8 +496,11 @@ Executed locally on 2026-11-16 (see the task report for the exact commands and o
 - Primary result: `outcome`; stable cause: `outcome_marker` + `response_marker` + `tempfail_reason` (+ `policy_status`,
   `tempfail_checkpoint`); presenting rule: `policy_rule`; stage: `outcome_stage`; transport facts: `transport`,
   `transport_status`.
-- Join MFA events to the password request with `flow_ref` (non-empty), never with `session`; deduplicate events with
-  `FINAL` or `LIMIT 1 BY event_id`, and login rows with `LIMIT 1 BY event_id`.
+- Join MFA and OIDC completion events to the password request with `flow_ref` (non-empty), never with `session`;
+  deduplicate events with `FINAL` or `LIMIT 1 BY event_id`, and login rows with `LIMIT 1 BY event_id`.
+- A flow is complete from Nauthilus's side only with an `oidc.code_redemption` success (section 7.6). A missing
+  completion event proves neither an abort nor a timeout; flows before the first completion event of a deployment
+  stay "never recorded".
 - Report the cutover boundary (first `contract_version = 1` per `deployment`/`instance`), the TTL window (one week),
   the export delay (`flush_interval`, `events_flush_interval`), success deduplication, and the coverage gaps of
   section 1 to support users. "No row" never proves "no request".

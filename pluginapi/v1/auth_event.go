@@ -26,8 +26,24 @@ type AuthEventType string
 // AuthEventMFAVerification is one observed second-factor verification attempt.
 const AuthEventMFAVerification AuthEventType = "mfa.verification"
 
-// AuthEventVersion is the current AuthEvent contract version.
+// AuthEventOIDCCodeIssuance is one authorization code the IdP handed to the browser for its client's redirect URI.
+const AuthEventOIDCCodeIssuance AuthEventType = "oidc.code_issuance"
+
+// AuthEventOIDCCodeRedemption is one consumed authorization code at the token endpoint, successful or not.
+const AuthEventOIDCCodeRedemption AuthEventType = "oidc.code_redemption"
+
+// AuthEventVersion is the current AuthEvent contract version of mfa.verification events.
 const AuthEventVersion uint16 = 1
+
+// AuthEventOIDCCodeVersion is the current contract version of both OIDC authorization-code event types. Version 1
+// defines that an issued code cannot be redeemed later than ten minutes after the issuance event was observed; a
+// change of that lifetime requires a new version.
+const AuthEventOIDCCodeVersion uint16 = 1
+
+// Completion reports whether the event type belongs to the OIDC authorization-code completion evidence.
+func (t AuthEventType) Completion() bool {
+	return t == AuthEventOIDCCodeIssuance || t == AuthEventOIDCCodeRedemption
+}
 
 // AuthEventResult is the observed result of one step event.
 type AuthEventResult string
@@ -55,13 +71,20 @@ const (
 	AuthEventFlowStepUpCompleted AuthEventFlowEffect = "step_up_completed"
 	// AuthEventFlowPrimaryFailureKept marks a verified factor on a flow whose primary step already failed.
 	AuthEventFlowPrimaryFailureKept AuthEventFlowEffect = "primary_failure_kept"
+	// AuthEventFlowCodeIssued marks an authorization code handed to the browser for the client redirect URI.
+	AuthEventFlowCodeIssued AuthEventFlowEffect = "code_issued"
+	// AuthEventFlowTokensIssued marks a redeemed code whose token response was handed to the transport.
+	AuthEventFlowTokensIssued AuthEventFlowEffect = "tokens_issued"
+	// AuthEventFlowCodeConsumed marks a code consumed by a rejected or failed redemption; the flow cannot complete.
+	AuthEventFlowCodeConsumed AuthEventFlowEffect = "code_consumed"
 )
 
 // AuthEventFactorRoleSecond marks a second factor after a primary authentication step.
 const AuthEventFactorRoleSecond = "second_factor"
 
 // AuthEvent is one bounded, secret-free step event observed by the host. It never contains passwords, hashes, OTP
-// values, recovery codes, tokens, authorizing handles, or WebAuthn payloads.
+// values, recovery codes, authorization codes, PKCE verifiers, tokens, cookies, authorizing handles, or WebAuthn
+// payloads.
 type AuthEvent struct {
 	ObservedAt   time.Time
 	EventID      string

@@ -100,7 +100,8 @@ func TestLoginCompletionAdvancesOnlySelectedProtocolFlow(t *testing.T) {
 	selected, err := rotated.Stores.OIDC.Load(context.Background(), sessionstate.Reference{
 		Session: rotated.Handle, Record: fixture.flowHandle,
 	})
-	if err != nil || selected.Value.AuthOutcome != "ok" || selected.Value.CurrentStep != "login" {
+	if err != nil || selected.Value.AuthOutcome != "ok" || selected.Value.CurrentStep != "login" ||
+		selected.Value.Authentication != sessionstate.OIDCFlowAuthenticatedInFlow {
 		t.Fatalf("selected flow = %#v, err = %v", selected, err)
 	}
 

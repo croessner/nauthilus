@@ -159,6 +159,40 @@ func (s *Store) ContractRowsSince(_ context.Context, from, until time.Time) (*ti
 	return since, true
 }
 
+// OIDC completion event types of the reader contract.
+const (
+	codeIssuanceEvent   = "oidc.code_issuance"
+	codeRedemptionEvent = "oidc.code_redemption"
+)
+
+// stepEventTypes mirrors the event types the reader selects.
+var stepEventTypes = []string{"mfa.verification", codeIssuanceEvent, codeRedemptionEvent}
+
+// completionEventTypes are the OIDC completion event types.
+var completionEventTypes = []string{codeIssuanceEvent, codeRedemptionEvent}
+
+// eventRetention mirrors the auth_events TTL that bounds the completion cutover probe.
+const eventRetention = 7 * 24 * time.Hour
+
+// CompletionEventsSince returns the first completion event before until within retention of the newest row.
+func (s *Store) CompletionEventsSince(_ context.Context, until time.Time) (*time.Time, bool) {
+	if err := s.record("CompletionEventsSince"); err != nil {
+		return nil, false
+	}
+
+	var since *time.Time
+
+	for _, row := range s.Events {
+		if slices.Contains(completionEventTypes, row.EventType) && row.At.Before(until) &&
+			until.Sub(row.At) <= eventRetention && (since == nil || row.At.Before(*since)) {
+			at := row.At
+			since = &at
+		}
+	}
+
+	return since, true
+}
+
 // inRange reports whether at lies in [from, until).
 func inRange(at, from, until time.Time) bool {
 	return !at.Before(from) && at.Before(until)
@@ -238,10 +272,16 @@ func anchorsLogin(query supporthistory.AnchorQuery, row supporthistory.LoginReco
 		filterMatch(query.Filter, row)
 }
 
-// anchorsEvent mirrors the step-event half of the anchor predicate, used only without login filters.
+// anchorsEvent mirrors the step-event half of the anchor predicate, with the filters mapped onto event columns.
 func anchorsEvent(query supporthistory.AnchorQuery, row supporthistory.AuthEventRecord) bool {
-	return query.Filter == (supporthistory.AttemptFilter{}) && inRange(row.At, query.From, query.Until) &&
-		row.Account != "" && slices.Contains(query.Subject.Accounts, row.Account)
+	filter := query.Filter
+
+	return slices.Contains(stepEventTypes, row.EventType) && inRange(row.At, query.From, query.Until) &&
+		row.Account != "" && slices.Contains(query.Subject.Accounts, row.Account) &&
+		(filter.ClientIP == "" || row.ClientIP == filter.ClientIP) &&
+		(filter.Protocol == "" || row.Protocol == filter.Protocol) &&
+		(filter.OIDCClientID == "" || row.ClientID == filter.OIDCClientID) &&
+		(filter.SAMLEntityID == "" || row.SAMLEntityID == filter.SAMLEntityID)
 }
 
 // budgetSpan returns the configured largest accepted slice, if any.
@@ -347,7 +387,7 @@ func (s *Store) AuthEvents(_ context.Context, query supporthistory.RowQuery) ([]
 	var rows []supporthistory.AuthEventRecord
 
 	for _, row := range s.Events {
-		if !inRange(row.At, query.From, query.Until) {
+		if !inRange(row.At, query.From, query.Until) || !slices.Contains(stepEventTypes, row.EventType) {
 			continue
 		}
 

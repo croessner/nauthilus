@@ -170,6 +170,7 @@ type OIDCHandler struct {
 	canonicalAuthorizeUserLoader     canonicalOIDCAuthorizeUserLoader
 	canonicalDeviceGrantPersister    canonicalDeviceGrantPersister
 	canonicalDeviceFlowConsumer      canonicalDeviceFlowConsumer
+	canonicalAuthEventEmitter        canonicalAuthEventEmitter
 	tracer                           monittrace.Tracer
 }
 

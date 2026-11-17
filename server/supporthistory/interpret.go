@@ -15,7 +15,10 @@
 
 package supporthistory
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Stages of an interpreted event.
 const (
@@ -23,6 +26,9 @@ const (
 	stageSecondFactor  = "second_factor"
 	stagePreCredential = "pre_credential"
 	stageLegacy        = "legacy"
+	stageAuthorization = "authorization"
+	stageTokenExchange = "token_exchange"
+	stageUnclassified  = "unclassified"
 )
 
 // Results of an interpreted event.
@@ -35,6 +41,7 @@ const (
 	resultInvalid        = "invalid"
 	resultRateLimited    = "rate_limited"
 	resultStateRejected  = "state_rejected"
+	resultIssued         = "issued"
 )
 
 // Categories of an interpreted event or finding.
@@ -46,6 +53,7 @@ const (
 	categoryPolicy        = "policy"
 	categoryTechnical     = "technical"
 	categoryFlowState     = "flow_state"
+	categoryClientRequest = "client_request"
 	categoryUnknown       = "unknown"
 )
 
@@ -83,7 +91,32 @@ const (
 	eventResultRejected    = "rejected"
 	reasonInvalidCode      = "invalid_code"
 	reasonAssertion        = "assertion_rejected"
+
+	eventTypeCodeIssuance     = "oidc.code_issuance"
+	eventTypeCodeRedemption   = "oidc.code_redemption"
+	flowEffectCodeIssued      = "code_issued"
+	flowEffectTokensIssued    = "tokens_issued"
+	flowEffectCodeConsumed    = "code_consumed"
+	reasonExistingSession     = "existing_session"
+	reasonAuthenticatedInFlow = "authenticated_in_flow"
+	reasonSourceNotRecorded   = "not_recorded"
+	reasonTokensIssued        = "tokens_issued"
+	grantAuthorizationCode    = "authorization_code"
+	protocolOIDC              = "oidc"
+	authenticationUnobserved  = "unknown"
 )
+
+// codeLifetimes maps the oidc.code_issuance contract version to the longest time its code stays redeemable after
+// the observed issuance (DIAGNOSTIC_CONTRACT.md §7.6). Old rows keep the lifetime of their version.
+var codeLifetimes = map[int]time.Duration{1: 10 * time.Minute}
+
+// CodeLifetimeOfIssuanceVersion returns the redeemable lifetime the history assumes for an oidc.code_issuance event
+// version; false means the version is unknown and no expiry can be stated.
+func CodeLifetimeOfIssuanceVersion(version int) (time.Duration, bool) {
+	lifetime, ok := codeLifetimes[version]
+
+	return lifetime, ok
+}
 
 // Event and finding codes. They are the stable interface for UIs.
 const (
@@ -120,6 +153,15 @@ const (
 	CodeFactorUnclassified      = "SECOND_FACTOR_UNCLASSIFIED"
 	CodeFactorOnLatchedFlow     = "SECOND_FACTOR_ON_LATCHED_FLOW"
 	CodeUnsupportedEventVersion = "UNSUPPORTED_EVENT_VERSION"
+
+	CodeAuthorizationCodeIssued     = "AUTHORIZATION_CODE_ISSUED"
+	CodeTokensIssued                = "TOKENS_ISSUED"
+	CodeRedemptionClientMismatch    = "CODE_REDEMPTION_CLIENT_MISMATCH"
+	CodeRedemptionRedirectMismatch  = "CODE_REDEMPTION_REDIRECT_URI_MISMATCH"
+	CodeRedemptionPKCEFailed        = "CODE_REDEMPTION_PKCE_FAILED"
+	CodeRedemptionInvalidTarget     = "CODE_REDEMPTION_INVALID_TARGET"
+	CodeRedemptionTechnicalError    = "CODE_REDEMPTION_TECHNICAL_ERROR"
+	CodeCompletionEventUnclassified = "COMPLETION_EVENT_UNCLASSIFIED"
 )
 
 // Uncertainty codes attached to findings whose recorded value can hide another cause.
@@ -220,15 +262,15 @@ func interpretTempfail(record LoginRecord) interpretation {
 	}
 }
 
-// mfaReading maps one (result, reason) pair of the observable MFA outcomes table (§7.4).
-type mfaReading struct {
+// stepReading is the interpreted result, code, and category of one observable step-event outcome (§7.4, §7.6).
+type stepReading struct {
 	result   string
 	code     string
 	category string
 }
 
 // mfaReadings is the complete §7.4 table; unknown pairs stay unclassified.
-var mfaReadings = map[[2]string]mfaReading{
+var mfaReadings = map[[2]string]stepReading{
 	{eventResultInvalid, reasonInvalidCode}:      {resultInvalid, CodeFactorRejected, categorySecondFactor},
 	{eventResultInvalid, reasonAssertion}:        {resultInvalid, CodeFactorRejected, categorySecondFactor},
 	{eventResultInvalid, "ceremony_unavailable"}: {resultStateRejected, CodeFactorChallengeMissing, categoryFlowState},
@@ -243,12 +285,28 @@ var mfaReadings = map[[2]string]mfaReading{
 	{eventResultSuccess, flowEffectFailureKept}:  {resultAccepted, CodeFactorVerifiedKept, categoryCredential},
 }
 
-// interpretAuthEvent reads one second-factor event; a factor attempt is never a terminal flow failure.
+// interpretAuthEvent reads one step event with the reader of its type.
 func interpretAuthEvent(record AuthEventRecord) interpretation {
-	if record.EventType != eventTypeMFA || record.EventVersion != supportedEventVersion ||
-		record.FactorRole != factorRoleSecond {
-		return interpretation{stage: stageSecondFactor, result: resultUnknown, code: CodeUnsupportedEventVersion,
-			category: categoryUnknown, finding: true}
+	switch record.EventType {
+	case eventTypeMFA:
+		return interpretFactorEvent(record)
+	case eventTypeCodeIssuance, eventTypeCodeRedemption:
+		return interpretCompletionEvent(record)
+	default:
+		return unsupportedEvent(stageUnclassified)
+	}
+}
+
+// unsupportedEvent marks an event whose type or version this reader does not know.
+func unsupportedEvent(stage string) interpretation {
+	return interpretation{stage: stage, result: resultUnknown, code: CodeUnsupportedEventVersion,
+		category: categoryUnknown, finding: true}
+}
+
+// interpretFactorEvent reads one second-factor event; a factor attempt is never a terminal flow failure.
+func interpretFactorEvent(record AuthEventRecord) interpretation {
+	if record.EventVersion != supportedEventVersion || record.FactorRole != factorRoleSecond {
+		return unsupportedEvent(stageSecondFactor)
 	}
 
 	key := [2]string{record.Result, record.Reason}
@@ -267,6 +325,51 @@ func interpretAuthEvent(record AuthEventRecord) interpretation {
 	}
 
 	return result
+}
+
+// completionReadings is the complete table of observable OIDC completion events (§7.6), keyed by type, result,
+// reason, and flow effect; unknown combinations stay unclassified.
+var completionReadings = map[[4]string]stepReading{
+	{eventTypeCodeIssuance, eventResultSuccess, reasonAuthenticatedInFlow, flowEffectCodeIssued}: {
+		resultIssued, CodeAuthorizationCodeIssued, categorySuccess},
+	{eventTypeCodeIssuance, eventResultSuccess, reasonExistingSession, flowEffectCodeIssued}: {
+		resultIssued, CodeAuthorizationCodeIssued, categorySuccess},
+	{eventTypeCodeIssuance, eventResultSuccess, reasonSourceNotRecorded, flowEffectCodeIssued}: {
+		resultIssued, CodeAuthorizationCodeIssued, categorySuccess},
+	{eventTypeCodeRedemption, eventResultSuccess, reasonTokensIssued, flowEffectTokensIssued}: {
+		resultSucceeded, CodeTokensIssued, categorySuccess},
+	{eventTypeCodeRedemption, eventResultRejected, "client_mismatch", flowEffectCodeConsumed}: {
+		resultRejected, CodeRedemptionClientMismatch, categoryClientRequest},
+	{eventTypeCodeRedemption, eventResultRejected, "redirect_uri_mismatch", flowEffectCodeConsumed}: {
+		resultRejected, CodeRedemptionRedirectMismatch, categoryClientRequest},
+	{eventTypeCodeRedemption, eventResultRejected, "pkce_mismatch", flowEffectCodeConsumed}: {
+		resultRejected, CodeRedemptionPKCEFailed, categoryClientRequest},
+	{eventTypeCodeRedemption, eventResultRejected, "invalid_target", flowEffectCodeConsumed}: {
+		resultRejected, CodeRedemptionInvalidTarget, categoryClientRequest},
+	{eventTypeCodeRedemption, eventResultError, "token_issue_error", flowEffectCodeConsumed}: {
+		resultTechnicalError, CodeRedemptionTechnicalError, categoryTechnical},
+	{eventTypeCodeRedemption, eventResultError, "client_state_error", flowEffectCodeConsumed}: {
+		resultTechnicalError, CodeRedemptionTechnicalError, categoryTechnical},
+}
+
+// interpretCompletionEvent reads one OIDC code issuance or redemption event. The stage separates the browser answer
+// (authorization) from the token endpoint (token_exchange); neither is a second factor.
+func interpretCompletionEvent(record AuthEventRecord) interpretation {
+	stage := stageAuthorization
+	if record.EventType == eventTypeCodeRedemption {
+		stage = stageTokenExchange
+	}
+
+	if record.EventVersion != supportedEventVersion {
+		return unsupportedEvent(stage)
+	}
+
+	reading, ok := completionReadings[[4]string{record.EventType, record.Result, record.Reason, record.FlowEffect}]
+	if !ok {
+		return simple(stage, resultUnknown, CodeCompletionEventUnclassified, categoryUnknown)
+	}
+
+	return simple(stage, reading.result, reading.code, reading.category)
 }
 
 // factorUncertainty names the documented verifier limits that can hide another cause behind a rejection (§7.4).

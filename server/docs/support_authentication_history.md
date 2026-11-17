@@ -4,7 +4,8 @@ Status: implemented on the `features` branch, locally tested; not released and n
 
 This read-only management API answers, from recorded ClickHouse evidence only: *why could a user not log in at a
 past attempt* – were the primary credentials rejected, did a second factor fail, did a control such as a brute-force
-ban reject the request before the credential check, or was there a technical error – and what cannot be said.
+ban reject the request before the credential check, was there a technical error, and did Nauthilus finish its part of
+an OIDC login (code issued, code redeemed) – and what cannot be said.
 
 It is a separate area from the current-state support inspection: it never reads today's ban, GeoIP, reputation, or
 configuration state, and today's state never explains a past failure. The data contract it reads is
@@ -120,10 +121,17 @@ Every 200 answer carries `history`:
   (`within_retention`, `partially_expired`, `expired`) per table. `no_rows_for_deployment` means the stream is disabled
   **or** nothing was recorded; the two cannot be told apart.
 - `conditions[]`: the limiting conditions above as codes, plus `LEGACY_ROWS_PRESENT`, `CONTRACT_CUTOVER_UNKNOWN`,
-  `NO_CONTRACT_ROWS_IN_WINDOW`, `CANDIDATE_NETWORKS_PARTIAL`.
+  `NO_CONTRACT_ROWS_IN_WINDOW`, `CANDIDATE_NETWORKS_PARTIAL`, `COMPLETION_CUTOVER_UNKNOWN` (the completion probe failed;
+  every flow keeps the never-recorded reading).
 - `known_limits[]`: limits that always apply, for example `SUCCESS_DEDUPLICATION_MAY_HIDE_REPEATS`,
   `BOUNDED_BUFFERS_MAY_DROP_ROWS`, `BEST_EFFORT_TERMINAL_POST_ACTIONS_MAY_BE_DROPPED`, `NO_ROW_WITHOUT_ANALYTICS_EFFECT`,
-  `FLOW_COMPLETION_NEVER_RECORDED`, `BROWSER_ABORTS_NOT_RECORDED`, `LOGIN_CASE_VARIANTS_NOT_MATCHED`.
+  `BROWSER_ABORTS_NOT_RECORDED`, `LOGIN_CASE_VARIANTS_NOT_MATCHED`. While the deployment has no OIDC completion event
+  within retention the list keeps `FLOW_COMPLETION_NEVER_RECORDED`; once it has, that entry is replaced by
+  `FLOW_COMPLETION_RECORDED_FOR_OIDC_AUTHORIZATION_CODE_ONLY`, `TOKEN_REQUESTS_BEFORE_CODE_RESOLUTION_NOT_RECORDED`,
+  `AUTHORIZATION_ERRORS_NOT_RECORDED`, and `CLIENT_SESSION_NOT_OBSERVED`.
+- `oidc_completion_events_since`: first OIDC completion event of the deployment within retention (null: none, or the
+  probe failed with `COMPLETION_CUTOVER_UNKNOWN`). Flows that began before it predate completion recording. The probe
+  is cached per hour of the window end for five minutes, so a first event can appear with that delay.
 - `delivery_completeness` is always `not_guaranteed`; `late_events_possible` is true when the window ends within five
   minutes of the query (export delay).
 - `contract_rows_since`: first row of the diagnostic contract in the window (older rows are legacy).
@@ -150,23 +158,64 @@ IP; parallel tabs are separate flows, and every factor retry is its own event.
 | Field | Values |
 |---|---|
 | `outcome` | `succeeded`, `rejected`, `technical_error`, `not_observed`, `unknown` |
-| `outcome_basis` | `request_terminal_answer` (sealed answer of a request), `primary_failure_latched` (a fail-latched flow cannot succeed), `primary_failure_kept` (detail role: the latched step-up was consumed), `none`, `legacy` |
+| `outcome_basis` | `request_terminal_answer` (sealed answer of a request), `primary_failure_latched` (a fail-latched flow cannot succeed), `primary_failure_kept` (detail role: the latched step-up was consumed), `oidc_tokens_issued` (the flow's code was redeemed), `oidc_code_redemption_rejected` (the token request for the code was rejected; a client error, not a credential failure), `oidc_code_redemption_failed` (technical failure after the code was consumed), `none`, `legacy` |
 | `final_outcome_observed` | true only with one of the recorded bases above |
-| `progress` | furthest recorded step: `none`, `technical_error`, `pre_credential_rejected`, `primary_rejected`, `primary_succeeded`, `second_factor_completed`, `primary_failure_latched` |
-| `steps` | `primary`: `recorded`/`not_recorded`; `second_factor`: `recorded`, `not_recorded`, `withheld`, `not_applicable` |
+| `progress` | furthest recorded step: `none`, `technical_error`, `pre_credential_rejected`, `primary_rejected`, `primary_succeeded`, `second_factor_completed`, `primary_failure_latched`, `authorization_code_issued`, `tokens_issued` |
+| `steps` | `primary`: `recorded`/`not_recorded`/`session_reused`; `second_factor`: `recorded`, `not_recorded`, `withheld`, `not_applicable`; `code_issuance`, `code_redemption`: `recorded`, `not_recorded`, `not_applicable` |
+| `completion` | OIDC authorization-code flows only (null otherwise), see below |
 | `findings[]` | every observed failure with `code`, `category`, `certainty` (`observed`/`uncertain`), `uncertainty[]`, `event_id`; there is no single invented "main cause" |
-| `recording` | `known_gaps[]` (`CONFLICTING_TERMINAL_RECORDS`, `PRIMARY_ROW_NOT_RECORDED`, `AUTH_EVENTS_NOT_READ`, `ATTEMPT_MAY_EXTEND_BEYOND_READ_WINDOW`, `FLOW_COMPLETION_NEVER_RECORDED`, `LEGACY_ROWS_UNINTERPRETED`), `replayed_rows_merged`, `legacy_rows`, `events_truncated`, `events_withheld` |
+| `recording` | `known_gaps[]` (`CONFLICTING_TERMINAL_RECORDS`, `PRIMARY_ROW_NOT_RECORDED`, `AUTH_EVENTS_NOT_READ`, `ATTEMPT_MAY_EXTEND_BEYOND_READ_WINDOW`, `FLOW_COMPLETION_NEVER_RECORDED`, `FLOW_COMPLETION_NOT_OBSERVED`, `FLOW_COMPLETION_SCOPE_UNDETERMINED`, `LEGACY_ROWS_UNINTERPRETED`), `replayed_rows_merged`, `legacy_rows`, `events_truncated`, `events_withheld` |
 
-A completed IdP login is never recorded (no token or assertion event exists), so IdP flows stay `not_observed` unless
-the flow was latched. An IdP password row with `ok` means only "primary step succeeded"; a request row with `ok`
-means the authentication request of that protocol was accepted. `known_gaps: []` only means no gap is known.
+`outcome` never names a cause: always show `outcome_basis` and `findings` with it. An IdP password row with `ok` means
+only "primary step succeeded"; a request row with `ok` means the authentication request of that protocol was accepted.
+`known_gaps: []` only means no gap is known.
+
+### OIDC completion
+
+Nauthilus has finished its part of an OIDC authorization-code login when the token endpoint handed a successful
+token response for the flow's code to the transport. Four milestones stay separate and are never equated: primary step
+succeeded (`PRIMARY_AUTHENTICATION_SUCCEEDED`), second factor accepted (`SECOND_FACTOR_ACCEPTED`), code issued to the
+browser (`AUTHORIZATION_CODE_ISSUED`), code redeemed (`TOKENS_ISSUED`). A token response does not prove a webmail or
+other relying-party session (`CLIENT_SESSION_NOT_OBSERVED`). The data contract is section 7.6 of the diagnostic
+contract.
+
+`completion` (only for flows with authorization-code evidence: a completion event or a password row with
+`grant_type = authorization_code`) holds `scope: oidc_authorization_code`, `state`, `authentication`,
+`code_issued_at`, `code_redeemable_until` (issuance plus the lifetime of the event version), `redemption_observed_at`:
+
+| `state` | Meaning | outcome / basis |
+|---|---|---|
+| `tokens_issued` | observed: code redeemed, tokens issued. Dominates every other event: a code is consumed once, and a replay is never attributable, so no later failure can undo it | `succeeded` / `oidc_tokens_issued` |
+| `redemption_rejected` | observed: the code was consumed, the token request rejected (`invalid_grant`, `invalid_target`) | `rejected` / `oidc_code_redemption_rejected` |
+| `redemption_failed` | observed: technical failure after the consume | `technical_error` / `oidc_code_redemption_failed` |
+| `redemption_pending` | code issued; it may still be redeemed or its redemption still be exported (lifetime plus 5 min) | `not_observed` |
+| `code_expired_redemption_not_observed` | the code can no longer be redeemed and no redemption was observed in a read range that covers the whole horizon. Never proof of an abort: an event can be dropped | `not_observed` |
+| `code_issuance_not_observed` | recording was active when the flow began, but neither issuance nor redemption was observed (still in the flow, aborted, consent denied, error redirect, or dropped) | `not_observed` |
+| `not_recorded` | the flow began before the deployment recorded completion events: old data stays unknown | `not_observed` |
+| `unknown` | events unreadable, cut by the per-attempt bound, conflicting, of an unknown version (finding `UNSUPPORTED_EVENT_VERSION`), or beyond the read window | `not_observed` |
+
+`authentication` is recorded with the code issuance: `authenticated_in_flow` (the password login completed on this
+flow), `existing_session` (a reused SSO session; `steps.primary` is then `session_reused` and no
+`PRIMARY_ROW_NOT_RECORDED` gap is reported), `not_recorded` (flow record of an older release), or `unknown` (no
+issuance observed). Flows without MFA simply have no second-factor events. A latched flow is decided by its latch and
+has no completion block; completion events on a latched flow are contradictory and read `unknown` with
+`CONFLICTING_TERMINAL_RECORDS`.
+
+Gaps of flows without final outcome: `FLOW_COMPLETION_NOT_OBSERVED` (authorization-code flow in the recorded era),
+`FLOW_COMPLETION_SCOPE_UNDETERMINED` (OIDC flow without any recorded grant in the recorded era, for example a step-up
+without password row), and `FLOW_COMPLETION_NEVER_RECORDED` for SAML, device-code, and every flow before completion
+recording. Token requests that never resolve a code (unknown, expired, replayed codes, client authentication failures)
+are not recorded and can never be attributed to a flow.
+
+Search filters (`client_ip`, `protocol`, `oidc_client_id`, `saml_entity_id`) also apply to step events, so a reused-
+session flow without password row is found; redemption events carry no client IP.
 
 Events (`events[]`, at most 200 per attempt, ordered by recorded time; `sequence` is presentation order only, there is
 no global order across instances) carry `stage`, `result`, `code`, `category`, `identity` (`supplied_login` is the
 claim as typed, `canonical_account` the account recorded at event time, `account_found_at_capture` is a weak
 capture-time flag, `matched_by`, `subject_match`, `redacted`), `context`, the recorded Policy `decision`
-(`outcome_marker`, `response_marker`, `tempfail_reason`, `decision_sources`, …), `factor` for second-factor events,
-and structured `reputation` (`state: none_recorded` is never a neutral rating; an early rejection can end before any
+(`outcome_marker`, `response_marker`, `tempfail_reason`, `decision_sources`, `answered_status_code`,
+`answered_status_message`, …), `factor` for second-factor events only, and structured `reputation` (`state: none_recorded` is never a neutral rating; an early rejection can end before any
 reputation check).
 
 ### Codes
@@ -187,6 +236,11 @@ reputation check).
 | `SECOND_FACTOR_TECHNICAL_ERROR`, `FLOW_STATE_ERROR` | Verifier, attempt store, or state failure. |
 | `SECOND_FACTOR_ON_LATCHED_FLOW` | Support role: factor attempts on a flow whose primary step failed; results withheld. |
 | `SECOND_FACTOR_VERIFIED_PRIMARY_FAILURE_KEPT` | Detail role: the factor was right, the earlier primary failure stays. Never a password success. |
+| `AUTHORIZATION_CODE_ISSUED` | The browser was redirected to the client with a code (stage `authorization`); the client has not been observed redeeming it. |
+| `TOKENS_ISSUED` | The code was redeemed and tokens issued (stage `token_exchange`); Nauthilus's part is complete. |
+| `CODE_REDEMPTION_CLIENT_MISMATCH`, `CODE_REDEMPTION_REDIRECT_URI_MISMATCH`, `CODE_REDEMPTION_PKCE_FAILED`, `CODE_REDEMPTION_INVALID_TARGET` | Category `client_request`: the token request did not match the issued code; the code is consumed. A client error after a successful login, not a credential failure. |
+| `CODE_REDEMPTION_TECHNICAL_ERROR` | Token issuance or client bookkeeping failed after the code was consumed. |
+| `COMPLETION_EVENT_UNCLASSIFIED` | A completion event with an unknown result/reason combination. |
 
 UIs must switch on codes and tolerate unknown codes (show them verbatim as "unclassified").
 
@@ -195,11 +249,28 @@ UIs must switch on codes and tolerate unknown codes (show them verbatim as "uncl
 | Path | Recorded | Not recorded |
 |---|---|---|
 | Mail/API authentication (nginx, header, json, cbor, basic, gRPC) | one or more `logins` rows with the sealed answer | repeats hidden by deduplication, dropped buffers, requests without analytics effect |
-| IdP password (OIDC, SAML, self-service portal) | one row per submission in the flow | completion of the login, SSO session reuse |
+| IdP password (OIDC, SAML, self-service portal) | one row per submission in the flow | SAML assertion issuance |
+| OIDC authorization code (with or without MFA, also a reused SSO session) | code issuance to the browser, code redemption at the token endpoint | token requests that never resolve a code, authorization errors, the relying-party session |
 | TOTP, recovery code, WebAuthn as second factor | one event per verification | browser aborts, a ceremony never submitted |
 | Passwordless WebAuthn | does not exist in the IdP (second factor only) | – |
 | Self-service step-up (`protocol: account`) | events keyed by request id, no `flow_ref` | link to the portal login flow |
 | Pre-credential rejection (ban, RBL, relay domain, TLS, environment) | row with `pre_auth` stage, marker, `decision_sources` | later checks (GeoIP/reputation may be absent) |
+
+### Answered status
+
+`decision.answered_status_code` and `decision.answered_status_message` are the stored host status code and status text
+selected for the sealed terminal decision (`logins.http_status`, `logins.status_msg`). They are not results – read
+`outcome` – and not the committed transport status (`context.transport_status`): nginx-style answers carry 200 also for
+rejections, and an IdP browser login answers its page with 200 or 302. IdP pages render their own localized text, so
+the message is not necessarily what a user saw. Both are null when no terminal decision was sealed (contract
+`outcome = 'unknown'`), and legacy rows have no `decision` at all, so an unknown value never reads as success. The
+message is the text the authentication caller received (configured texts, Lua `status_message_set`, tempfail default),
+never a host backend error; in the support projection it is null on events whose identity is redacted, because free
+text can name that identity.
+
+Example (production pattern of an OIDC password row): `{"outcome": "ok", "response_marker": "auth.response.ok",
+"answered_status_code": 200, "answered_status_message": "OK"}` with `context.transport_status: 302` – the decision
+was a success, the browser received the redirect.
 
 ### Identity
 
@@ -293,6 +364,22 @@ Technical error:
  "events": [{"decision": {"outcome": "tempfail", "tempfail_reason": "backend_tempfail"}}]}
 ```
 
+Complete OIDC login with TOTP (Nauthilus's part finished):
+
+```json
+{"attempt_id": "fl1.3333…", "kind": "flow", "outcome": "succeeded", "outcome_basis": "oidc_tokens_issued",
+ "final_outcome_observed": true, "progress": "tokens_issued",
+ "steps": {"primary": "recorded", "second_factor": "recorded", "code_issuance": "recorded", "code_redemption": "recorded"},
+ "completion": {"scope": "oidc_authorization_code", "state": "tokens_issued", "authentication": "authenticated_in_flow",
+                "code_issued_at": "2026-11-17T18:35:08.1Z", "code_redeemable_until": "2026-11-17T18:45:08.1Z",
+                "redemption_observed_at": "2026-11-17T18:35:08.9Z"},
+ "events": [{"stage": "primary_authentication", "code": "PRIMARY_AUTHENTICATION_SUCCEEDED"},
+            {"stage": "second_factor", "code": "SECOND_FACTOR_ACCEPTED"},
+            {"stage": "authorization", "code": "AUTHORIZATION_CODE_ISSUED"},
+            {"stage": "token_exchange", "code": "TOKENS_ISSUED"}],
+ "recording": {"known_gaps": []}}
+```
+
 Incomplete evidence:
 
 ```json
@@ -310,7 +397,8 @@ log in".
 - Go: `server/openapi/client` `SearchAuthenticationAttempts`, `GetAuthenticationAttempt`, `SearchBruteForceBans`.
 - Python: `contrib/client/nauthilus-admin.py support …` (see its README for exit codes; a deployed mail-stack copy must
   be synced separately).
-- Tests: `server/supporthistory` (JSON scenario `testdata/attempt_scenarios.json`), `server/supporthistory/clickhousestore`,
+- Tests: `server/supporthistory` (JSON scenario `testdata/attempt_scenarios.json`, completion matrix
+  `completion_test.go`, answered status `answered_status_test.go`), `server/supporthistory/clickhousestore`,
   `server/handler/support` (scope matrix, OpenAPI response validation), and the `clickhouse_integration` tests
   `TestClickHouseHistory*` that write through the real plugin into ClickHouse 25.8 and read through a provisioned
   read-only account (`contrib/clickhouse-kubernetes/run-integration-tests.sh -run TestClickHouseHistory`).

@@ -91,13 +91,11 @@ func (h *FrontendHandler) emitCanonicalMFAEvent(
 		return
 	}
 
-	event := pluginapi.AuthEvent{
-		ObservedAt: time.Now().UTC(), EventID: newCanonicalMFAEventID(), RequestID: ctx.GetString(definitions.CtxGUIDKey),
-		FlowRef: flowdomain.DiagnosticFlowRef(string(selection.stepUp.Value.Flow)), Protocol: canonicalSelfServiceProtocol,
-		Account: selection.identity.Account, ClientIP: ctx.ClientIP(), FactorRole: pluginapi.AuthEventFactorRoleSecond,
-		Method: method, Reason: outcome.reason, Type: pluginapi.AuthEventMFAVerification, Result: outcome.result,
-		FlowEffect: outcome.flowEffect, Version: pluginapi.AuthEventVersion, FailLatched: selection.failLatched,
-	}
+	event := newCanonicalAuthEvent(ctx, pluginapi.AuthEventMFAVerification, pluginapi.AuthEventVersion)
+	event.FlowRef = flowdomain.DiagnosticFlowRef(string(selection.stepUp.Value.Flow))
+	event.Protocol, event.Account, event.ClientIP = canonicalSelfServiceProtocol, selection.identity.Account, ctx.ClientIP()
+	event.FactorRole, event.Method, event.Reason = pluginapi.AuthEventFactorRoleSecond, method, outcome.reason
+	event.Result, event.FlowEffect, event.FailLatched = outcome.result, outcome.flowEffect, selection.failLatched
 
 	if parent := selection.parent; parent != nil {
 		event.Protocol = string(parent.Protocol)
@@ -125,8 +123,16 @@ func (h *FrontendHandler) authEventEmitter() canonicalAuthEventEmitter {
 	return h.deps.PluginRunner
 }
 
-// newCanonicalMFAEventID returns a random 128-bit hex idempotency key, or empty when randomness is unavailable.
-func newCanonicalMFAEventID() string {
+// newCanonicalAuthEvent starts one host step event of the observing request with a fresh idempotency key.
+func newCanonicalAuthEvent(ctx *gin.Context, eventType pluginapi.AuthEventType, version uint16) pluginapi.AuthEvent {
+	return pluginapi.AuthEvent{
+		ObservedAt: time.Now().UTC(), EventID: newCanonicalAuthEventID(), RequestID: ctx.GetString(definitions.CtxGUIDKey),
+		Type: eventType, Version: version,
+	}
+}
+
+// newCanonicalAuthEventID returns a random 128-bit hex idempotency key, or empty when randomness is unavailable.
+func newCanonicalAuthEventID() string {
 	var buffer [16]byte
 
 	if _, err := rand.Read(buffer[:]); err != nil {

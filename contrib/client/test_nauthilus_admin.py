@@ -614,6 +614,49 @@ class SupportHistoryClientTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(stdout)["headers"]["cache-control"], "no-store")
 
+    def test_summary_renders_completion_and_keeps_older_answers_honest(self):
+        complete = {"attempt_id": "fl1." + "3" * 32, "kind": "flow", "outcome": "succeeded",
+                    "outcome_basis": "oidc_tokens_issued", "final_outcome_observed": True, "progress": "tokens_issued",
+                    "steps": {"primary": "recorded", "second_factor": "recorded", "code_issuance": "recorded",
+                              "code_redemption": "recorded"},
+                    "completion": {"state": "tokens_issued", "authentication": "authenticated_in_flow"},
+                    "findings": [], "recording": {"known_gaps": []}}
+        older = {"attempt_id": "fl1." + "4" * 32, "kind": "flow", "outcome": "not_observed", "outcome_basis": "none",
+                 "final_outcome_observed": False, "progress": "second_factor_completed",
+                 "steps": {"primary": "recorded", "second_factor": "recorded"},
+                 "findings": [{"code": "SECOND_FACTOR_REJECTED"}],
+                 "recording": {"known_gaps": ["FLOW_COMPLETION_NEVER_RECORDED"]}}
+        response = history_response(attempts=[complete, older])
+        code, stdout, stderr, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                   "--summary", responses=[response])
+        self.assertEqual(code, 0, stderr)
+        header, first, second = stdout.strip().splitlines()
+        self.assertEqual(header, "result_basis=matches_found availability=available completion_since=-")
+        self.assertIn("outcome=succeeded/oidc_tokens_issued final=true progress=tokens_issued "
+                      "steps=recorded/recorded/recorded/recorded completion=tokens_issued "
+                      "authentication=authenticated_in_flow findings=- gaps=-", first)
+        self.assertIn("outcome=not_observed/none final=false progress=second_factor_completed "
+                      "steps=recorded/recorded/-/- completion=- authentication=- findings=SECOND_FACTOR_REJECTED "
+                      "gaps=FLOW_COMPLETION_NEVER_RECORDED", second)
+
+    def test_detail_summary_lists_events_with_the_answered_status(self):
+        event = {"sequence": 1, "occurred_at": "2026-11-17T18:34:56Z", "stage": "primary_authentication",
+                 "code": "PRIMARY_AUTHENTICATION_SUCCEEDED", "context": {"transport_status": 302},
+                 "decision": {"answered_status_code": 200, "answered_status_message": "OK"}}
+        older = {"sequence": 2, "occurred_at": "2026-11-17T18:35:07Z", "stage": "second_factor",
+                 "code": "SECOND_FACTOR_ACCEPTED", "context": {}, "decision": None}
+        detail = {"attempt_id": ATTEMPT_ID, "kind": "flow", "outcome": "not_observed", "events": [event, older]}
+        code, stdout, stderr, _ = self.run_support("attempts", "detail", "--attempt-id", ATTEMPT_ID, "--around",
+                                                   "2026-11-17T18:34:56Z", "--summary",
+                                                   responses=[history_response(attempt=detail)])
+        self.assertEqual(code, 0, stderr)
+        lines = stdout.strip().splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[2], "  #1 2026-11-17T18:34:56Z stage=primary_authentication "
+                                   "code=PRIMARY_AUTHENTICATION_SUCCEEDED answered=200 message=\"OK\" transport=302")
+        self.assertEqual(lines[3], "  #2 2026-11-17T18:35:07Z stage=second_factor code=SECOND_FACTOR_ACCEPTED "
+                                   "answered=- message=- transport=-")
+
     def test_help_documents_the_exit_codes(self):
         for argv in (["support", "--help"], ["support", "attempts", "search", "--help"]):
             with self.subTest(argv=argv):

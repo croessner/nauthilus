@@ -187,6 +187,36 @@ without an attempt) prints a stderr note with `result_basis` and
 `history.conditions`: it does not prove that no login or ban happened, because
 history delivery is not guaranteed to be complete.
 
+`attempts search` and `attempts detail` accept `--summary`: instead of JSON they
+print a header line (`result_basis`, `availability`, `completion_since`), one
+line per attempt with `outcome/outcome_basis`, `final`, `progress`, the four
+steps (`primary/second_factor/code_issuance/code_redemption`), the OIDC
+`completion` state and `authentication`, finding codes and known gaps, and for
+`detail` one line per event with stage, code, the stored decision status
+(`answered`, `message`) and the committed `transport` status. A field the answer
+does not carry, for example in an answer of an older server, prints as `-`; it
+never defaults to a success. Read the OIDC fields as follows: `completion=tokens_issued`
+means Nauthilus redeemed the code and issued tokens (its part is complete; a
+webmail session is not observed), `redemption_pending` and
+`code_expired_redemption_not_observed` mean no redemption was observed (never
+proof of an abort), `not_recorded` means the flow predates completion
+recording. `answered=200 message="OK"` is the stored host decision status, not
+the HTTP status the browser received (`transport`, for example 302).
+
+The JSON output always carries the complete answer. A `jq` view of the same
+fields that also copes with older answers:
+
+```sh
+./nauthilus-admin.py --output json support attempts search --login alice@example.test --since 2h |
+  jq -r '.attempts[] | [.attempt_id, .outcome, .outcome_basis, .progress,
+         (.completion.state // "-"), (.completion.authentication // "-"),
+         ((.recording.known_gaps // []) | join(",") | if . == "" then "-" else . end)] | @tsv'
+./nauthilus-admin.py --output json support attempts detail --attempt-id fl1.0123456789abcdef0123456789abcdef \
+  --around 2026-11-17T18:34:56Z --login alice@example.test |
+  jq -r '.attempt.events[] | [.sequence, .stage, .code, (.decision.answered_status_code // "-"),
+         (.decision.answered_status_message // "-"), (.context.transport_status // "-")] | @tsv'
+```
+
 The managed mail stack may run an older or backported copy of this client (see
 `/usr/local/sbin/auth-cli` above). The `support` commands exist only in this
 owner-repository client. Syncing a deployed copy is a separate, deliberate

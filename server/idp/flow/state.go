@@ -74,6 +74,8 @@ const (
 	FlowMetadataUniqueUserID = "unique_user_id"
 	// FlowMetadataDisplayName stores the display name across required MFA hops.
 	FlowMetadataDisplayName = "display_name"
+	// FlowMetadataAuthentication stores how an OIDC flow got its authenticated identity (diagnostics only).
+	FlowMetadataAuthentication = "authentication"
 )
 
 const requireMFAFlowIDSeparator = ":"

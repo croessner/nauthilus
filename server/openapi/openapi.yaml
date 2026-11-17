@@ -1872,10 +1872,18 @@ components:
     SupportHistoryCoverage:
       type: object
       additionalProperties: false
-      required: [contract_rows_since, sources, conditions, known_limits, availability, deployment,
-        delivery_completeness, late_events_possible]
+      required: [contract_rows_since, oidc_completion_events_since, sources, conditions, known_limits, availability,
+        deployment, delivery_completeness, late_events_possible]
       properties:
         contract_rows_since: {type: [string, "null"], format: date-time}
+        oidc_completion_events_since:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            First recorded OIDC completion event (oidc.code_issuance or oidc.code_redemption) of the deployment
+            within the event retention. Flows that started before it, or every flow when it is null, predate
+            completion recording and keep FLOW_COMPLETION_NEVER_RECORDED. Null also means the probe failed; then
+            conditions contain COMPLETION_CUTOVER_UNKNOWN.
         sources:
           type: array
           items:
@@ -1918,16 +1926,30 @@ components:
         event_id: {type: [string, "null"]}
         uncertainty: {type: array, items: {type: string}}
         code: {type: string}
-        category: {type: string, enum: [success, credential, second_factor, pre_credential, policy, technical, flow_state, unknown]}
+        category: {type: string, enum: [success, credential, second_factor, pre_credential, policy, technical, flow_state, client_request, unknown]}
         certainty: {type: string, enum: [observed, uncertain]}
     SupportHistoryDecision:
       type: object
       additionalProperties: false
-      required: [brute_force_bucket, brute_force_tolerated, decision_sources, operation, outcome, outcome_stage,
-        outcome_marker, response_marker, policy_rule, tempfail_reason, tempfail_checkpoint, policy_status, fsm_state]
+      required: [brute_force_bucket, brute_force_tolerated, answered_status_code, answered_status_message,
+        decision_sources, operation, outcome, outcome_stage, outcome_marker, response_marker, policy_rule,
+        tempfail_reason, tempfail_checkpoint, policy_status, fsm_state]
       properties:
         brute_force_bucket: {type: [string, "null"]}
         brute_force_tolerated: {type: [boolean, "null"]}
+        answered_status_code:
+          type: [integer, "null"]
+          description: >-
+            Stored host status code selected for the sealed terminal decision (logins.http_status: the configured
+            OK/Fail/InternalError code; 200 for nginx-style answers, also for rejections). It is not the committed
+            transport status (context.transport_status) and never a result: read outcome. Null when no terminal
+            decision was sealed.
+        answered_status_message:
+          type: [string, "null"]
+          description: >-
+            Stored status text the host answered the authentication caller with (logins.status_msg). IdP browser
+            pages render their own localized text, so this is not necessarily what a user saw. Null when no terminal
+            decision was sealed, and in the support projection on events whose identity is redacted.
         decision_sources: {type: array, items: {type: string}}
         operation: {type: string}
         outcome: {type: string}
@@ -2026,7 +2048,7 @@ components:
         source: {type: string, enum: [logins, auth_events]}
         request_id: {type: string}
         instance: {type: string}
-        stage: {type: string, enum: [primary_authentication, second_factor, pre_credential, legacy]}
+        stage: {type: string, enum: [primary_authentication, second_factor, pre_credential, legacy, authorization, token_exchange, unclassified]}
         result: {type: string}
         code: {type: string}
         category: {type: string}
@@ -2035,11 +2057,15 @@ components:
     SupportHistoryAttempt:
       type: object
       additionalProperties: false
-      required: [started_at, last_observed_at, findings, events, recording, steps, attempt_id, kind, projection,
-        outcome, outcome_basis, progress, final_outcome_observed]
+      required: [started_at, last_observed_at, completion, findings, events, recording, steps, attempt_id, kind,
+        projection, outcome, outcome_basis, progress, final_outcome_observed]
       properties:
         started_at: {type: string, format: date-time}
         last_observed_at: {type: string, format: date-time}
+        completion:
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistoryCompletion"
+            - type: "null"
         findings: {type: array, items: {$ref: "#/components/schemas/SupportHistoryFinding"}}
         events: {type: array, items: {$ref: "#/components/schemas/SupportHistoryEvent"}}
         recording:
@@ -2055,20 +2081,64 @@ components:
         steps:
           type: object
           additionalProperties: false
-          required: [primary, second_factor]
+          required: [primary, second_factor, code_issuance, code_redemption]
           properties:
-            primary: {type: string, enum: [recorded, not_recorded]}
+            primary:
+              type: string
+              enum: [recorded, not_recorded, session_reused]
+              description: session_reused marks an OIDC flow that /authorize started for an already authenticated session; no primary step happened in it.
             second_factor: {type: string, enum: [recorded, not_recorded, withheld, not_applicable], x-enum-varnames: [SupportHistorySecondFactorStepRecorded, SupportHistorySecondFactorStepNotRecorded, SupportHistorySecondFactorStepWithheld, SupportHistorySecondFactorStepNotApplicable]}
+            code_issuance: {type: string, enum: [recorded, not_recorded, not_applicable], x-enum-varnames: [SupportHistoryCodeIssuanceStepRecorded, SupportHistoryCodeIssuanceStepNotRecorded, SupportHistoryCodeIssuanceStepNotApplicable]}
+            code_redemption: {type: string, enum: [recorded, not_recorded, not_applicable], x-enum-varnames: [SupportHistoryCodeRedemptionStepRecorded, SupportHistoryCodeRedemptionStepNotRecorded, SupportHistoryCodeRedemptionStepNotApplicable]}
         attempt_id: {type: string}
         kind: {type: string, enum: [flow, request]}
         projection: {type: string, enum: [support, detail]}
         outcome: {type: string, enum: [succeeded, rejected, technical_error, not_observed, unknown]}
-        outcome_basis: {type: string, enum: [request_terminal_answer, primary_failure_latched, primary_failure_kept, none, legacy]}
+        outcome_basis:
+          type: string
+          enum: [request_terminal_answer, primary_failure_latched, primary_failure_kept, none, legacy,
+            oidc_tokens_issued, oidc_code_redemption_rejected, oidc_code_redemption_failed]
+          description: >-
+            The recorded evidence of the outcome. outcome never names a cause: oidc_code_redemption_rejected after a
+            successful login is a rejected token request of the client, not a credential failure. Show outcome_basis
+            and the findings together with outcome.
         progress:
           type: string
           enum: [none, technical_error, pre_credential_rejected, primary_rejected, primary_succeeded,
-            second_factor_completed, primary_failure_latched]
+            second_factor_completed, primary_failure_latched, authorization_code_issued, tokens_issued]
         final_outcome_observed: {type: boolean}
+    SupportHistoryCompletion:
+      type: object
+      additionalProperties: false
+      description: >-
+        Recorded OIDC authorization-code completion of one flow. Nauthilus's part ends with the token response for
+        the flow's code (state tokens_issued); a relying-party session after it is never observed. Only
+        authorization-code flows carry this block; SAML, device-code, flows without grant evidence, and latched flows
+        (decided by the latch) have none.
+      required: [code_issued_at, code_redeemable_until, redemption_observed_at, scope, state, authentication]
+      properties:
+        code_issued_at: {type: [string, "null"], format: date-time}
+        code_redeemable_until:
+          type: [string, "null"]
+          format: date-time
+          description: Latest instant the issued code could be redeemed (event contract version lifetime); null without issuance or for an unknown version.
+        redemption_observed_at: {type: [string, "null"], format: date-time}
+        scope: {type: string, const: oidc_authorization_code}
+        state:
+          type: string
+          enum: [tokens_issued, redemption_rejected, redemption_failed, redemption_pending,
+            code_expired_redemption_not_observed, code_issuance_not_observed, not_recorded, unknown]
+          description: >-
+            tokens_issued, redemption_rejected, and redemption_failed are observed and final. redemption_pending: the
+            code may still be redeemed or its redemption still be exported. code_expired_redemption_not_observed: the
+            code can no longer be redeemed and no redemption was observed; an event may have been dropped, so it
+            never proves an abort. code_issuance_not_observed: recording was active, but neither issuance nor
+            redemption was observed. not_recorded: the flow predates completion recording. unknown: evidence was
+            unreadable, truncated, conflicting, or unclassified.
+        authentication:
+          type: string
+          enum: [authenticated_in_flow, existing_session, not_recorded, unknown]
+          description: How the flow got its authenticated identity, as recorded with the code issuance; unknown without an observed issuance.
     SupportHistoryAttemptSearchResponse:
       type: object
       additionalProperties: false

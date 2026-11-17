@@ -19,7 +19,14 @@ CLICKHOUSE_EXPECTED_EVENTS=(
   "recovery_codes|invalid|invalid_code|none"
   "webauthn|success|verified|step_up_completed"
   "webauthn|invalid|assertion_rejected|none"
+  # OIDC authorization-code completion: code issued after a login on the flow, code redeemed at the token endpoint.
+  "|success|authenticated_in_flow|code_issued"
+  "|success|tokens_issued|tokens_issued"
 )
+# Synthetic credentials of the support history check (config/edge-a.yml); never real accounts.
+HISTORY_READER_PASSWORD="e2e-history-reader"
+HISTORY_CLIENT_ID="split-e2e-support"
+HISTORY_CLIENT_SECRET="split-e2e-support-secret"
 
 usage() {
   cat <<'USAGE'
@@ -35,6 +42,7 @@ Commands:
   browser        Run the Playwright browser smoke against the running stack.
   plugin-reload  Prove that SIGHUP applies native plugin config and refuses artifact changes.
   clickhouse-events  Prove that browser MFA flows produced the expected auth_events rows in ClickHouse.
+  clickhouse-history Prove browser OIDC completion events reach the history API and the owner Python client.
   smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks.
   down           Stop and remove the E2E stack.
 
@@ -395,6 +403,87 @@ clickhouse_events_check() {
   echo "ok clickhouse-auth-events"
 }
 
+# Provision the documented read-only history account in the disposable ClickHouse with the synthetic password.
+provision_history_reader() {
+  sed "s/CHANGE_ME_PASSWORD/${HISTORY_READER_PASSWORD}/" "${REPO_DIR}/contrib/clickhouse-kubernetes/history-reader.sql" |
+    "${COMPOSE[@]}" exec -T clickhouse clickhouse-client --multiquery
+}
+
+# Run the owner Python client against the edge-a history API with the synthetic support console.
+history_client() {
+  NAUTHILUS_URL="https://127.0.0.1:38080" python3 "${REPO_DIR}/contrib/client/nauthilus-admin.py" --insecure \
+    --token-cache off --client-id "${HISTORY_CLIENT_ID}" --client-secret "${HISTORY_CLIENT_SECRET}" \
+    --scopes "nauthilus:authenticate nauthilus:history_read nauthilus:history_detail" "$@"
+}
+
+# Prove the OIDC completion path end to end: browser authorization-code flows -> auth_events in ClickHouse -> the
+# read-only history API of edge-a -> the owner Python client. The edges record step events only (password rows are
+# written by the authority, which has no analytics effect here), so the history is partial and flows report
+# PRIMARY_ROW_NOT_RECORDED; the completion evidence is what this check proves.
+clickhouse_history_check() {
+  local evidence="${ROOT_DIR}/.work/history-attempts.json"
+  local account="" status=0
+
+  provision_history_reader
+
+  for _ in $(seq 1 30); do
+    account="$(clickhouse_query "SELECT account FROM nauthilus.auth_events WHERE event_type = 'oidc.code_redemption' AND result = 'success' AND deployment = 'e2e' AND account != '' GROUP BY account ORDER BY count() DESC, account LIMIT 1")"
+    [[ -n "${account}" ]] && break
+    sleep 2
+  done
+
+  if [[ -z "${account}" ]]; then
+    echo "The browser OIDC flows left no successful code redemption in ClickHouse." >&2
+    return 1
+  fi
+
+  mkdir -p "${ROOT_DIR}/.work"
+  history_client --output json support attempts search --account "${account}" --since 2h --all \
+    --audit-reference e2e-history >"${evidence}" || status=$?
+  if [[ "${status}" -ne 0 && "${status}" -ne 3 ]]; then
+    echo "The history search failed with exit code ${status}." >&2
+    return 1
+  fi
+
+  python3 - "${evidence}" <<'PY' || return 1
+import json, sys
+
+answer = json.load(open(sys.argv[1]))
+attempts = answer.get("attempts") or []
+done = [a for a in attempts if (a.get("completion") or {}).get("state") == "tokens_issued"]
+if not done:
+    sys.exit("no attempt reports completion.state tokens_issued")
+for attempt in done:
+    steps = attempt.get("steps") or {}
+    codes = [event.get("code") for event in attempt.get("events") or []]
+    if attempt.get("outcome") != "succeeded" or attempt.get("outcome_basis") != "oidc_tokens_issued" or \
+            not attempt.get("final_outcome_observed") or steps.get("code_redemption") != "recorded" or \
+            "TOKENS_ISSUED" not in codes:
+        sys.exit("inconsistent completed attempt: " + json.dumps(attempt)[:600])
+    stages = [event.get("stage") for event in attempt.get("events") or []]
+    if "token_exchange" not in stages or any(event.get("factor") for event in attempt.get("events") or []
+                                             if event.get("stage") in ("authorization", "token_exchange")):
+        sys.exit("completion events must keep their own stages without factor blocks")
+if answer["history"].get("oidc_completion_events_since") is None:
+    sys.exit("history.oidc_completion_events_since missing")
+if "FLOW_COMPLETION_RECORDED_FOR_OIDC_AUTHORIZATION_CODE_ONLY" not in answer["history"].get("known_limits", []):
+    sys.exit("known limits do not name the recorded completion scope")
+states = sorted({(a.get("completion") or {}).get("state") or "-" for a in attempts})
+sources = sorted({(a.get("completion") or {}).get("authentication") or "-" for a in attempts})
+print(f"history attempts={len(attempts)} completed={len(done)} states={states} authentication={sources}")
+PY
+
+  local detail
+  detail="$(python3 -c 'import json,sys; a=[x for x in json.load(open(sys.argv[1]))["attempts"] if (x.get("completion") or {}).get("state")=="tokens_issued"][0]; print(a["attempt_id"], a["started_at"])' "${evidence}")"
+  echo "history search (compact):"
+  history_client support attempts search --account "${account}" --since 2h --all --summary || [[ $? -eq 3 ]]
+  echo "history detail of one completed flow (compact):"
+  history_client support attempts detail --attempt-id "${detail%% *}" --around "${detail##* }" \
+    --account "${account}" --summary || [[ $? -eq 3 ]]
+
+  echo "ok clickhouse-history"
+}
+
 reset_stack() {
   "${COMPOSE[@]}" down -v --remove-orphans
 }
@@ -418,6 +507,9 @@ smoke() {
   fi
   if [[ "${status}" -eq 0 ]]; then
     clickhouse_events_check || status=$?
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    clickhouse_history_check || status=$?
   fi
   if [[ "${status}" -eq 0 ]]; then
     rpc_post_browser || status=$?
@@ -469,6 +561,9 @@ case "${command}" in
     ;;
   clickhouse-events)
     clickhouse_events_check
+    ;;
+  clickhouse-history)
+    clickhouse_history_check
     ;;
   smoke)
     smoke

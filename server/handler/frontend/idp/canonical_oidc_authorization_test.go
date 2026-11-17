@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	pluginapi "github.com/croessner/nauthilus/v4/pluginapi/v1"
 	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
@@ -305,6 +306,8 @@ func TestOIDCConsentCanonicalGETAndPOSTBindTypedFlowAndIgnorePostedState(t *test
 	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
 	authenticateCanonicalFixture(t, runtime, browserCookie)
 	handler, mockRedis := newOIDCCallbackRedirectTestHandler(t)
+	emitter := &recordingAuthEventEmitter{}
+	handler.canonicalAuthEventEmitter = emitter
 	session := openCanonicalFixture(t, runtime, browserCookie)
 	request := oidcAuthorizeRequest{
 		clientID: latchedConsentClientID, redirectURI: "https://app.example.com/callback",
@@ -319,6 +322,7 @@ func TestOIDCConsentCanonicalGETAndPOSTBindTypedFlowAndIgnorePostedState(t *test
 	}
 
 	state.AuthOutcome = flow.AuthOutcomeOK
+	state.Metadata[flow.FlowMetadataAuthentication] = sessionstate.OIDCFlowExistingSession
 
 	store := flow.NewTypedStore(session.Stores, session.Handle, flow.FlowProtocolOIDC, canonicalOIDCAuthorizationTTL)
 	if err = store.Save(context.Background(), state); err != nil {
@@ -406,6 +410,14 @@ func TestOIDCConsentCanonicalGETAndPOSTBindTypedFlowAndIgnorePostedState(t *test
 
 	if replayResponse.Code != http.StatusConflict {
 		t.Fatalf("canonical consent replay status = %d, want %d", replayResponse.Code, http.StatusConflict)
+	}
+
+	events := emitter.snapshot()
+	if len(events) != 1 || events[0].Type != pluginapi.AuthEventOIDCCodeIssuance ||
+		events[0].Reason != sessionstate.OIDCFlowExistingSession || events[0].Account != "alice" ||
+		events[0].ClientID != latchedConsentClientID || events[0].FlowRef != flow.DiagnosticFlowRef(state.FlowID) ||
+		strings.Contains(events[0].FlowRef, state.FlowID) {
+		t.Fatalf("consent issuance events = %+v, want exactly one secret-free issuance of the consented flow", events)
 	}
 }
 

@@ -26,7 +26,8 @@ import (
 
 const (
 	operationFilter = "operation IN ('authenticate', '')"
-	mfaEventFilter  = "event_type = 'mfa.verification'"
+	// stepEventFilter selects the step events the history interprets: second factors and OIDC completion.
+	stepEventFilter = "event_type IN ('mfa.verification', 'oidc.code_issuance', 'oidc.code_redemption')"
 	attemptKeyLogin = "if(flow_ref != '', flow_ref, session)"
 	attemptKeyEvent = "if(flow_ref != '', flow_ref, request_id)"
 	keyKindExpr     = "if(flow_ref != '', 'flow', 'request')"
@@ -37,7 +38,7 @@ const loginColumns = "toUnixTimestamp64Milli(ts) AS ts_ms, event_id, session, in
 	"username, account, client_ip, client_net, oidc_cid, saml_entity_id, grant_type, flow_ref, operation, outcome, " +
 	"outcome_stage, outcome_marker, response_marker, policy_rule, tempfail_reason, tempfail_checkpoint, policy_status, " +
 	"fsm_state, transport, transport_status, user_found, brute_force_bucket, brute_force_tolerated, decision_sources, " +
-	"contract_version, reputation_assessments, reputation_truncated"
+	"contract_version, reputation_assessments, reputation_truncated, http_status, status_msg"
 
 // eventColumns are the selected auth_events columns.
 const eventColumns = "toUnixTimestamp64Milli(ts) AS ts_ms, event_id, event_type, event_version, request_id, flow_ref, " +
@@ -73,11 +74,15 @@ func (s *Store) Anchors(ctx context.Context, query supporthistory.AnchorQuery) (
 	inner := "SELECT " + keyKindExpr + " AS key_kind, " + attemptKeyLogin + " AS key_value, ts FROM " +
 		s.client.table("logins") + stmt.whereClause()
 
-	if query.Filter == (supporthistory.AttemptFilter{}) && len(query.Subject.Accounts) > 0 {
+	if len(query.Subject.Accounts) > 0 {
 		events := stmt.sibling(s.deployment)
-		events.where(mfaEventFilter)
+		events.where(stepEventFilter)
 		events.timeRange("ts", query.From, query.Until)
 		events.where("account != '' AND account IN " + events.texts(query.Subject.Accounts))
+		events.equalsIfSet("client_ip", query.Filter.ClientIP)
+		events.equalsIfSet("protocol", query.Filter.Protocol)
+		events.equalsIfSet("client_id", query.Filter.OIDCClientID)
+		events.equalsIfSet("saml_entity_id", query.Filter.SAMLEntityID)
 		inner += " UNION ALL SELECT " + keyKindExpr + ", " + attemptKeyEvent + ", ts FROM " +
 			s.client.table("auth_events") + events.whereClause()
 	}
@@ -212,14 +217,14 @@ func (s *Store) LoginRows(ctx context.Context, query supporthistory.RowQuery) ([
 	return records, err
 }
 
-// AuthEvents returns the second-factor events of the attempts.
+// AuthEvents returns the second-factor and OIDC completion events of the attempts.
 func (s *Store) AuthEvents(ctx context.Context, query supporthistory.RowQuery) ([]supporthistory.AuthEventRecord, error) {
 	if len(query.Flows)+len(query.Requests) == 0 {
 		return nil, nil
 	}
 
 	stmt := newStatement(s.deployment)
-	stmt.where(mfaEventFilter)
+	stmt.where(stepEventFilter)
 	stmt.timeRange("ts", query.From, query.Until)
 
 	subject := ""
@@ -253,6 +258,7 @@ type loginRow struct {
 	Reputation          []reputationTuple `json:"reputation_assessments"`
 	TS                  optInt            `json:"ts_ms"`
 	TransportStatus     optInt            `json:"transport_status"`
+	AnsweredStatusCode  optInt            `json:"http_status"`
 	ContractVersion     optInt            `json:"contract_version"`
 	UserFound           optBool           `json:"user_found"`
 	BruteForceTolerated optBool           `json:"brute_force_tolerated"`
@@ -284,6 +290,7 @@ type loginRow struct {
 	Transport           string            `json:"transport"`
 	BruteForceBucket    string            `json:"brute_force_bucket"`
 	DecisionSources     string            `json:"decision_sources"`
+	StatusMessage       string            `json:"status_msg"`
 }
 
 // reputationTuple is one named reputation_assessments tuple.
@@ -314,6 +321,7 @@ func (r loginRow) record() supporthistory.LoginRecord {
 		PolicyRule: r.PolicyRule, TempFailReason: r.TempFailReason, TempFailCheckpoint: r.TempFailCheckpoint,
 		PolicyStatus: r.PolicyStatus, FSMState: r.FSMState, Transport: r.Transport,
 		BruteForceBucket: r.BruteForceBucket, ContractVersion: int(r.ContractVersion.int()),
+		AnsweredStatusCode: int(r.AnsweredStatusCode.int()), AnsweredStatusMessage: r.StatusMessage,
 		ReputationTruncated: r.ReputationTruncated.bool(), DecisionSources: splitSources(r.DecisionSources)}
 
 	if r.TransportStatus.value != nil {

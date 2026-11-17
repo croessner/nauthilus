@@ -18,7 +18,7 @@ import stat
 import sys
 import time
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -120,11 +120,13 @@ class Response:
 
 @dataclass(frozen=True)
 class CommandOutcome:
-    """CommandOutcome lets a command choose its process exit code and stderr notes besides the rendered result."""
+    """CommandOutcome lets a command choose its process exit code and stderr notes besides the rendered result; a
+    command that renders its own compact text sets text instead of printing the response."""
 
     result: Any
     exit_code: int = EXIT_OK
     notes: tuple[str, ...] = ()
+    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1733,8 +1735,88 @@ def support_history(client: NauthilusClient, args: argparse.Namespace) -> Comman
     follow = getattr(args, "all_pages", False)
     pages = fetch_history_pages(client, query.path, query.build_body(args), follow)
     response = merge_history_pages(query, pages) if follow else pages[0]
+    outcome = history_outcome(query, response, follow)
 
-    return history_outcome(query, response, follow)
+    if getattr(args, "summary", False):
+        return dataclass_replace(outcome, text=summarize_history(response.parsed))
+
+    return outcome
+
+
+# SUMMARY_MISSING renders a field an answer does not carry; older answers lack newer fields, and an absent value
+# must never read as a success.
+SUMMARY_MISSING = "-"
+
+
+def summary_value(value: Any) -> str:
+    """Render one summary field: lists comma-joined, absent or empty values as SUMMARY_MISSING."""
+
+    if value is None or value == "" or value == []:
+        return SUMMARY_MISSING
+
+    if isinstance(value, list):
+        return ",".join(summary_value(item) for item in value)
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    return str(value)
+
+
+def summarize_attempt(item: Any) -> str:
+    """Render one attempt as a single line: outcome and its basis, progress, steps, OIDC completion, codes, gaps."""
+
+    steps = (json_path(item, "steps", name) for name in ("primary", "second_factor", "code_issuance", "code_redemption"))
+    findings = [json_path(finding, "code") for finding in list_field(item, "findings")]
+    fields = [
+        ("outcome", f"{summary_value(json_path(item, 'outcome'))}/{summary_value(json_path(item, 'outcome_basis'))}"),
+        ("final", summary_value(json_path(item, "final_outcome_observed"))),
+        ("progress", summary_value(json_path(item, "progress"))),
+        ("steps", "/".join(summary_value(step) for step in steps)),
+        ("completion", summary_value(json_path(item, "completion", "state"))),
+        ("authentication", summary_value(json_path(item, "completion", "authentication"))),
+        ("findings", summary_value(findings)),
+        ("gaps", summary_value(list_field(json_path(item, "recording"), "known_gaps"))),
+    ]
+
+    return f"{summary_value(json_path(item, 'attempt_id'))} {summary_value(json_path(item, 'kind'))} " + \
+        " ".join(f"{name}={value}" for name, value in fields)
+
+
+def summarize_event(event: Any) -> str:
+    """Render one event of a detail answer, including the stored answered status of its decision."""
+
+    message = json_path(event, "decision", "answered_status_message")
+    fields = [
+        ("stage", summary_value(json_path(event, "stage"))),
+        ("code", summary_value(json_path(event, "code"))),
+        ("answered", summary_value(json_path(event, "decision", "answered_status_code"))),
+        ("message", json.dumps(message, ensure_ascii=False) if isinstance(message, str) else SUMMARY_MISSING),
+        ("transport", summary_value(json_path(event, "context", "transport_status"))),
+    ]
+
+    return f"  #{summary_value(json_path(event, 'sequence'))} {summary_value(json_path(event, 'occurred_at'))} " + \
+        " ".join(f"{name}={value}" for name, value in fields)
+
+
+def summarize_history(payload: Any) -> str:
+    """Render an attempt search or detail answer compactly: a header line, one line per attempt, event lines for a
+    detail answer. The JSON output stays the complete answer."""
+
+    attempts = list_field(payload, "attempts")
+    detail = json_path(payload, "attempt")
+    if isinstance(detail, dict):
+        attempts = [detail]
+
+    lines = [f"result_basis={summary_value(json_path(payload, 'result_basis'))} "
+             f"availability={summary_value(json_path(payload, 'history', 'availability'))} "
+             f"completion_since={summary_value(json_path(payload, 'history', 'oidc_completion_events_since'))}"]
+    for item in attempts:
+        lines.append(summarize_attempt(item))
+        if isinstance(detail, dict):
+            lines.extend(summarize_event(event) for event in list_field(item, "events"))
+
+    return "\n".join(lines)
 
 
 def add_support_parser(container: Any, name: str, help_text: str) -> argparse.ArgumentParser:
@@ -1806,6 +1888,11 @@ def add_support_commands(subcommands: Any) -> None:
     ban_search.add_argument("--ban-ref", type=checked_text(pattern_check(SUPPORT_BAN_REF), "32 lowercase hex characters"))
     add_history_subject_arguments(ban_search, required=False)
     add_history_page_arguments(ban_search, SUPPORT_BAN_LIMIT)
+
+    for parser in (search, detail):
+        parser.add_argument("--summary", action="store_true",
+                            help="print one compact line per attempt (and per event for detail) instead of JSON; "
+                                 "fields an older answer lacks print as '-'")
 
     for parser, query in ((search, ATTEMPTS_SEARCH), (detail, ATTEMPT_DETAIL), (ban_search, BANS_SEARCH)):
         parser.add_argument("--audit-reference", help="ticket or case reference recorded in the server audit log",
@@ -1958,7 +2045,9 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(outcome, CommandOutcome):
             outcome = CommandOutcome(outcome)
 
-        if getattr(args, "local_object", False):
+        if outcome.text is not None:
+            print(outcome.text)
+        elif getattr(args, "local_object", False):
             print_object(outcome.result, args)
             if getattr(args, "fail_on_entry_errors", False) and outcome.result.get("failed"):
                 return EXIT_FAILURE

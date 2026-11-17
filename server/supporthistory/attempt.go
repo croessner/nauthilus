@@ -81,13 +81,16 @@ func (r readRange) touchesBoundary(at time.Time) bool {
 
 // attemptInput is everything the builder needs for one attempt.
 type attemptInput struct {
-	key        AttemptKey
-	logins     []LoginRecord
-	events     []AuthEventRecord
-	matcher    subjectMatcher
-	read       readRange
-	projection Projection
-	eventsRead bool
+	queriedAt time.Time
+	// completionSince is the first recorded OIDC completion event of the deployment (nil: none or unknown).
+	completionSince *time.Time
+	key             AttemptKey
+	logins          []LoginRecord
+	events          []AuthEventRecord
+	matcher         subjectMatcher
+	read            readRange
+	projection      Projection
+	eventsRead      bool
 }
 
 // projectedEvent is one interpreted, projected event before sequencing.
@@ -100,11 +103,14 @@ type projectedEvent struct {
 func buildAttempt(input attemptInput) Attempt {
 	logins, loginReplays := dedupeByID(input.logins, loginEventID)
 	events, _ := dedupeByID(input.events, authEventID)
-	latched := slices.ContainsFunc(events, func(record AuthEventRecord) bool {
+	factor, completion := splitStepEvents(events)
+	latched := slices.ContainsFunc(factor, func(record AuthEventRecord) bool {
 		return record.FailLatched || record.FlowEffect == flowEffectFailureKept
 	})
 	withhold := latched && input.projection == ProjectionSupport
 	visible, visibleReplays := dedupeByID(visibleEvents(input.events, withhold), authEventID)
+	visibleFactor, _ := splitStepEvents(visible)
+	evidence := evaluateCompletion(input, logins, factor, completion, latched)
 
 	projected := make([]projectedEvent, 0, len(logins)+len(visible))
 	for _, record := range logins {
@@ -121,10 +127,12 @@ func buildAttempt(input attemptInput) Attempt {
 	attempt.Recording = recordingOf(input, logins, loginReplays+visibleReplays, withhold, projected)
 	attempt.Events, attempt.Findings = sequence(projected, withhold, &attempt.Recording)
 	attempt.StartedAt, attempt.LastObservedAt = observedSpan(projected, events)
-	attempt.Outcome, attempt.OutcomeBasis, attempt.FinalOutcomeObserved = attemptOutcome(input, logins, events, latched)
-	attempt.Progress = attemptProgress(logins, events, input.key.Kind, latched)
-	attempt.Steps = attemptSteps(input, logins, visible, withhold)
-	attempt.Recording.KnownGaps = attemptGaps(input, logins, visible, attempt)
+	attempt.Outcome, attempt.OutcomeBasis, attempt.FinalOutcomeObserved = attemptOutcome(input, logins, factor,
+		latched, evidence, len(completion) > 0)
+	attempt.Progress = attemptProgress(logins, factor, completion, input.key.Kind, latched)
+	attempt.Steps = attemptSteps(input, logins, visibleFactor, withhold, evidence, completion)
+	attempt.Completion = evidence.block
+	attempt.Recording.KnownGaps = attemptGaps(input, logins, visible, attempt, evidence, latched && len(completion) > 0)
 
 	return attempt
 }

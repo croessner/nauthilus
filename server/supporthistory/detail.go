@@ -107,9 +107,12 @@ func (s *Service) getAttempt(ctx context.Context, caller Caller, key AttemptKey,
 		matcher = matcher.withRecordedAccounts(subject.Login, logins)
 	}
 
+	cutover := s.completionCutoverAt(ctx, window.Until)
+
 	if (len(logins) > 0 || len(events) > 0) && (!bound || belongsToSubject(matcher, logins, events)) {
 		attempt := buildAttempt(attemptInput{key: key, logins: logins, events: events, matcher: matcher,
-			read: rows.ranges[key], projection: caller.projection(), eventsRead: eventsRead.failed == nil})
+			read: rows.ranges[key], projection: caller.projection(), eventsRead: eventsRead.failed == nil,
+			queriedAt: queriedAt, completionSince: cutover.since})
 		result.Attempt = &attempt
 	}
 
@@ -118,7 +121,7 @@ func (s *Service) getAttempt(ctx context.Context, caller Caller, key AttemptKey,
 		attempts = []Attempt{*result.Attempt}
 	}
 
-	result.History = s.attemptCoverage(ctx, window, queriedAt, eventsRead, attempts)
+	result.History = s.attemptCoverage(ctx, window, queriedAt, eventsRead, cutover, attempts)
 	result.ResultBasis = resultBasis(result.Attempt != nil, result.History, SourceLogins, false)
 
 	return result, nil
@@ -138,7 +141,8 @@ func belongsToSubject(matcher subjectMatcher, logins []LoginRecord, events []Aut
 }
 
 // attemptCoverage builds the coverage block of attempt answers from source presence and the reads of this call.
-func (s *Service) attemptCoverage(ctx context.Context, window Window, queriedAt time.Time, eventsRead sourceRead, attempts []Attempt) Coverage {
+func (s *Service) attemptCoverage(ctx context.Context, window Window, queriedAt time.Time, eventsRead sourceRead,
+	cutover completionCutover, attempts []Attempt) Coverage {
 	logins := sourceRead{source: SourceLogins, retention: loginRetention, queried: true,
 		presence: s.attempts.Presence(ctx, SourceLogins)}
 
@@ -148,7 +152,10 @@ func (s *Service) attemptCoverage(ctx context.Context, window Window, queriedAt 
 	since, known := s.attempts.ContractRowsSince(ctx, window.From, minTime(window.Until, queriedAt))
 	legacy := slices.ContainsFunc(attempts, func(attempt Attempt) bool { return attempt.Recording.LegacyRows > 0 })
 
-	return buildCoverage(coverageInput{now: queriedAt, window: window, deployment: s.attempts.Deployment(),
+	coverage := buildCoverage(coverageInput{now: queriedAt, window: window, deployment: s.attempts.Deployment(),
 		reads: []sourceRead{logins, eventsRead}, contractSince: since, contractKnown: known,
-		limits: attemptKnownLimits, legacyRows: legacy})
+		limits: attemptLimits(cutover), legacyRows: legacy, conditions: cutover.conditions()})
+	coverage.CompletionEventsSince = cutover.since
+
+	return coverage
 }

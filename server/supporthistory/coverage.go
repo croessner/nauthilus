@@ -48,6 +48,7 @@ const (
 	conditionNoContractRows   = "NO_CONTRACT_ROWS_IN_WINDOW"
 	conditionCandidatePartial = "CANDIDATE_NETWORKS_PARTIAL"
 	conditionLifecycleTrimmed = "LIFECYCLE_ROWS_TRUNCATED"
+	conditionCompletionProbe  = "COMPLETION_CUTOVER_UNKNOWN"
 )
 
 // Result basis values of every answer.
@@ -62,11 +63,11 @@ const (
 // Secondary sources (step events, raw brute-force rows, summaries) only feed conditions and availability: a
 // deployment that never writes them must still be able to answer no_matches.
 var primaryBasis = map[string]string{
-	stateNotInstalled:  "source_not_installed",
-	stateWithoutRows:   "source_without_rows",
-	stateReadFailed:    "source_read_failed",
-	coverageExpired:    "window_expired",
-	coveragePartial:    "window_partially_expired",
+	stateNotInstalled: "source_not_installed",
+	stateWithoutRows:  "source_without_rows",
+	stateReadFailed:   "source_read_failed",
+	coverageExpired:   "window_expired",
+	coveragePartial:   "window_partially_expired",
 }
 
 // resultBasis states the match state: matches win over any condition; otherwise the read state of the primary source,
@@ -103,6 +104,9 @@ func resultBasis(found bool, coverage Coverage, primary Source, identityUnresolv
 // limitNoGlobalOrder states that rows of different instances have no common order.
 const limitNoGlobalOrder = "NO_GLOBAL_ORDER_ACROSS_INSTANCES"
 
+// limitCompletionNeverRecorded is the known limit of a deployment that never recorded flow completion.
+const limitCompletionNeverRecorded = "FLOW_COMPLETION_NEVER_RECORDED"
+
 // attemptKnownLimits are the coverage limits of login and step-event history (contract §1, §8, terminal post-actions).
 var attemptKnownLimits = []string{
 	"SUCCESS_DEDUPLICATION_MAY_HIDE_REPEATS",
@@ -111,11 +115,49 @@ var attemptKnownLimits = []string{
 	"BEST_EFFORT_TERMINAL_POST_ACTIONS_MAY_BE_DROPPED",
 	"NO_ROW_WITHOUT_ANALYTICS_EFFECT",
 	"EXPORT_DELAY",
-	"FLOW_COMPLETION_NEVER_RECORDED",
+	limitCompletionNeverRecorded,
 	"BROWSER_ABORTS_NOT_RECORDED",
 	limitNoGlobalOrder,
 	"LOGIN_CASE_VARIANTS_NOT_MATCHED",
 	"ALIAS_HISTORY_NOT_RECORDED",
+}
+
+// completionRecordingLimits replace FLOW_COMPLETION_NEVER_RECORDED once the deployment records completion events
+// (contract §7.6): only OIDC authorization-code flows are covered, and only what Nauthilus itself observes.
+var completionRecordingLimits = []string{
+	"FLOW_COMPLETION_RECORDED_FOR_OIDC_AUTHORIZATION_CODE_ONLY",
+	"TOKEN_REQUESTS_BEFORE_CODE_RESOLUTION_NOT_RECORDED",
+	"AUTHORIZATION_ERRORS_NOT_RECORDED",
+	"CLIENT_SESSION_NOT_OBSERVED",
+}
+
+// attemptLimits returns the known limits of an attempt answer for the completion recording state of the deployment.
+func attemptLimits(cutover completionCutover) []string {
+	if cutover.since == nil {
+		return attemptKnownLimits
+	}
+
+	limits := make([]string, 0, len(attemptKnownLimits)+len(completionRecordingLimits))
+	for _, limit := range attemptKnownLimits {
+		if limit == limitCompletionNeverRecorded {
+			limits = append(limits, completionRecordingLimits...)
+
+			continue
+		}
+
+		limits = append(limits, limit)
+	}
+
+	return limits
+}
+
+// conditions names a completion probe that failed; flows then keep the conservative never-recorded reading.
+func (c completionCutover) conditions() []string {
+	if c.known {
+		return nil
+	}
+
+	return []string{conditionCompletionProbe}
 }
 
 // sourceRead is the outcome of reading one source in one operation.

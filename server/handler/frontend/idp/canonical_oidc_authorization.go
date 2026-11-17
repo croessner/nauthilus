@@ -227,6 +227,10 @@ func canonicalOIDCEnrollmentParentBound(parent *flowdomain.State, request oidcAu
 		parent.Metadata[flowdomain.FlowMetadataRedirectURI] == request.redirectURI
 }
 
+// authorizeCanonicalAuthenticated answers an authorization request of an authenticated session: it enforces the MFA
+// policy, routes to consent when needed, or issues one single-use code bound to the flow's diagnostic reference and
+// reports the issuance as an oidc.code_issuance event.
+//
 //nolint:gocyclo,funlen // Authenticated authorization binds policy, consent, claims, and single-use issuance.
 func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 	ctx *gin.Context,
@@ -257,6 +261,8 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 
 		return
 	}
+
+	oidcSession.DiagnosticFlowRef = flowdomain.DiagnosticFlowRef(state.FlowID)
 
 	needsConsent, err := h.canonicalOIDCAuthorizeNeedsConsent(
 		ctx.Request.Context(), session, identity, client, oidcSession.Scopes, request.prompt,
@@ -314,7 +320,7 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 
 	code := ksuid.New().String()
 	if err = h.storage.StoreSession(
-		ctx.Request.Context(), code, oidcSession, canonicalOIDCAuthorizationTTL,
+		ctx.Request.Context(), code, oidcSession, canonicalOIDCAuthorizationCodeTTL,
 	); err != nil {
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
@@ -343,6 +349,7 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 		return
 	}
 
+	h.emitOIDCCodeIssued(ctx, state, identity.Account, client)
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
 	ctx.Redirect(http.StatusFound, target)
 }
@@ -995,8 +1002,10 @@ func (h *OIDCHandler) ConsentPOSTCanonical(ctx *gin.Context) {
 		return
 	}
 
+	pending.DiagnosticFlowRef = flowdomain.DiagnosticFlowRef(selection.state.FlowID)
+
 	if err = h.storage.StoreSession(
-		ctx.Request.Context(), code, pending, canonicalOIDCAuthorizationTTL,
+		ctx.Request.Context(), code, pending, canonicalOIDCAuthorizationCodeTTL,
 	); err != nil {
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
@@ -1021,6 +1030,7 @@ func (h *OIDCHandler) ConsentPOSTCanonical(ctx *gin.Context) {
 		return
 	}
 
+	h.emitOIDCCodeIssued(ctx, selection.state, selection.identity.Account, selection.client)
 	stats.GetMetrics().GetIdpConsentTotal().
 		WithLabelValues(oidcMetricClientID(selection.client.ClientID), oidcConsentDecisionAllow).Inc()
 	stats.GetMetrics().GetIdpLoginsTotal().WithLabelValues("oidc", "success").Inc()
@@ -1098,6 +1108,9 @@ func validCanonicalOIDCResumeTarget(target string) bool {
 		!strings.ContainsAny(languageTag, "/\\")
 }
 
+// canonicalAuthorizeState returns the typed flow of an authenticated authorization request: the ticket flow after a
+// login or step-up, or a new flow for a session that is already authenticated, which it records as
+// existing_session for the completion diagnostics.
 func (h *OIDCHandler) canonicalAuthorizeState(
 	ctx *gin.Context,
 	session *cookie.CanonicalSession,
@@ -1131,6 +1144,7 @@ func (h *OIDCHandler) canonicalAuthorizeState(
 	}
 
 	state.AuthOutcome = flowdomain.AuthOutcomeOK
+	state.Metadata[flowdomain.FlowMetadataAuthentication] = sessionstate.OIDCFlowExistingSession
 
 	store := flowdomain.NewTypedStore(
 		session.Stores, session.Handle, flowdomain.FlowProtocolOIDC, canonicalOIDCAuthorizationTTL,
@@ -1149,10 +1163,7 @@ func (h *OIDCHandler) canonicalAuthorizePolicyReady(
 	state *flowdomain.State,
 	identity cookie.SessionIdentity,
 ) bool {
-	frontendHandler := h.frontend
-	if frontendHandler == nil {
-		frontendHandler = &FrontendHandler{deps: h.deps}
-	}
+	frontendHandler := h.frontendHandler()
 
 	policy, ok := frontendHandler.canonicalFlowMFAPolicy(ctx.Request.Context(), state)
 	if !ok {

@@ -219,8 +219,9 @@ func rejectDuplicateOIDCAuthorizeParameters(ctx *gin.Context) bool {
 	return false
 }
 
-// handleAuthorizationCodeTokenExchange processes the authorization_code grant type
-// within the token endpoint.
+// handleAuthorizationCodeTokenExchange processes the authorization_code grant type within the token endpoint. Every
+// answer after the atomic consume is reported once as an oidc.code_redemption event; requests that never resolve a
+// code (unknown, expired, or already redeemed codes) cannot be attributed and are not reported.
 func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
 	code := formValue(ctx, oidcParamCode)
@@ -236,19 +237,10 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 		return
 	}
 
-	if session.ClientID != clientID {
-		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
+	redemption := h.newOIDCCodeRedemption(ctx, session)
 
-		return
-	}
-
-	if formValue(ctx, oidcParamRedirectURI) != session.RedirectURI {
-		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
-
-		return
-	}
-
-	if pkceErr := validatePKCEVerifier(session.CodeChallenge, session.CodeChallengeMethod, formValue(ctx, oidcParamCodeVerifier)); pkceErr != nil {
+	if rejection, rejected := authorizationCodeRequestMismatch(ctx, clientID, session); rejected {
+		redemption.report(rejection)
 		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
@@ -258,6 +250,7 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 		ctx.Request.Context(), session, idp.TokenIssueOptions{Resources: oidcRequestedResources(ctx)},
 	)
 	if err != nil {
+		redemption.report(oidcTokenIssueFailure(err))
 		h.logTokenError(ctx, grantType, clientID, err)
 
 		return
@@ -269,6 +262,7 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 			_ = h.storage.DeleteDynamicRefreshToken(ctx.Request.Context(), refreshToken)
 		}
 
+		redemption.report(oidcRedemptionClientStateError)
 		h.logTokenError(ctx, grantType, clientID, err)
 
 		return
@@ -280,6 +274,7 @@ func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, cli
 		refreshToken: refreshToken,
 		expiresIn:    expiresIn,
 	})
+	redemption.report(oidcRedemptionTokensIssued)
 }
 
 // handleRefreshTokenExchange processes the refresh_token grant type

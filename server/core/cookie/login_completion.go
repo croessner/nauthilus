@@ -418,9 +418,12 @@ func rebindLoginCompletionOIDC(
 	return value.Handle, value.ExpiresAt
 }
 
+// advanceLoginCompletionOIDC publishes successful primary authentication on the selected OIDC flow and records that
+// the identity was authenticated on this flow.
 func advanceLoginCompletionOIDC(value *sessionstate.OIDCFlow, nextStep string) {
 	value.AuthOutcome = loginCompletionSuccessOutcome
 	value.CurrentStep = nextStep
+	value.Authentication = sessionstate.OIDCFlowAuthenticatedInFlow
 }
 
 func rebindLoginCompletionSAML(

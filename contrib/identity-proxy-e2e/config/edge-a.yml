@@ -102,6 +102,19 @@ storage:
     encryption_secret: "edgeRedisSecret2026!"
     password_nonce: "edgeRedisNonce2026!"
 
+  # Read-only support history over the disposable ClickHouse; run.sh clickhouse-history provisions the reader account
+  # from contrib/clickhouse-kubernetes/history-reader.sql with this synthetic password.
+  history:
+    clickhouse:
+      url: "http://clickhouse:8123/"
+      database: nauthilus
+      username: nauthilus_history
+      password: "e2e-history-reader"
+      deployment: "e2e"
+      budget_mode: query_settings
+      timeout: 15s
+      max_execution_time: 8s
+
 auth:
   backchannel:
     oidc_bearer:
@@ -204,6 +217,19 @@ identity:
         algorithm: "RS256"
         active: true
     clients:
+      # Synthetic support console of the history check; client credentials only, history scopes only.
+      - name: "Split Support Console"
+        client_id: "split-e2e-support"
+        client_secret: "split-e2e-support-secret"
+        grant_types:
+          - client_credentials
+        token_endpoint_auth_method: "client_secret_basic"
+        access_token_lifetime: 5m
+        scopes:
+          - nauthilus:authenticate
+          - nauthilus:history_read
+          - nauthilus:history_detail
+
       - name: "Split Browser Client"
         client_id: "split-e2e-browser"
         client_secret: "split-e2e-browser-secret"

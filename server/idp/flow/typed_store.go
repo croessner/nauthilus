@@ -255,6 +255,7 @@ func oidcFromState(session sessionstate.Handle, state *State) sessionstate.OIDCF
 		CodeChallengeMethod: state.metadataValue(FlowMetadataCodeChallengeMethod),
 		Resources:           SplitResources(state.metadataValue(FlowMetadataResource)),
 		ConsentChallenge:    state.metadataValue(FlowMetadataConsentChallenge),
+		Authentication:      state.metadataValue(FlowMetadataAuthentication),
 	}
 }
 
@@ -304,6 +305,7 @@ func stateFromOIDC(versioned sessionstate.Versioned[sessionstate.OIDCFlow]) *Sta
 			FlowMetadataConsentChallenge:     value.ConsentChallenge,
 			FlowMetadataDeviceCode:           value.DeviceCode,
 			FlowMetadataDeviceUserCodeDigest: value.DeviceUserCodeDigest,
+			FlowMetadataAuthentication:       value.Authentication,
 		},
 	}
 }

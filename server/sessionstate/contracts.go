@@ -169,14 +169,25 @@ type AssuranceSummary struct {
 	ExpiresAt time.Time
 }
 
+// OIDC flow authentication sources. They are non-authorizing diagnostics: issuance never depends on them.
+const (
+	// OIDCFlowAuthenticatedInFlow marks a flow whose primary login completed on this flow.
+	OIDCFlowAuthenticatedInFlow = "authenticated_in_flow"
+	// OIDCFlowExistingSession marks a flow that /authorize started for an already authenticated session.
+	OIDCFlowExistingSession = "existing_session"
+)
+
 // OIDCFlow identifies one isolated OIDC flow record.
 type OIDCFlow struct {
 	Record
-	Session              Handle
-	ParentFlow           Handle
-	FlowType             string
-	CurrentStep          string
-	AuthOutcome          string
+	Session     Handle
+	ParentFlow  Handle
+	FlowType    string
+	CurrentStep string
+	AuthOutcome string
+	// Authentication names how the flow got its authenticated identity (OIDCFlow* constants); empty for records an
+	// older release wrote. It is diagnostic only and never gates a transition.
+	Authentication       string
 	CancelTarget         string
 	ReturnTarget         string
 	ResumeTarget         string

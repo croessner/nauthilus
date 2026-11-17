@@ -125,7 +125,11 @@ type LoginRecord struct {
 	FSMState            string
 	Transport           string
 	BruteForceBucket    string
-	ContractVersion     int
+	// AnsweredStatusMessage is logins.status_msg: the status text the host answered the authentication caller with.
+	AnsweredStatusMessage string
+	ContractVersion       int
+	// AnsweredStatusCode is logins.http_status: the host status code selected for the terminal decision (0 = unknown).
+	AnsweredStatusCode  int
 	ReputationTruncated bool
 }
 
@@ -181,11 +185,6 @@ type AttemptFilter struct {
 	Protocol     string
 	OIDCClientID string
 	SAMLEntityID string
-}
-
-// isEmpty reports whether no filter is set.
-func (f AttemptFilter) isEmpty() bool {
-	return f == AttemptFilter{}
 }
 
 // AnchorPosition is the exclusive newest-first paging position (anchor time, key value).
@@ -255,6 +254,10 @@ type AttemptStore interface {
 	// ContractRowsSince returns the first contract row in [from, until); known is false when the probe failed or
 	// exceeded its budget, and a nil time with known=true means the window holds no contract row.
 	ContractRowsSince(ctx context.Context, from, until time.Time) (since *time.Time, known bool)
+
+	// CompletionEventsSince returns the first OIDC completion event of the deployment within retention before until;
+	// known is false when the probe failed or exceeded its budget, and nil with known=true means none was recorded.
+	CompletionEventsSince(ctx context.Context, until time.Time) (since *time.Time, known bool)
 }
 
 // IdentityMapping is the current stored login-name to account mapping of one login.

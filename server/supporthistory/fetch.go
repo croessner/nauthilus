@@ -207,7 +207,7 @@ func (s *Service) collectAttempts(ctx context.Context, scope searchScope, page [
 
 		attempts = append(attempts, buildAttempt(attemptInput{key: key, logins: rows.logins[key],
 			events: rows.events[key], matcher: scope.matcher, read: rows.ranges[key], projection: scope.projection,
-			eventsRead: eventsRead.failed == nil}))
+			eventsRead: eventsRead.failed == nil, queriedAt: scope.queriedAt, completionSince: scope.completion.since}))
 	}
 
 	return attempts, eventsRead, nil

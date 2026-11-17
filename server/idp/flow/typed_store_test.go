@@ -161,6 +161,8 @@ func parallelFlowStates(oidcID string, samlID string) (*State, *State) {
 			FlowMetadataClientID: "client-a",
 			FlowMetadataState:    "oidc-state",
 			FlowMetadataResource: "https://mail.example.org/jmap urn:example:calendar",
+			// The diagnostic authentication source survives every load/save round trip, so a step-up keeps it.
+			FlowMetadataAuthentication: sessionstate.OIDCFlowExistingSession,
 		},
 	}
 	saml := &State{
@@ -210,7 +212,8 @@ func assertParallelTypedFlows(t *testing.T, fixture parallelTypedFlowFixture) {
 	}
 
 	if loadedOIDC.Protocol != FlowProtocolOIDC || loadedOIDC.Metadata[FlowMetadataState] != "oidc-state" ||
-		loadedOIDC.Metadata[FlowMetadataResource] != "https://mail.example.org/jmap urn:example:calendar" {
+		loadedOIDC.Metadata[FlowMetadataResource] != "https://mail.example.org/jmap urn:example:calendar" ||
+		loadedOIDC.Metadata[FlowMetadataAuthentication] != sessionstate.OIDCFlowExistingSession {
 		t.Fatalf("OIDC state crossed repository boundary: %#v", loadedOIDC)
 	}
 

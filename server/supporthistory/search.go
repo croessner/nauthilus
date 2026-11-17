@@ -53,6 +53,7 @@ type searchScope struct {
 	window     Window
 	queriedAt  time.Time
 	cursor     *cursorState
+	completion completionCutover
 	matcher    subjectMatcher
 	projection Projection
 	digest     string
@@ -77,6 +78,7 @@ func (s *Service) searchAttempts(ctx context.Context, caller Caller, request Att
 		scan.scannedUntil = page[len(page)-1].At
 	}
 
+	scope.completion = s.completionCutoverAt(ctx, minTime(scope.window.Until, scope.queriedAt))
 	attempts, eventsRead, err := s.collectAttempts(ctx, scope, page)
 	if err != nil {
 		return nil, mapStoreError(ctx, err)
@@ -85,7 +87,7 @@ func (s *Service) searchAttempts(ctx context.Context, caller Caller, request Att
 	result := &AttemptSearchResult{SchemaVersion: SchemaVersion, QueriedAt: scope.queriedAt,
 		SubjectResolution: resolution, Attempts: attempts,
 		Page: AttemptPage{Limit: scope.limit, ScannedUntil: scan.scannedUntil}}
-	result.History = s.attemptCoverage(ctx, scope.window, scope.queriedAt, eventsRead, attempts)
+	result.History = s.attemptCoverage(ctx, scope.window, scope.queriedAt, eventsRead, scope.completion, attempts)
 	result.ResultBasis = resultBasis(len(attempts) > 0, result.History, SourceLogins,
 		request.Subject.Account == "" && len(resolution.Accounts) == 0)
 	result.Page.NextCursor = nextCursor(scope, scan, page)

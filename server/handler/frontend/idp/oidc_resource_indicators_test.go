@@ -105,11 +105,18 @@ func resourceAuthorizeQuery(resources ...string) url.Values {
 func postResourceTokenRequest(t *testing.T, handler *OIDCHandler, form url.Values) map[string]any {
 	t.Helper()
 
+	return postTokenRequestAs(t, handler, resourceTestClientID, form)
+}
+
+// postTokenRequestAs sends one token request authenticated as the named fixture client.
+func postTokenRequestAs(t *testing.T, handler *OIDCHandler, clientID string, form url.Values) map[string]any {
+	t.Helper()
+
 	response := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(response)
 	ctx.Request = httptest.NewRequest(http.MethodPost, oidcEndpointPathToken, strings.NewReader(form.Encode()))
 	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	ctx.Request.SetBasicAuth(resourceTestClientID, "test-secret")
+	ctx.Request.SetBasicAuth(clientID, "test-secret")
 
 	handler.Token(ctx)
 
@@ -169,11 +176,22 @@ func TestOIDCAuthorizeRejectsInvalidResources(t *testing.T) {
 func authorizeResourceCode(t *testing.T, handler *OIDCHandler, resources ...string) string {
 	t.Helper()
 
+	return authorizeThroughFlowLogin(t, handler, resourceAuthorizeQuery(resources...), func(state *flow.State) {
+		assert.Equal(t, resourceTestMail+" "+resourceTestDAV, state.Metadata[flow.FlowMetadataResource],
+			"resources are deduplicated in request order")
+	})
+}
+
+// authorizeThroughFlowLogin starts an unauthenticated authorization request, simulates the completed login on its
+// flow (prepare may adjust the stored flow first), resumes it, and returns the issued authorization code.
+func authorizeThroughFlowLogin(t *testing.T, handler *OIDCHandler, query url.Values, prepare func(*flow.State)) string {
+	t.Helper()
+
 	runtime, browserCookie, _ := seedCanonicalIDPFlow(t, nil)
 	router := gin.New()
 	router.GET("/oidc/authorize", cookie.CanonicalMiddleware(runtime, cookie.CanonicalProtocolEntry), handler.AuthorizeCanonical)
 
-	entry := httptest.NewRequest(http.MethodGet, "/oidc/authorize?"+resourceAuthorizeQuery(resources...).Encode(), nil)
+	entry := httptest.NewRequest(http.MethodGet, "/oidc/authorize?"+query.Encode(), nil)
 	entry.AddCookie(browserCookie)
 
 	entryResponse := httptest.NewRecorder()
@@ -193,7 +211,7 @@ func authorizeResourceCode(t *testing.T, handler *OIDCHandler, resources ...stri
 		return ""
 	}
 
-	assert.Equal(t, resourceTestMail+" "+resourceTestDAV, state.Metadata[flow.FlowMetadataResource], "resources are deduplicated in request order")
+	prepare(state)
 
 	// Simulate the completed login and resume the stored authorization request.
 	authenticateCanonicalFixture(t, runtime, browserCookie)

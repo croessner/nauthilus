@@ -657,11 +657,14 @@ func (e SupportHistoryAttemptOutcome) Valid() bool {
 
 // Defines values for SupportHistoryAttemptOutcomeBasis.
 const (
-	SupportHistoryAttemptOutcomeBasisLegacy                SupportHistoryAttemptOutcomeBasis = "legacy"
-	SupportHistoryAttemptOutcomeBasisNone                  SupportHistoryAttemptOutcomeBasis = "none"
-	SupportHistoryAttemptOutcomeBasisPrimaryFailureKept    SupportHistoryAttemptOutcomeBasis = "primary_failure_kept"
-	SupportHistoryAttemptOutcomeBasisPrimaryFailureLatched SupportHistoryAttemptOutcomeBasis = "primary_failure_latched"
-	SupportHistoryAttemptOutcomeBasisRequestTerminalAnswer SupportHistoryAttemptOutcomeBasis = "request_terminal_answer"
+	SupportHistoryAttemptOutcomeBasisLegacy                     SupportHistoryAttemptOutcomeBasis = "legacy"
+	SupportHistoryAttemptOutcomeBasisNone                       SupportHistoryAttemptOutcomeBasis = "none"
+	SupportHistoryAttemptOutcomeBasisOidcCodeRedemptionFailed   SupportHistoryAttemptOutcomeBasis = "oidc_code_redemption_failed"
+	SupportHistoryAttemptOutcomeBasisOidcCodeRedemptionRejected SupportHistoryAttemptOutcomeBasis = "oidc_code_redemption_rejected"
+	SupportHistoryAttemptOutcomeBasisOidcTokensIssued           SupportHistoryAttemptOutcomeBasis = "oidc_tokens_issued"
+	SupportHistoryAttemptOutcomeBasisPrimaryFailureKept         SupportHistoryAttemptOutcomeBasis = "primary_failure_kept"
+	SupportHistoryAttemptOutcomeBasisPrimaryFailureLatched      SupportHistoryAttemptOutcomeBasis = "primary_failure_latched"
+	SupportHistoryAttemptOutcomeBasisRequestTerminalAnswer      SupportHistoryAttemptOutcomeBasis = "request_terminal_answer"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryAttemptOutcomeBasis enum.
@@ -670,6 +673,12 @@ func (e SupportHistoryAttemptOutcomeBasis) Valid() bool {
 	case SupportHistoryAttemptOutcomeBasisLegacy:
 		return true
 	case SupportHistoryAttemptOutcomeBasisNone:
+		return true
+	case SupportHistoryAttemptOutcomeBasisOidcCodeRedemptionFailed:
+		return true
+	case SupportHistoryAttemptOutcomeBasisOidcCodeRedemptionRejected:
+		return true
+	case SupportHistoryAttemptOutcomeBasisOidcTokensIssued:
 		return true
 	case SupportHistoryAttemptOutcomeBasisPrimaryFailureKept:
 		return true
@@ -684,18 +693,22 @@ func (e SupportHistoryAttemptOutcomeBasis) Valid() bool {
 
 // Defines values for SupportHistoryAttemptProgress.
 const (
-	SupportHistoryAttemptProgressNone                  SupportHistoryAttemptProgress = "none"
-	SupportHistoryAttemptProgressPreCredentialRejected SupportHistoryAttemptProgress = "pre_credential_rejected"
-	SupportHistoryAttemptProgressPrimaryFailureLatched SupportHistoryAttemptProgress = "primary_failure_latched"
-	SupportHistoryAttemptProgressPrimaryRejected       SupportHistoryAttemptProgress = "primary_rejected"
-	SupportHistoryAttemptProgressPrimarySucceeded      SupportHistoryAttemptProgress = "primary_succeeded"
-	SupportHistoryAttemptProgressSecondFactorCompleted SupportHistoryAttemptProgress = "second_factor_completed"
-	SupportHistoryAttemptProgressTechnicalError        SupportHistoryAttemptProgress = "technical_error"
+	SupportHistoryAttemptProgressAuthorizationCodeIssued SupportHistoryAttemptProgress = "authorization_code_issued"
+	SupportHistoryAttemptProgressNone                    SupportHistoryAttemptProgress = "none"
+	SupportHistoryAttemptProgressPreCredentialRejected   SupportHistoryAttemptProgress = "pre_credential_rejected"
+	SupportHistoryAttemptProgressPrimaryFailureLatched   SupportHistoryAttemptProgress = "primary_failure_latched"
+	SupportHistoryAttemptProgressPrimaryRejected         SupportHistoryAttemptProgress = "primary_rejected"
+	SupportHistoryAttemptProgressPrimarySucceeded        SupportHistoryAttemptProgress = "primary_succeeded"
+	SupportHistoryAttemptProgressSecondFactorCompleted   SupportHistoryAttemptProgress = "second_factor_completed"
+	SupportHistoryAttemptProgressTechnicalError          SupportHistoryAttemptProgress = "technical_error"
+	SupportHistoryAttemptProgressTokensIssued            SupportHistoryAttemptProgress = "tokens_issued"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryAttemptProgress enum.
 func (e SupportHistoryAttemptProgress) Valid() bool {
 	switch e {
+	case SupportHistoryAttemptProgressAuthorizationCodeIssued:
+		return true
 	case SupportHistoryAttemptProgressNone:
 		return true
 	case SupportHistoryAttemptProgressPreCredentialRejected:
@@ -709,6 +722,8 @@ func (e SupportHistoryAttemptProgress) Valid() bool {
 	case SupportHistoryAttemptProgressSecondFactorCompleted:
 		return true
 	case SupportHistoryAttemptProgressTechnicalError:
+		return true
+	case SupportHistoryAttemptProgressTokensIssued:
 		return true
 	default:
 		return false
@@ -733,10 +748,53 @@ func (e SupportHistoryAttemptProjection) Valid() bool {
 	}
 }
 
+// Defines values for SupportHistoryAttemptStepsCodeIssuance.
+const (
+	SupportHistoryCodeIssuanceStepNotApplicable SupportHistoryAttemptStepsCodeIssuance = "not_applicable"
+	SupportHistoryCodeIssuanceStepNotRecorded   SupportHistoryAttemptStepsCodeIssuance = "not_recorded"
+	SupportHistoryCodeIssuanceStepRecorded      SupportHistoryAttemptStepsCodeIssuance = "recorded"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptStepsCodeIssuance enum.
+func (e SupportHistoryAttemptStepsCodeIssuance) Valid() bool {
+	switch e {
+	case SupportHistoryCodeIssuanceStepNotApplicable:
+		return true
+	case SupportHistoryCodeIssuanceStepNotRecorded:
+		return true
+	case SupportHistoryCodeIssuanceStepRecorded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptStepsCodeRedemption.
+const (
+	SupportHistoryCodeRedemptionStepNotApplicable SupportHistoryAttemptStepsCodeRedemption = "not_applicable"
+	SupportHistoryCodeRedemptionStepNotRecorded   SupportHistoryAttemptStepsCodeRedemption = "not_recorded"
+	SupportHistoryCodeRedemptionStepRecorded      SupportHistoryAttemptStepsCodeRedemption = "recorded"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptStepsCodeRedemption enum.
+func (e SupportHistoryAttemptStepsCodeRedemption) Valid() bool {
+	switch e {
+	case SupportHistoryCodeRedemptionStepNotApplicable:
+		return true
+	case SupportHistoryCodeRedemptionStepNotRecorded:
+		return true
+	case SupportHistoryCodeRedemptionStepRecorded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SupportHistoryAttemptStepsPrimary.
 const (
-	SupportHistoryAttemptStepsPrimaryNotRecorded SupportHistoryAttemptStepsPrimary = "not_recorded"
-	SupportHistoryAttemptStepsPrimaryRecorded    SupportHistoryAttemptStepsPrimary = "recorded"
+	SupportHistoryAttemptStepsPrimaryNotRecorded   SupportHistoryAttemptStepsPrimary = "not_recorded"
+	SupportHistoryAttemptStepsPrimaryRecorded      SupportHistoryAttemptStepsPrimary = "recorded"
+	SupportHistoryAttemptStepsPrimarySessionReused SupportHistoryAttemptStepsPrimary = "session_reused"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryAttemptStepsPrimary enum.
@@ -745,6 +803,8 @@ func (e SupportHistoryAttemptStepsPrimary) Valid() bool {
 	case SupportHistoryAttemptStepsPrimaryNotRecorded:
 		return true
 	case SupportHistoryAttemptStepsPrimaryRecorded:
+		return true
+	case SupportHistoryAttemptStepsPrimarySessionReused:
 		return true
 	default:
 		return false
@@ -838,6 +898,81 @@ func (e SupportHistoryBanSearchResponseThresholdToleratedEvidence) Valid() bool 
 	case SupportHistoryBanSearchResponseThresholdToleratedEvidenceRaw:
 		return true
 	case SupportHistoryBanSearchResponseThresholdToleratedEvidenceSummary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCompletionAuthentication.
+const (
+	SupportHistoryCompletionAuthenticationAuthenticatedInFlow SupportHistoryCompletionAuthentication = "authenticated_in_flow"
+	SupportHistoryCompletionAuthenticationExistingSession     SupportHistoryCompletionAuthentication = "existing_session"
+	SupportHistoryCompletionAuthenticationNotRecorded         SupportHistoryCompletionAuthentication = "not_recorded"
+	SupportHistoryCompletionAuthenticationUnknown             SupportHistoryCompletionAuthentication = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCompletionAuthentication enum.
+func (e SupportHistoryCompletionAuthentication) Valid() bool {
+	switch e {
+	case SupportHistoryCompletionAuthenticationAuthenticatedInFlow:
+		return true
+	case SupportHistoryCompletionAuthenticationExistingSession:
+		return true
+	case SupportHistoryCompletionAuthenticationNotRecorded:
+		return true
+	case SupportHistoryCompletionAuthenticationUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCompletionScope.
+const (
+	OidcAuthorizationCode SupportHistoryCompletionScope = "oidc_authorization_code"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCompletionScope enum.
+func (e SupportHistoryCompletionScope) Valid() bool {
+	switch e {
+	case OidcAuthorizationCode:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCompletionState.
+const (
+	SupportHistoryCompletionStateCodeExpiredRedemptionNotObserved SupportHistoryCompletionState = "code_expired_redemption_not_observed"
+	SupportHistoryCompletionStateCodeIssuanceNotObserved          SupportHistoryCompletionState = "code_issuance_not_observed"
+	SupportHistoryCompletionStateNotRecorded                      SupportHistoryCompletionState = "not_recorded"
+	SupportHistoryCompletionStateRedemptionFailed                 SupportHistoryCompletionState = "redemption_failed"
+	SupportHistoryCompletionStateRedemptionPending                SupportHistoryCompletionState = "redemption_pending"
+	SupportHistoryCompletionStateRedemptionRejected               SupportHistoryCompletionState = "redemption_rejected"
+	SupportHistoryCompletionStateTokensIssued                     SupportHistoryCompletionState = "tokens_issued"
+	SupportHistoryCompletionStateUnknown                          SupportHistoryCompletionState = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCompletionState enum.
+func (e SupportHistoryCompletionState) Valid() bool {
+	switch e {
+	case SupportHistoryCompletionStateCodeExpiredRedemptionNotObserved:
+		return true
+	case SupportHistoryCompletionStateCodeIssuanceNotObserved:
+		return true
+	case SupportHistoryCompletionStateNotRecorded:
+		return true
+	case SupportHistoryCompletionStateRedemptionFailed:
+		return true
+	case SupportHistoryCompletionStateRedemptionPending:
+		return true
+	case SupportHistoryCompletionStateRedemptionRejected:
+		return true
+	case SupportHistoryCompletionStateTokensIssued:
+		return true
+	case SupportHistoryCompletionStateUnknown:
 		return true
 	default:
 		return false
@@ -1062,15 +1197,20 @@ func (e SupportHistoryEventSource) Valid() bool {
 
 // Defines values for SupportHistoryEventStage.
 const (
+	SupportHistoryEventStageAuthorization         SupportHistoryEventStage = "authorization"
 	SupportHistoryEventStageLegacy                SupportHistoryEventStage = "legacy"
 	SupportHistoryEventStagePreCredential         SupportHistoryEventStage = "pre_credential"
 	SupportHistoryEventStagePrimaryAuthentication SupportHistoryEventStage = "primary_authentication"
 	SupportHistoryEventStageSecondFactor          SupportHistoryEventStage = "second_factor"
+	SupportHistoryEventStageTokenExchange         SupportHistoryEventStage = "token_exchange"
+	SupportHistoryEventStageUnclassified          SupportHistoryEventStage = "unclassified"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryEventStage enum.
 func (e SupportHistoryEventStage) Valid() bool {
 	switch e {
+	case SupportHistoryEventStageAuthorization:
+		return true
 	case SupportHistoryEventStageLegacy:
 		return true
 	case SupportHistoryEventStagePreCredential:
@@ -1079,6 +1219,10 @@ func (e SupportHistoryEventStage) Valid() bool {
 		return true
 	case SupportHistoryEventStageSecondFactor:
 		return true
+	case SupportHistoryEventStageTokenExchange:
+		return true
+	case SupportHistoryEventStageUnclassified:
+		return true
 	default:
 		return false
 	}
@@ -1086,6 +1230,7 @@ func (e SupportHistoryEventStage) Valid() bool {
 
 // Defines values for SupportHistoryFindingCategory.
 const (
+	SupportHistoryFindingCategoryClientRequest SupportHistoryFindingCategory = "client_request"
 	SupportHistoryFindingCategoryCredential    SupportHistoryFindingCategory = "credential"
 	SupportHistoryFindingCategoryFlowState     SupportHistoryFindingCategory = "flow_state"
 	SupportHistoryFindingCategoryPolicy        SupportHistoryFindingCategory = "policy"
@@ -1099,6 +1244,8 @@ const (
 // Valid indicates whether the value is a known member of the SupportHistoryFindingCategory enum.
 func (e SupportHistoryFindingCategory) Valid() bool {
 	switch e {
+	case SupportHistoryFindingCategoryClientRequest:
+		return true
 	case SupportHistoryFindingCategoryCredential:
 		return true
 	case SupportHistoryFindingCategoryFlowState:
@@ -1942,17 +2089,20 @@ type SupportHistoryActivationKind string
 
 // SupportHistoryAttempt defines model for SupportHistoryAttempt.
 type SupportHistoryAttempt struct {
-	AttemptId            string                            `json:"attempt_id"`
-	Events               []SupportHistoryEvent             `json:"events"`
-	FinalOutcomeObserved bool                              `json:"final_outcome_observed"`
-	Findings             []SupportHistoryFinding           `json:"findings"`
-	Kind                 SupportHistoryAttemptKind         `json:"kind"`
-	LastObservedAt       time.Time                         `json:"last_observed_at"`
-	Outcome              SupportHistoryAttemptOutcome      `json:"outcome"`
-	OutcomeBasis         SupportHistoryAttemptOutcomeBasis `json:"outcome_basis"`
-	Progress             SupportHistoryAttemptProgress     `json:"progress"`
-	Projection           SupportHistoryAttemptProjection   `json:"projection"`
-	Recording            struct {
+	AttemptId            string                       `json:"attempt_id"`
+	Completion           *SupportHistoryCompletion    `json:"completion"`
+	Events               []SupportHistoryEvent        `json:"events"`
+	FinalOutcomeObserved bool                         `json:"final_outcome_observed"`
+	Findings             []SupportHistoryFinding      `json:"findings"`
+	Kind                 SupportHistoryAttemptKind    `json:"kind"`
+	LastObservedAt       time.Time                    `json:"last_observed_at"`
+	Outcome              SupportHistoryAttemptOutcome `json:"outcome"`
+
+	// OutcomeBasis The recorded evidence of the outcome. outcome never names a cause: oidc_code_redemption_rejected after a successful login is a rejected token request of the client, not a credential failure. Show outcome_basis and the findings together with outcome.
+	OutcomeBasis SupportHistoryAttemptOutcomeBasis `json:"outcome_basis"`
+	Progress     SupportHistoryAttemptProgress     `json:"progress"`
+	Projection   SupportHistoryAttemptProjection   `json:"projection"`
+	Recording    struct {
 		EventsTruncated    bool     `json:"events_truncated"`
 		EventsWithheld     bool     `json:"events_withheld"`
 		KnownGaps          []string `json:"known_gaps"`
@@ -1961,6 +2111,10 @@ type SupportHistoryAttempt struct {
 	} `json:"recording"`
 	StartedAt time.Time `json:"started_at"`
 	Steps     struct {
+		CodeIssuance   SupportHistoryAttemptStepsCodeIssuance   `json:"code_issuance"`
+		CodeRedemption SupportHistoryAttemptStepsCodeRedemption `json:"code_redemption"`
+
+		// Primary session_reused marks an OIDC flow that /authorize started for an already authenticated session; no primary step happened in it.
 		Primary      SupportHistoryAttemptStepsPrimary      `json:"primary"`
 		SecondFactor SupportHistoryAttemptStepsSecondFactor `json:"second_factor"`
 	} `json:"steps"`
@@ -1972,7 +2126,7 @@ type SupportHistoryAttemptKind string
 // SupportHistoryAttemptOutcome defines model for SupportHistoryAttempt.Outcome.
 type SupportHistoryAttemptOutcome string
 
-// SupportHistoryAttemptOutcomeBasis defines model for SupportHistoryAttempt.OutcomeBasis.
+// SupportHistoryAttemptOutcomeBasis The recorded evidence of the outcome. outcome never names a cause: oidc_code_redemption_rejected after a successful login is a rejected token request of the client, not a credential failure. Show outcome_basis and the findings together with outcome.
 type SupportHistoryAttemptOutcomeBasis string
 
 // SupportHistoryAttemptProgress defines model for SupportHistoryAttempt.Progress.
@@ -1981,7 +2135,13 @@ type SupportHistoryAttemptProgress string
 // SupportHistoryAttemptProjection defines model for SupportHistoryAttempt.Projection.
 type SupportHistoryAttemptProjection string
 
-// SupportHistoryAttemptStepsPrimary defines model for SupportHistoryAttempt.Steps.Primary.
+// SupportHistoryAttemptStepsCodeIssuance defines model for SupportHistoryAttempt.Steps.CodeIssuance.
+type SupportHistoryAttemptStepsCodeIssuance string
+
+// SupportHistoryAttemptStepsCodeRedemption defines model for SupportHistoryAttempt.Steps.CodeRedemption.
+type SupportHistoryAttemptStepsCodeRedemption string
+
+// SupportHistoryAttemptStepsPrimary session_reused marks an OIDC flow that /authorize started for an already authenticated session; no primary step happened in it.
 type SupportHistoryAttemptStepsPrimary string
 
 // SupportHistoryAttemptStepsSecondFactor defines model for SupportHistoryAttempt.Steps.SecondFactor.
@@ -2137,6 +2297,30 @@ type SupportHistoryBanSearchResponseProjection string
 // SupportHistoryBanSearchResponseThresholdToleratedEvidence defines model for SupportHistoryBanSearchResponse.ThresholdTolerated.Evidence.
 type SupportHistoryBanSearchResponseThresholdToleratedEvidence string
 
+// SupportHistoryCompletion Recorded OIDC authorization-code completion of one flow. Nauthilus's part ends with the token response for the flow's code (state tokens_issued); a relying-party session after it is never observed. Only authorization-code flows carry this block; SAML, device-code, flows without grant evidence, and latched flows (decided by the latch) have none.
+type SupportHistoryCompletion struct {
+	// Authentication How the flow got its authenticated identity, as recorded with the code issuance; unknown without an observed issuance.
+	Authentication SupportHistoryCompletionAuthentication `json:"authentication"`
+	CodeIssuedAt   *time.Time                             `json:"code_issued_at"`
+
+	// CodeRedeemableUntil Latest instant the issued code could be redeemed (event contract version lifetime); null without issuance or for an unknown version.
+	CodeRedeemableUntil  *time.Time                    `json:"code_redeemable_until"`
+	RedemptionObservedAt *time.Time                    `json:"redemption_observed_at"`
+	Scope                SupportHistoryCompletionScope `json:"scope"`
+
+	// State tokens_issued, redemption_rejected, and redemption_failed are observed and final. redemption_pending: the code may still be redeemed or its redemption still be exported. code_expired_redemption_not_observed: the code can no longer be redeemed and no redemption was observed; an event may have been dropped, so it never proves an abort. code_issuance_not_observed: recording was active, but neither issuance nor redemption was observed. not_recorded: the flow predates completion recording. unknown: evidence was unreadable, truncated, conflicting, or unclassified.
+	State SupportHistoryCompletionState `json:"state"`
+}
+
+// SupportHistoryCompletionAuthentication How the flow got its authenticated identity, as recorded with the code issuance; unknown without an observed issuance.
+type SupportHistoryCompletionAuthentication string
+
+// SupportHistoryCompletionScope defines model for SupportHistoryCompletion.Scope.
+type SupportHistoryCompletionScope string
+
+// SupportHistoryCompletionState tokens_issued, redemption_rejected, and redemption_failed are observed and final. redemption_pending: the code may still be redeemed or its redemption still be exported. code_expired_redemption_not_observed: the code can no longer be redeemed and no redemption was observed; an event may have been dropped, so it never proves an abort. code_issuance_not_observed: recording was active, but neither issuance nor redemption was observed. not_recorded: the flow predates completion recording. unknown: evidence was unreadable, truncated, conflicting, or unclassified.
+type SupportHistoryCompletionState string
+
 // SupportHistoryContribution defines model for SupportHistoryContribution.
 type SupportHistoryContribution struct {
 	Account         *string   `json:"account"`
@@ -2186,7 +2370,10 @@ type SupportHistoryCoverage struct {
 	Deployment           string                                     `json:"deployment"`
 	KnownLimits          []string                                   `json:"known_limits"`
 	LateEventsPossible   bool                                       `json:"late_events_possible"`
-	Sources              []struct {
+
+	// OidcCompletionEventsSince First recorded OIDC completion event (oidc.code_issuance or oidc.code_redemption) of the deployment within the event retention. Flows that started before it, or every flow when it is null, predate completion recording and keep FLOW_COMPLETION_NEVER_RECORDED. Null also means the probe failed; then conditions contain COMPLETION_CUTOVER_UNKNOWN.
+	OidcCompletionEventsSince *time.Time `json:"oidc_completion_events_since"`
+	Sources                   []struct {
 		RetentionDays  int                                         `json:"retention_days"`
 		Source         SupportHistoryCoverageSourcesSource         `json:"source"`
 		State          SupportHistoryCoverageSourcesState          `json:"state"`
@@ -2211,19 +2398,24 @@ type SupportHistoryCoverageSourcesWindowCoverage string
 
 // SupportHistoryDecision defines model for SupportHistoryDecision.
 type SupportHistoryDecision struct {
-	BruteForceBucket    *string  `json:"brute_force_bucket"`
-	BruteForceTolerated *bool    `json:"brute_force_tolerated"`
-	DecisionSources     []string `json:"decision_sources"`
-	FsmState            string   `json:"fsm_state"`
-	Operation           string   `json:"operation"`
-	Outcome             string   `json:"outcome"`
-	OutcomeMarker       string   `json:"outcome_marker"`
-	OutcomeStage        string   `json:"outcome_stage"`
-	PolicyRule          string   `json:"policy_rule"`
-	PolicyStatus        string   `json:"policy_status"`
-	ResponseMarker      string   `json:"response_marker"`
-	TempfailCheckpoint  string   `json:"tempfail_checkpoint"`
-	TempfailReason      string   `json:"tempfail_reason"`
+	// AnsweredStatusCode Stored host status code selected for the sealed terminal decision (logins.http_status: the configured OK/Fail/InternalError code; 200 for nginx-style answers, also for rejections). It is not the committed transport status (context.transport_status) and never a result: read outcome. Null when no terminal decision was sealed.
+	AnsweredStatusCode *int `json:"answered_status_code"`
+
+	// AnsweredStatusMessage Stored status text the host answered the authentication caller with (logins.status_msg). IdP browser pages render their own localized text, so this is not necessarily what a user saw. Null when no terminal decision was sealed, and in the support projection on events whose identity is redacted.
+	AnsweredStatusMessage *string  `json:"answered_status_message"`
+	BruteForceBucket      *string  `json:"brute_force_bucket"`
+	BruteForceTolerated   *bool    `json:"brute_force_tolerated"`
+	DecisionSources       []string `json:"decision_sources"`
+	FsmState              string   `json:"fsm_state"`
+	Operation             string   `json:"operation"`
+	Outcome               string   `json:"outcome"`
+	OutcomeMarker         string   `json:"outcome_marker"`
+	OutcomeStage          string   `json:"outcome_stage"`
+	PolicyRule            string   `json:"policy_rule"`
+	PolicyStatus          string   `json:"policy_status"`
+	ResponseMarker        string   `json:"response_marker"`
+	TempfailCheckpoint    string   `json:"tempfail_checkpoint"`
+	TempfailReason        string   `json:"tempfail_reason"`
 }
 
 // SupportHistoryError defines model for SupportHistoryError.

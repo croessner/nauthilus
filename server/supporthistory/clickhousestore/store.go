@@ -176,7 +176,7 @@ var presenceStatements = map[supporthistory.Source]struct {
 	filter string
 }{
 	supporthistory.SourceLogins:       {"logins", "ts >= now64(3) - INTERVAL 7 DAY"},
-	supporthistory.SourceAuthEvents:   {"auth_events", "event_type = 'mfa.verification' AND ts >= now64(3) - INTERVAL 7 DAY"},
+	supporthistory.SourceAuthEvents:   {"auth_events", stepEventFilter + " AND ts >= now64(3) - INTERVAL 7 DAY"},
 	supporthistory.SourceBanLifecycle: {"bruteforce_lifecycle", "1"},
 	supporthistory.SourceBanAttempts:  {"bruteforce_attempts", "1"},
 	supporthistory.SourceBanSummary:   {"bruteforce_attempt_summary", "1"},
@@ -224,17 +224,39 @@ func (s *Store) Presence(ctx context.Context, source supporthistory.Source) supp
 // the first match, and a failed or over-budget probe reports known=false.
 func (s *Store) ContractRowsSince(ctx context.Context, from, until time.Time) (*time.Time, bool) {
 	key := "cutover:" + from.Truncate(time.Hour).Format(time.RFC3339) + ":" + until.Truncate(time.Hour).Format(time.RFC3339)
-	if cached, fresh := s.cached(key); fresh {
-		return cached.since, cached.known
-	}
-
 	stmt := newStatement(s.deployment)
 	stmt.timeRange("ts", from, until)
 	stmt.where("contract_version >= 1")
 
+	return s.firstRowSince(ctx, key, "logins", stmt)
+}
+
+// completionEventFilter selects the OIDC completion events.
+const completionEventFilter = "event_type IN ('oidc.code_issuance', 'oidc.code_redemption')"
+
+// CompletionEventsSince returns the first OIDC completion event of the deployment within the event retention
+// before until; a failed or over-budget probe reports known=false. Like ContractRowsSince, the answer is cached per
+// hour of until for probeTTL, so a first event can stay hidden for that long; the reading stays conservative
+// (never recorded) meanwhile.
+func (s *Store) CompletionEventsSince(ctx context.Context, until time.Time) (*time.Time, bool) {
+	key := "completion:" + until.Truncate(time.Hour).Format(time.RFC3339)
+	stmt := newStatement(s.deployment)
+	stmt.where(completionEventFilter)
+	stmt.where("ts >= now64(3) - INTERVAL 7 DAY")
+	stmt.where("ts < " + stmt.instant(until))
+
+	return s.firstRowSince(ctx, key, "auth_events", stmt)
+}
+
+// firstRowSince runs one cached, ordered first-row probe; it stops at the first match.
+func (s *Store) firstRowSince(ctx context.Context, key, table string, stmt *statement) (*time.Time, bool) {
+	if cached, fresh := s.cached(key); fresh {
+		return cached.since, cached.known
+	}
+
 	var since *time.Time
 
-	err := s.client.query(ctx, "SELECT toUnixTimestamp64Milli(ts) AS ts_ms FROM "+s.client.table("logins")+
+	err := s.client.query(ctx, "SELECT toUnixTimestamp64Milli(ts) AS ts_ms FROM "+s.client.table(table)+
 		stmt.whereClause()+" ORDER BY ts LIMIT 1", stmt.params(), func(raw json.RawMessage) error {
 		var row struct {
 			TS optInt `json:"ts_ms"`

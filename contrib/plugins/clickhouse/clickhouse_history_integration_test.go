@@ -42,6 +42,11 @@ const (
 	historyOtherLogin  = "mallory@example.test"
 	historyFlowOK      = "1111111111111111aaaaaaaaaaaaaaaa"
 	historyFlowLatched = "2222222222222222bbbbbbbbbbbbbbbb"
+	// historyFlowDone completes an OIDC login with MFA; historyFlowSSO reuses a session without login row;
+	// historyFlowPKCE ends with a rejected code redemption after a successful login.
+	historyFlowDone = "3333333333333333cccccccccccccccc"
+	historyFlowSSO  = "4444444444444444dddddddddddddddd"
+	historyFlowPKCE = "5555555555555555eeeeeeeeeeeeeeee"
 )
 
 // historyEnv is one isolated database with the plugin writer, a provisioned reader account, and the service.
@@ -86,6 +91,7 @@ func historyRequest(t *testing.T, session string, outcome pluginapi.AuthOutcome,
 
 	if flowRef != "" {
 		request.Snapshot.IDP.FlowRef, request.Snapshot.Protocol, request.Snapshot.Service = flowRef, "oidc", "idp"
+		request.Snapshot.IDP.GrantType = "authorization_code"
 	}
 
 	return request
@@ -111,6 +117,8 @@ func (env historyEnv) writeScenario(t *testing.T) {
 		historyRequest(t, "flow-ok-password", outcomes["success"], historyFlowOK, historySubject),
 		historyRequest(t, "flow-ok-other", outcomes["credential failure"], historyFlowOK, historyOtherLogin),
 		historyRequest(t, "flow-latched-password", outcomes["credential failure"], historyFlowLatched, historySubject),
+		historyRequest(t, "flow-done-password", outcomes["success"], historyFlowDone, historySubject),
+		historyRequest(t, "flow-pkce-password", outcomes["success"], historyFlowPKCE, historySubject),
 	} {
 		if _, err := env.harness.enqueuePostAction(t.Context(), request); err != nil {
 			t.Fatalf("Enqueue(%s) error = %v", request.Snapshot.Session, err)
@@ -125,8 +133,8 @@ func (env historyEnv) writeScenario(t *testing.T) {
 	}
 
 	flushStreams(t, env.harness)
-	waitRows(t, env.db, "SELECT event_id FROM nauthilus.logins", 8)
-	waitRows(t, env.db, "SELECT event_id FROM nauthilus.auth_events", 5)
+	waitRows(t, env.db, "SELECT event_id FROM nauthilus.logins", 10)
+	waitRows(t, env.db, "SELECT event_id FROM nauthilus.auth_events", 12)
 
 	// A replayed delivery of the credential failure row and one legacy row of the same subject.
 	env.db.exec(env.db.scoped("INSERT INTO nauthilus.logins SELECT * FROM nauthilus.logins WHERE session = 'req-credential'"))
@@ -137,8 +145,48 @@ func (env historyEnv) writeScenario(t *testing.T) {
 	observeBruteForceEvents(t, env.harness, shiftedBruteForceFixture(t, env.now))
 }
 
-// historyEvents returns a TOTP retry that completes one flow and three latched events of another.
+// historyEvents returns a TOTP retry that completes one flow, three latched events of another, and the OIDC
+// completion events of the done, SSO, and PKCE flows.
 func (env historyEnv) historyEvents() []pluginapi.AuthEvent {
+	return append(env.factorEvents(), env.completionEvents()...)
+}
+
+// completionEvents returns the code issuance and redemption events as the IdP emits them. The SSO flow lies half an
+// hour back, so the deployment records completion before the retry flow began.
+func (env historyEnv) completionEvents() []pluginapi.AuthEvent {
+	event := func(id, flow string, eventType pluginapi.AuthEventType, result pluginapi.AuthEventResult, reason string,
+		effect pluginapi.AuthEventFlowEffect, offset time.Duration) pluginapi.AuthEvent {
+		value := pluginapi.AuthEvent{EventID: id, RequestID: "req-" + id[len(id)-4:], FlowRef: flow, Protocol: "oidc",
+			ClientID: "client-a", Account: historyAccount, Type: eventType, Version: pluginapi.AuthEventOIDCCodeVersion,
+			Result: result, Reason: reason, FlowEffect: effect, ObservedAt: env.now.Add(offset)}
+		if eventType == pluginapi.AuthEventOIDCCodeIssuance {
+			value.ClientIP = "192.0.2.1"
+		}
+
+		return value
+	}
+
+	issuance, redemption := pluginapi.AuthEventOIDCCodeIssuance, pluginapi.AuthEventOIDCCodeRedemption
+
+	return []pluginapi.AuthEvent{
+		event("c0000000000000000000000000000001", historyFlowSSO, issuance, pluginapi.AuthEventSuccess,
+			"existing_session", pluginapi.AuthEventFlowCodeIssued, -30*time.Minute),
+		event("c0000000000000000000000000000002", historyFlowSSO, redemption, pluginapi.AuthEventSuccess,
+			"tokens_issued", pluginapi.AuthEventFlowTokensIssued, -30*time.Minute+time.Second),
+		event("c0000000000000000000000000000003", historyFlowDone, issuance, pluginapi.AuthEventSuccess,
+			"authenticated_in_flow", pluginapi.AuthEventFlowCodeIssued, 7*time.Second),
+		event("c0000000000000000000000000000004", historyFlowDone, redemption, pluginapi.AuthEventSuccess,
+			"tokens_issued", pluginapi.AuthEventFlowTokensIssued, 8*time.Second),
+		event("c0000000000000000000000000000005", historyFlowPKCE, issuance, pluginapi.AuthEventSuccess,
+			"authenticated_in_flow", pluginapi.AuthEventFlowCodeIssued, 9*time.Second),
+		event("c0000000000000000000000000000006", historyFlowPKCE, redemption, pluginapi.AuthEventRejected,
+			"pkce_mismatch", pluginapi.AuthEventFlowCodeConsumed, 10*time.Second),
+	}
+}
+
+// factorEvents returns a TOTP retry that completes one flow, three latched events of another, and the accepted
+// factor of the done flow.
+func (env historyEnv) factorEvents() []pluginapi.AuthEvent {
 	base := pluginapi.AuthEvent{RequestID: "mfa-request", Protocol: "oidc", ClientID: "client-a", Account: historyAccount,
 		ClientIP: "192.0.2.1", FactorRole: pluginapi.AuthEventFactorRoleSecond, Type: pluginapi.AuthEventMFAVerification,
 		Version: pluginapi.AuthEventVersion}
@@ -162,6 +210,8 @@ func (env historyEnv) historyEvents() []pluginapi.AuthEvent {
 			"attempt_limit", pluginapi.AuthEventFlowNone, true, 4*time.Second),
 		event("e0000000000000000000000000000005", historyFlowLatched, "recovery_codes", pluginapi.AuthEventSuccess,
 			"verified", pluginapi.AuthEventFlowPrimaryFailureKept, true, 5*time.Second),
+		event("e0000000000000000000000000000006", historyFlowDone, "totp", pluginapi.AuthEventSuccess, "verified",
+			pluginapi.AuthEventFlowStepUpCompleted, false, 6*time.Second),
 	}
 }
 
@@ -287,8 +337,8 @@ func TestClickHouseHistoryAnswersWhatTheWriterRecorded(t *testing.T) {
 	service := historyService(t, env, provisionReader(t, env.db, "2", clickhousestore.BudgetQuerySettings))
 	attempts := searchAll(t, env, service, historyCaller(definitions.ScopeHistoryRead))
 
-	if len(attempts) != 8 {
-		t.Fatalf("attempts = %d, want 6 requests and 2 flows", len(attempts))
+	if len(attempts) != 11 {
+		t.Fatalf("attempts = %d, want 6 requests and 5 flows", len(attempts))
 	}
 
 	for id, want := range map[string]struct{ outcome, code string }{
@@ -309,7 +359,53 @@ func TestClickHouseHistoryAnswersWhatTheWriterRecorded(t *testing.T) {
 		t.Fatalf("replayed rows merged = %d, want 1", replays)
 	}
 
+	assertAnsweredStatus(t, attempts)
 	assertSupportFlows(t, attempts)
+	assertCompletionFlows(t, attempts)
+}
+
+// assertAnsweredStatus checks that the stored host status code and text reach the decision block, and that a
+// legacy row exposes none.
+func assertAnsweredStatus(t *testing.T, attempts map[string]supporthistory.Attempt) {
+	t.Helper()
+
+	for id, want := range map[string]struct {
+		message string
+		code    int
+	}{
+		"rq1.req-tls":        {"TLS transport encryption required", 500},
+		"rq1.req-credential": {"Invalid login or password", 403},
+		"rq1.req-success":    {"OK", 200},
+	} {
+		decision := attempts[id].Events[0].Decision
+		if decision == nil || decision.AnsweredStatusCode == nil || *decision.AnsweredStatusCode != want.code ||
+			decision.AnsweredStatusMessage == nil || *decision.AnsweredStatusMessage != want.message {
+			t.Fatalf("%s decision = %+v, want %d %q", id, decision, want.code, want.message)
+		}
+	}
+
+	if legacy := attempts["rq1.req-legacy"].Events[0]; legacy.Decision != nil {
+		t.Fatalf("legacy decision = %+v, want none", legacy.Decision)
+	}
+}
+
+// assertCompletionFlows checks the OIDC completion readings of the plugin-written events.
+func assertCompletionFlows(t *testing.T, attempts map[string]supporthistory.Attempt) {
+	t.Helper()
+
+	for id, want := range map[string]struct{ outcome, basis, state, primary string }{
+		"fl1." + historyFlowDone: {"succeeded", "oidc_tokens_issued", "tokens_issued", "recorded"},
+		"fl1." + historyFlowSSO:  {"succeeded", "oidc_tokens_issued", "tokens_issued", "session_reused"},
+		"fl1." + historyFlowPKCE: {"rejected", "oidc_code_redemption_rejected", "redemption_rejected", "recorded"},
+	} {
+		attempt := attempts[id]
+		if attempt.Outcome != want.outcome || attempt.OutcomeBasis != want.basis || attempt.Completion == nil ||
+			attempt.Completion.State != want.state || attempt.Steps.Primary != want.primary ||
+			!attempt.FinalOutcomeObserved {
+			t.Fatalf("%s = outcome %s/%s steps %+v completion %+v gaps %v", id, attempt.Outcome, attempt.OutcomeBasis,
+				attempt.Steps, attempt.Completion, attempt.Recording.KnownGaps)
+		}
+	}
 }
 
 // assertSupportFlows checks the TOTP retry flow and the withheld fail-latched flow of the support projection.
@@ -326,6 +422,13 @@ func assertRetryFlow(t *testing.T, retry supporthistory.Attempt) {
 
 	if retry.Outcome != "not_observed" || retry.Progress != "second_factor_completed" || retry.FinalOutcomeObserved {
 		t.Fatalf("retry flow = %+v, want completion never claimed", retry)
+	}
+
+	// The deployment recorded completion events before this flow began, so the missing completion is "not observed",
+	// never an abort or a timeout.
+	if retry.Completion == nil || retry.Completion.State != "code_issuance_not_observed" ||
+		!slices.Contains(retry.Recording.KnownGaps, "FLOW_COMPLETION_NOT_OBSERVED") {
+		t.Fatalf("retry flow completion = %+v gaps %v", retry.Completion, retry.Recording.KnownGaps)
 	}
 
 	rejected := slices.ContainsFunc(retry.Events, func(event supporthistory.Event) bool {

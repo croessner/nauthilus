@@ -165,6 +165,9 @@ type OIDCSession struct {
 	AccessTokenIssuer    string   `json:"access_token_issuer,omitempty"`
 	RefreshFamilyID      string   `json:"refresh_family_id,omitempty"`
 	DynamicUserEpoch     string   `json:"dynamic_user_epoch,omitempty"`
+	// DiagnosticFlowRef is the non-authorizing flow reference (flow.DiagnosticFlowRef) of the browser flow that issued
+	// an authorization code. Only code sessions carry it; the token endpoint removes it before token issuance.
+	DiagnosticFlowRef    string `json:"diagnostic_flow_ref,omitempty"`
 	staticRefreshData    string
 	IDTokenClaims        map[string]any `json:"id_token_claims"`
 	AccessTokenClaims    map[string]any `json:"access_token_claims"`

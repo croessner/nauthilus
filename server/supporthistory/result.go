@@ -22,14 +22,17 @@ const SchemaVersion = "1"
 
 // Coverage states which evidence a response is based on; it is part of every processed answer.
 type Coverage struct {
-	ContractRowsSince    *time.Time       `json:"contract_rows_since"`
-	Sources              []SourceCoverage `json:"sources"`
-	Conditions           []string         `json:"conditions"`
-	KnownLimits          []string         `json:"known_limits"`
-	Availability         string           `json:"availability"`
-	Deployment           string           `json:"deployment"`
-	DeliveryCompleteness string           `json:"delivery_completeness"`
-	LateEventsPossible   bool             `json:"late_events_possible"`
+	ContractRowsSince *time.Time `json:"contract_rows_since"`
+	// CompletionEventsSince is the first recorded OIDC completion event of the deployment within retention; flows
+	// before it predate completion recording and keep FLOW_COMPLETION_NEVER_RECORDED.
+	CompletionEventsSince *time.Time       `json:"oidc_completion_events_since"`
+	Sources               []SourceCoverage `json:"sources"`
+	Conditions            []string         `json:"conditions"`
+	KnownLimits           []string         `json:"known_limits"`
+	Availability          string           `json:"availability"`
+	Deployment            string           `json:"deployment"`
+	DeliveryCompleteness  string           `json:"delivery_completeness"`
+	LateEventsPossible    bool             `json:"late_events_possible"`
 }
 
 // SourceCoverage is the read state and retention fit of one source.
@@ -86,20 +89,27 @@ type EventContext struct {
 }
 
 // Decision is the recorded Policy result of a login row.
+//
+// AnsweredStatusCode and AnsweredStatusMessage are the host status code and status text selected for the sealed
+// terminal decision (logins.http_status, logins.status_msg). They are neither the committed transport status
+// (EventContext.TransportStatus) nor necessarily what a browser displayed: IdP pages render their own text. Unknown
+// values are null, never a success default.
 type Decision struct {
-	BruteForceBucket    *string  `json:"brute_force_bucket"`
-	BruteForceTolerated *bool    `json:"brute_force_tolerated"`
-	DecisionSources     []string `json:"decision_sources"`
-	Operation           string   `json:"operation"`
-	Outcome             string   `json:"outcome"`
-	OutcomeStage        string   `json:"outcome_stage"`
-	OutcomeMarker       string   `json:"outcome_marker"`
-	ResponseMarker      string   `json:"response_marker"`
-	PolicyRule          string   `json:"policy_rule"`
-	TempFailReason      string   `json:"tempfail_reason"`
-	TempFailCheckpoint  string   `json:"tempfail_checkpoint"`
-	PolicyStatus        string   `json:"policy_status"`
-	FSMState            string   `json:"fsm_state"`
+	BruteForceBucket      *string  `json:"brute_force_bucket"`
+	BruteForceTolerated   *bool    `json:"brute_force_tolerated"`
+	AnsweredStatusCode    *int     `json:"answered_status_code"`
+	AnsweredStatusMessage *string  `json:"answered_status_message"`
+	DecisionSources       []string `json:"decision_sources"`
+	Operation             string   `json:"operation"`
+	Outcome               string   `json:"outcome"`
+	OutcomeStage          string   `json:"outcome_stage"`
+	OutcomeMarker         string   `json:"outcome_marker"`
+	ResponseMarker        string   `json:"response_marker"`
+	PolicyRule            string   `json:"policy_rule"`
+	TempFailReason        string   `json:"tempfail_reason"`
+	TempFailCheckpoint    string   `json:"tempfail_checkpoint"`
+	PolicyStatus          string   `json:"policy_status"`
+	FSMState              string   `json:"fsm_state"`
 }
 
 // Factor is the recorded result of one second-factor verification event.
@@ -139,10 +149,24 @@ type Event struct {
 	RecordVersion int           `json:"record_version"`
 }
 
-// Steps states per step whether evidence was recorded, withheld, or does not apply.
+// Steps states per step whether evidence was recorded, withheld, or does not apply. Primary is session_reused for
+// an OIDC flow that /authorize started for an already authenticated session.
 type Steps struct {
-	Primary      string `json:"primary"`
-	SecondFactor string `json:"second_factor"`
+	Primary        string `json:"primary"`
+	SecondFactor   string `json:"second_factor"`
+	CodeIssuance   string `json:"code_issuance"`
+	CodeRedemption string `json:"code_redemption"`
+}
+
+// Completion is the recorded OIDC authorization-code completion of one flow. Nauthilus's part ends with the token
+// response for the flow's code (state tokens_issued); a relying-party session after it is never observed.
+type Completion struct {
+	CodeIssuedAt         *time.Time `json:"code_issued_at"`
+	CodeRedeemableUntil  *time.Time `json:"code_redeemable_until"`
+	RedemptionObservedAt *time.Time `json:"redemption_observed_at"`
+	Scope                string     `json:"scope"`
+	State                string     `json:"state"`
+	Authentication       string     `json:"authentication"`
 }
 
 // Recording describes evidence limits of one attempt.
@@ -156,19 +180,20 @@ type Recording struct {
 
 // Attempt is one diagnostic attempt: an IdP flow or a single authentication request.
 type Attempt struct {
-	StartedAt            time.Time `json:"started_at"`
-	LastObservedAt       time.Time `json:"last_observed_at"`
-	Findings             []Finding `json:"findings"`
-	Events               []Event   `json:"events"`
-	Recording            Recording `json:"recording"`
-	Steps                Steps     `json:"steps"`
-	AttemptID            string    `json:"attempt_id"`
-	Kind                 string    `json:"kind"`
-	Projection           string    `json:"projection"`
-	Outcome              string    `json:"outcome"`
-	OutcomeBasis         string    `json:"outcome_basis"`
-	Progress             string    `json:"progress"`
-	FinalOutcomeObserved bool      `json:"final_outcome_observed"`
+	StartedAt            time.Time   `json:"started_at"`
+	LastObservedAt       time.Time   `json:"last_observed_at"`
+	Completion           *Completion `json:"completion"`
+	Findings             []Finding   `json:"findings"`
+	Events               []Event     `json:"events"`
+	Recording            Recording   `json:"recording"`
+	Steps                Steps       `json:"steps"`
+	AttemptID            string      `json:"attempt_id"`
+	Kind                 string      `json:"kind"`
+	Projection           string      `json:"projection"`
+	Outcome              string      `json:"outcome"`
+	OutcomeBasis         string      `json:"outcome_basis"`
+	Progress             string      `json:"progress"`
+	FinalOutcomeObserved bool        `json:"final_outcome_observed"`
 }
 
 // AttemptPage is the paging block of an attempt search.

@@ -115,9 +115,17 @@ func (m subjectMatcher) anchorsLogin(record LoginRecord) bool {
 		(filter.SAMLEntityID == "" || record.SAMLEntityID == filter.SAMLEntityID)
 }
 
-// anchorsEvent mirrors the store anchor predicate for step events: identity, and only without login filters.
+// anchorsEvent mirrors the store anchor predicate for step events: identity plus every set filter on the event
+// columns. OIDC flows that reuse a session have no login row, so their events must anchor filtered searches too.
 func (m subjectMatcher) anchorsEvent(record AuthEventRecord) bool {
-	matched, _ := m.identityOfEvent(record)
+	if matched, _ := m.identityOfEvent(record); !matched {
+		return false
+	}
 
-	return matched && m.filter.isEmpty()
+	filter := m.filter
+
+	return (filter.ClientIP == "" || record.ClientIP == filter.ClientIP) &&
+		(filter.Protocol == "" || record.Protocol == filter.Protocol) &&
+		(filter.OIDCClientID == "" || record.ClientID == filter.OIDCClientID) &&
+		(filter.SAMLEntityID == "" || record.SAMLEntityID == filter.SAMLEntityID)
 }
