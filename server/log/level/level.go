@@ -228,6 +228,9 @@ func logAttr(key string, value any) slog.Attr {
 		return slog.Any(key, typed)
 	case error:
 		return errorLogAttr(key, typed)
+	case slog.LogValuer:
+		// A value that defines its own log representation, such as a redacted secret, keeps it.
+		return slog.Any(key, typed)
 	case fmt.Stringer:
 		return stringerLogAttr(key, typed)
 	case nil:

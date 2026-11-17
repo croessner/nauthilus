@@ -1114,7 +1114,7 @@ func (a *AuthState) String() string {
 	for _, f := range fields {
 		if _, hidden := hiddenAuthStateFields[f.Name]; hidden {
 			if getDefaultEnvironment().GetDevMode() {
-				fmt.Fprintf(&result, " %s='%v'", f.Name, f.Value)
+				fmt.Fprintf(&result, " %s='%v'", f.Name, devModeFieldValue(f.Value))
 			} else {
 				fmt.Fprintf(&result, " %s='<hidden>'", f.Name)
 			}
@@ -1130,6 +1130,16 @@ func (a *AuthState) String() string {
 	}
 
 	return result.String()[1:]
+}
+
+// devModeFieldValue reveals a hidden secret field explicitly for the dev-mode dump. fmt redacts secret.Value on its
+// own, so the plaintext is only shown where dev mode deliberately asks for it.
+func devModeFieldValue(value any) any {
+	if hidden, ok := value.(secret.Value); ok {
+		return hidden.String()
+	}
+
+	return value
 }
 
 // collectFields returns the ordered list of fields for string representation.
