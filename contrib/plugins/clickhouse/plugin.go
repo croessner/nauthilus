@@ -81,7 +81,7 @@ func NewPlugin() *Plugin {
 		flushes:      flushScheduler{newTicker: newTimeTicker},
 		eventFlushes: flushScheduler{newTicker: newTimeTicker},
 		bfFlushes:    flushScheduler{newTicker: newTimeTicker},
-		logins:       rowStream{target: loginStreamTarget, names: loginMetricNames},
+		logins:       rowStream{target: loginStreamTarget, names: loginMetricNames, isLimitedRow: isBruteForceRejectRow},
 		events:       rowStream{target: eventStreamTarget, names: eventMetricNames},
 		bfLifecycle:  rowStream{target: bruteForceLifecycleStreamTarget, names: streamMetricNames("bruteforce_lifecycle")},
 		bfCounted:    rowStream{target: bruteForceCountedStreamTarget, names: streamMetricNames("bruteforce_counted")},
@@ -356,11 +356,14 @@ func (p *Plugin) movePendingRowsLocked(ctx context.Context, stream *rowStream, p
 
 	rows := p.cache.PopAll(ctx, previousKey)
 	stream.pendingRows = 0
+	stream.pendingLimited = 0
 	p.pushRowsLocked(ctx, stream, rows...)
 }
 
 // pushRowsLocked admits rows into one stream under its current key up to the buffer limit while the caller holds
-// the write lock; -1 means none were admitted. Drops are counted in the stream's own metrics.
+// the write lock; -1 means none were admitted. Rows the stream marks as limited (brute-force rejects on the login
+// stream) may only fill their reserved share, so an attack cannot crowd out other rows. Drops are counted in the
+// stream's own metrics.
 func (p *Plugin) pushRowsLocked(ctx context.Context, stream *rowStream, rows ...any) int {
 	length := stream.pendingRows
 	accepted := 0
@@ -377,9 +380,19 @@ func (p *Plugin) pushRowsLocked(ctx context.Context, stream *rowStream, rows ...
 			continue
 		}
 
+		limited, full := stream.limitedRowsFull(row, p.config.MaxBruteForceRejectRows)
+		if full {
+			stream.metrics.recordQueueResult(ctx, resultDroppedRejectLimit)
+			continue
+		}
+
 		length = p.cache.Push(ctx, cacheKey, row)
 		stream.pendingRows = length
 		accepted++
+
+		if limited {
+			stream.pendingLimited++
+		}
 	}
 
 	if accepted == 0 {

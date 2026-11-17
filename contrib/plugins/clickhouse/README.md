@@ -23,6 +23,7 @@ plugins:
         password: ""
         batch_size: 100
         max_buffer_rows: 10000
+        max_brute_force_reject_rows: 5000
         flush_interval: 30s
         cache_key: clickhouse:batch:logins
         timeout: 10s
@@ -72,6 +73,14 @@ The batch lives in the module-scoped host cache, which is process-local memory. 
 shared between processes: every Nauthilus process or Kubernetes pod collects and flushes its own batch under
 `cache_key`. Each process buffers at most `max_buffer_rows` rows (default `10000`), plus at most one in-flight batch of
 that size. The limit must be positive; zero selects the default. Lowering it on reload discards excess queued rows.
+
+Rows of requests rejected because of an active brute-force ban (outcome marker `auth.outcome.brute_force_reject`) may
+fill at most `max_brute_force_reject_rows` of that buffer (default: half of `max_buffer_rows`, at least one). The rest
+stays reserved for other login rows, so an attack against a banned network cannot crowd out successes and ordinary
+failures while ClickHouse is slow or unavailable. The share must be smaller than `max_buffer_rows`; only a one-row
+buffer, which cannot reserve anything, keeps a share of one. Reject rows beyond it
+are dropped and counted with `result=dropped_reject_limit`; the share is recounted when failed batches are requeued or
+moved on reload. Every ban hit is also recorded in the separate `bruteforce_attempts` stream.
 
 A batch is flushed when one of the following happens:
 

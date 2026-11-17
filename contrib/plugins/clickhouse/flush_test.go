@@ -300,7 +300,7 @@ func TestStartExposesZeroValuedResultSeries(t *testing.T) {
 		t.Fatalf("Gather() error = %v", err)
 	}
 
-	assertZeroCounterSeries(t, families, loginMetricNames.queuedRows, []string{"queued", "skipped", "dedup_skipped", "encode_error", "dropped"})
+	assertZeroCounterSeries(t, families, loginMetricNames.queuedRows, []string{"queued", "skipped", "dedup_skipped", "encode_error", "dropped", "dropped_reject_limit"})
 	assertZeroCounterSeries(t, families, loginMetricNames.flushBatches, []string{"success", "http_error", "status_error", "no_url", "requeued"})
 
 	for _, family := range families {

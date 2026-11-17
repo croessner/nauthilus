@@ -26,11 +26,13 @@ import (
 )
 
 const (
-	defaultBatchSize      = 100
-	defaultMaxBufferRows  = 10000
-	defaultCacheKey       = "clickhouse:batch:logins"
-	defaultEventsCacheKey = "clickhouse:batch:auth_events"
-	defaultEventsFlush    = 10 * time.Second
+	defaultBatchSize     = 100
+	defaultMaxBufferRows = 10000
+	// rejectBufferShareDivisor reserves half of the login buffer for rows other than brute-force rejects by default.
+	rejectBufferShareDivisor = 2
+	defaultCacheKey          = "clickhouse:batch:logins"
+	defaultEventsCacheKey    = "clickhouse:batch:auth_events"
+	defaultEventsFlush       = 10 * time.Second
 
 	defaultBruteForceLifecycleCacheKey = "clickhouse:batch:bruteforce_lifecycle"
 	defaultBruteForceCountedCacheKey   = "clickhouse:batch:bruteforce_counted"
@@ -67,9 +69,11 @@ type moduleConfig struct {
 	EventsFlushInterval time.Duration `mapstructure:"-"`
 	BatchSize           int           `mapstructure:"-"`
 	MaxBufferRows       int           `mapstructure:"-"`
-	MaxResponseBytes    int64         `mapstructure:"-"`
-	DedupSuccess        bool          `mapstructure:"-"`
-	DedupFailure        bool          `mapstructure:"-"`
+	// MaxBruteForceRejectRows bounds how many buffered login rows may be brute-force rejects.
+	MaxBruteForceRejectRows int   `mapstructure:"-"`
+	MaxResponseBytes        int64 `mapstructure:"-"`
+	DedupSuccess            bool  `mapstructure:"-"`
+	DedupFailure            bool  `mapstructure:"-"`
 }
 
 type rawModuleConfig struct {
@@ -94,6 +98,7 @@ type rawModuleConfig struct {
 	BruteForceFlush              string `mapstructure:"bruteforce_flush_interval"`
 	BatchSize                    int    `mapstructure:"batch_size"`
 	MaxBufferRows                int    `mapstructure:"max_buffer_rows"`
+	MaxBruteForceRejectRows      int    `mapstructure:"max_brute_force_reject_rows"`
 	MaxResponseBytes             int64  `mapstructure:"max_response_bytes"`
 	DedupSuccess                 bool   `mapstructure:"dedup_success"`
 	DedupFailure                 bool   `mapstructure:"dedup_failure"`
@@ -135,6 +140,11 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		return moduleConfig{}, err
 	}
 
+	maxRejectRows, err := decodeMaxBruteForceRejectRows(raw.MaxBruteForceRejectRows, maxBufferRows)
+	if err != nil {
+		return moduleConfig{}, err
+	}
+
 	maxResponseBytes, err := pluginutil.ParsePositiveDefaultedInt64("max_response_bytes", raw.MaxResponseBytes, defaultMaxResponseBytes)
 	if err != nil {
 		return moduleConfig{}, err
@@ -170,15 +180,16 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 	}
 
 	return moduleConfig{
-		bruteForceStreamConfig: bruteForce,
-		MaxBufferRows:          maxBufferRows,
-		DedupSuccess:           raw.DedupSuccess,
-		DedupFailure:           raw.DedupFailure,
-		Deployment:             strings.TrimSpace(raw.Deployment),
-		Instance:               strings.TrimSpace(raw.Instance),
-		InsertURL:              insertURL,
-		EventsInsertURL:        eventsInsertURL,
-		EventsCacheKey:         eventsCacheKey,
+		bruteForceStreamConfig:  bruteForce,
+		MaxBufferRows:           maxBufferRows,
+		MaxBruteForceRejectRows: maxRejectRows,
+		DedupSuccess:            raw.DedupSuccess,
+		DedupFailure:            raw.DedupFailure,
+		Deployment:              strings.TrimSpace(raw.Deployment),
+		Instance:                strings.TrimSpace(raw.Instance),
+		InsertURL:               insertURL,
+		EventsInsertURL:         eventsInsertURL,
+		EventsCacheKey:          eventsCacheKey,
 		// The events worker interval is mandatory so a quiet process still delivers step events.
 		EventsFlushInterval: eventsFlushInterval,
 		User:                strings.TrimSpace(raw.User),
@@ -190,6 +201,28 @@ func decodeModuleConfig(view pluginapi.ConfigView) (moduleConfig, error) {
 		BatchSize:           batchSize,
 		MaxResponseBytes:    maxResponseBytes,
 	}, nil
+}
+
+// decodeMaxBruteForceRejectRows validates the brute-force reject share of the login buffer. Zero selects half of
+// max_buffer_rows (at least one row). The share must leave at least one row for other login rows; only a one-row
+// buffer, which cannot reserve anything, keeps a share of one.
+func decodeMaxBruteForceRejectRows(configured int, maxBufferRows int) (int, error) {
+	fallback := max(maxBufferRows/rejectBufferShareDivisor, 1)
+	limit := max(maxBufferRows-1, 1)
+
+	rows, err := pluginutil.ParsePositiveDefaultedInt("max_brute_force_reject_rows", configured, fallback)
+	if err != nil {
+		return 0, err
+	}
+
+	if rows > limit {
+		return 0, fmt.Errorf(
+			"max_brute_force_reject_rows %d must leave at least one of max_buffer_rows %d for other login rows",
+			rows, maxBufferRows,
+		)
+	}
+
+	return rows, nil
 }
 
 // defaultedCacheKey trims a configured module-cache key and falls back to its default.

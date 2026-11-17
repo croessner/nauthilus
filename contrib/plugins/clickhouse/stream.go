@@ -26,13 +26,26 @@ type streamTarget func(moduleConfig) (insertURL string, cacheKey string)
 // rowStream owns the in-memory batching, insert gate, retry pause, and metrics of one ClickHouse insert target.
 // Plugin.mu guards every field. Streams never share buffers, so a stalled target cannot delay the other one.
 type rowStream struct {
-	retryAfter  time.Time
-	target      streamTarget
-	metrics     pluginMetrics
-	names       metricNames
-	retryDelay  time.Duration
-	pendingRows int
-	flushing    bool
+	retryAfter time.Time
+	target     streamTarget
+	// isLimitedRow marks rows that count against the stream's reserved-share limit; nil disables the share.
+	isLimitedRow func(any) bool
+	metrics      pluginMetrics
+	names        metricNames
+	retryDelay   time.Duration
+	pendingRows  int
+	// pendingLimited counts buffered rows that isLimitedRow marks; it is rebuilt whenever rows are re-pushed.
+	pendingLimited int
+	flushing       bool
+}
+
+// limitedRowsFull reports whether one more marked row would exceed the stream's reserved share.
+func (s *rowStream) limitedRowsFull(row any, limit int) (bool, bool) {
+	if s.isLimitedRow == nil || !s.isLimitedRow(row) {
+		return false, false
+	}
+
+	return true, s.pendingLimited >= limit
 }
 
 // loginStreamTarget selects the authentication-row target.
@@ -88,6 +101,8 @@ func (q streamQueue) beginFlush(ctx context.Context) []any {
 	rows := q.plugin.cache.PopAll(ctx, cacheKey)
 
 	stream.pendingRows = 0
+	stream.pendingLimited = 0
+
 	if len(rows) != 0 {
 		stream.flushing = true
 	}

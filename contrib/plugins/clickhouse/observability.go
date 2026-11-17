@@ -39,25 +39,29 @@ const (
 	resultNoURL           = "no_url"
 	resultQueued          = "queued"
 	resultDropped         = "dropped"
-	resultRequeued        = "requeued"
-	resultSkipped         = "skipped"
-	resultStatusError     = "status_error"
-	resultSuccess         = "success"
-	operationEnqueue      = "enqueue"
-	operationFlush        = "flush"
-	logFieldAuthMethod    = "auth_method"
-	logFieldBatchSize     = "batch_size"
-	logFieldField         = "field"
-	logFieldFlushWorker   = "flush_worker"
-	logFieldResult        = "result"
-	logFieldRows          = "rows"
-	logFieldThreshold     = "threshold"
-	logFieldTrigger       = "trigger"
-	logFieldURLConfigured = "url_configured"
+	// resultDroppedRejectLimit counts brute-force reject rows dropped at their reserved share of the login buffer.
+	resultDroppedRejectLimit = "dropped_reject_limit"
+	resultRequeued           = "requeued"
+	resultSkipped            = "skipped"
+	resultStatusError        = "status_error"
+	resultSuccess            = "success"
+	operationEnqueue         = "enqueue"
+	operationFlush           = "flush"
+	logFieldAuthMethod       = "auth_method"
+	logFieldBatchSize        = "batch_size"
+	logFieldField            = "field"
+	logFieldFlushWorker      = "flush_worker"
+	logFieldResult           = "result"
+	logFieldRows             = "rows"
+	logFieldThreshold        = "threshold"
+	logFieldTrigger          = "trigger"
+	logFieldURLConfigured    = "url_configured"
 )
 
 // queueResults lists every result label recorded on metricQueuedRows.
-var queueResults = []string{resultQueued, resultSkipped, resultDedupSkipped, resultEncodeError, resultDropped}
+var queueResults = []string{
+	resultQueued, resultSkipped, resultDedupSkipped, resultEncodeError, resultDropped, resultDroppedRejectLimit,
+}
 
 // flushResults lists every result label recorded on metricFlushBatches.
 var flushResults = []string{resultSuccess, resultHTTPError, resultStatusError, resultNoURL, resultRequeued}
