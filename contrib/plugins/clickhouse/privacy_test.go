@@ -69,7 +69,11 @@ func TestPrivacyExchangePopulatesEveryJSONEachRowField(t *testing.T) {
 
 	assertCompletePrivacyRow(t, row)
 	assertStringField(t, row, "geoip_country", "DE")
-	assertNumberField(t, row, "reputation_score", 0.25)
+
+	if _, ok := row["reputation_score"]; ok {
+		t.Fatal("the retired GeoIP reputation map must not be exported")
+	}
+
 	assertStringField(t, row, "decision_sources", "")
 }
 

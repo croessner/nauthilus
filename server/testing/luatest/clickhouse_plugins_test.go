@@ -3,7 +3,9 @@ package luatest
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -217,5 +219,58 @@ func assertStringField(t *testing.T, row map[string]any, key, expected string) {
 
 	if got != expected {
 		t.Fatalf("unexpected %s value: got=%q want=%q", key, got, expected)
+	}
+}
+
+// retiredColumnCount is the size of the retired legacy column list.
+const retiredColumnCount = 20
+
+// retiredColumnsFromSchema reads the column names of the schema.sql retirement block, the single list of logins
+// columns that no producer writes any more. The markers and the exact list are also checked by retiredColumnDrops in
+// contrib/plugins/clickhouse/clickhouse_integration_test.go (another package, so the parser cannot be shared).
+func retiredColumnsFromSchema(t *testing.T) []string {
+	t.Helper()
+
+	content, err := os.ReadFile("../../../contrib/clickhouse-kubernetes/schema.sql")
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+
+	text := string(content)
+	start, end := strings.Index(text, "-- BEGIN retire-legacy-columns 2026-11-17"), strings.Index(text, "-- END retire-legacy-columns 2026-11-17")
+
+	if start < 0 || end < start {
+		t.Fatal("schema.sql has no retire-legacy-columns block")
+	}
+
+	var columns []string
+
+	for _, match := range regexp.MustCompile(`DROP COLUMN IF EXISTS (\w+);`).FindAllStringSubmatch(text[start:end], -1) {
+		columns = append(columns, match[1])
+	}
+
+	if len(columns) != retiredColumnCount {
+		t.Fatalf("retirement block lists %d columns, want %d", len(columns), retiredColumnCount)
+	}
+
+	return columns
+}
+
+// TestClickhouseQueryNeverSelectsRetiredColumns pins that the query hook keeps working after the retired columns are
+// dropped: its projection and filter whitelists name none of them.
+func TestClickhouseQueryNeverSelectsRetiredColumns(t *testing.T) {
+	runner := runClickhouseFixture(t, "query_wrapper.lua", "query_success.json", "hook")
+	sql := firstCapturedHTTPRequest(t, runner).Body
+
+	hook, err := os.ReadFile("../../lua-plugins.d/hooks/clickhouse-query.lua")
+	if err != nil {
+		t.Fatalf("read hook: %v", err)
+	}
+
+	for _, column := range retiredColumnsFromSchema(t) {
+		pattern := regexp.MustCompile(`\b` + column + `\b`)
+		if pattern.MatchString(sql) || pattern.MatchString(string(hook)) {
+			t.Errorf("query hook still references retired column %q", column)
+		}
 	}
 }

@@ -143,7 +143,9 @@ Exports metrics about non-authenticated requests (including those without an exi
 
 Native replacement: configure the bundled Go plugin `clickhouse` and reference the native policy effect ID
 `authn/plugin.clickhouse.post_action`. The native plugin writes the same JSONEachRow field names through host-managed HTTP, Redis, and
-cache facades. Native post-actions cannot apply runtime deltas, so the Lua `rt.post_clickhouse = true` marker is not
+cache facades, except the retired flat `reputation_*`, `gp_*`, `prot_*`, and `dyn_*` fields, which no producer fills any
+more. This retired script still sends them, so it only works with tables that keep those columns: fresh tables from
+`contrib/clickhouse-kubernetes/schema.sql` no longer have them, and its retirement block drops them from existing tables. Native post-actions cannot apply runtime deltas, so the Lua `rt.post_clickhouse = true` marker is not
 mutated back into request runtime state.
 
 Capabilities:
@@ -152,7 +154,8 @@ Capabilities:
 - Uses glua_http (cjoudrey/gluahttp) for HTTP POST to ClickHouse.
 - Validates the general 64-character password hash and exports its first eight lowercase hex characters only in the ClickHouse row.
 
-ClickHouse table schema (JSONEachRow):
+ClickHouse table schema expected by this retired script (JSONEachRow). It still contains the retired legacy columns;
+do not copy it for new installations, use `contrib/clickhouse-kubernetes/schema.sql` instead:
 ```
 CREATE TABLE IF NOT EXISTS nauthilus.logins (
   ts                   DateTime64(3, 'UTC'),

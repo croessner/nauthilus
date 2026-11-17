@@ -24,6 +24,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -43,8 +44,8 @@ const legacyLoginRow = `{"ts":"2026-11-16 08:28:09.000","session":"legacy-sessio
 	`"http_status":403,"status_msg":"Invalid login or password"}`
 
 // TestClickHouseContractMigrationKeepsLegacyRowsAndMatchesFreshSchema proves the additive migration on a
-// production-shaped table: it is repeatable, keeps legacy rows as contract_version 0 without invented causes, and
-// yields exactly the column set of a fresh installation from schema.sql.
+// production-shaped table: it is repeatable, keeps legacy rows as contract_version 0 without invented causes, and,
+// together with the retirement block of schema.sql, yields exactly the column set of a fresh installation.
 func TestClickHouseContractMigrationKeepsLegacyRowsAndMatchesFreshSchema(t *testing.T) {
 	migrated := newClickHouseTestDB(t)
 	migrated.applyFile(legacySchemaPath)
@@ -70,6 +71,21 @@ func TestClickHouseContractMigrationKeepsLegacyRowsAndMatchesFreshSchema(t *test
 			"reputation_truncated": false, "brute_force_tolerated": nil, "http_status": "403",
 			"status_msg": "Invalid login or password",
 		})
+	}
+
+	// The separately approved retirement step brings the migrated table to the fresh column set.
+	migrated.applyRetiredColumnDrops(t)
+	migrated.applyRetiredColumnDrops(t)
+
+	kept := migrated.rows("SELECT contract_version, http_status, status_msg FROM nauthilus.logins " +
+		"WHERE session IN ('legacy-session', 'legacy-after-migration')")
+	if len(kept) != 2 {
+		t.Fatalf("rows after retiring legacy columns = %v, want both legacy rows kept", kept)
+	}
+
+	for _, row := range kept {
+		assertRowValues(t, row, map[string]any{"contract_version": "0", "http_status": "403",
+			"status_msg": "Invalid login or password"})
 	}
 
 	fresh := newClickHouseTestDB(t)
@@ -529,21 +545,52 @@ func assertRowValues(t *testing.T, row map[string]any, want map[string]any) {
 // TestClickHouseDashboardQueriesRunOnMigratedSchema executes every panel query of the shipped Grafana dashboard
 // against a migrated production-shaped table, with Grafana macros replaced by neutral SQL.
 func TestClickHouseDashboardQueriesRunOnMigratedSchema(t *testing.T) {
-	db := newClickHouseTestDB(t)
-	db.applyFile(legacySchemaPath)
-	db.applyFile(migrationPath)
-	db.exec(fmt.Sprintf("INSERT INTO %s.logins FORMAT JSONEachRow %s", db.name, legacyLoginRow))
-
 	queries := dashboardQueries(t)
 	if len(queries) == 0 {
 		t.Fatal("dashboard contains no SQL panel queries")
 	}
 
-	for index, query := range queries {
-		statement := expandDashboardMacros(query, db.name+".logins")
-		if err := db.tryExec(statement + " FORMAT Null"); err != nil {
-			t.Errorf("dashboard query %d failed on migrated schema: %v\n%s", index, err, statement)
-		}
+	for name, prepare := range map[string]func(*clickHouseTestDB){
+		"transition": func(db *clickHouseTestDB) { db.applyFile(legacySchemaPath); db.applyFile(migrationPath) },
+		"retired": func(db *clickHouseTestDB) {
+			db.applyFile(legacySchemaPath)
+			db.applyFile(migrationPath)
+			db.applyRetiredColumnDrops(t)
+		},
+		"fresh": func(db *clickHouseTestDB) { db.applyFile(schemaPath) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newClickHouseTestDB(t)
+			prepare(db)
+			seedDashboardRows(t, db)
+
+			for index, query := range queries {
+				statement := expandDashboardMacros(query, db.name+".logins")
+				if err := db.tryExec(statement + " FORMAT Null"); err != nil {
+					t.Errorf("dashboard query %d failed on the %s schema: %v\n%s", index, name, err, statement)
+				}
+			}
+		})
+	}
+}
+
+// seedDashboardRows inserts one legacy row without assessments and one contract row with a measured and a not_found
+// assessment, so the dashboard expressions run on data and NULL measurements are proven to be ignored.
+func seedDashboardRows(t *testing.T, db *clickHouseTestDB) {
+	t.Helper()
+
+	db.exec(fmt.Sprintf("INSERT INTO %s.logins FORMAT JSONEachRow %s", db.name, legacyLoginRow))
+	db.exec(db.scoped("INSERT INTO nauthilus.logins (ts, session, service, deployment, username, client_ip, " +
+		"contract_version, outcome, decision_sources, reputation_assessments) VALUES (now64(3), 'dashboard-row', 'nginx', " +
+		"'it', 'anna@example.test', '203.0.113.7', 1, 'fail', 'brute_force', " +
+		"[('plugin.reputation.auth_subjects', 'client', 'ip', 'fresh', 'fast', 'suspicious', 'none', 0.8, 0.1, 0.9, 5, 2, 10), " +
+		"('plugin.reputation.auth_subjects', 'client', 'asn', 'not_found', 'fast', 'unknown', 'none', NULL, NULL, NULL, NULL, NULL, NULL)])"))
+
+	rows := db.rows("SELECT maxArray(arrayMap(a -> a.risk_score, reputation_assessments)) AS risk, " +
+		"countIf(hasAny(arrayMap(a -> a.band, reputation_assessments), ['suspicious'])) AS suspicious, " +
+		"countIf(hasAny(arrayMap(a -> a.state, reputation_assessments), ['not_found'])) AS not_found FROM nauthilus.logins")
+	if fmt.Sprint(rows[0]["risk"]) != "0.8" || fmt.Sprint(rows[0]["suspicious"]) != "1" || fmt.Sprint(rows[0]["not_found"]) != "1" {
+		t.Fatalf("structured reputation probes = %v, want risk 0.8 without NULL influence and one row per filter", rows)
 	}
 }
 
@@ -590,6 +637,9 @@ func dashboardQueries(t *testing.T) []string {
 	return queries
 }
 
+// dashboardVariable matches a multi-value Grafana variable rendered with the singlequote format.
+var dashboardVariable = regexp.MustCompile(`\$\{[a-z_]+:singlequote\}`)
+
 // expandDashboardMacros replaces the Grafana ClickHouse macros used by the dashboard with neutral SQL.
 func expandDashboardMacros(query string, table string) string {
 	replacer := strings.NewReplacer(
@@ -597,7 +647,12 @@ func expandDashboardMacros(query string, table string) string {
 		"${exclude_identities:singlequote}", "''",
 	)
 	query = replacer.Replace(query)
-	query = replaceMacroCalls(query, "$__conditionalAll", func(string) string { return "1" })
+	// A selected filter keeps its condition, so filter expressions are checked against the schema as well.
+	query = replaceMacroCalls(query, "$__conditionalAll", func(argument string) string {
+		condition := argument[:strings.LastIndex(argument, ",")]
+
+		return "(" + dashboardVariable.ReplaceAllString(condition, "'probe'") + ")"
+	})
 	query = replaceMacroCalls(query, "$__timeFilter_ms", func(argument string) string {
 		return "(" + argument + " >= now() - INTERVAL 1 DAY)"
 	})

@@ -124,26 +124,6 @@ type clickHouseRow struct {
 	GeoIPIsPrivacyRelay           *bool                     `json:"geoip_is_privacy_relay"`
 	GeoIPIsHostingNetwork         *bool                     `json:"geoip_is_hosting_network"`
 	GeoIPIsSharedEgress           *bool                     `json:"geoip_is_shared_egress"`
-	ReputationScore               *float64                  `json:"reputation_score"`
-	ReputationPositiveScore       *float64                  `json:"reputation_positive_score"`
-	ReputationNegativeScore       *float64                  `json:"reputation_negative_score"`
-	ReputationIPScore             *float64                  `json:"reputation_ip_score"`
-	ReputationASNScore            *float64                  `json:"reputation_asn_score"`
-	ReputationCountryScore        *float64                  `json:"reputation_country_score"`
-	ReputationASNCountryScore     *float64                  `json:"reputation_asn_country_score"`
-	ReputationSamples             *uint64                   `json:"reputation_samples"`
-	ReputationSource              string                    `json:"reputation_source"`
-	ReputationDecision            string                    `json:"reputation_decision"`
-	GPAttempts                    *uint64                   `json:"gp_attempts"`
-	GPUniqueIPs                   *uint64                   `json:"gp_unique_ips"`
-	GPUniqueUsers                 *uint64                   `json:"gp_unique_users"`
-	GPIPsPerUser                  *float64                  `json:"gp_ips_per_user"`
-	ProtectionActive              *bool                     `json:"prot_active"`
-	ProtectionReason              string                    `json:"prot_reason"`
-	ProtectionBackoff             *uint64                   `json:"prot_backoff"`
-	ProtectionDelayMillis         *uint64                   `json:"prot_delay_ms"`
-	DynamicThreat                 *uint64                   `json:"dyn_threat"`
-	DynamicResponse               string                    `json:"dyn_response"`
 	XSSLProtocol                  string                    `json:"xssl_protocol"`
 	XSSLCipher                    string                    `json:"xssl_cipher"`
 	SSLFingerprint                string                    `json:"ssl_fingerprint"`
@@ -218,10 +198,6 @@ func buildRow(request pluginapi.PostActionRequest, cfg moduleConfig) (clickHouse
 	applyFailedLoginInfo(&row, exchangeSnapshot.Map(exchange.KeyFailedLoginHotspot))
 	applyGeoIPInfo(&row, geoIPInfo(geoIPAnalytics.Fields))
 	applyGeoIPPrivacyInfo(&row, geoIPAnalytics)
-	applyReputationInfo(&row, reputationInfo(exchangeSnapshot))
-	applyGlobalPatternInfo(&row, exchangeSnapshot.Map(exchange.KeyGlobalPattern))
-	applyAccountProtectionInfo(&row, exchangeSnapshot.Map(exchange.KeyAccountProtection))
-	applyDynamicResponseInfo(&row, exchangeSnapshot.Map(exchange.KeyDynamicResponse))
 
 	return row, nil
 }
@@ -317,67 +293,6 @@ func applyGeoIPInfo(row *clickHouseRow, info map[string]any) {
 	row.GeoIPASNStatus = stringValue(info["asn_status"])
 }
 
-// applyReputationInfo copies GeoIP reputation details from runtime or facts.
-func applyReputationInfo(row *clickHouseRow, info reputationDetails) {
-	values := info.values
-	if len(values) == 0 {
-		return
-	}
-
-	row.ReputationScore = floatFromAny(values["score"])
-	row.ReputationPositiveScore = floatFromAny(values["positive_score"])
-	row.ReputationNegativeScore = floatFromAny(values["negative_score"])
-	row.ReputationIPScore = floatFromAny(values["ip_score"])
-	row.ReputationASNScore = floatFromAny(values["asn_score"])
-	row.ReputationCountryScore = floatFromAny(values["country_score"])
-	row.ReputationASNCountryScore = floatFromAny(values["asn_country_score"])
-	row.ReputationSamples = uintFromAny(values["samples"])
-	row.ReputationSource = info.source
-
-	if source := stringValue(values["source"]); source != "" {
-		row.ReputationSource = source
-	}
-
-	row.ReputationDecision = stringValue(values["decision"])
-}
-
-// applyGlobalPatternInfo copies global pattern counters from runtime state.
-func applyGlobalPatternInfo(row *clickHouseRow, info map[string]any) {
-	if len(info) == 0 {
-		return
-	}
-
-	row.GPAttempts = uintFromAny(info["attempts"])
-	row.GPUniqueIPs = uintFromAny(info["unique_ips"])
-	row.GPUniqueUsers = uintFromAny(info["unique_users"])
-	row.GPIPsPerUser = floatFromAny(info["ips_per_user"])
-}
-
-// applyAccountProtectionInfo copies account protection details from runtime state.
-func applyAccountProtectionInfo(row *clickHouseRow, info map[string]any) {
-	if len(info) == 0 {
-		return
-	}
-
-	if value, ok := boolFromAny(info["active"]); ok {
-		row.ProtectionActive = &value
-	}
-
-	row.ProtectionReason = stringValue(info["reason"])
-	row.ProtectionBackoff = uintFromAny(info["backoff_level"])
-	row.ProtectionDelayMillis = uintFromAny(info["delay_ms"])
-}
-
-// applyDynamicResponseInfo copies dynamic response details from runtime state.
-func applyDynamicResponseInfo(row *clickHouseRow, info map[string]any) {
-	if len(info) == 0 {
-		return
-	}
-
-	row.DynamicThreat = uintFromAny(info["threat_level"])
-	row.DynamicResponse = stringValue(info["response"])
-}
-
 // geoIPInfo normalizes standard GeoIP exchange fields for row mapping.
 func geoIPInfo(values map[string]any) map[string]any {
 	if len(values) == 0 {
@@ -413,22 +328,6 @@ func geoIPStatus(info map[string]any) string {
 	}
 
 	return geoIPStatusMiss
-}
-
-type reputationDetails struct {
-	values map[string]any
-	source string
-}
-
-// reputationInfo returns the standard reputation details from the GeoIP reputation exchange map.
-// The row source is the map's own source field; Policy facts are no longer a fallback.
-func reputationInfo(snapshot exchange.Snapshot) reputationDetails {
-	values := snapshot.GeoIPReputation()
-	if len(values) == 0 {
-		return reputationDetails{}
-	}
-
-	return reputationDetails{values: values, source: stringValue(values["source"])}
 }
 
 // clickHouseTimestampLayout is the DateTime64(3, 'UTC') text format accepted by JSONEachRow.
@@ -535,51 +434,6 @@ func firstUintFromAny(values ...any) *uint64 {
 // uintPointer returns a pointer to value.
 func uintPointer(value uint64) *uint64 {
 	return &value
-}
-
-// floatFromAny converts finite numeric values to Float64-compatible pointers.
-//
-//nolint:gocyclo // Type-switch breadth keeps runtime conversion explicit and allocation-free.
-func floatFromAny(value any) *float64 {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case *float64:
-		return typed
-	case float64:
-		if math.IsNaN(typed) || math.IsInf(typed, 0) {
-			return nil
-		}
-
-		return &typed
-	case float32:
-		return floatFromAny(float64(typed))
-	case int:
-		value := float64(typed)
-
-		return &value
-	case int64:
-		value := float64(typed)
-
-		return &value
-	case uint:
-		value := float64(typed)
-
-		return &value
-	case uint64:
-		value := float64(typed)
-
-		return &value
-	case string:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-		if err != nil {
-			return nil
-		}
-
-		return floatFromAny(parsed)
-	default:
-		return nil
-	}
 }
 
 // boolFromAny converts bool-like runtime values.

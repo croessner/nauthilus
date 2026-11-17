@@ -75,6 +75,15 @@ ORDER BY ts DESC
 LIMIT 50;
 ```
 
+## Retired legacy columns
+
+The native plugin no longer writes the flat `reputation_*` (ten columns), `gp_*`, `prot_*`, and `dyn_*` columns of
+`nauthilus.logins`; fresh tables from `schema.sql` do not create them, and its rows still insert into existing tables
+that keep them. The separate, versioned `retire-legacy-columns` section at the end of `schema.sql` drops exactly these
+columns from existing tables. It is not part of the upgrade guide: run it only after every writer runs the cleaned
+export, old batches are drained, readers no longer reference the columns, and a backup exists if their values are still
+needed (`contrib/plugins/clickhouse/DIAGNOSTIC_CONTRACT.md` section 9). Dropping is irreversible.
+
 ## Grafana dashboard
 
 The ClickHouse login analytics dashboard is available as:
@@ -86,14 +95,18 @@ It is built for the official Grafana ClickHouse data source (`grafana-clickhouse
 - Executive login KPIs: attempts, success/failure counts, success rate, unique users, unique source IPs, p95 latency, and defense-event volume.
 - Outcome and performance trends by time bucket, HTTP status class, protocol, and authentication method.
 - Identity and source-risk views for failed identities, source IPs, a country outcome world map, country rankings, known-vs-unknown users, and user agents.
-- GeoIP reputation views for reputation decisions over time, score percentiles, hot source IPs, and ASN/country aggregates.
+- Reputation views over the structured `reputation_assessments` tuples: reputation bands over time, risk/trust score
+  percentiles, hot source IPs, and ASN/country aggregates. The score aggregates cover every assessment tuple of a row
+  (all subjects and profiles), so ASN- or country-level scores also appear in the per-IP tables.
 - Network privacy intelligence views for Tor, known/community VPN, public proxy, privacy relay, hosting-network,
   stale-evidence, and recent attributed-request analytics. Shared-egress evidence is stored in its dedicated nullable
   column for policy and custom dashboard queries. Hosting remains separate from VPN evidence.
-- Defense-signal views for decision sources, account protection, dynamic response, brute-force buckets, repeat/replay markers, and OIDC/SAML client activity.
+- Defense-signal views for fired decision sources, brute-force buckets, repeat/replay markers, and OIDC/SAML client
+  activity. The retired dynamic response and account protection columns are not used any more; account protection
+  still appears as a decision source.
 - Investigation tables for recent high-risk events and the recent login stream.
 
-Import it through Grafana's dashboard import flow and select the ClickHouse data source that can read the `nauthilus` database when Grafana asks for `ClickHouse datasource`. The selected data source pre-fills the dashboard's data-source variable, which remains visible for later switching. The dashboard exposes filters for service, protocol, method, status message, country, ASN, ASN country, reputation decision, and a ClickHouse-native exclude-identities filter. The exclude filter defaults to `zabbix_mail`; clear it to include every identity. Multiple exact identities can be excluded as a comma-separated list.
+Import it through Grafana's dashboard import flow and select the ClickHouse data source that can read the `nauthilus` database when Grafana asks for `ClickHouse datasource`. The selected data source pre-fills the dashboard's data-source variable, which remains visible for later switching. The dashboard exposes filters for service, protocol, method, status message, country, ASN, ASN country, reputation band, reputation state, and a ClickHouse-native exclude-identities filter. The reputation filters select rows with at least one matching assessment tuple and need the `reputation_assessments` column from `migrations/diagnostic-contract.sql`. The exclude filter defaults to `zabbix_mail`; clear it to include every identity. Multiple exact identities can be excluded as a comma-separated list.
 
 The large raw-event tables (`Recent high-risk events` and `Recent login stream`) use server-side ClickHouse pagination through the `Rows/page` and `Table page` variables. Changing those variables changes the SQL `LIMIT` and `OFFSET`, so Grafana only receives the selected slice instead of loading the full result set and paging it in the browser. The aggregated Top-N tables stay capped by their own small `LIMIT` values.
 

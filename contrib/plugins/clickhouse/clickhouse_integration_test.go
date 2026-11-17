@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,57 @@ func sqlStatements(content string) []string {
 	}
 
 	return statements
+}
+
+// retiredColumnsBlockStart and retiredColumnsBlockEnd delimit the retirement block of schema.sql.
+const (
+	retiredColumnsBlockStart = "-- BEGIN retire-legacy-columns 2026-11-17"
+	retiredColumnsBlockEnd   = "-- END retire-legacy-columns 2026-11-17"
+)
+
+// retiredColumnDrops extracts the DROP statements of the schema.sql retirement block and checks that they drop
+// exactly the columns the plugin stopped exporting.
+func retiredColumnDrops(t *testing.T) []string {
+	t.Helper()
+
+	content, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+
+	text := string(content)
+	start, end := strings.Index(text, retiredColumnsBlockStart), strings.Index(text, retiredColumnsBlockEnd)
+
+	if start < 0 || end < start {
+		t.Fatal("schema.sql has no retire-legacy-columns block")
+	}
+
+	statements := sqlStatements(text[start:end])
+	dropped := make([]string, 0, len(statements))
+
+	for _, statement := range statements {
+		const prefix = "ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS "
+		if !strings.HasPrefix(statement, prefix) {
+			t.Fatalf("unexpected statement in retirement block: %s", statement)
+		}
+
+		dropped = append(dropped, strings.TrimPrefix(statement, prefix))
+	}
+
+	if !slices.Equal(dropped, retiredLegacyColumns) {
+		t.Fatalf("retirement block drops %v, want exactly %v", dropped, retiredLegacyColumns)
+	}
+
+	return statements
+}
+
+// applyRetiredColumnDrops runs the retirement block against the test database.
+func (db *clickHouseTestDB) applyRetiredColumnDrops(t *testing.T) {
+	t.Helper()
+
+	for _, statement := range retiredColumnDrops(t) {
+		db.exec(db.scoped(statement))
+	}
 }
 
 // flushStreams delivers both plugin streams synchronously.

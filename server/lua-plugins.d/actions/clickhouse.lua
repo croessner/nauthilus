@@ -18,7 +18,9 @@
 -- RETIRED: This Lua action is no longer maintained and receives no new columns or decision sources. Use the native
 -- Go ClickHouse plugin (contrib/plugins/clickhouse) instead; it writes decision_sources including the built-in rbl
 -- and brute_force controls and the rbl_lists column. Existing tables keep accepting rows from this script because new
--- columns have defaults.
+-- columns have defaults, as long as they still carry the retired reputation_*, gp_*, prot_*, and dyn_* columns this
+-- script sends: tables created from the current schema.sql, or after its retirement block ran, reject its rows when
+-- the insert URL sets input_format_skip_unknown_fields=0.
 --
 -- Purpose: Collect the same metrics as telegram.lua for non-authenticated requests,
 -- including requests without an existing account, and batch-insert them into ClickHouse.

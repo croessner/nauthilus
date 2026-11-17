@@ -69,26 +69,6 @@ CREATE TABLE IF NOT EXISTS nauthilus.logins (
   geoip_is_privacy_relay Nullable(Bool),
   geoip_is_hosting_network Nullable(Bool),
   geoip_is_shared_egress Nullable(Bool),
-  reputation_score             Nullable(Float64),
-  reputation_positive_score    Nullable(Float64),
-  reputation_negative_score    Nullable(Float64),
-  reputation_ip_score          Nullable(Float64),
-  reputation_asn_score         Nullable(Float64),
-  reputation_country_score     Nullable(Float64),
-  reputation_asn_country_score Nullable(Float64),
-  reputation_samples           Nullable(UInt64),
-  reputation_source            LowCardinality(String),
-  reputation_decision          LowCardinality(String),
-  gp_attempts          Nullable(UInt64),
-  gp_unique_ips        Nullable(UInt64),
-  gp_unique_users      Nullable(UInt64),
-  gp_ips_per_user      Nullable(Float64),
-  prot_active          Nullable(Bool),
-  prot_reason          LowCardinality(String),
-  prot_backoff         Nullable(UInt64),
-  prot_delay_ms        Nullable(UInt64),
-  dyn_threat           Nullable(UInt64),
-  dyn_response         LowCardinality(String),
   repeating            Nullable(Bool),
   rwp Nullable(Bool),
   user_found           Nullable(Bool),
@@ -323,10 +303,6 @@ ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_registry LowCardinality(Str
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_country  LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_allocated LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN geoip_asn_status   LowCardinality(String);
-ALTER TABLE nauthilus.logins MODIFY COLUMN reputation_source  LowCardinality(String);
-ALTER TABLE nauthilus.logins MODIFY COLUMN reputation_decision LowCardinality(String);
-ALTER TABLE nauthilus.logins MODIFY COLUMN prot_reason        LowCardinality(String);
-ALTER TABLE nauthilus.logins MODIFY COLUMN dyn_response       LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN xssl_protocol      LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN xssl_cipher        LowCardinality(String);
 ALTER TABLE nauthilus.logins MODIFY COLUMN ssl_fingerprint    LowCardinality(String);
@@ -365,16 +341,6 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_public_proxy Null
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_privacy_relay Nullable(Bool) AFTER geoip_is_public_proxy;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_hosting_network Nullable(Bool) AFTER geoip_is_privacy_relay;
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS geoip_is_shared_egress Nullable(Bool) AFTER geoip_is_hosting_network;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_score Nullable(Float64) AFTER geoip_is_shared_egress;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_positive_score Nullable(Float64) AFTER reputation_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_negative_score Nullable(Float64) AFTER reputation_positive_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_ip_score Nullable(Float64) AFTER reputation_negative_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_asn_score Nullable(Float64) AFTER reputation_ip_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_country_score Nullable(Float64) AFTER reputation_asn_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_asn_country_score Nullable(Float64) AFTER reputation_country_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_samples Nullable(UInt64) AFTER reputation_asn_country_score;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_source LowCardinality(String) AFTER reputation_samples;
-ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS reputation_decision LowCardinality(String) AFTER reputation_source;
 
 ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rwp Nullable(Bool) AFTER repeating;
 
@@ -385,4 +351,42 @@ ALTER TABLE nauthilus.logins ADD COLUMN IF NOT EXISTS rwp Nullable(Bool) AFTER r
 -- - These ALTERs trigger background mutation and re-encoding of affected parts.
 -- - Keep session, client_ip, client_port, local_port, password_hash as-is due to likely high cardinality or specific semantics.
 -- - You can adjust ZSTD level to taste; 3–5 is a practical range for UA/hostname.
+*/
+
+/*
+NOT part of the upgrade guide above, and never part of a routine upgrade: a separate, versioned, explicitly approved
+retirement step. Copy only the statements between the markers, after their preconditions are met.
+
+-- BEGIN retire-legacy-columns 2026-11-17
+-- Retire the unused legacy columns (DIAGNOSTIC_CONTRACT.md section 3). The native plugin no longer exports them and
+-- fresh installations no longer create them. Run this block only as a separate, approved step, after
+--   1. every writer runs a release with the cleaned export (production, shadow, and any other writer; verify the
+--      running artifacts, not only tags),
+--   2. queued, persisted, and retried batches of older releases are drained (strict inserts would otherwise keep
+--      sending the old keys),
+--   3. dashboards, hooks, reports, and other readers no longer reference these columns, and
+--   4. a backup exists if their historical values are still needed.
+-- Dropping is irreversible: re-adding the columns before a rollback to an older writer restores types and defaults,
+-- not the deleted values. The list is exact; never drop by name prefix.
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_positive_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_negative_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_ip_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_asn_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_country_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_asn_country_score;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_samples;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_source;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS reputation_decision;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS gp_attempts;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS gp_unique_ips;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS gp_unique_users;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS gp_ips_per_user;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS prot_active;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS prot_reason;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS prot_backoff;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS prot_delay_ms;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS dyn_threat;
+ALTER TABLE nauthilus.logins DROP COLUMN IF EXISTS dyn_response;
+-- END retire-legacy-columns 2026-11-17
 */

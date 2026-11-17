@@ -176,8 +176,11 @@ drift into visible insert errors. The Kubernetes ClickHouse README contains the 
 Reputation assessments published by the native reputation plugin as decision records are projected into
 `reputation_assessments` (one named tuple per fact and subject, NULL measurements for `not_found` and `unavailable`,
 at most 64 tuples). When the host dropped record facts to keep the post-action within its work bounds, or the plugin
-reached the tuple cap, `reputation_truncated` is `true`. The ten legacy `reputation_*` columns describe the removed
-GeoIP reputation map and stay NULL.
+reached the tuple cap, `reputation_truncated` is `true`. The plugin no longer exports the ten flat legacy
+`reputation_*` columns of the removed GeoIP reputation map, nor `gp_*`, `prot_*`, and `dyn_*`; rows still insert into
+tables that keep these columns. Fresh tables from `contrib/clickhouse-kubernetes/schema.sql` omit them, and the marked
+`retire-legacy-columns` block of that file drops them from existing tables as a separate, approved step (see
+`DIAGNOSTIC_CONTRACT.md` section 9).
 
 ## Step Events
 

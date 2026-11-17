@@ -26,13 +26,15 @@ this contract; they must not invent identifiers, stages, or causes that this con
 | Writer | Status | Contract |
 |---|---|---|
 | Native plugin `contrib/plugins/clickhouse` (`authn/plugin.clickhouse.post_action`) | Active in production | This document |
-| Lua `server/lua-plugins.d/actions/clickhouse.lua` | Retired, reference only, not configurable as Policy action | Legacy columns only; writes `contract_version = 0` implicitly (column default). No new columns. |
+| Lua `server/lua-plugins.d/actions/clickhouse.lua` | Retired, reference only, not configurable as Policy action | Legacy columns only; writes `contract_version = 0` implicitly (column default). No new columns. Still sends the retired columns of section 3, so it cannot write into tables without them under strict field checking. |
 
 ## 3. Field matrix for `nauthilus.logins`
 
 Classification: **active** = filled whenever its producer runs; **conditional** = empty by design unless a specific
 producer or input exists; **legacy** = no active producer in the current host; **defect** = projection was wrong;
-**unproven** = producer exists but no positive live evidence yet.
+**unproven** = producer exists but no positive live evidence yet; **retired** = no longer exported by the native plugin,
+absent from fresh tables, and dropped from existing tables only by the separately approved retirement block of
+`schema.sql` (section 9).
 
 Timing note: the snapshot is captured when the selected Policy rule's effects are prepared (inside
 `session.Evaluate`), which is before `finalize()` applies status message, tempfail cause, and the client response. The
@@ -62,8 +64,8 @@ on the terminal result must therefore be bound at execution time, not at capture
 | `geoip_*` (location, ASN) | GeoIP evidence | `plugin.geoip.*` facts / exchange | NULL / empty when lookup missed; city empty with country DB | active |
 | `geoip_privacy_*`, `geoip_is_*` | Privacy intelligence | GeoIP privacy facts | NULL when no evidence; arrays `[]` | active (positive paths unproven live) |
 | `geoip_guid` | Legacy exchange GUID | no active producer | empty | legacy |
-| `reputation_score` … `reputation_decision` (10) | Legacy GeoIP reputation map | removed Lua producer; no current producer | NULL / empty | legacy, intentionally unbound (section 6) |
-| `gp_*`, `prot_*`, `dyn_*` | Global pattern, account protection, dynamic response exchange maps | no active producer found | NULL / empty | legacy |
+| `reputation_score` … `reputation_decision` (10) | Legacy GeoIP reputation map | not exported (no producer); structured reputation lives in `reputation_assessments` | column default for writers that omit them; dropped by the retirement block | retired |
+| `gp_*`, `prot_*`, `dyn_*` (10) | Global pattern, account protection, dynamic response exchange maps | not exported (no producer) | column default for writers that omit them; dropped by the retirement block | retired |
 | `ssl_fingerprint` | Client TLS fingerprint header | request | empty unless proxy sends it | conditional |
 | `xssl_protocol`, `xssl_cipher` | TLS metadata from proxy | request | empty without TLS context | active |
 | `repeating`, `rwp` | Brute-force repeat / repeated-wrong-password hints | brute-force path, capture time | false when brute force did not run (non-null bool; not evidence) | active, weak semantics |
@@ -237,7 +239,8 @@ reputation_assessments Array(Tuple(
 - Measured fields are NULL for `not_found`/`unavailable`, never 0.
 - No decision, model, or config version exists in the record; none is invented. A future model fingerprint needs a
   new column because a tuple's element set cannot be extended in place.
-- The 10 legacy `reputation_*` columns stay NULL; they describe the removed GeoIP reputation map.
+- The 10 legacy `reputation_*` columns are retired (section 3): the plugin no longer exports them, and they describe the
+  removed GeoIP reputation map.
 
 ## 7. Second-factor events (`nauthilus.auth_events`)
 
@@ -371,7 +374,14 @@ are identifiable by `event_id` but not collapsed.
    Existing rows are not reinterpreted, rewritten, or deleted.
 4. Clients filter `contract_version >= 1` for outcome-based interpretation; the first `ts` with version 1 per
    `deployment`/`instance` is the cutover boundary (reported by the history task).
-5. The repository `schema.sql` gains the `deployment` and `instance` columns that the writer has always emitted and that
+5. Retired columns (section 3): the plugin omits them, so its rows insert into tables that still have them (column
+   defaults) and into tables without them, also with `input_format_skip_unknown_fields=0`. Fresh installations from
+   `schema.sql` no longer create them. Existing tables keep them until the operator runs the marked
+   `retire-legacy-columns` block of `schema.sql` as a separate step: after every writer runs the cleaned export,
+   queued and retried batches of older releases are drained, readers no longer reference them, and a backup exists if
+   their values are needed. Dropping is irreversible; re-adding them before a rollback to an older writer restores
+   types and defaults, not the values. The retired Lua writer still sends them.
+6. The repository `schema.sql` gains the `deployment` and `instance` columns that the writer has always emitted and that
    the Kubernetes mirror already has; both files carry the same statements.
 
 ## 10. Verification
