@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -60,9 +61,11 @@ type TargetCatalogRecord struct {
 	Checkpoints                 []CheckpointRecord
 	Providers                   []registry.ProviderDefinition
 	Effects                     []registry.EffectDefinition
-	DefaultPolicySet            registry.PolicySetID
-	NoMatch                     registry.NoMatchBehavior
-	AuthorityMode               registry.AuthorityMode
+	// TerminalPostActions run once per answered authn request, whichever rule answered it.
+	TerminalPostActions []registry.EffectUse
+	DefaultPolicySet    registry.PolicySetID
+	NoMatch             registry.NoMatchBehavior
+	AuthorityMode       registry.AuthorityMode
 }
 
 // CheckpointRecord carries one resolved exact plan checkpoint into the runtime candidate.
@@ -578,16 +581,18 @@ func (s CompiledSchema) ValidatePresentFacts(facts decision.FactSet) error {
 
 // CompiledTarget is one immutable activated target and selected exact schema.
 type CompiledTarget struct {
-	target           decision.Target
-	schema           CompiledSchema
-	domainPlan       CompiledDomainPlan
-	providers        map[string]registry.ProviderDefinition
-	effects          map[string]registry.EffectDefinition
-	policySets       map[string]CompiledPolicySet
-	defaultPolicySet registry.PolicySetID
-	report           registry.TargetReportSettings
-	noMatch          registry.NoMatchBehavior
-	authorityMode    registry.AuthorityMode
+	target     decision.Target
+	schema     CompiledSchema
+	domainPlan CompiledDomainPlan
+	providers  map[string]registry.ProviderDefinition
+	effects    map[string]registry.EffectDefinition
+	policySets map[string]CompiledPolicySet
+	// terminalPostActions are the validated once-per-request authn post-actions in configured order.
+	terminalPostActions []registry.EffectUse
+	defaultPolicySet    registry.PolicySetID
+	report              registry.TargetReportSettings
+	noMatch             registry.NoMatchBehavior
+	authorityMode       registry.AuthorityMode
 }
 
 // Target returns the exact activated namespace/action pair.
@@ -626,6 +631,22 @@ func (t CompiledTarget) AuthorityMode() registry.AuthorityMode {
 // Report returns the exact target-local diagnostic report selection.
 func (t CompiledTarget) Report() registry.TargetReportSettings {
 	return t.report
+}
+
+// TerminalPostActions returns the detached once-per-request authn post-action selections in configured order.
+func (t CompiledTarget) TerminalPostActions() []registry.EffectUse {
+	return append([]registry.EffectUse(nil), t.terminalPostActions...)
+}
+
+// IsTerminalPostAction reports whether one effect is owned by the target's once-per-request completion.
+func (t CompiledTarget) IsTerminalPostAction(effectID string) bool {
+	for _, use := range t.terminalPostActions {
+		if use.ID() == effectID {
+			return true
+		}
+	}
+
+	return false
 }
 
 // LookupPolicySet resolves one exact target-local instantiated policy set.
@@ -742,6 +763,8 @@ func (t CompiledTarget) clone() CompiledTarget {
 		report:           t.report,
 		noMatch:          t.noMatch,
 		authorityMode:    t.authorityMode,
+
+		terminalPostActions: t.TerminalPostActions(),
 	}
 }
 
@@ -960,6 +983,14 @@ func compileTargetRecord(
 		return CompiledTarget{}, err
 	}
 
+	if err := validateCompiledTerminalPostActions(target, record.TerminalPostActions, effects); err != nil {
+		return CompiledTarget{}, err
+	}
+
+	if err := validateFoldedTerminalObligations(rules, record.TerminalPostActions); err != nil {
+		return CompiledTarget{}, err
+	}
+
 	if err := validateCompiledDefaults(target, record, plan, policySets); err != nil {
 		return CompiledTarget{}, err
 	}
@@ -980,6 +1011,8 @@ func compileTargetRecord(
 		report:           record.Report,
 		noMatch:          record.NoMatch,
 		authorityMode:    record.AuthorityMode,
+
+		terminalPostActions: append([]registry.EffectUse(nil), record.TerminalPostActions...),
 	}, nil
 }
 
@@ -2304,17 +2337,94 @@ func validateCompiledRuleEffectUses(
 	effects map[string]registry.EffectDefinition,
 ) error {
 	for _, use := range uses {
-		effect, exists := effects[use.ID()]
-		if !exists {
-			return fmt.Errorf("%w: rule %s references unknown effect %s", ErrInvalidCompiledTarget, rule.Name(), use.ID())
+		if _, err := resolveCompiledEffectUse("rule "+rule.Name(), use, wantKind, effects); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// resolveCompiledEffectUse re-proves one selection against the indexed target effects; owner names it in errors.
+func resolveCompiledEffectUse(
+	owner string,
+	use registry.EffectUse,
+	wantKind registry.EffectKind,
+	effects map[string]registry.EffectDefinition,
+) (registry.EffectDefinition, error) {
+	effect, exists := effects[use.ID()]
+	if !exists {
+		return registry.EffectDefinition{}, fmt.Errorf("%w: %s references unknown effect %s", ErrInvalidCompiledTarget, owner, use.ID())
+	}
+
+	if effect.Kind() != wantKind {
+		return registry.EffectDefinition{}, fmt.Errorf("%w: %s effect %s has incompatible class", ErrInvalidCompiledTarget, owner, use.ID())
+	}
+
+	if err := effect.ValidateUse(use); err != nil {
+		return registry.EffectDefinition{}, fmt.Errorf("%w: %s effect %s: %v", ErrInvalidCompiledTarget, owner, use.ID(), err)
+	}
+
+	return effect, nil
+}
+
+// validateCompiledTerminalPostActions keeps terminal selections authn-only, unique, and detached post-actions.
+func validateCompiledTerminalPostActions(
+	target decision.Target,
+	uses []registry.EffectUse,
+	effects map[string]registry.EffectDefinition,
+) error {
+	if len(uses) == 0 {
+		return nil
+	}
+
+	if target.Namespace() != authnNamespace {
+		return fmt.Errorf("%w: target %s cannot declare terminal post-actions", ErrInvalidCompiledTarget, target.String())
+	}
+
+	seen := make(map[string]struct{}, len(uses))
+
+	for _, use := range uses {
+		if _, exists := seen[use.ID()]; exists {
+			return fmt.Errorf("%w: terminal post-action %s repeats", ErrInvalidCompiledTarget, use.ID())
 		}
 
-		if effect.Kind() != wantKind {
-			return fmt.Errorf("%w: rule %s effect %s has incompatible class", ErrInvalidCompiledTarget, rule.Name(), use.ID())
+		seen[use.ID()] = struct{}{}
+
+		effect, err := resolveCompiledEffectUse("terminal post-actions", use, registry.EffectKindObligation, effects)
+		if err != nil {
+			return err
 		}
 
-		if err := effect.ValidateUse(use); err != nil {
-			return fmt.Errorf("%w: rule %s effect %s: %v", ErrInvalidCompiledTarget, rule.Name(), use.ID(), err)
+		if effect.Execution() != registry.ExecutionHostPostAction {
+			return fmt.Errorf("%w: terminal post-action %s is not a host post-action", ErrInvalidCompiledTarget, use.ID())
+		}
+	}
+
+	return nil
+}
+
+// validateFoldedTerminalObligations rejects a rule obligation that names a terminal post-action with other parameters.
+// Such an obligation is folded into the once-per-request completion, so differing parameters would be lost silently.
+func validateFoldedTerminalObligations(rules []CompiledRule, terminal []registry.EffectUse) error {
+	if len(terminal) == 0 {
+		return nil
+	}
+
+	declared := make(map[string]registry.EffectUse, len(terminal))
+	for _, use := range terminal {
+		declared[use.ID()] = use
+	}
+
+	for _, rule := range rules {
+		for _, use := range rule.Effects() {
+			want, folded := declared[use.ID()]
+			if folded && !reflect.DeepEqual(use.Parameters().Values(), want.Parameters().Values()) {
+				return fmt.Errorf(
+					"%w: rule %s selects terminal post-action %s with parameters that differ from terminal_post_actions",
+					ErrInvalidCompiledTarget, rule.Name(), use.ID(),
+				)
+			}
 		}
 	}
 

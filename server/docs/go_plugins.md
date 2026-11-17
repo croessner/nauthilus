@@ -485,6 +485,51 @@ effects, `return_only` obligations, and advice do not. Post-actions must be acce
 supervisor before application-response finalization and execute only after its gate opens. Acceptance failure is
 synchronous; failures after finalization are recorded without changing the response.
 
+### Terminal post-actions
+
+An authn target can declare post-actions that run exactly once for every answered request, whichever rule answered
+it:
+
+```yaml
+policy:
+  targets:
+    - namespace: authn
+      action: authenticate
+      schema: authn/authenticate/v1
+      default_policy: authn/standard_auth
+      terminal_post_actions:
+        - id: authn/plugin.clickhouse.post_action
+```
+
+Rule-selected obligations depend on the selected rule. A request answered by a builtin `authn/standard_auth` rule,
+for example a brute-force reject after a ban hit closed the remaining pre-auth providers, carries only the builtin
+effects, so an analytics post-action listed on a configured rule never runs for it. Terminal post-actions close that
+gap without touching the decision:
+
+- They run after the request's terminal outcome is sealed, with the facts of the last evaluated checkpoint, so the
+  post-action sees the enforced decision, stage, markers, and rule of the answer.
+- A rule obligation naming the same effect is folded into the terminal completion. It is neither executed per
+  checkpoint nor decision-relevant, so a neutral pre-auth rule and a final rule that both list it produce one
+  completion instead of two.
+- They are best-effort. Preparation or supervisor-acceptance failures are recorded and never turn the answered
+  decision into a temporary failure.
+- Only `host_post_action` effects allowed for the target are accepted; decision-relevant or counting effects such as
+  `authn/brute_force_update` are rejected when the candidate compiles. Duplicates and non-authn targets are rejected.
+- Observe mode withholds them like every other effect.
+- `policy_terminal_post_actions_total{operation,post_action,result}` counts every outcome: `accepted`, `failed`,
+  `disabled` (observe mode), `no_outcome` (the request ended without a sealed outcome), and `unavailable`. A request
+  answered before a Policy session exists, such as an admission-capacity rejection, cannot be completed; it is counted
+  as `admission_rejected` with an empty `post_action` label for every authn request, whether or not its target declares
+  terminal post-actions.
+- The guarantee is at most one completion attempt per request. Delivery and storage stay with the post-action, for
+  example the ClickHouse plugin's best-effort buffer.
+- Completions are best-effort supervisor plans. They are accepted only while fewer than half of the post-action
+  queue capacity (rounded up) is in flight, so a flood of completions, such as ban hits during an attack, cannot
+  saturate the queue that mandatory rule post-actions of other requests rely on. The threshold counts every
+  in-flight plan, so completions are dropped once the queue is half busy, whatever the source of that load; they are
+  then counted as `failed`, and the supervisor records the rejection with error class `best_effort_saturated` at
+  debug level.
+
 Each selected effect ordinal has at most one host attempt per Decision invocation. Nauthilus does not automatically
 retry on error, cancellation, timeout, panic, or an ambiguous external dispatch. `outcome_unknown` means the provider
 may have dispatched externally but cannot establish the remote result; the internal attempt identity is correlation

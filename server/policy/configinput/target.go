@@ -570,6 +570,11 @@ func (n *policyNormalizer) normalizeActivation(target normalizedTarget) (registr
 		return registry.TargetActivation{}, atPath(target.path+".report", err)
 	}
 
+	activation, err = n.withTerminalPostActions(target, activation)
+	if err != nil {
+		return registry.TargetActivation{}, err
+	}
+
 	bindings, err := n.normalizeTargetBindings(target)
 	if err != nil {
 		return registry.TargetActivation{}, err
@@ -578,6 +583,26 @@ func (n *policyNormalizer) normalizeActivation(target normalizedTarget) (registr
 	activation, err = activation.WithPolicySetBindings(bindings)
 	if err != nil {
 		return registry.TargetActivation{}, atPath(target.path+".plans", err)
+	}
+
+	return activation, nil
+}
+
+// withTerminalPostActions projects the configured terminal post-action selections onto one activation.
+func (n *policyNormalizer) withTerminalPostActions(
+	target normalizedTarget,
+	activation registry.TargetActivation,
+) (registry.TargetActivation, error) {
+	path := target.path + ".terminal_post_actions"
+
+	uses, err := normalizeEffectUses(path, target.config.TerminalPostActions)
+	if err != nil {
+		return registry.TargetActivation{}, err
+	}
+
+	activation, err = activation.WithTerminalPostActions(uses)
+	if err != nil {
+		return registry.TargetActivation{}, atPath(path, err)
 	}
 
 	return activation, nil

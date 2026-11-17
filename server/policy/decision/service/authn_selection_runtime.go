@@ -57,6 +57,8 @@ func resolveAuthnDecisionSelection(
 		final.Advice = nil
 	}
 
+	selection.obligations = withoutTerminalPostActions(target, selection.obligations)
+
 	return selection, final, controls, nil
 }
 

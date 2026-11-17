@@ -160,15 +160,16 @@ func (b postActionOutcomeBinding) bind(request *pluginapi.PostActionRequest) {
 	request.Snapshot.Diagnostics.StatusMessage = outcome.StatusMessage
 }
 
-// sealTerminalOutcome records the answered result of this run for post-actions that execute after the gate.
-func (e *authnCandidateExecution) sealTerminalOutcome(result authnApplicationResult) {
+// sealTerminalOutcome records the answered result of this run for post-actions that execute after the gate and
+// reports whether a known outcome was sealed.
+func (e *authnCandidateExecution) sealTerminalOutcome(result authnApplicationResult) bool {
 	if e == nil || e.auth == nil {
-		return
+		return false
 	}
 
 	decision := pluginOutcomeDecision(result.currentDecision())
 	if decision == pluginapi.AuthOutcomeUnknown {
-		return
+		return false
 	}
 
 	outcome := pluginapi.AuthOutcome{
@@ -185,6 +186,8 @@ func (e *authnCandidateExecution) sealTerminalOutcome(result authnApplicationRes
 	}
 
 	e.outcome.seal(outcome)
+
+	return true
 }
 
 // outcomeBinding returns the binding that detached post-actions of this run resolve at execution time.

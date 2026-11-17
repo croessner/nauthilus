@@ -71,6 +71,8 @@ type plannedEffect struct {
 	definition   registry.EffectDefinition
 	use          registry.EffectUse
 	execution    effectExecution
+	// bestEffort marks a post-action whose rejection never affects a decision, such as a terminal completion.
+	bestEffort bool
 }
 
 type effectExecutionOutcome struct {
@@ -458,7 +460,7 @@ func (r *checkpointRuntime) executeEffect(
 			Gate: effectFinalizationGate{finalization: input.finalization}, Work: work,
 			DecisionID: planned.execution.decisionID, Target: planned.execution.target.String(),
 			Provider: planned.execution.provider, DeadlineBudget: r.postActionBudget,
-			EffectOrdinal: planned.execution.ordinal,
+			EffectOrdinal: planned.execution.ordinal, BestEffort: planned.bestEffort,
 			Observability: effectsupervisor.ObservabilityMetadata{RuntimeGeneration: input.generation, Source: "decision_service"},
 		})
 		if err != nil {

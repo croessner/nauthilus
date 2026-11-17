@@ -464,16 +464,18 @@ type DecisionControlConfig struct {
 
 // TargetConfig explicitly activates one exact namespace/action/schema target.
 type TargetConfig struct {
-	Plans         map[string]TargetPlanConfig `mapstructure:"plans"`
-	Namespace     string                      `mapstructure:"namespace"`
-	Action        string                      `mapstructure:"action"`
-	Schema        string                      `mapstructure:"schema"`
-	DomainPlan    string                      `mapstructure:"domain_plan"`
-	Mode          string                      `mapstructure:"mode"`
-	DefaultPolicy string                      `mapstructure:"default_policy"`
-	NoMatch       string                      `mapstructure:"no_match"`
-	Timeouts      TargetTimeoutsConfig        `mapstructure:"timeouts"`
-	Report        ReportConfig                `mapstructure:"report"`
+	Plans map[string]TargetPlanConfig `mapstructure:"plans"`
+	// TerminalPostActions run once for every answered request of an authn target, whichever rule answered it.
+	TerminalPostActions []EffectSelectionConfig `mapstructure:"terminal_post_actions"`
+	Namespace           string                  `mapstructure:"namespace"`
+	Action              string                  `mapstructure:"action"`
+	Schema              string                  `mapstructure:"schema"`
+	DomainPlan          string                  `mapstructure:"domain_plan"`
+	Mode                string                  `mapstructure:"mode"`
+	DefaultPolicy       string                  `mapstructure:"default_policy"`
+	NoMatch             string                  `mapstructure:"no_match"`
+	Timeouts            TargetTimeoutsConfig    `mapstructure:"timeouts"`
+	Report              ReportConfig            `mapstructure:"report"`
 }
 
 // TargetTimeoutsConfig declares generic evaluation and provider budgets.

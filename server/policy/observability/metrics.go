@@ -136,6 +136,14 @@ type AdviceMeasurement struct {
 	Result Result
 }
 
+// TerminalPostActionMeasurement records one once-per-request terminal post-action outcome. PostAction is empty when
+// the whole completion was skipped before any post-action was attempted.
+type TerminalPostActionMeasurement struct {
+	Operation  string
+	PostAction string
+	Result     string
+}
+
 // Recorder is the no-op-safe policy metrics boundary.
 type Recorder interface {
 	RecordSnapshotBuild(context.Context, SnapshotBuildMeasurement)
@@ -150,6 +158,7 @@ type Recorder interface {
 	RecordResponseRender(context.Context, RendererMeasurement)
 	RecordObligation(context.Context, ObligationMeasurement)
 	RecordAdvice(context.Context, AdviceMeasurement)
+	RecordTerminalPostAction(context.Context, TerminalPostActionMeasurement)
 }
 
 type nopRecorder struct{}
@@ -167,6 +176,8 @@ func (nopRecorder) RecordFSMTransition(context.Context, FSMMeasurement)       {}
 func (nopRecorder) RecordResponseRender(context.Context, RendererMeasurement) {}
 func (nopRecorder) RecordObligation(context.Context, ObligationMeasurement)   {}
 func (nopRecorder) RecordAdvice(context.Context, AdviceMeasurement)           {}
+func (nopRecorder) RecordTerminalPostAction(context.Context, TerminalPostActionMeasurement) {
+}
 
 // SafeRecorder returns a no-op recorder when recorder is nil.
 func SafeRecorder(recorder Recorder) Recorder {
@@ -217,6 +228,7 @@ type PrometheusRecorder struct {
 	responseRenderSeconds     *prometheus.HistogramVec
 	obligationDurationSeconds *prometheus.HistogramVec
 	adviceSelectionsTotal     *prometheus.CounterVec
+	terminalPostActionsTotal  *prometheus.CounterVec
 }
 
 // NewPrometheusRecorder registers policy collectors against the provided registry.
@@ -243,6 +255,11 @@ func NewPrometheusRecorder(registerer prometheus.Registerer) (*PrometheusRecorde
 		responseRenderSeconds:     newPolicyHistogramVec("policy_response_render_seconds", "Duration of policy response rendering.", "surface", "response_marker", "result"),
 		obligationDurationSeconds: newPolicyHistogramVec("policy_obligation_duration_seconds", "Duration of policy obligation execution.", "obligation", "result"),
 		adviceSelectionsTotal:     newPolicyCounterVec("policy_advice_selections_total", "Total number of selected policy advice entries.", "advice", "result"),
+		terminalPostActionsTotal: newPolicyCounterVec(
+			"policy_terminal_post_actions_total",
+			"Total number of once-per-request terminal post-action outcomes, including skipped completions.",
+			"operation", "post_action", "result",
+		),
 	}
 
 	if err := registerPolicyCollectors(registerer, recorder.collectors()); err != nil {
@@ -271,6 +288,7 @@ func (r *PrometheusRecorder) collectors() []prometheus.Collector {
 		r.responseRenderSeconds,
 		r.obligationDurationSeconds,
 		r.adviceSelectionsTotal,
+		r.terminalPostActionsTotal,
 	}
 }
 
@@ -483,6 +501,19 @@ func (r *PrometheusRecorder) RecordAdvice(_ context.Context, measurement AdviceM
 	r.adviceSelectionsTotal.WithLabelValues(
 		measurement.Advice,
 		string(measurement.Result),
+	).Inc()
+}
+
+// RecordTerminalPostAction records one terminal post-action outcome or skipped completion.
+func (r *PrometheusRecorder) RecordTerminalPostAction(_ context.Context, measurement TerminalPostActionMeasurement) {
+	if r == nil {
+		return
+	}
+
+	r.terminalPostActionsTotal.WithLabelValues(
+		measurement.Operation,
+		measurement.PostAction,
+		measurement.Result,
 	).Inc()
 }
 

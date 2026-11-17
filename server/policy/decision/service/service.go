@@ -618,10 +618,12 @@ func validAuthenticationInput(input decision.AuthenticationInput) bool {
 }
 
 type decisionSession struct {
-	generation      *runtimeGeneration
-	request         decision.DecisionRequest
-	facts           decision.FactSet
-	providerFacts   decision.FactSet
+	generation    *runtimeGeneration
+	request       decision.DecisionRequest
+	facts         decision.FactSet
+	providerFacts decision.FactSet
+	// terminalFacts are the normalized facts of the latest evaluated checkpoint, used by the terminal completion.
+	terminalFacts   decision.FactSet
 	permit          admissionPermit
 	finalization    decision.EvaluationFinalization
 	checkpoints     []CheckpointPlan
@@ -639,6 +641,8 @@ type decisionSession struct {
 	hostTerminal    bool
 	evaluating      bool
 	closed          bool
+	// terminalCompleted marks the single terminal completion of this session as claimed.
+	terminalCompleted bool
 }
 
 var _ AuthnHostProviderSession = (*decisionSession)(nil)
@@ -775,6 +779,7 @@ func (s *decisionSession) Evaluate(
 
 	s.mu.Lock()
 	s.providerFacts = outcome.report.runtime.providerFacts
+	s.terminalFacts = outcome.report.runtime.facts
 	s.mu.Unlock()
 
 	return outcome.response, nil

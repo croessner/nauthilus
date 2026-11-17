@@ -89,6 +89,10 @@ policy:
       schema: authn/authenticate/v1
       domain_plan: authn/clickhouse_post_action
       default_policy: authn/standard_auth
+      # Record every answered request once, including requests the builtin standard_auth rules answer, such as
+      # early brute-force rejects. The rule obligation above then runs through this completion, not a second time.
+      terminal_post_actions:
+        - id: authn/plugin.clickhouse.post_action
       plans:
         auth_decision:
           policy_sets: [authn/clickhouse_post_action]

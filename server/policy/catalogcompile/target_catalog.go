@@ -619,6 +619,10 @@ func compileActivatedRecord(
 		return policyruntime.TargetCatalogRecord{}, err
 	}
 
+	if err := validateTerminalPostActions(activation, effects); err != nil {
+		return policyruntime.TargetCatalogRecord{}, err
+	}
+
 	return policyruntime.TargetCatalogRecord{
 		Target:                      activation.Target(),
 		Schema:                      schema,
@@ -631,6 +635,7 @@ func compileActivatedRecord(
 		NoMatch:                     activation.NoMatch(),
 		AuthorityMode:               activation.AuthorityMode(),
 		Report:                      activation.Report(),
+		TerminalPostActions:         activation.TerminalPostActions(),
 	}, nil
 }
 
@@ -1177,33 +1182,80 @@ func validateRuleEffectUses(
 	effects map[string]registry.EffectDefinition,
 	usedEffects map[string]struct{},
 ) error {
+	subject := fmt.Sprintf("set %s rule %s", set.ID().String(), rule.Name())
+
 	for _, use := range uses {
-		definition, exists := effects[use.ID()]
-		if !exists {
-			return fmt.Errorf("unknown policy effect: set %s rule %s effect %s", set.ID().String(), rule.Name(), use.ID())
-		}
-
-		if definition.Kind() != wantKind {
-			return fmt.Errorf(
-				"%w: set %s rule %s effect %s has class %s, want %s",
-				ErrPolicyEffectParameterMismatch,
-				set.ID().String(),
-				rule.Name(),
-				use.ID(),
-				definition.Kind(),
-				wantKind,
-			)
-		}
-
-		if !definition.AllowsTarget(target) {
-			return fmt.Errorf("%w: set %s rule %s effect %s", ErrPolicyEffectTargetMismatch, set.ID().String(), rule.Name(), use.ID())
-		}
-
-		if err := definition.ValidateUse(use); err != nil {
-			return fmt.Errorf("%w: set %s rule %s: %v", ErrPolicyEffectParameterMismatch, set.ID().String(), rule.Name(), err)
+		if _, err := resolveSelectedEffect(subject, target, use, wantKind, effects); err != nil {
+			return err
 		}
 
 		usedEffects[use.ID()] = struct{}{}
+	}
+
+	return nil
+}
+
+// resolveSelectedEffect proves that one selection names a target-allowed effect of the wanted class with valid
+// parameters; subject names the selecting owner in errors.
+func resolveSelectedEffect(
+	subject string,
+	target decision.Target,
+	use registry.EffectUse,
+	wantKind registry.EffectKind,
+	effects map[string]registry.EffectDefinition,
+) (registry.EffectDefinition, error) {
+	definition, exists := effects[use.ID()]
+	if !exists {
+		return registry.EffectDefinition{}, fmt.Errorf("unknown policy effect: %s effect %s", subject, use.ID())
+	}
+
+	if definition.Kind() != wantKind {
+		return registry.EffectDefinition{}, fmt.Errorf(
+			"%w: %s effect %s has class %s, want %s",
+			ErrPolicyEffectParameterMismatch, subject, use.ID(), definition.Kind(), wantKind,
+		)
+	}
+
+	if !definition.AllowsTarget(target) {
+		return registry.EffectDefinition{}, fmt.Errorf("%w: %s effect %s", ErrPolicyEffectTargetMismatch, subject, use.ID())
+	}
+
+	if err := definition.ValidateUse(use); err != nil {
+		return registry.EffectDefinition{}, fmt.Errorf("%w: %s: %v", ErrPolicyEffectParameterMismatch, subject, err)
+	}
+
+	return definition, nil
+}
+
+// validateTerminalPostActions proves that every terminal selection is a detached post-action of this target, so it
+// can never add a decision-relevant or counting effect to an answered request.
+func validateTerminalPostActions(activation registry.TargetActivation, effects []registry.EffectDefinition) error {
+	uses := activation.TerminalPostActions()
+	if len(uses) == 0 {
+		return nil
+	}
+
+	byID := make(map[string]registry.EffectDefinition, len(effects))
+	for _, effect := range effects {
+		byID[effect.ID()] = effect
+	}
+
+	subject := activation.Path() + ".terminal_post_actions"
+
+	for _, use := range uses {
+		definition, err := resolveSelectedEffect(
+			subject, activation.Target(), use, registry.EffectKindObligation, byID,
+		)
+		if err != nil {
+			return err
+		}
+
+		if definition.Execution() != registry.ExecutionHostPostAction {
+			return fmt.Errorf(
+				"%w: %s effect %s has execution %s, want %s",
+				ErrPolicyEffectParameterMismatch, subject, use.ID(), definition.Execution(), registry.ExecutionHostPostAction,
+			)
+		}
 	}
 
 	return nil

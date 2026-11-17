@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/croessner/nauthilus/v4/server/policy"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/internal/identifier"
 )
@@ -227,14 +228,16 @@ func (i SchemaIdentity) valid() bool {
 // TargetActivation is an immutable operator-owned exact target/schema selection.
 type TargetActivation struct {
 	policySetBindings []PolicySetImport
-	target            decision.Target
-	schema            SchemaIdentity
-	defaultPolicySet  PolicySetID
-	report            TargetReportSettings
-	noMatch           NoMatchBehavior
-	path              string
-	authorityMode     AuthorityMode
-	policyConfigured  bool
+	// terminalPostActions run once per answered authn request, independent of the answering rule.
+	terminalPostActions []EffectUse
+	target              decision.Target
+	schema              SchemaIdentity
+	defaultPolicySet    PolicySetID
+	report              TargetReportSettings
+	noMatch             NoMatchBehavior
+	path                string
+	authorityMode       AuthorityMode
+	policyConfigured    bool
 }
 
 // NewTargetActivation validates one explicit operator target activation.
@@ -426,6 +429,41 @@ func (a TargetActivation) WithReport(settings TargetReportSettings) (TargetActiv
 // Report returns the exact target-local diagnostic report selection.
 func (a TargetActivation) Report() TargetReportSettings {
 	return a.report
+}
+
+// WithTerminalPostActions returns an authn activation with its once-per-request terminal post-action selections.
+// The compiler later proves that every selection resolves to a post-action this target may run.
+func (a TargetActivation) WithTerminalPostActions(uses []EffectUse) (TargetActivation, error) {
+	if len(uses) == 0 {
+		a.terminalPostActions = nil
+
+		return a, nil
+	}
+
+	if a.target.Namespace() != policy.AuthnNamespace {
+		return TargetActivation{}, newValidationError(
+			ErrTargetSchemaMismatch,
+			a.path+".terminal_post_actions",
+			a.target.String(),
+			"terminal post-actions are restricted to authn targets",
+		)
+	}
+
+	cloned, err := cloneEffectUses(uses)
+	if err != nil {
+		return TargetActivation{}, err
+	}
+
+	a.terminalPostActions = cloned
+
+	return a, nil
+}
+
+// TerminalPostActions returns detached terminal post-action selections.
+func (a TargetActivation) TerminalPostActions() []EffectUse {
+	cloned, _ := cloneEffectUses(a.terminalPostActions)
+
+	return cloned
 }
 
 // ClientAdmissionReference is an immutable future client-profile target/schema reference.

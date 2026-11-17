@@ -451,10 +451,13 @@ func (s *authnPolicyApplicationService) run(
 		result, traversalErr = s.runCheckpointPlan(evaluationCtx, session, input, operation, execution)
 		result.attachMessageResolver(messageResolver)
 
+		sealed := false
 		if traversalErr == nil && result.validFor(operation) {
-			execution.sealTerminalOutcome(result)
+			sealed = execution.sealTerminalOutcome(result)
 			toleration, tolerationObserved = execution.tolerationObservation(result)
 		}
+
+		execution.completeAuthnTerminal(evaluationCtx, session, sealed)
 
 		return traversalErr
 	})
@@ -482,6 +485,8 @@ func (s *authnPolicyApplicationService) sessionFailure(
 ) (authnApplicationResult, error) {
 	if !admitted {
 		if rejected, ok := s.admissionRejections.tempFail(input, operation, err); ok {
+			recordTerminalCompletionAdmissionRejected(operation)
+
 			return rejected, nil
 		}
 	}

@@ -2042,7 +2042,38 @@ func validateTarget(target TargetConfig, path string) error {
 		return err
 	}
 
+	if err := validateTargetTerminalPostActions(target, path+".terminal_post_actions"); err != nil {
+		return err
+	}
+
 	return validateTargetReport(target, path+".report")
+}
+
+// validateTargetTerminalPostActions restricts terminal post-actions to authn targets and unique effect identities.
+func validateTargetTerminalPostActions(target TargetConfig, path string) error {
+	if len(target.TerminalPostActions) == 0 {
+		return nil
+	}
+
+	if target.Namespace != authnNamespace {
+		return invalid(path, "is restricted to authn targets")
+	}
+
+	if err := validateEffectSelections(target.TerminalPostActions, path); err != nil {
+		return err
+	}
+
+	seen := make(map[string]struct{}, len(target.TerminalPostActions))
+
+	for index, selection := range target.TerminalPostActions {
+		if _, exists := seen[selection.ID]; exists {
+			return invalid(fmt.Sprintf("%s[%d].id", path, index), "must not repeat a terminal post-action")
+		}
+
+		seen[selection.ID] = struct{}{}
+	}
+
+	return nil
 }
 
 // validateTargetMode keeps observe authority restricted to authn targets.
