@@ -70,9 +70,14 @@ func Reference(namespace string, value string) string {
 	return rediscli.NewSecurityManager(secret.Value{}).IndexDigest(namespace, value)
 }
 
-// AuthorizationCodeKey returns the digest key of a single-use authorization code or consent challenge.
+// AuthorizationCodeKey returns the digest key of a single-use authorization code.
 func AuthorizationCodeKey(prefix string, code string) string {
 	return prefix + "oidc:code:" + Reference("oidc-authorization-code", code)
+}
+
+// ConsentSessionKey returns the digest key of the pending authorization of one consent challenge.
+func ConsentSessionKey(prefix string, challenge string) string {
+	return prefix + "oidc:consent:" + Reference("oidc-consent-challenge", challenge)
 }
 
 // DeviceCodeKey returns the request key of a device code in its own hash slot.

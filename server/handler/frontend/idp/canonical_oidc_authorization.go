@@ -289,8 +289,8 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 		}
 
 		challenge := ksuid.New().String()
-		if err = h.storage.StoreSession(
-			ctx.Request.Context(), "consent:"+challenge, oidcSession, canonicalOIDCAuthorizationTTL,
+		if err = h.storage.StoreConsentSession(
+			ctx.Request.Context(), challenge, oidcSession, canonicalOIDCAuthorizationTTL,
 		); err != nil {
 			ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
@@ -301,7 +301,7 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 			ctx.Request.Context(), session, state.FlowID, challenge,
 		)
 		if bindErr != nil {
-			_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+challenge)
+			_ = h.storage.DeleteConsentSession(ctx.Request.Context(), challenge)
 			ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 			return
@@ -649,9 +649,9 @@ func (h *OIDCHandler) loadCanonicalOIDCConsentSelection(
 	}
 
 	if consumePending {
-		selection.pending, err = h.storage.ConsumeSession(ctx.Request.Context(), "consent:"+challenge)
+		selection.pending, err = h.storage.ConsumeConsentSession(ctx.Request.Context(), challenge)
 	} else {
-		selection.pending, err = h.storage.GetSession(ctx.Request.Context(), "consent:"+challenge)
+		selection.pending, err = h.storage.GetConsentSession(ctx.Request.Context(), challenge)
 	}
 
 	if err != nil {
@@ -667,7 +667,7 @@ func (h *OIDCHandler) loadCanonicalOIDCConsentSelection(
 
 	if err = h.validateCanonicalOIDCConsentSelection(selection); err != nil {
 		if !consumePending {
-			_ = h.storage.DeleteSession(ctx.Request.Context(), "consent:"+challenge)
+			_ = h.storage.DeleteConsentSession(ctx.Request.Context(), challenge)
 		}
 
 		_ = discardCanonicalOIDCConsent(ctx.Request.Context(), selection.session, selection.state)

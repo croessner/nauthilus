@@ -764,7 +764,8 @@ with `CROSSSLOT`. Bearer secrets and user-facing codes never appear in keys; key
 | `oidc:dcr:{registry}:clients`, `oidc:dcr:{registry}:rate:*` | `registry`                    | Active-client quota index and registration rate limits                        |
 | `oidc:device_code:{<device-code digest>}`                   | Keyed device-code digest      | Device request; claim and completion are single-key `WATCH` transactions      |
 | `oidc:device_user_code:{<user-code digest>}`                | Keyed user-code digest        | None; single-key locator from a user code to its device request               |
-| `oidc:code:<code digest>`                                   | none (single key)             | Authorization code or consent challenge, consumed with `GETDEL`               |
+| `oidc:code:<code digest>`                                   | none (single key)             | Authorization code, consumed with `GETDEL` by the token endpoint              |
+| `oidc:consent:<challenge digest>`                           | none (single key)             | Pending authorization of one consent page, consumed with `GETDEL` on decision |
 
 - The subject slot holds the revocation epoch (`epoch`), the access, static refresh, and dynamic refresh token
   records and indexes, and the refresh-family pointer, consumed, and revoked markers. Token issuance, static refresh
@@ -784,6 +785,13 @@ with `CROSSSLOT`. Bearer secrets and user-facing codes never appear in keys; key
   without a plaintext mapping. The lock flag in the request makes the user-code claim single-use; the user-code
   locator is removed after the claim. The locator is created with `NX`, so a user code that collides with a live one
   is regenerated instead of taking over the other request.
+- Pending consent decisions live in their own key family and digest namespace (`oidc-consent-challenge`), apart from
+  authorization codes (`oidc-authorization-code`). The consent challenge is visible to the user agent, so it must
+  never be redeemable at the token endpoint; the token endpoint additionally rejects every code value outside the
+  issued shape (unreserved URI characters, at most 256) before it reads code storage. Older releases stored the
+  pending consent as `consent:<challenge>` in the code family: during a rolling update a consent page started on an
+  older instance cannot be decided on a newer one, and the user starts the authorization again (at most the
+  ten-minute authorization TTL); no stored value has to be migrated or removed.
 - Revocation epochs have no TTL. Run the IdP Redis with `maxmemory-policy noeviction`: an evicted epoch key would fall
   back to the epoch floor and could make tokens valid again that a revocation had invalidated.
 - Redis 6.2 or newer (or a compatible Valkey) is required: code redemption uses `GETDEL`, the registry repair uses

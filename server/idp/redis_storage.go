@@ -61,6 +61,10 @@ const (
 // oidcAuthorizationCodeDigestNamespace domain-separates authorization-code key digests.
 const oidcAuthorizationCodeDigestNamespace = "oidc-authorization-code"
 
+// oidcConsentChallengeDigestNamespace domain-separates consent-challenge key digests from authorization codes, so a
+// browser-visible consent challenge can never be redeemed as a code.
+const oidcConsentChallengeDigestNamespace = "oidc-consent-challenge"
+
 // oidcDynamicRefreshRevokedTTL bounds how long a revoked refresh family keeps rejecting its tokens.
 const oidcDynamicRefreshRevokedTTL = 30 * 24 * time.Hour
 
@@ -260,9 +264,15 @@ func (s *RedisTokenStorage) oidcKey(kind string, value string) string {
 }
 
 // authorizationCodeKey returns the single-use code key without embedding the bearer code itself.
-// Authorization codes and consent challenges are only referenced by their keyed, domain-separated digest.
+// Authorization codes are only referenced by their keyed, domain-separated digest.
 func (s *RedisTokenStorage) authorizationCodeKey(code string) string {
 	return s.oidcKey("code", s.redis.GetSecurityManager().IndexDigest(oidcAuthorizationCodeDigestNamespace, code))
+}
+
+// consentSessionKey returns the key of one pending consent decision. It lives in its own key family and digest
+// namespace: no token request can reach it, whatever code value it sends.
+func (s *RedisTokenStorage) consentSessionKey(challenge string) string {
+	return s.oidcKey("consent", s.redis.GetSecurityManager().IndexDigest(oidcConsentChallengeDigestNamespace, challenge))
 }
 
 // StoreSession stores an OIDC session with a given code and TTL.
@@ -277,20 +287,45 @@ func (s *RedisTokenStorage) GetSession(ctx context.Context, code string) (*OIDCS
 
 // ConsumeSession atomically reads and removes a one-time authorization code.
 func (s *RedisTokenStorage) ConsumeSession(ctx context.Context, code string) (*OIDCSession, error) {
-	writeCtx, cancel := s.redisWriteContext(ctx)
-	defer cancel()
-
-	data, err := s.redis.GetWriteHandle().GetDel(writeCtx, s.authorizationCodeKey(code)).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.decryptSession(data)
+	return s.consumeSessionAtKey(ctx, s.authorizationCodeKey(code))
 }
 
 // DeleteSession removes an OIDC session from Redis.
 func (s *RedisTokenStorage) DeleteSession(ctx context.Context, code string) error {
 	return s.deleteKey(ctx, s.authorizationCodeKey(code))
+}
+
+// StoreConsentSession stores the pending authorization of one consent challenge.
+func (s *RedisTokenStorage) StoreConsentSession(ctx context.Context, challenge string, session *OIDCSession, ttl time.Duration) error {
+	return s.storeSessionAtKey(ctx, s.consentSessionKey(challenge), session, ttl)
+}
+
+// GetConsentSession reads the pending authorization of one consent challenge.
+func (s *RedisTokenStorage) GetConsentSession(ctx context.Context, challenge string) (*OIDCSession, error) {
+	return s.getSessionAtKey(ctx, s.consentSessionKey(challenge))
+}
+
+// ConsumeConsentSession atomically reads and removes the pending authorization of one consent challenge.
+func (s *RedisTokenStorage) ConsumeConsentSession(ctx context.Context, challenge string) (*OIDCSession, error) {
+	return s.consumeSessionAtKey(ctx, s.consentSessionKey(challenge))
+}
+
+// DeleteConsentSession removes the pending authorization of one consent challenge.
+func (s *RedisTokenStorage) DeleteConsentSession(ctx context.Context, challenge string) error {
+	return s.deleteKey(ctx, s.consentSessionKey(challenge))
+}
+
+// consumeSessionAtKey atomically reads and removes one single-use session with GETDEL.
+func (s *RedisTokenStorage) consumeSessionAtKey(ctx context.Context, key string) (*OIDCSession, error) {
+	writeCtx, cancel := s.redisWriteContext(ctx)
+	defer cancel()
+
+	data, err := s.redis.GetWriteHandle().GetDel(writeCtx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	return s.decryptSession(data)
 }
 
 // StoreRefreshToken stores a refresh token session in Redis and tracks it for the user.

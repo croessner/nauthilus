@@ -338,8 +338,8 @@ func TestOIDCConsentCanonicalGETAndPOSTBindTypedFlowAndIgnorePostedState(t *test
 		ClientID: request.clientID, UserID: "identity-42", Username: "alice", DisplayName: "Alice",
 		Scopes: []string{definitions.ScopeOpenID, "profile"}, RedirectURI: request.redirectURI,
 	}
-	mockRedis.ExpectGet(idptest.AuthorizationCodeKey("test:", "consent:"+challenge)).SetVal(mustMarshalOIDCSession(t, consentSession))
-	mockRedis.ExpectGetDel(idptest.AuthorizationCodeKey("test:", "consent:"+challenge)).SetVal(mustMarshalOIDCSession(t, consentSession))
+	mockRedis.ExpectGet(idptest.ConsentSessionKey("test:", challenge)).SetVal(mustMarshalOIDCSession(t, consentSession))
+	mockRedis.ExpectGetDel(idptest.ConsentSessionKey("test:", challenge)).SetVal(mustMarshalOIDCSession(t, consentSession))
 	expectOIDCAuthorizationCodeStorage(mockRedis)
 
 	router := gin.New()
@@ -485,7 +485,7 @@ func TestOIDCConsentCanonicalDenyDeletesOnlySelectedParallelFlow(t *testing.T) {
 		ClientID: firstRequest.clientID, UserID: "identity-42", Username: "alice",
 		Scopes: []string{definitions.ScopeOpenID}, RedirectURI: firstRequest.redirectURI,
 	}
-	mockRedis.ExpectGetDel(idptest.AuthorizationCodeKey("test:", "consent:"+challenge)).SetVal(mustMarshalOIDCSession(t, pending))
+	mockRedis.ExpectGetDel(idptest.ConsentSessionKey("test:", challenge)).SetVal(mustMarshalOIDCSession(t, pending))
 
 	router := gin.New()
 	router.POST("/oidc/consent", cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation), handler.ConsentPOSTCanonical)

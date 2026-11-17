@@ -219,12 +219,19 @@ func rejectDuplicateOIDCAuthorizeParameters(ctx *gin.Context) bool {
 	return false
 }
 
-// handleAuthorizationCodeTokenExchange processes the authorization_code grant type within the token endpoint. Every
-// answer after the atomic consume is reported once as an oidc.code_redemption event; requests that never resolve a
-// code (unknown, expired, or already redeemed codes) cannot be attributed and are not reported.
+// handleAuthorizationCodeTokenExchange processes the authorization_code grant type within the token endpoint. A value
+// outside the issued code shape is rejected before any storage access. Every answer after the atomic consume is
+// reported once as an oidc.code_redemption event; requests that never resolve a code (malformed, unknown, expired, or
+// already redeemed codes) cannot be attributed and are not reported.
 func (h *OIDCHandler) handleAuthorizationCodeTokenExchange(ctx *gin.Context, client *config.OIDCClient, grantType string) {
 	clientID := client.ClientID
 	code := formValue(ctx, oidcParamCode)
+
+	if !validAuthorizationCodeShape(code) {
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
+
+		return
+	}
 
 	if !h.precheckAuthorizationCodeResources(ctx, client, code) {
 		return
@@ -418,4 +425,27 @@ func hasOIDCPrompt(prompt, value string) bool {
 // requestsFreshOIDCLogin requires explicit credentials for login or account selection.
 func requestsFreshOIDCLogin(prompt string) bool {
 	return hasOIDCPrompt(prompt, "login") || hasOIDCPrompt(prompt, "select_account")
+}
+
+// maxAuthorizationCodeLength bounds a code value the token endpoint looks up; issued codes are 27-character KSUIDs.
+const maxAuthorizationCodeLength = 256
+
+// validAuthorizationCodeShape reports whether a code value has the shape of a code this IdP issues: unreserved URI
+// characters (RFC 3986) within a bounded length. It keeps every other value, above all the "consent:<challenge>"
+// layout that older releases stored in the code key space, away from code storage.
+func validAuthorizationCodeShape(code string) bool {
+	if code == "" || len(code) > maxAuthorizationCodeLength {
+		return false
+	}
+
+	for _, char := range code {
+		switch {
+		case char >= 'A' && char <= 'Z', char >= 'a' && char <= 'z', char >= '0' && char <= '9':
+		case char == '-', char == '.', char == '_', char == '~':
+		default:
+			return false
+		}
+	}
+
+	return true
 }

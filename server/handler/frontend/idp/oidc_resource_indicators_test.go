@@ -75,8 +75,15 @@ func resourceIndicatorClients() []config.OIDCClient {
 func newResourceIndicatorHandler(t *testing.T) *OIDCHandler {
 	t.Helper()
 
+	return newMiniredisOIDCHandler(t, resourceIndicatorClients())
+}
+
+// newMiniredisOIDCHandler builds an OIDC handler for the given clients whose token state lives in miniredis.
+func newMiniredisOIDCHandler(t *testing.T, clients []config.OIDCClient) *OIDCHandler {
+	t.Helper()
+
 	tokenRedis := miniredis.RunT(t)
-	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: secret.New(generateTestKey()), clients: resourceIndicatorClients()}
+	cfg := &mockOIDCCfg{issuer: "https://auth.example.com", signingKey: secret.New(generateTestKey()), clients: clients}
 	handlerDeps := &deps.Deps{
 		Cfg: cfg, Env: config.NewTestEnvironmentConfig(),
 		Redis:       rediscli.NewTestClient(redis.NewClient(&redis.Options{Addr: tokenRedis.Addr()})),

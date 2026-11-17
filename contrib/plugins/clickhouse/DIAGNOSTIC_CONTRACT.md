@@ -402,8 +402,8 @@ code is stored), and `GETDEL` returns a code at most once, so one flow has at mo
 
 Not recorded, because no safe attribution exists or the code stays redeemable:
 
-- token requests that never resolve a code: client authentication failures, unknown, expired, or already redeemed
-  codes. Every replay after a successful redemption is such a miss, so a replay can never turn a completed flow into a
+- token requests that never resolve a code: client authentication failures, malformed code values (rejected before
+  code storage is read), unknown, expired, or already redeemed codes. Every replay after a successful redemption is such a miss, so a replay can never turn a completed flow into a
   failure;
 - resource pre-check rejections before the consume (the code stays redeemable once);
 - a code session that cannot be decrypted after `GETDEL` (the code is consumed without event);
