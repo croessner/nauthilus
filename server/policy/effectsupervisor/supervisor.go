@@ -316,6 +316,10 @@ func (s *Supervisor) captureAndQueue(ctx context.Context, plan Plan) (*acceptedW
 		return nil, Receipt{}, "saturated", ErrSaturated
 	}
 
+	if plan.bestEffort && s.inFlight >= bestEffortCapacity(s.capacity) {
+		return nil, Receipt{}, bestEffortSaturatedErrorClass, ErrSaturated
+	}
+
 	captured, err := captureProviderWork(ctx, provider, plan.work)
 	if err != nil {
 		return nil, Receipt{}, contextErrorClass(err), err
@@ -458,6 +462,15 @@ func (s *Supervisor) startWorkersLocked() {
 
 		go s.worker()
 	}
+}
+
+// bestEffortSaturatedErrorClass marks a best-effort plan rejected at its share; it never affects a decision.
+const bestEffortSaturatedErrorClass = "best_effort_saturated"
+
+// bestEffortCapacity is the in-flight bound for best-effort plans: half of the capacity, rounded up, so the other
+// half stays reserved for plans whose acceptance decides an answer. A one-slot supervisor cannot reserve anything.
+func bestEffortCapacity(capacity int) int {
+	return capacity - capacity/2
 }
 
 // reserveLocked records one accepted capacity owner and opens a new idle epoch.

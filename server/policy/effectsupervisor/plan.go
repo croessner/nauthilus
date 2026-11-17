@@ -59,6 +59,8 @@ type PlanInput struct {
 	Observability  ObservabilityMetadata
 	DeadlineBudget time.Duration
 	EffectOrdinal  uint32
+	// BestEffort marks work whose rejection never affects a decision; it may only use part of the capacity.
+	BestEffort bool
 }
 
 // Plan is an immutable host-internal post-action acceptance request.
@@ -72,6 +74,7 @@ type Plan struct {
 	deadlineBudget time.Duration
 	effectOrdinal  uint32
 	boundary       Boundary
+	bestEffort     bool
 }
 
 // NewPlan validates and owns all generic plan metadata before supervisor acceptance.
@@ -105,6 +108,7 @@ func NewPlan(input PlanInput) (Plan, error) {
 		deadlineBudget: input.DeadlineBudget,
 		effectOrdinal:  input.EffectOrdinal,
 		boundary:       boundary,
+		bestEffort:     input.BestEffort,
 	}, nil
 }
 

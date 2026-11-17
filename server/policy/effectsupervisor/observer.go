@@ -127,6 +127,17 @@ func eventTraceAttributes(event Event) []attribute.KeyValue {
 	}
 }
 
+// eventWarns reports whether a transition is a failure worth a warning. A best-effort plan rejected at its share is
+// expected under load and stays visible through the acceptance-failure counter instead.
+func eventWarns(event Event) bool {
+	return (event.State == StateFailed || event.State == StateOutcomeUnknown) && !quietBestEffortRejection(event)
+}
+
+// quietBestEffortRejection identifies the share rejection of a best-effort plan.
+func quietBestEffortRejection(event Event) bool {
+	return event.State == StateFailed && event.ErrorClass == bestEffortSaturatedErrorClass
+}
+
 // eventLogAttributes returns the same redacted fields for structured logs.
 func eventLogAttributes(event Event) []slog.Attr {
 	return []slog.Attr{
@@ -145,7 +156,7 @@ func eventLogAttributes(event Event) []slog.Attr {
 
 // eventLogLevel raises rejected or unsuccessful states above debug.
 func eventLogLevel(event Event) slog.Level {
-	if event.State == StateFailed || event.State == StateOutcomeUnknown {
+	if eventWarns(event) {
 		return slog.LevelWarn
 	}
 
@@ -154,8 +165,12 @@ func eventLogLevel(event Event) slog.Level {
 
 // eventAuditLogLevel keeps successful controlled-audit transitions visible at the default level.
 func eventAuditLogLevel(event Event) slog.Level {
-	if event.State == StateFailed || event.State == StateOutcomeUnknown {
+	if eventWarns(event) {
 		return slog.LevelWarn
+	}
+
+	if quietBestEffortRejection(event) {
+		return slog.LevelDebug
 	}
 
 	return slog.LevelInfo
