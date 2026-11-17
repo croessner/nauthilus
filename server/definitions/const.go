@@ -375,6 +375,13 @@ const (
 
 	// ScopeAttributeRead grants access to released identity attributes.
 	ScopeAttributeRead = "nauthilus:attribute_read"
+
+	// ScopeHistoryRead grants support access to recorded authentication history of a named subject.
+	ScopeHistoryRead = "nauthilus:history_read"
+
+	// ScopeHistoryDetail additionally releases other people's identities behind shared addresses and
+	// operator-only factor results in recorded history.
+	ScopeHistoryDetail = "nauthilus:history_detail"
 )
 
 const (

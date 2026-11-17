@@ -1,0 +1,201 @@
+// Copyright (C) 2026 Christian Rößner
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+package supporthistory
+
+import "time"
+
+// SchemaVersion is the version of every request and response of this service.
+const SchemaVersion = "1"
+
+// Coverage states which evidence a response is based on; it is part of every processed answer.
+type Coverage struct {
+	ContractRowsSince    *time.Time       `json:"contract_rows_since"`
+	Sources              []SourceCoverage `json:"sources"`
+	Conditions           []string         `json:"conditions"`
+	KnownLimits          []string         `json:"known_limits"`
+	Availability         string           `json:"availability"`
+	Deployment           string           `json:"deployment"`
+	DeliveryCompleteness string           `json:"delivery_completeness"`
+	LateEventsPossible   bool             `json:"late_events_possible"`
+}
+
+// SourceCoverage is the read state and retention fit of one source.
+type SourceCoverage struct {
+	Source         string `json:"source"`
+	State          string `json:"state"`
+	WindowCoverage string `json:"window_coverage"`
+	RetentionDays  int    `json:"retention_days"`
+}
+
+// ResolvedAccount is one account the search matched, with its provenance.
+type ResolvedAccount struct {
+	Account    string `json:"account"`
+	Provenance string `json:"provenance"`
+}
+
+// SubjectResolution explains how the subject was turned into match values.
+type SubjectResolution struct {
+	SuppliedLogin   *string           `json:"supplied_login"`
+	SuppliedAccount *string           `json:"supplied_account"`
+	Accounts        []ResolvedAccount `json:"accounts"`
+	CurrentMapping  string            `json:"current_mapping"`
+}
+
+// Finding is one observed failure or noteworthy condition; UIs use Code, never text.
+type Finding struct {
+	EventID     *string  `json:"event_id"`
+	Uncertainty []string `json:"uncertainty"`
+	Code        string   `json:"code"`
+	Category    string   `json:"category"`
+	Certainty   string   `json:"certainty"`
+}
+
+// EventIdentity holds the identity claims recorded with one event.
+type EventIdentity struct {
+	SuppliedLogin    *string `json:"supplied_login"`
+	CanonicalAccount *string `json:"canonical_account"`
+	AccountFound     *bool   `json:"account_found_at_capture"`
+	MatchedBy        *string `json:"matched_by"`
+	SubjectMatch     bool    `json:"subject_match"`
+	Redacted         bool    `json:"redacted"`
+}
+
+// EventContext holds the request context recorded with one event.
+type EventContext struct {
+	ClientIP        *string `json:"client_ip"`
+	Protocol        *string `json:"protocol"`
+	Service         *string `json:"service"`
+	OIDCClientID    *string `json:"oidc_client_id"`
+	SAMLEntityID    *string `json:"saml_entity_id"`
+	GrantType       *string `json:"grant_type"`
+	Transport       *string `json:"transport"`
+	TransportStatus *int    `json:"transport_status"`
+}
+
+// Decision is the recorded Policy result of a login row.
+type Decision struct {
+	BruteForceBucket    *string  `json:"brute_force_bucket"`
+	BruteForceTolerated *bool    `json:"brute_force_tolerated"`
+	DecisionSources     []string `json:"decision_sources"`
+	Operation           string   `json:"operation"`
+	Outcome             string   `json:"outcome"`
+	OutcomeStage        string   `json:"outcome_stage"`
+	OutcomeMarker       string   `json:"outcome_marker"`
+	ResponseMarker      string   `json:"response_marker"`
+	PolicyRule          string   `json:"policy_rule"`
+	TempFailReason      string   `json:"tempfail_reason"`
+	TempFailCheckpoint  string   `json:"tempfail_checkpoint"`
+	PolicyStatus        string   `json:"policy_status"`
+	FSMState            string   `json:"fsm_state"`
+}
+
+// Factor is the recorded result of one second-factor verification event.
+type Factor struct {
+	Result      string `json:"result"`
+	Reason      string `json:"reason"`
+	FlowEffect  string `json:"flow_effect"`
+	FailLatched bool   `json:"fail_latched"`
+}
+
+// Reputation is the structured reputation evidence of one login row.
+type Reputation struct {
+	Assessments []ReputationAssessment `json:"assessments"`
+	State       string                 `json:"state"`
+	Truncated   bool                   `json:"truncated"`
+}
+
+// Event is one recorded row or step event, interpreted under the data contract.
+type Event struct {
+	OccurredAt    time.Time     `json:"occurred_at"`
+	EventID       *string       `json:"event_id"`
+	FactorRole    *string       `json:"factor_role"`
+	Method        *string       `json:"method"`
+	Decision      *Decision     `json:"decision"`
+	Factor        *Factor       `json:"factor"`
+	Reputation    *Reputation   `json:"reputation"`
+	Identity      EventIdentity `json:"identity"`
+	Context       EventContext  `json:"context"`
+	Source        string        `json:"source"`
+	RequestID     string        `json:"request_id"`
+	Instance      string        `json:"instance"`
+	Stage         string        `json:"stage"`
+	Result        string        `json:"result"`
+	Code          string        `json:"code"`
+	Category      string        `json:"category"`
+	Sequence      int           `json:"sequence"`
+	RecordVersion int           `json:"record_version"`
+}
+
+// Steps states per step whether evidence was recorded, withheld, or does not apply.
+type Steps struct {
+	Primary      string `json:"primary"`
+	SecondFactor string `json:"second_factor"`
+}
+
+// Recording describes evidence limits of one attempt.
+type Recording struct {
+	KnownGaps          []string `json:"known_gaps"`
+	ReplayedRowsMerged int      `json:"replayed_rows_merged"`
+	LegacyRows         int      `json:"legacy_rows"`
+	EventsTruncated    bool     `json:"events_truncated"`
+	EventsWithheld     bool     `json:"events_withheld"`
+}
+
+// Attempt is one diagnostic attempt: an IdP flow or a single authentication request.
+type Attempt struct {
+	StartedAt            time.Time `json:"started_at"`
+	LastObservedAt       time.Time `json:"last_observed_at"`
+	Findings             []Finding `json:"findings"`
+	Events               []Event   `json:"events"`
+	Recording            Recording `json:"recording"`
+	Steps                Steps     `json:"steps"`
+	AttemptID            string    `json:"attempt_id"`
+	Kind                 string    `json:"kind"`
+	Projection           string    `json:"projection"`
+	Outcome              string    `json:"outcome"`
+	OutcomeBasis         string    `json:"outcome_basis"`
+	Progress             string    `json:"progress"`
+	FinalOutcomeObserved bool      `json:"final_outcome_observed"`
+}
+
+// AttemptPage is the paging block of an attempt search.
+type AttemptPage struct {
+	ScannedUntil time.Time `json:"scanned_until"`
+	NextCursor   *string   `json:"next_cursor"`
+	Limit        int       `json:"limit"`
+}
+
+// AttemptSearchResult is the processed answer of an attempt search.
+type AttemptSearchResult struct {
+	QueriedAt         time.Time         `json:"queried_at"`
+	History           Coverage          `json:"history"`
+	SubjectResolution SubjectResolution `json:"subject_resolution"`
+	Attempts          []Attempt         `json:"attempts"`
+	Page              AttemptPage       `json:"page"`
+	SchemaVersion     string            `json:"schema_version"`
+	ResultBasis       string            `json:"result_basis"`
+}
+
+// AttemptDetailResult is the processed answer of an attempt detail lookup; Attempt is nil when nothing visible to
+// the caller was found.
+type AttemptDetailResult struct {
+	QueriedAt         time.Time          `json:"queried_at"`
+	Attempt           *Attempt           `json:"attempt"`
+	SubjectResolution *SubjectResolution `json:"subject_resolution"`
+	History           Coverage           `json:"history"`
+	SchemaVersion     string             `json:"schema_version"`
+	ResultBasis       string             `json:"result_basis"`
+}

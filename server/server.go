@@ -49,6 +49,7 @@ import (
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/supporthistory"
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -98,6 +99,9 @@ type contextStore struct {
 
 	// pluginRunner is the explicitly started process-owned native runtime.
 	pluginRunner *pluginruntime.Runner
+
+	// supportHistory is the process-owned historical diagnosis service; nil when no history source is configured.
+	supportHistory *supporthistory.Service
 
 	// bruteForceTolerate is the explicitly constructed boot-lifetime tolerance owner.
 	bruteForceTolerate tolerate.Tolerate
@@ -665,6 +669,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 			RouteArtifacts: runtime.routeArtifacts,
 			LDAPQueue:      priorityqueue.LDAPQueue,
 			LDAPAuthQueue:  priorityqueue.LDAPAuthQueue,
+			SupportHistory: runtime.store.supportHistory,
 		}
 
 		if runtime.rateLimit != nil {

@@ -12,4 +12,5 @@ output-options:
     - OIDCSessions
     - Policy
     - Reputation
+    - SupportHistory
 output: server/openapi/generated/management/bindings.gen.go

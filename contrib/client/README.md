@@ -132,5 +132,65 @@ On the managed mailhost, the canonical installation is `/usr/local/sbin/auth-cli
 updating the client does not replace that wrapper, credentials or token cache.
 The new commands return 404 until the server-side reputation plugin is deployed.
 
+## Support history
+
+The `support` commands are read-only lookups in the recorded authentication
+history and brute-force ban history. Each command sends one `POST` with a JSON
+body to `/api/v1/support/...`; logins, accounts, addresses and filters never
+appear in the URL.
+
+They require a backchannel bearer token with `nauthilus:history_read`.
+`nauthilus:history_detail` widens the projection and allows `attempts detail`
+without `--login`/`--account`. The server rejects Basic backchannel credentials
+and tokens that only carry `nauthilus:admin`; the client refuses Basic-only
+credentials before sending anything. With OIDC client credentials, request the
+scopes explicitly, for example
+`NAUTHILUS_SCOPES="nauthilus:history_read nauthilus:history_detail"`.
+
+```sh
+# Attempts of one login during the last two hours
+./nauthilus-admin.py support attempts search --login alice@example.test --since 2h
+# One attempt; --around is any instant of it, for example started_at from the search
+./nauthilus-admin.py support attempts detail --attempt-id fl1.0123456789abcdef0123456789abcdef \
+  --around 2026-11-17T08:15:02Z --login alice@example.test
+# Bans of one client IP during the last week, all pages
+./nauthilus-admin.py support bans search --ip 203.0.113.10 --since 7d --all
+./nauthilus-admin.py support bans search --network 203.0.113.0/24 \
+  --from 2026-11-01T00:00:00Z --until 2026-11-08T00:00:00Z --audit-reference INC-4711
+```
+
+The window is either `--since DURATION` (`30m`, `2h`, `7d`; from now minus the
+duration until now) or both `--from` and `--until` as RFC3339 timestamps. It
+must not exceed 31 days and `--from` must be earlier than `--until`; the client
+checks this locally. `--limit` accepts 1-50 attempts or 1-20 bans per page.
+`--cursor` continues from the `next_cursor` of an earlier page with the same
+query. `--all` follows `next_cursor` for at most 20 pages and prints one merged
+answer: attempts deduplicated by `attempt_id`, bans by `ban_ref`, the other
+blocks from the last page (the `history` block stays `partial` if any page was
+partial), plus `"pages": n`. If 20 pages are not enough, a stderr warning names
+the cursor to continue with. `--audit-reference` (`[A-Za-z0-9._:/-]{1,64}`)
+links the lookup to a ticket in the server audit log.
+
+| Exit | Meaning                                                                   |
+|------|---------------------------------------------------------------------------|
+| 0    | processed and `history.availability` is `available`                       |
+| 3    | processed, but history is `partial`; a stderr warning lists `history.conditions` |
+| 4    | history unavailable or busy (HTTP 503 or 429)                             |
+| 5    | query too broad (HTTP 422); narrow the window or add filters              |
+| 1    | any other error: local validation, HTTP 400/401/403/500, transport errors |
+| 2    | command-line usage error                                                  |
+
+The JSON `error.code` decides the exit code when the server sends one; the
+message text is only displayed. A login failure recorded in the history is data,
+never a non-zero exit by itself. An empty search result (or a detail lookup
+without an attempt) prints a stderr note with `result_basis` and
+`history.conditions`: it does not prove that no login or ban happened, because
+history delivery is not guaranteed to be complete.
+
+The managed mail stack may run an older or backported copy of this client (see
+`/usr/local/sbin/auth-cli` above). The `support` commands exist only in this
+owner-repository client. Syncing a deployed copy is a separate, deliberate
+step; changing this file does not install or overwrite any live copy.
+
 Run the hermetic client contracts with
 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s contrib/client -p 'test_*.py'`.

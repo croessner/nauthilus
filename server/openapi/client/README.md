@@ -26,6 +26,9 @@ Management API:
 - `ManagementClient.LookupReputation`
 - `ManagementClient.PutReputationOverride`
 - `ManagementClient.DeleteReputationOverride`
+- `ManagementClient.SearchAuthenticationAttempts`
+- `ManagementClient.GetAuthenticationAttempt`
+- `ManagementClient.SearchBruteForceBans`
 - `BearerToken`
 - `BasicCredentials`
 

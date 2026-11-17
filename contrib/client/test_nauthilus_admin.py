@@ -1,4 +1,4 @@
-"""Hermetic command-to-HTTP contracts for reputation administration."""
+"""Hermetic command-to-HTTP contracts for the standalone admin client."""
 
 import contextlib
 import importlib.util
@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("nauthilus_admin", Path(__file__).with_name("nauthilus-admin.py"))
@@ -342,6 +343,287 @@ class ReputationImportTest(unittest.TestCase):
         summary = json.loads(stdout)
         self.assertEqual([result["status"] for result in summary["results"]], ["failed", "applied", "applied"])
         self.assertIn("HTTP 409", summary["results"][0]["error"])
+
+
+ATTEMPT_ID = "fl1." + "a" * 32
+BAN_REF = "0123456789abcdef" * 2
+
+
+def history_response(availability: str = "available", conditions: tuple = (), **fields) -> "ADMIN.Response":
+    """Build a processed support history answer with a no-store JSON response."""
+    payload = {"schema_version": "1", "queried_at": "2027-01-15T08:00:00Z", "result_basis": "matches_found",
+               "history": {"availability": availability, "conditions": list(conditions),
+                           "delivery_completeness": "not_guaranteed"}, **fields}
+    headers = {"content-type": "application/json", "cache-control": "no-store"}
+    body = json.dumps(payload).encode()
+    return ADMIN.Response(200, "OK", headers, body, ADMIN.parse_response_body(headers, body))
+
+
+def history_error(status: int, code: str) -> "ADMIN.Response":
+    """Build a support history error envelope."""
+    return json_response(status, json.dumps({"schema_version": "1", "error": {"code": code, "message": "synthetic"}}).encode())
+
+
+def attempt(attempt_id: str) -> dict:
+    """Build one recorded attempt whose historical outcome is a failed login."""
+    return {"attempt_id": attempt_id, "started_at": "2027-01-15T07:59:58Z", "outcome": "failure"}
+
+
+class SupportHistoryClientTest(unittest.TestCase):
+    """Keep support history queries body-only, bounded and honest about incomplete history."""
+
+    def run_support(self, *argv, responses=(), base=("--bearer-token", "synthetic"), output="json"):
+        """Run one support command through main with a mocked HTTP boundary and a fixed clock."""
+        environment = {key: value for key, value in ADMIN.os.environ.items() if not key.startswith("NAUTHILUS_")}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(ADMIN.os.environ, environment, clear=True), \
+                patch.object(ADMIN.NauthilusClient, "_send", side_effect=list(responses)) as send, \
+                patch.object(ADMIN.time, "time", return_value=NOW), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = ADMIN.main([*base, "--token-cache", "off", "--output", output, "support", *argv])
+        return code, stdout.getvalue(), stderr.getvalue(), send
+
+    @staticmethod
+    def sent_bodies(send) -> list:
+        """Decode the JSON body of every HTTP call."""
+        return [json.loads(call.kwargs["body"]) for call in send.call_args_list]
+
+    def test_each_command_posts_its_exact_body_without_query_parameters(self):
+        cases = [
+            (["attempts", "search", "--login", "alice@example.test", "--since", "2h", "--client-ip", "192.0.2.8",
+              "--protocol", "imap", "--oidc-client-id", "webmail", "--limit", "10", "--audit-reference", "INC-42/a"],
+             "authentication-attempts/search", {"attempts": [attempt(ATTEMPT_ID)]},
+             {"schema_version": "1", "subject": {"login": "alice@example.test"},
+              "filter": {"from": "2027-01-15T06:00:00Z", "until": "2027-01-15T08:00:00Z", "client_ip": "192.0.2.8",
+                         "protocol": "imap", "oidc_client_id": "webmail"},
+              "page": {"limit": 10}, "audit_reference": "INC-42/a"}),
+            (["attempts", "search", "--account", "alice", "--from", "2027-01-01T00:00:00Z", "--until",
+              "2027-01-02T00:00:00+01:00", "--saml-entity-id", "https://sp.example.test/", "--cursor", "opaque"],
+             "authentication-attempts/search", {"attempts": [attempt(ATTEMPT_ID)]},
+             {"schema_version": "1", "subject": {"account": "alice"},
+              "filter": {"from": "2027-01-01T00:00:00Z", "until": "2027-01-02T00:00:00+01:00",
+                         "saml_entity_id": "https://sp.example.test/"}, "page": {"cursor": "opaque"}}),
+            (["attempts", "detail", "--attempt-id", ATTEMPT_ID, "--around", "2027-01-15T07:59:58Z"],
+             "authentication-attempts/detail", {"attempt": attempt(ATTEMPT_ID)},
+             {"schema_version": "1", "attempt_id": ATTEMPT_ID, "around": "2027-01-15T07:59:58Z"}),
+            (["attempts", "detail", "--attempt-id", "rq1.Req_42-x", "--around", "2027-01-15T07:59:58.25Z", "--login",
+              "alice"], "authentication-attempts/detail", {"attempt": attempt("rq1.Req_42-x")},
+             {"schema_version": "1", "attempt_id": "rq1.Req_42-x", "around": "2027-01-15T07:59:58.250000Z",
+              "subject": {"login": "alice"}}),
+            (["bans", "search", "--ip", "2001:db8::8", "--since", "7d", "--ban-ref", BAN_REF],
+             "bruteforce-bans/search", {"bans": [{"ban_ref": BAN_REF}]},
+             {"schema_version": "1", "target": {"ip": "2001:db8::8"},
+              "filter": {"from": "2027-01-08T08:00:00Z", "until": "2027-01-15T08:00:00Z", "ban_ref": BAN_REF},
+              "page": {}}),
+            (["bans", "search", "--network", "192.0.2.0/24", "--since", "30m", "--account", "alice", "--limit", "20"],
+             "bruteforce-bans/search", {"bans": [{"ban_ref": BAN_REF}]},
+             {"schema_version": "1", "target": {"network": "192.0.2.0/24"},
+              "filter": {"from": "2027-01-15T07:30:00Z", "until": "2027-01-15T08:00:00Z"},
+              "subject": {"account": "alice"}, "page": {"limit": 20}}),
+        ]
+        for argv, path, result, body in cases:
+            with self.subTest(argv=argv):
+                code, stdout, stderr, send = self.run_support(*argv, responses=[history_response(**result)])
+                self.assertEqual(code, 0, stderr)
+                self.assertEqual(send.call_count, 1)
+                method, url = send.call_args.args
+                self.assertEqual((method, url), ("POST", ADMIN.DEFAULT_URL + "/api/v1/support/" + path))
+                self.assertEqual(urllib.parse.urlsplit(url).query, "")
+                self.assertEqual(self.sent_bodies(send), [body])
+                self.assertEqual(send.call_args.kwargs["headers"]["Authorization"], "Bearer synthetic")
+                self.assertEqual(json.loads(stdout)["history"]["availability"], "available")
+                self.assertEqual(stderr, "")
+
+    def test_all_follows_next_cursor_with_an_unchanged_query_and_deduplicates(self):
+        first, second, third = ("fl1." + digit * 32 for digit in "123")
+        pages = [
+            history_response(attempts=[attempt(first), attempt(second)], page={"limit": 2, "next_cursor": "c1"}),
+            history_response(attempts=[attempt(second), attempt(third)], page={"limit": 2, "next_cursor": "c2"}),
+            history_response(attempts=[], result_basis="no_matches", page={"limit": 2, "next_cursor": None}),
+        ]
+        code, stdout, stderr, send = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                      "--limit", "2", "--all", responses=pages)
+        self.assertEqual(code, 0, stderr)
+        bodies = self.sent_bodies(send)
+        self.assertEqual([body.pop("page") for body in bodies], [{"limit": 2}, {"limit": 2, "cursor": "c1"},
+                                                                 {"limit": 2, "cursor": "c2"}])
+        self.assertEqual(bodies, [bodies[0]] * 3)
+        self.assertTrue(all(urllib.parse.urlsplit(call.args[1]).query == "" for call in send.call_args_list))
+        merged = json.loads(stdout)
+        self.assertEqual([item["attempt_id"] for item in merged["attempts"]], [first, second, third])
+        self.assertEqual((merged["pages"], merged["result_basis"], merged["page"]["next_cursor"]),
+                         (3, "matches_found", None))
+        self.assertEqual(stderr, "")
+
+    def test_all_deduplicates_bans_by_ban_ref_and_lifecycle_events_by_value(self):
+        other = "f" * 32
+        pages = [
+            history_response(bans=[{"ban_ref": BAN_REF, "rule": "r1"}], releases=[{"at": "t1"}],
+                             page={"limit": 1, "next_cursor": "b1"}),
+            history_response(bans=[{"ban_ref": BAN_REF, "rule": "r1"}, {"ban_ref": other, "rule": "r2"}],
+                             releases=[{"at": "t1"}, {"at": "t2"}], page={"limit": 1, "next_cursor": None}),
+        ]
+        code, stdout, _, send = self.run_support("bans", "search", "--ip", "192.0.2.8", "--since", "1d", "--all",
+                                                 responses=pages)
+        self.assertEqual((code, send.call_count), (0, 2))
+        merged = json.loads(stdout)
+        self.assertEqual([ban["ban_ref"] for ban in merged["bans"]], [BAN_REF, other])
+        self.assertEqual(merged["releases"], [{"at": "t1"}, {"at": "t2"}])
+        self.assertEqual(merged["pages"], 2)
+
+    def test_all_never_hides_an_earlier_partial_page(self):
+        pages = [
+            history_response("partial", ("source_lagging",), attempts=[attempt(ATTEMPT_ID)],
+                             page={"next_cursor": "c1"}),
+            history_response(attempts=[attempt("rq1.second")], page={"next_cursor": None}),
+        ]
+        code, stdout, stderr, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h", "--all",
+                                                   responses=pages)
+        self.assertEqual(code, 3)
+        history = json.loads(stdout)["history"]
+        self.assertEqual((history["availability"], history["conditions"]), ("partial", ["source_lagging"]))
+        self.assertIn("source_lagging", stderr)
+
+    def test_all_stops_after_the_page_cap_and_names_the_cursor(self):
+        pages = [history_response(attempts=[attempt(f"rq1.r{index}")], page={"next_cursor": f"c{index}"})
+                 for index in range(ADMIN.SUPPORT_MAX_PAGES + 1)]
+        code, stdout, stderr, send = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                      "--all", responses=pages)
+        self.assertEqual((code, send.call_count), (0, ADMIN.SUPPORT_MAX_PAGES))
+        self.assertEqual(json.loads(stdout)["pages"], ADMIN.SUPPORT_MAX_PAGES)
+        self.assertIn(f"stopped after {ADMIN.SUPPORT_MAX_PAGES} pages", stderr)
+        self.assertIn(f"--cursor c{ADMIN.SUPPORT_MAX_PAGES - 1}", stderr)
+
+    def test_basic_credentials_are_rejected_before_any_request(self):
+        code, stdout, stderr, send = self.run_support(
+            "attempts", "search", "--login", "alice", "--since", "1h",
+            base=("--basic-user", "operator", "--basic-password", "synthetic"))
+        self.assertEqual((code, stdout), (1, ""))
+        send.assert_not_called()
+        self.assertIn("bearer token with nauthilus:history_read", stderr)
+
+    def test_client_credentials_must_request_the_history_scope(self):
+        base = ("--client-id", "support", "--client-secret", "synthetic")
+        code, _, stderr, send = self.run_support("bans", "search", "--ip", "192.0.2.8", "--since", "1h", base=base)
+        self.assertEqual(code, 1)
+        send.assert_not_called()
+        self.assertIn("nauthilus:history_read scope", stderr)
+        token = json_response(200, b'{"access_token":"issued","expires_in":60}')
+        code, _, stderr, send = self.run_support("bans", "search", "--ip", "192.0.2.8", "--since", "1h",
+                                                 base=(*base, "--scopes", "nauthilus:history_read"),
+                                                 responses=[token, history_response(bans=[{"ban_ref": BAN_REF}])])
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(send.call_args.kwargs["headers"]["Authorization"], "Bearer issued")
+
+    def test_window_is_validated_before_any_request(self):
+        cases = {
+            "longer than 31 days": ["--from", "2027-01-01T00:00:00Z", "--until", "2027-02-01T00:00:01Z"],
+            "since longer than 31 days": ["--since", "32d"],
+            "same instant": ["--from", "2027-01-01T00:00:00Z", "--until", "2027-01-01T01:00:00+01:00"],
+            "reversed": ["--from", "2027-01-02T00:00:00Z", "--until", "2027-01-01T00:00:00Z"],
+            "since with from": ["--since", "1h", "--from", "2027-01-01T00:00:00Z"],
+            "missing until": ["--from", "2027-01-01T00:00:00Z"],
+            "missing window": [],
+        }
+        for name, window in cases.items():
+            with self.subTest(name):
+                code, stdout, stderr, send = self.run_support("attempts", "search", "--login", "alice", *window)
+                self.assertEqual((code, stdout), (1, ""))
+                self.assertIn("error:", stderr)
+                send.assert_not_called()
+        code, _, stderr, _ = self.run_support("attempts", "search", "--login", "alice", "--from",
+                                              "2027-01-01T00:00:00Z", "--until", "2027-02-01T00:00:00Z",
+                                              responses=[history_response(attempts=[attempt(ATTEMPT_ID)])])
+        self.assertEqual(code, 0, stderr)
+
+    def test_malformed_arguments_are_usage_errors(self):
+        cases = [
+            ["attempts", "search", "--since", "1h"],
+            ["attempts", "search", "--login", "a", "--account", "b", "--since", "1h"],
+            ["attempts", "search", "--login", "a", "--since", "1h", "--limit", "51"],
+            ["attempts", "search", "--login", "a", "--since", "90"],
+            ["attempts", "search", "--login", "a", "--from", "2027-01-01 00:00:00", "--until", "2027-01-02T00:00:00Z"],
+            ["attempts", "search", "--login", "a", "--since", "1h", "--client-ip", "192.0.2.300"],
+            ["attempts", "search", "--login", "a", "--since", "1h", "--audit-reference", "has space"],
+            ["attempts", "detail", "--attempt-id", "fl1.ABC", "--around", "2027-01-01T00:00:00Z"],
+            ["attempts", "detail", "--attempt-id", ATTEMPT_ID],
+            ["bans", "search", "--since", "1h"],
+            ["bans", "search", "--ip", "192.0.2.8", "--network", "192.0.2.0/24", "--since", "1h"],
+            ["bans", "search", "--network", "192.0.2.8", "--since", "1h"],
+            ["bans", "search", "--ip", "192.0.2.8", "--since", "1h", "--limit", "21"],
+            ["bans", "search", "--ip", "192.0.2.8", "--since", "1h", "--ban-ref", "ABC"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit) as raised:
+                    self.run_support(*argv)
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_partial_history_exits_3_with_a_condition_warning(self):
+        response = history_response("partial", ("source_lagging", "late_events"), attempts=[attempt(ATTEMPT_ID)])
+        code, stdout, stderr, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                   responses=[response])
+        self.assertEqual(code, 3)
+        self.assertEqual(json.loads(stdout)["attempts"][0]["outcome"], "failure")
+        self.assertEqual(stderr.count("\n"), 1)
+        self.assertIn("warning: history availability is partial (conditions: source_lagging, late_events)", stderr)
+
+    def test_rejected_queries_map_error_codes_to_exit_codes(self):
+        proxy = ADMIN.Response(503, "Service Unavailable", {"content-type": "text/html"}, b"<html/>", "<html/>")
+        cases = [
+            (history_error(503, "HISTORY_SOURCE_UNAVAILABLE"), 4, "retry later"),
+            (history_error(503, "HISTORY_NOT_CONFIGURED"), 4, "HISTORY_NOT_CONFIGURED"),
+            (history_error(429, "HISTORY_BUSY"), 4, "retry later"),
+            (history_error(500, "HISTORY_TIMEOUT"), 4, "HISTORY_TIMEOUT"),
+            (proxy, 4, "HTTP 503"),
+            (history_error(422, "QUERY_TOO_BROAD"), 5, "narrow the window"),
+            (history_error(403, "FORBIDDEN"), 1, "needs nauthilus:history_read"),
+            (history_error(401, "UNAUTHORIZED"), 1, "needs nauthilus:history_read"),
+            (history_error(400, "WINDOW_TOO_LARGE"), 1, "WINDOW_TOO_LARGE"),
+            (history_error(500, "INTERNAL_ERROR"), 1, "INTERNAL_ERROR"),
+            (ConnectionRefusedError("refused"), 1, "refused"),
+            (ADMIN.http.client.BadStatusLine("garbage"), 1, "support history request failed"),
+        ]
+        for response, expected, message in cases:
+            with self.subTest(expected=expected, message=message):
+                code, stdout, stderr, _ = self.run_support("bans", "search", "--ip", "192.0.2.8", "--since", "1h",
+                                                           responses=[response])
+                self.assertEqual((code, stdout), (expected, ""))
+                self.assertIn(message, stderr)
+
+    def test_empty_available_result_exits_0_with_a_note(self):
+        cases = [
+            (["attempts", "search", "--login", "alice", "--since", "1h"], {"attempts": []}, "no login happened"),
+            (["attempts", "detail", "--attempt-id", ATTEMPT_ID, "--around", "2027-01-15T07:59:58Z"],
+             {"attempt": None}, "no login happened"),
+            (["bans", "search", "--ip", "192.0.2.8", "--since", "1h"], {"bans": []}, "no ban happened"),
+        ]
+        for argv, result, proof in cases:
+            with self.subTest(argv=argv):
+                response = history_response(result_basis="no_matches", **result)
+                code, stdout, stderr, _ = self.run_support(*argv, responses=[response])
+                self.assertEqual(code, 0)
+                self.assertTrue(stdout)
+                self.assertIn("result_basis=no_matches, conditions: none", stderr)
+                self.assertIn("an empty result does not prove that " + proof, stderr)
+
+    def test_paged_output_keeps_the_existing_output_modes(self):
+        pages = [history_response(attempts=[attempt(ATTEMPT_ID)], page={"next_cursor": None})]
+        code, stdout, _, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h", "--all",
+                                              responses=pages, output="headers")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout)["headers"]["cache-control"], "no-store")
+
+    def test_help_documents_the_exit_codes(self):
+        for argv in (["support", "--help"], ["support", "attempts", "search", "--help"]):
+            with self.subTest(argv=argv):
+                stdout = io.StringIO()
+                with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(stdout):
+                    ADMIN.main(argv)
+                self.assertEqual(raised.exception.code, 0)
+                for line in ("3  processed, but history is partial", "4  history unavailable or busy (HTTP 503 or 429)",
+                             "5  query too broad (HTTP 422)", "2  command-line usage error"):
+                    self.assertIn(line, stdout.getvalue())
 
 
 if __name__ == "__main__":

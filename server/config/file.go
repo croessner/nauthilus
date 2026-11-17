@@ -2498,6 +2498,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validatePlugins,
 		f.validateGRPCAuthServer,
 		f.validateMetricsEndpointAuth,
+		f.validateHistory,
 		f.validateOpenAPIValidation,
 		f.validateBackendHealthCheckTLSModes,
 

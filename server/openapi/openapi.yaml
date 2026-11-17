@@ -44,6 +44,12 @@ tags:
   - name: Reputation
     x-displayName: /api/v1/custom/reputation
     description: Optional authenticated native reputation administration.
+  - name: SupportHistory
+    x-displayName: /api/v1/support
+    description: >-
+      Read-only historical authentication diagnosis from recorded ClickHouse evidence. Requires a backchannel bearer
+      token with nauthilus:history_read; nauthilus:history_detail widens the projection. Basic credentials and
+      nauthilus:admin alone grant no access.
 paths:
   "/api/v1/custom/reputation/allocation":
     post:
@@ -1091,7 +1097,141 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/Error"
+  /api/v1/support/authentication-attempts/search:
+    post:
+      tags:
+        - SupportHistory
+      operationId: searchAuthenticationAttempts
+      summary: Search the recorded authentication attempts of one subject in a bounded window.
+      description: >-
+        Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused.
+        HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis`
+        the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by
+        their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients
+        deduplicate by attempt_id.
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportHistoryAttemptSearchRequest"
+      responses:
+        "200":
+          description: Processed search; evidence may be partial.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/SupportHistoryNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportHistoryAttemptSearchResponse"
+        "400":
+          $ref: "#/components/responses/SupportHistoryBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SupportHistoryForbidden"
+        "422":
+          $ref: "#/components/responses/SupportHistoryQueryTooBroad"
+        "429":
+          $ref: "#/components/responses/SupportHistoryBusy"
+        "500":
+          $ref: "#/components/responses/SupportHistoryInternal"
+        "503":
+          $ref: "#/components/responses/SupportHistoryUnavailable"
+  /api/v1/support/authentication-attempts/detail:
+    post:
+      tags:
+        - SupportHistory
+      operationId: getAuthenticationAttempt
+      summary: Return every recorded event of one diagnostic attempt id.
+      description: >-
+        Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The
+        attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the
+        same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportHistoryAttemptDetailRequest"
+      responses:
+        "200":
+          description: Processed lookup; `attempt` is null when nothing visible to the caller was found.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/SupportHistoryNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportHistoryAttemptDetailResponse"
+        "400":
+          $ref: "#/components/responses/SupportHistoryBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SupportHistoryForbidden"
+        "422":
+          $ref: "#/components/responses/SupportHistoryQueryTooBroad"
+        "429":
+          $ref: "#/components/responses/SupportHistoryBusy"
+        "500":
+          $ref: "#/components/responses/SupportHistoryInternal"
+        "503":
+          $ref: "#/components/responses/SupportHistoryUnavailable"
+  /api/v1/support/bruteforce-bans/search:
+    post:
+      tags:
+        - SupportHistory
+      operationId: searchBruteForceBans
+      summary: Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+      description: >-
+        Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate
+        networks are computed from rule prefixes, never scanned; the latest activation before the window start is
+        included. The activating request is never a culprit and `crossed` is a heuristic.
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportHistoryBanSearchRequest"
+      responses:
+        "200":
+          description: Processed ban search; evidence may be partial or aggregate-only.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/SupportHistoryNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportHistoryBanSearchResponse"
+        "400":
+          $ref: "#/components/responses/SupportHistoryBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SupportHistoryForbidden"
+        "422":
+          $ref: "#/components/responses/SupportHistoryQueryTooBroad"
+        "429":
+          $ref: "#/components/responses/SupportHistoryBusy"
+        "500":
+          $ref: "#/components/responses/SupportHistoryInternal"
+        "503":
+          $ref: "#/components/responses/SupportHistoryUnavailable"
 components:
+  headers:
+    SupportHistoryNoStore:
+      description: Support history answers are never cached.
+      schema:
+        type: string
+        const: no-store
   securitySchemes:
     policyBasic:
       type: http
@@ -1376,6 +1516,44 @@ components:
         type: string
       description: Client certificate fingerprint.
   responses:
+    SupportHistoryBadRequest:
+      description: Malformed request, window above 31 days, foreign cursor, malformed attempt id, or query parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportHistoryError"
+    SupportHistoryForbidden:
+      description: The verified caller lacks the required history permission.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportHistoryError"
+    SupportHistoryQueryTooBroad:
+      description: The read exceeded the server-side budget; narrow the window or add filters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportHistoryError"
+    SupportHistoryBusy:
+      description: The shared history concurrency gate is full; retry later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportHistoryError"
+    SupportHistoryInternal:
+      description: Unexpected service failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportHistoryError"
+    SupportHistoryUnavailable:
+      description: >-
+        No history source configured, the primary source could not be read completely, the reader account is not
+        read-only or does not enforce budgets, or the time budget expired. Never an empty history.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportHistoryError"
     PolicyDecision:
       description: Completed Policy evaluation, including an indeterminate effect when safe to construct.
       content:
@@ -1589,6 +1767,520 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SupportHistoryResultBasis:
+      type: string
+      description: >-
+        Match state of an answer. matches_found wins over every condition; an answer without matches names the
+        state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows,
+        failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then
+        no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
+      enum: [matches_found, no_matches, identity_unresolved, source_not_installed, source_without_rows, source_read_failed, window_expired, window_partially_expired, evidence_truncated]
+      x-enum-varnames: [SupportHistoryBasisMatchesFound, SupportHistoryBasisNoMatches, SupportHistoryBasisIdentityUnresolved, SupportHistoryBasisSourceNotInstalled, SupportHistoryBasisSourceWithoutRows, SupportHistoryBasisSourceReadFailed, SupportHistoryBasisWindowExpired, SupportHistoryBasisWindowPartiallyExpired, SupportHistoryBasisEvidenceTruncated]
+    SupportHistoryError:
+      type: object
+      additionalProperties: false
+      required: [schema_version, error]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, WINDOW_TOO_LARGE, INVALID_CURSOR, INVALID_ATTEMPT_ID, FORBIDDEN, QUERY_TOO_BROAD,
+                HISTORY_BUSY, HISTORY_NOT_CONFIGURED, HISTORY_SOURCE_UNAVAILABLE, HISTORY_READER_UNSAFE, HISTORY_TIMEOUT,
+                INTERNAL_ERROR]
+            message: {type: string, description: Fixed English text per code; never parse it.}
+    SupportHistorySubject:
+      type: object
+      additionalProperties: false
+      description: Login is a claim as typed; account is a canonical account. At least one is required.
+      properties:
+        login: {type: string, maxLength: 256}
+        account: {type: string, maxLength: 256}
+    SupportHistoryPageRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        limit: {type: integer, minimum: 1, maximum: 50}
+        cursor: {type: string, maxLength: 512, description: Opaque position bound to the same query; never authorizing.}
+    SupportHistoryAuditReference:
+      type: string
+      pattern: "^[A-Za-z0-9._:/-]{1,64}$"
+      description: Unverified ticket-like annotation recorded in the audit log only.
+    SupportHistoryAttemptSearchRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, subject, filter]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        subject: {$ref: "#/components/schemas/SupportHistorySubject"}
+        filter:
+          type: object
+          additionalProperties: false
+          required: [from, until]
+          properties:
+            from: {type: string, format: date-time, description: Inclusive lower bound (event time).}
+            until: {type: string, format: date-time, description: Exclusive upper bound; at most 31 days after from.}
+            client_ip: {type: string, maxLength: 64}
+            protocol: {type: string, maxLength: 64}
+            oidc_client_id: {type: string, maxLength: 256}
+            saml_entity_id: {type: string, maxLength: 1024}
+        page: {$ref: "#/components/schemas/SupportHistoryPageRequest"}
+        audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+    SupportHistoryAttemptDetailRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, attempt_id, around]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        attempt_id: {type: string, maxLength: 128, description: "fl1.<flow_ref> or rq1.<request id>"}
+        around: {type: string, format: date-time}
+        subject: {$ref: "#/components/schemas/SupportHistorySubject"}
+        audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+    SupportHistoryBanSearchRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, target, filter]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        target:
+          type: object
+          additionalProperties: false
+          description: Exactly one of ip or network.
+          properties:
+            ip: {type: string, maxLength: 64}
+            network: {type: string, maxLength: 64}
+        filter:
+          type: object
+          additionalProperties: false
+          required: [from, until]
+          properties:
+            from: {type: string, format: date-time}
+            until: {type: string, format: date-time}
+            ban_ref: {type: string, pattern: "^[0-9a-f]{32}$"}
+        subject: {$ref: "#/components/schemas/SupportHistorySubject"}
+        page:
+          type: object
+          additionalProperties: false
+          properties:
+            limit: {type: integer, minimum: 1, maximum: 20}
+            cursor: {type: string, maxLength: 512}
+        audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+    SupportHistoryCoverage:
+      type: object
+      additionalProperties: false
+      required: [contract_rows_since, sources, conditions, known_limits, availability, deployment,
+        delivery_completeness, late_events_possible]
+      properties:
+        contract_rows_since: {type: [string, "null"], format: date-time}
+        sources:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, state, window_coverage, retention_days]
+            properties:
+              source: {type: string, enum: [logins, auth_events, bruteforce_lifecycle, bruteforce_attempts, bruteforce_attempt_summary]}
+              state: {type: string, enum: [read, read_failed, not_installed, no_rows_for_deployment, not_queried]}
+              window_coverage: {type: string, enum: [within_retention, partially_expired, expired]}
+              retention_days: {type: integer}
+        conditions: {type: array, items: {type: string}}
+        known_limits: {type: array, items: {type: string}}
+        availability: {type: string, enum: [available, partial]}
+        deployment: {type: string}
+        delivery_completeness: {type: string, const: not_guaranteed}
+        late_events_possible: {type: boolean}
+    SupportHistorySubjectResolution:
+      type: object
+      additionalProperties: false
+      required: [supplied_login, supplied_account, accounts, current_mapping]
+      properties:
+        supplied_login: {type: [string, "null"]}
+        supplied_account: {type: [string, "null"]}
+        accounts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [account, provenance]
+            properties:
+              account: {type: string}
+              provenance: {type: string, enum: [supplied_account, current_account_mapping, recorded_at_event]}
+        current_mapping: {type: string, enum: [resolved, unmapped, unavailable, not_attempted]}
+    SupportHistoryFinding:
+      type: object
+      additionalProperties: false
+      required: [event_id, uncertainty, code, category, certainty]
+      properties:
+        event_id: {type: [string, "null"]}
+        uncertainty: {type: array, items: {type: string}}
+        code: {type: string}
+        category: {type: string, enum: [success, credential, second_factor, pre_credential, policy, technical, flow_state, unknown]}
+        certainty: {type: string, enum: [observed, uncertain]}
+    SupportHistoryDecision:
+      type: object
+      additionalProperties: false
+      required: [brute_force_bucket, brute_force_tolerated, decision_sources, operation, outcome, outcome_stage,
+        outcome_marker, response_marker, policy_rule, tempfail_reason, tempfail_checkpoint, policy_status, fsm_state]
+      properties:
+        brute_force_bucket: {type: [string, "null"]}
+        brute_force_tolerated: {type: [boolean, "null"]}
+        decision_sources: {type: array, items: {type: string}}
+        operation: {type: string}
+        outcome: {type: string}
+        outcome_stage: {type: string}
+        outcome_marker: {type: string}
+        response_marker: {type: string}
+        policy_rule: {type: string}
+        tempfail_reason: {type: string}
+        tempfail_checkpoint: {type: string}
+        policy_status: {type: string}
+        fsm_state: {type: string}
+    SupportHistoryFactor:
+      type: object
+      additionalProperties: false
+      required: [result, reason, flow_effect, fail_latched]
+      properties:
+        result: {type: string}
+        reason: {type: string}
+        flow_effect: {type: string}
+        fail_latched: {type: boolean}
+    SupportHistoryReputationAssessment:
+      type: object
+      additionalProperties: false
+      required: [risk_score, trust_score, confidence, samples, source_diversity, age_seconds, fact, role, kind, state,
+        profile, band, override]
+      properties:
+        risk_score: {type: [number, "null"]}
+        trust_score: {type: [number, "null"]}
+        confidence: {type: [number, "null"]}
+        samples: {type: [number, "null"]}
+        source_diversity: {type: [integer, "null"]}
+        age_seconds: {type: [integer, "null"]}
+        fact: {type: string}
+        role: {type: string}
+        kind: {type: string}
+        state: {type: string}
+        profile: {type: string}
+        band: {type: string}
+        override: {type: string}
+    SupportHistoryReputation:
+      type: object
+      additionalProperties: false
+      required: [assessments, state, truncated]
+      properties:
+        assessments: {type: array, items: {$ref: "#/components/schemas/SupportHistoryReputationAssessment"}}
+        state: {type: string, enum: [recorded, none_recorded, legacy_not_projected]}
+        truncated: {type: boolean}
+    SupportHistoryEventIdentity:
+      type: object
+      additionalProperties: false
+      required: [supplied_login, canonical_account, account_found_at_capture, matched_by, subject_match, redacted]
+      properties:
+        supplied_login: {type: [string, "null"]}
+        canonical_account: {type: [string, "null"]}
+        account_found_at_capture: {type: [boolean, "null"]}
+        matched_by: {type: [string, "null"]}
+        subject_match: {type: boolean}
+        redacted: {type: boolean}
+    SupportHistoryEventContext:
+      type: object
+      additionalProperties: false
+      required: [client_ip, protocol, service, oidc_client_id, saml_entity_id, grant_type, transport, transport_status]
+      properties:
+        client_ip: {type: [string, "null"]}
+        protocol: {type: [string, "null"]}
+        service: {type: [string, "null"]}
+        oidc_client_id: {type: [string, "null"]}
+        saml_entity_id: {type: [string, "null"]}
+        grant_type: {type: [string, "null"]}
+        transport: {type: [string, "null"]}
+        transport_status: {type: [integer, "null"]}
+    SupportHistoryEvent:
+      type: object
+      additionalProperties: false
+      required: [occurred_at, event_id, factor_role, method, decision, factor, reputation, identity, context, source,
+        request_id, instance, stage, result, code, category, sequence, record_version]
+      properties:
+        occurred_at: {type: string, format: date-time}
+        event_id: {type: [string, "null"]}
+        factor_role: {type: [string, "null"]}
+        method: {type: [string, "null"]}
+        decision:
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistoryDecision"
+            - type: "null"
+        factor:
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistoryFactor"
+            - type: "null"
+        reputation:
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistoryReputation"
+            - type: "null"
+        identity: {$ref: "#/components/schemas/SupportHistoryEventIdentity"}
+        context: {$ref: "#/components/schemas/SupportHistoryEventContext"}
+        source: {type: string, enum: [logins, auth_events]}
+        request_id: {type: string}
+        instance: {type: string}
+        stage: {type: string, enum: [primary_authentication, second_factor, pre_credential, legacy]}
+        result: {type: string}
+        code: {type: string}
+        category: {type: string}
+        sequence: {type: integer}
+        record_version: {type: integer}
+    SupportHistoryAttempt:
+      type: object
+      additionalProperties: false
+      required: [started_at, last_observed_at, findings, events, recording, steps, attempt_id, kind, projection,
+        outcome, outcome_basis, progress, final_outcome_observed]
+      properties:
+        started_at: {type: string, format: date-time}
+        last_observed_at: {type: string, format: date-time}
+        findings: {type: array, items: {$ref: "#/components/schemas/SupportHistoryFinding"}}
+        events: {type: array, items: {$ref: "#/components/schemas/SupportHistoryEvent"}}
+        recording:
+          type: object
+          additionalProperties: false
+          required: [known_gaps, replayed_rows_merged, legacy_rows, events_truncated, events_withheld]
+          properties:
+            known_gaps: {type: array, items: {type: string}}
+            replayed_rows_merged: {type: integer}
+            legacy_rows: {type: integer}
+            events_truncated: {type: boolean}
+            events_withheld: {type: boolean}
+        steps:
+          type: object
+          additionalProperties: false
+          required: [primary, second_factor]
+          properties:
+            primary: {type: string, enum: [recorded, not_recorded]}
+            second_factor: {type: string, enum: [recorded, not_recorded, withheld, not_applicable], x-enum-varnames: [SupportHistorySecondFactorStepRecorded, SupportHistorySecondFactorStepNotRecorded, SupportHistorySecondFactorStepWithheld, SupportHistorySecondFactorStepNotApplicable]}
+        attempt_id: {type: string}
+        kind: {type: string, enum: [flow, request]}
+        projection: {type: string, enum: [support, detail]}
+        outcome: {type: string, enum: [succeeded, rejected, technical_error, not_observed, unknown]}
+        outcome_basis: {type: string, enum: [request_terminal_answer, primary_failure_latched, primary_failure_kept, none, legacy]}
+        progress:
+          type: string
+          enum: [none, technical_error, pre_credential_rejected, primary_rejected, primary_succeeded,
+            second_factor_completed, primary_failure_latched]
+        final_outcome_observed: {type: boolean}
+    SupportHistoryAttemptSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [queried_at, history, subject_resolution, attempts, page, schema_version, result_basis]
+      properties:
+        queried_at: {type: string, format: date-time}
+        history: {$ref: "#/components/schemas/SupportHistoryCoverage"}
+        subject_resolution: {$ref: "#/components/schemas/SupportHistorySubjectResolution"}
+        attempts: {type: array, items: {$ref: "#/components/schemas/SupportHistoryAttempt"}}
+        page:
+          type: object
+          additionalProperties: false
+          required: [scanned_until, next_cursor, limit]
+          properties:
+            scanned_until: {type: string, format: date-time, description: "The search covered (scanned_until, until) completely; attempts anchored exactly at scanned_until can follow on the next page."}
+            next_cursor: {type: [string, "null"]}
+            limit: {type: integer}
+        schema_version: {type: string, pattern: "^1$"}
+        result_basis: {$ref: "#/components/schemas/SupportHistoryResultBasis"}
+    SupportHistoryAttemptDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [queried_at, attempt, subject_resolution, history, schema_version, result_basis]
+      properties:
+        queried_at: {type: string, format: date-time}
+        attempt:
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistoryAttempt"
+            - type: "null"
+        subject_resolution:
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistorySubjectResolution"
+            - type: "null"
+        history: {$ref: "#/components/schemas/SupportHistoryCoverage"}
+        schema_version: {type: string, pattern: "^1$"}
+        result_basis: {$ref: "#/components/schemas/SupportHistoryResultBasis"}
+    SupportHistoryActivation:
+      type: object
+      additionalProperties: false
+      required: [at, bucket_id, window_index, window_current, window_previous, total, effective_limit, planned_end, kind,
+        rule, stored_rule, rule_fingerprint, instance, activating_request, period_seconds, ban_time_seconds,
+        failed_requests]
+      properties:
+        at: {type: string, format: date-time}
+        bucket_id: {type: [string, "null"]}
+        window_index: {type: [integer, "null"]}
+        window_current: {type: [integer, "null"]}
+        window_previous: {type: [integer, "null"]}
+        total: {type: [number, "null"]}
+        effective_limit: {type: [number, "null"]}
+        planned_end: {type: [string, "null"], format: date-time}
+        kind: {type: string, enum: [ban_activated, ban_activation_unconfirmed]}
+        rule: {type: string}
+        stored_rule: {type: string}
+        rule_fingerprint: {type: string}
+        instance: {type: string}
+        activating_request: {type: string, const: NOT_A_CULPRIT}
+        period_seconds: {type: integer}
+        ban_time_seconds: {type: integer}
+        failed_requests: {type: integer}
+    SupportHistoryWindowStatus:
+      type: object
+      additionalProperties: false
+      required: [expected, present, window, status, evidence, window_index, counts_are_upper_bounds,
+        summary_check_unreliable]
+      properties:
+        expected: {type: [integer, "null"]}
+        present: {type: [integer, "null"]}
+        window: {type: string, enum: [activation_window, previous_window]}
+        status: {type: string, enum: [complete, loss_detected, aggregate_only, expired, not_applicable], x-enum-varnames: [SupportHistoryContributionStatusComplete, SupportHistoryContributionStatusLossDetected, SupportHistoryContributionStatusAggregateOnly, SupportHistoryContributionStatusExpired, SupportHistoryContributionStatusNotApplicable]}
+        evidence: {type: string, enum: [raw, summary, not_read, not_assessed]}
+        window_index: {type: integer}
+        counts_are_upper_bounds: {type: boolean}
+        summary_check_unreliable: {type: boolean}
+    SupportHistoryContribution:
+      type: object
+      additionalProperties: false
+      required: [at, window_index, window_current, crossed, account_known, claimed_username, account, client_ip,
+        subject_match, event_id, request_id, count_source, protocol, redacted]
+      properties:
+        at: {type: string, format: date-time}
+        window_index: {type: [integer, "null"]}
+        window_current: {type: [integer, "null"]}
+        crossed: {type: [boolean, "null"]}
+        account_known: {type: [boolean, "null"]}
+        claimed_username: {type: [string, "null"]}
+        account: {type: [string, "null"]}
+        client_ip: {type: [string, "null"]}
+        subject_match: {type: [boolean, "null"]}
+        event_id: {type: string}
+        request_id: {type: string}
+        count_source: {type: string}
+        protocol: {type: string}
+        redacted: {type: boolean}
+    SupportHistoryContributions:
+      type: object
+      additionalProperties: false
+      required: [crossing_candidate, distinct_claimed_names, windows, items, caveats, status, truncated]
+      properties:
+        crossing_candidate:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [at, window_current, event_id, basis]
+              properties:
+                at: {type: string, format: date-time}
+                window_current: {type: [integer, "null"]}
+                event_id: {type: string}
+                basis: {type: string, const: heuristic_crossed_flag}
+            - type: "null"
+        distinct_claimed_names: {type: [integer, "null"]}
+        windows: {type: array, items: {$ref: "#/components/schemas/SupportHistoryWindowStatus"}}
+        items: {type: array, items: {$ref: "#/components/schemas/SupportHistoryContribution"}}
+        caveats: {type: array, items: {type: string}}
+        status: {type: string, enum: [complete, loss_detected, aggregate_only, expired, not_applicable], x-enum-varnames: [SupportHistoryContributionsStatusComplete, SupportHistoryContributionsStatusLossDetected, SupportHistoryContributionsStatusAggregateOnly, SupportHistoryContributionsStatusExpired, SupportHistoryContributionsStatusNotApplicable]}
+        truncated: {type: boolean}
+    SupportHistoryHitSummary:
+      type: object
+      additionalProperties: false
+      required: [by_source, distinct_claimed_names, subject_hits, claimants, evidence, count, count_is_upper_bound,
+        interval_approximate]
+      properties:
+        by_source: {type: object, additionalProperties: {type: integer}}
+        distinct_claimed_names: {type: [integer, "null"]}
+        subject_hits: {type: [integer, "null"]}
+        claimants:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [claimed_username, account, hits]
+            properties:
+              claimed_username: {type: [string, "null"]}
+              account: {type: [string, "null"]}
+              hits: {type: integer}
+        evidence: {type: string, enum: [raw, summary, not_read, not_assessed]}
+        count: {type: integer}
+        count_is_upper_bound: {type: boolean}
+        interval_approximate: {type: boolean}
+    SupportHistoryBan:
+      type: object
+      additionalProperties: false
+      required: [activation, end, contributions, hits, unknowns, ban_ref, network]
+      properties:
+        activation: {$ref: "#/components/schemas/SupportHistoryActivation"}
+        end:
+          type: object
+          additionalProperties: false
+          required: [at, release_source, reason]
+          properties:
+            at: {type: [string, "null"], format: date-time}
+            release_source: {type: [string, "null"]}
+            reason:
+              type: string
+              enum: [released, superseded_by_new_activation, planned_end_passed_unconfirmed, planned_end_after_window, unknown]
+        contributions: {$ref: "#/components/schemas/SupportHistoryContributions"}
+        hits: {$ref: "#/components/schemas/SupportHistoryHitSummary"}
+        unknowns: {type: array, items: {type: string}}
+        ban_ref: {type: string}
+        network: {type: string}
+    SupportHistoryLifecycleEvent:
+      type: object
+      additionalProperties: false
+      required: [at, bucket_id, release_source, operator_client_id, keys_removed, event_id, kind, network, rule]
+      properties:
+        at: {type: string, format: date-time}
+        bucket_id: {type: [string, "null"]}
+        release_source: {type: [string, "null"]}
+        operator_client_id: {type: [string, "null"], description: Released to the detail projection only.}
+        keys_removed: {type: [integer, "null"]}
+        event_id: {type: string}
+        kind: {type: string, enum: [ban_activation_unconfirmed, ban_released, counters_reset]}
+        network: {type: string}
+        rule: {type: string}
+    SupportHistoryBanSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [queried_at, history, target, bans, orphan_hits, threshold_tolerated, unconfirmed_activations, releases,
+        counter_resets, page, projection, schema_version, result_basis]
+      properties:
+        queried_at: {type: string, format: date-time}
+        history: {$ref: "#/components/schemas/SupportHistoryCoverage"}
+        target:
+          type: object
+          additionalProperties: false
+          required: [ip, candidate_networks]
+          properties:
+            ip: {type: [string, "null"]}
+            candidate_networks: {type: array, items: {type: string}}
+        bans: {type: array, items: {$ref: "#/components/schemas/SupportHistoryBan"}}
+        orphan_hits: {$ref: "#/components/schemas/SupportHistoryHitSummary"}
+        threshold_tolerated:
+          type: object
+          additionalProperties: false
+          required: [evidence, count, count_is_upper_bound]
+          properties:
+            evidence: {type: string, enum: [raw, summary, not_read, not_assessed]}
+            count: {type: integer}
+            count_is_upper_bound: {type: boolean}
+        unconfirmed_activations: {type: array, items: {$ref: "#/components/schemas/SupportHistoryLifecycleEvent"}}
+        releases: {type: array, items: {$ref: "#/components/schemas/SupportHistoryLifecycleEvent"}}
+        counter_resets: {type: array, items: {$ref: "#/components/schemas/SupportHistoryLifecycleEvent"}}
+        page:
+          type: object
+          additionalProperties: false
+          required: [next_cursor, limit]
+          properties:
+            next_cursor: {type: [string, "null"]}
+            limit: {type: integer}
+        projection: {type: string, enum: [support, detail]}
+        schema_version: {type: string, pattern: "^1$"}
+        result_basis: {$ref: "#/components/schemas/SupportHistoryResultBasis"}
     ReputationAllocationRequest:
       oneOf:
         - type: "object"

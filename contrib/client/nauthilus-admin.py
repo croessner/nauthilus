@@ -7,6 +7,7 @@ import argparse
 import base64
 import getpass
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -18,8 +19,9 @@ import sys
 import time
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 DEFAULT_URL = "https://nauthilus.example.invalid"
 DEFAULT_SCOPES = "nauthilus:authenticate nauthilus:admin nauthilus:security"
@@ -38,10 +40,62 @@ REPUTATION_IMPORT_ENTRY_KEYS = frozenset(
     ("kind", "subject", "band", "reason", "creator", "audit_id", "origin", "expires_at"))
 REPUTATION_IMPORT_MAX_BYTES = 4 * 1024 * 1024
 REPUTATION_IMPORT_MAX_EXPIRES_AT = 100_000_000_000
+REPUTATION_BEARER_REQUIRED = "reputation administration requires a backchannel bearer token with nauthilus:admin"
+
+EXIT_OK = 0
+EXIT_FAILURE = 1
+EXIT_HISTORY_PARTIAL = 3
+EXIT_HISTORY_UNAVAILABLE = 4
+EXIT_QUERY_TOO_BROAD = 5
+
+SUPPORT_PATH = "/api/v1/support/"
+SUPPORT_SCHEMA_VERSION = "1"
+SUPPORT_READ_SCOPE = "nauthilus:history_read"
+SUPPORT_DETAIL_SCOPE = "nauthilus:history_detail"
+SUPPORT_BEARER_REQUIRED = (f"support history requires a backchannel bearer token with {SUPPORT_READ_SCOPE}; "
+                           "Basic credentials are rejected")
+SUPPORT_MAX_WINDOW = timedelta(days=31)
+SUPPORT_MAX_PAGES = 20
+SUPPORT_ATTEMPT_LIMIT = 50
+SUPPORT_BAN_LIMIT = 20
+SUPPORT_AUDIT_REFERENCE = re.compile(r"[A-Za-z0-9._:/-]{1,64}")
+SUPPORT_ATTEMPT_ID = re.compile(r"fl1\.[0-9a-f]{32}|rq1\.[A-Za-z0-9_-]{1,64}")
+SUPPORT_BAN_REF = re.compile(r"[0-9a-f]{32}")
+SUPPORT_DURATION = re.compile(r"([1-9][0-9]{0,5})([smhd])")
+SUPPORT_DURATION_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+RFC3339_TIMESTAMP = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})")
+SUPPORT_ERROR_EXIT_CODES = {
+    **dict.fromkeys(("INVALID_REQUEST", "WINDOW_TOO_LARGE", "INVALID_CURSOR", "INVALID_ATTEMPT_ID", "UNAUTHORIZED",
+                     "FORBIDDEN", "INTERNAL_ERROR"), EXIT_FAILURE),
+    **dict.fromkeys(("HISTORY_BUSY", "HISTORY_NOT_CONFIGURED", "HISTORY_SOURCE_UNAVAILABLE", "HISTORY_READER_UNSAFE",
+                     "HISTORY_TIMEOUT"), EXIT_HISTORY_UNAVAILABLE),
+    "QUERY_TOO_BROAD": EXIT_QUERY_TOO_BROAD,
+}
+SUPPORT_STATUS_EXIT_CODES = {422: EXIT_QUERY_TOO_BROAD, 429: EXIT_HISTORY_UNAVAILABLE, 503: EXIT_HISTORY_UNAVAILABLE}
+SUPPORT_ERROR_HINTS = {
+    EXIT_HISTORY_UNAVAILABLE: "the history store is unavailable or busy; retry later",
+    EXIT_QUERY_TOO_BROAD: "the query is too broad; narrow the window (--since or --from/--until) or add filters",
+}
+SUPPORT_SCOPE_HINT = (f"the bearer token needs {SUPPORT_READ_SCOPE}; attempt detail without --login/--account "
+                      f"needs {SUPPORT_DETAIL_SCOPE}")
+SUPPORT_EXIT_HELP = """exit codes:
+  0  processed and history.availability is "available"
+  3  processed, but history is partial (a stderr warning lists history.conditions)
+  4  history unavailable or busy (HTTP 503 or 429)
+  5  query too broad (HTTP 422); narrow the window or add filters
+  1  any other error (local validation, HTTP 400/401/403/500, transport)
+  2  command-line usage error
+
+A historical login failure in the data is never a non-zero exit by itself.
+An empty result does not prove that no login or ban happened."""
 
 
 class ClientError(RuntimeError):
     """ClientError represents an operator-facing request or configuration failure."""
+
+    def __init__(self, message: str, *, exit_code: int = EXIT_FAILURE) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 class HTTPClientError(ClientError):
@@ -62,6 +116,15 @@ class Response:
     headers: dict[str, str]
     body: bytes
     parsed: Any
+
+
+@dataclass(frozen=True)
+class CommandOutcome:
+    """CommandOutcome lets a command choose its process exit code and stderr notes besides the rendered result."""
+
+    result: Any
+    exit_code: int = EXIT_OK
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1078,11 +1141,17 @@ def add_wait_args(parser: argparse.ArgumentParser, *, include_switch: bool = Tru
     parser.add_argument("--wait-interval", type=float, default=1.0, help="seconds between status polls")
 
 
+def require_bearer(client: NauthilusClient, requirement: str) -> None:
+    """Reject Basic-only backchannel credentials for operations that accept bearer tokens only."""
+
+    if not client.config.bearer_token and client.config.basic_user and client.config.basic_password:
+        raise ClientError(requirement)
+
+
 def require_reputation_bearer(client: NauthilusClient) -> None:
     """Reject Basic backchannel credentials, which cannot authorize reputation administration."""
 
-    if not client.config.bearer_token and client.config.basic_user and client.config.basic_password:
-        raise ClientError("reputation administration requires a backchannel bearer token with nauthilus:admin")
+    require_bearer(client, REPUTATION_BEARER_REQUIRED)
 
 
 def send_reputation(client: NauthilusClient, method: str, path: str, body: dict[str, Any], *,
@@ -1326,6 +1395,424 @@ def add_reputation_commands(subcommands: Any) -> None:
                              reputation_path="allocation", reputation_action=action, reputation_mutation=action == "drain")
 
 
+def json_path(payload: Any, *keys: str) -> Any:
+    """Return a nested JSON object value, or None when a level is missing or not an object."""
+
+    for key in keys:
+        if not isinstance(payload, dict):
+            return None
+        payload = payload.get(key)
+
+    return payload
+
+
+def list_field(payload: Any, field: str) -> list[Any]:
+    """Return a JSON list field, treating a missing or malformed field as empty."""
+
+    value = json_path(payload, field)
+    return value if isinstance(value, list) else []
+
+
+def compact(fields: dict[str, Any]) -> dict[str, Any]:
+    """Drop unset optional fields so a request body carries only what the operator asked for."""
+
+    return {key: value for key, value in fields.items() if value is not None}
+
+
+def checked_text(check: Callable[[str], bool], description: str) -> Callable[[str], str]:
+    """Build an argparse type that keeps the operator's spelling but rejects values failing a cheap local check."""
+
+    def parse(value: str) -> str:
+        try:
+            valid = check(value)
+        except ValueError:
+            valid = False
+
+        if not valid:
+            raise argparse.ArgumentTypeError(f"must be {description}")
+
+        return value
+
+    return parse
+
+
+def pattern_check(pattern: re.Pattern[str]) -> Callable[[str], bool]:
+    """Return a check that accepts full matches of pattern only."""
+
+    return lambda value: pattern.fullmatch(value) is not None
+
+
+def is_ip_address(value: str) -> bool:
+    """Accept one literal IPv4 or IPv6 address; ipaddress raises ValueError otherwise."""
+
+    return ipaddress.ip_address(value) is not None
+
+
+def is_cidr_network(value: str) -> bool:
+    """Accept one network in CIDR notation; host bits are left for the server to judge."""
+
+    return "/" in value and ipaddress.ip_network(value, strict=False) is not None
+
+
+def bounded_int(minimum: int, maximum: int) -> Callable[[str], int]:
+    """Build an argparse type that accepts decimal integers within an inclusive range."""
+
+    def parse(value: str) -> int:
+        if not re.fullmatch(r"[0-9]{1,9}", value) or not minimum <= int(value) <= maximum:
+            raise argparse.ArgumentTypeError(f"must be an integer between {minimum} and {maximum}")
+
+        return int(value)
+
+    return parse
+
+
+def rfc3339_timestamp(value: str) -> datetime:
+    """Parse an RFC3339 timestamp with an explicit offset; digits beyond microseconds are truncated."""
+
+    match = RFC3339_TIMESTAMP.fullmatch(value)
+    if match:
+        base, fraction, offset = match.groups()
+        micros = "." + fraction[:6].ljust(6, "0") if fraction else ""
+        try:
+            return datetime.fromisoformat(base + micros + ("+00:00" if offset == "Z" else offset))
+        except ValueError:
+            pass
+
+    raise argparse.ArgumentTypeError("must be an RFC3339 timestamp with offset, for example 2026-11-17T08:00:00Z")
+
+
+def format_rfc3339(value: datetime) -> str:
+    """Render an aware timestamp as RFC3339, using Z for UTC."""
+
+    text = value.isoformat()
+    return text[:-6] + "Z" if text.endswith("+00:00") else text
+
+
+def history_duration(value: str) -> timedelta:
+    """Parse a positive --since duration such as 30m, 2h or 7d."""
+
+    match = SUPPORT_DURATION.fullmatch(value)
+    if not match:
+        raise argparse.ArgumentTypeError("must be a duration such as 30m, 2h or 7d")
+
+    return timedelta(seconds=int(match.group(1)) * SUPPORT_DURATION_SECONDS[match.group(2)])
+
+
+def history_window(args: argparse.Namespace) -> dict[str, str]:
+    """Resolve --since or --from/--until into a validated window of at most SUPPORT_MAX_WINDOW."""
+
+    if args.since is not None and (args.window_from is not None or args.window_until is not None):
+        raise ClientError("use either --since or --from/--until, not both")
+
+    if args.since is not None:
+        until = datetime.fromtimestamp(int(time.time()), tz=timezone.utc)
+        start = until - args.since
+    elif args.window_from is not None and args.window_until is not None:
+        start, until = args.window_from, args.window_until
+    else:
+        raise ClientError("a time window is required: use --since DURATION or both --from and --until")
+
+    if start >= until:
+        raise ClientError("--from must be earlier than --until")
+
+    if until - start > SUPPORT_MAX_WINDOW:
+        raise ClientError(f"the time window exceeds {SUPPORT_MAX_WINDOW.days} days; narrow --since or --from/--until")
+
+    return {"from": format_rfc3339(start), "until": format_rfc3339(until)}
+
+
+def history_subject(args: argparse.Namespace) -> dict[str, str] | None:
+    """Return the selected login or account subject, or None when neither was given."""
+
+    if args.login:
+        return {"login": args.login}
+
+    if args.account:
+        return {"account": args.account}
+
+    return None
+
+
+def history_page(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the page selector; an empty selector lets the server choose its default limit."""
+
+    return compact({"limit": args.limit, "cursor": args.cursor})
+
+
+def history_body(args: argparse.Namespace, fields: dict[str, Any]) -> dict[str, Any]:
+    """Wrap command-specific fields in the versioned envelope shared by every history request."""
+
+    return compact({"schema_version": SUPPORT_SCHEMA_VERSION, **fields, "audit_reference": args.audit_reference})
+
+
+def attempts_search_body(args: argparse.Namespace) -> dict[str, Any]:
+    """Build the body of an authentication-attempt search."""
+
+    filters = {**history_window(args), "client_ip": args.client_ip, "protocol": args.protocol,
+               "oidc_client_id": args.oidc_client_id, "saml_entity_id": args.saml_entity_id}
+
+    return history_body(args, {"subject": history_subject(args), "filter": compact(filters), "page": history_page(args)})
+
+
+def attempt_detail_body(args: argparse.Namespace) -> dict[str, Any]:
+    """Build the body of an authentication-attempt detail lookup."""
+
+    return history_body(args, {"attempt_id": args.attempt_id, "around": format_rfc3339(args.around),
+                               "subject": history_subject(args)})
+
+
+def bans_search_body(args: argparse.Namespace) -> dict[str, Any]:
+    """Build the body of a brute-force ban search for exactly one IP address or network."""
+
+    target = {"ip": args.ip} if args.ip else {"network": args.network}
+    filters = {**history_window(args), "ban_ref": args.ban_ref}
+
+    return history_body(args, {"target": target, "filter": compact(filters), "subject": history_subject(args),
+                               "page": history_page(args)})
+
+
+@dataclass(frozen=True)
+class HistoryQuery:
+    """HistoryQuery describes one support history endpoint, its request body and how followed pages merge."""
+
+    build_body: Callable[[argparse.Namespace], dict[str, Any]]
+    merge_fields: tuple[tuple[str, str | None], ...]
+    path: str
+    result_field: str
+    empty_subject: str
+
+
+ATTEMPTS_SEARCH = HistoryQuery(attempts_search_body, (("attempts", "attempt_id"),),
+                               "authentication-attempts/search", "attempts", "login")
+ATTEMPT_DETAIL = HistoryQuery(attempt_detail_body, (), "authentication-attempts/detail", "attempt", "login")
+BANS_SEARCH = HistoryQuery(bans_search_body, (("bans", "ban_ref"), ("releases", None), ("counter_resets", None),
+                                              ("unconfirmed_activations", None)),
+                           "bruteforce-bans/search", "bans", "ban")
+
+
+def require_history_credentials(client: NauthilusClient) -> None:
+    """Reject credentials that can never authorize the read-only support history API."""
+
+    require_bearer(client, SUPPORT_BEARER_REQUIRED)
+    if not client.config.bearer_token and SUPPORT_READ_SCOPE not in client.config.scopes.split():
+        raise ClientError(f"support history needs the {SUPPORT_READ_SCOPE} scope; request it with --scopes or "
+                          "NAUTHILUS_SCOPES")
+
+
+def history_http_error(exc: HTTPClientError) -> ClientError:
+    """Map a rejected history query to its documented exit code, preferring the JSON error code over the status."""
+
+    code = json_path(exc.response.parsed if exc.response else None, "error", "code")
+    code = code if isinstance(code, str) and code else None
+    exit_code = SUPPORT_ERROR_EXIT_CODES.get(code or "", SUPPORT_STATUS_EXIT_CODES.get(exc.status, EXIT_FAILURE))
+    hint = SUPPORT_ERROR_HINTS.get(exit_code) or (SUPPORT_SCOPE_HINT if exc.status in (401, 403) else None)
+    message = f"support history query failed with {code or 'HTTP ' + str(exc.status)}: {exc}"
+
+    return ClientError(message + (f"\nhint: {hint}" if hint else ""), exit_code=exit_code)
+
+
+def send_history(client: NauthilusClient, path: str, body: dict[str, Any]) -> Response:
+    """POST one history query; subjects and filters travel only in the JSON body, never in the URL."""
+
+    try:
+        response = client.post(SUPPORT_PATH + path, body)
+    except HTTPClientError as exc:
+        raise history_http_error(exc) from exc
+    except http.client.HTTPException as exc:
+        raise ClientError(f"support history request failed: {exc!r}") from exc
+
+    if not isinstance(response.parsed, dict):
+        raise ClientError("support history response was not a JSON object")
+
+    return response
+
+
+def history_next_cursor(payload: Any) -> str | None:
+    """Return the next page cursor of a processed answer, if any."""
+
+    cursor = json_path(payload, "page", "next_cursor")
+    return cursor if isinstance(cursor, str) and cursor else None
+
+
+def fetch_history_pages(client: NauthilusClient, path: str, body: dict[str, Any], follow: bool) -> list[Response]:
+    """Fetch one page, or follow next_cursor with an unchanged query for at most SUPPORT_MAX_PAGES pages."""
+
+    pages = [send_history(client, path, body)]
+    cursor = history_next_cursor(pages[-1].parsed)
+    while follow and cursor and len(pages) < SUPPORT_MAX_PAGES:
+        body = {**body, "page": {**body.get("page", {}), "cursor": cursor}}
+        pages.append(send_history(client, path, body))
+        cursor = history_next_cursor(pages[-1].parsed)
+
+    return pages
+
+
+def unique_items(items: Iterable[Any], key: str | None) -> list[Any]:
+    """Keep the first occurrence of each item, identified by its key field or else by its canonical JSON form."""
+
+    seen: set[str] = set()
+    result: list[Any] = []
+    for item in items:
+        identity = json_path(item, key) if key else None
+        marker = f"key:{identity}" if isinstance(identity, str) else "json:" + json.dumps(item, sort_keys=True)
+        if marker not in seen:
+            seen.add(marker)
+            result.append(item)
+
+    return result
+
+
+def merge_history_blocks(blocks: list[Any]) -> Any:
+    """Keep the last history block, but never let it hide partial availability or conditions of earlier pages."""
+
+    history = blocks[-1]
+    if not isinstance(history, dict):
+        return history
+
+    merged = dict(history)
+    if merged.get("availability") == "available" and any(json_path(block, "availability") != "available"
+                                                         for block in blocks):
+        merged["availability"] = "partial"
+
+    merged["conditions"] = unique_items((condition for block in blocks for condition in list_field(block, "conditions")),
+                                        None)
+
+    return merged
+
+
+def merge_history_pages(query: HistoryQuery, pages: list[Response]) -> Response:
+    """Merge followed pages into one answer: deduplicated lists, the last page's blocks and the page count."""
+
+    payloads = [page.parsed for page in pages]
+    merged = dict(payloads[-1])
+    for field, key in query.merge_fields:
+        merged[field] = unique_items((item for payload in payloads for item in list_field(payload, field)), key)
+
+    merged["history"] = merge_history_blocks([payload.get("history") for payload in payloads])
+    if any(payload.get("result_basis") == "matches_found" for payload in payloads):
+        merged["result_basis"] = "matches_found"
+
+    merged["pages"] = len(pages)
+    last = pages[-1]
+    body = json.dumps(merged, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    return Response(last.status, last.reason, last.headers, body, merged)
+
+
+def history_outcome(query: HistoryQuery, response: Response, follow: bool) -> CommandOutcome:
+    """Classify a processed answer by availability; historical login failures never change the exit code."""
+
+    payload = response.parsed
+    availability = json_path(payload, "history", "availability")
+    conditions = ", ".join(map(str, list_field(json_path(payload, "history"), "conditions"))) or "none"
+    exit_code = EXIT_OK
+    notes: list[str] = []
+    if availability != "available":
+        exit_code = EXIT_HISTORY_PARTIAL
+        notes.append(f"warning: history availability is {availability or 'unknown'} (conditions: {conditions}); "
+                     "the result may be incomplete")
+
+    if not payload.get(query.result_field):
+        notes.append(f"note: no {query.result_field} returned (result_basis={payload.get('result_basis')}, "
+                     f"conditions: {conditions}); an empty result does not prove that no {query.empty_subject} "
+                     "happened")
+
+    cursor = history_next_cursor(payload)
+    if follow and cursor:
+        notes.append(f"warning: stopped after {SUPPORT_MAX_PAGES} pages; more results remain, continue with "
+                     f"--cursor {cursor}")
+
+    return CommandOutcome(response, exit_code, tuple(notes))
+
+
+def support_history(client: NauthilusClient, args: argparse.Namespace) -> CommandOutcome:
+    """Run one read-only support history command and report incomplete history through the exit code."""
+
+    require_history_credentials(client)
+    query: HistoryQuery = args.history_query
+    follow = getattr(args, "all_pages", False)
+    pages = fetch_history_pages(client, query.path, query.build_body(args), follow)
+    response = merge_history_pages(query, pages) if follow else pages[0]
+
+    return history_outcome(query, response, follow)
+
+
+def add_support_parser(container: Any, name: str, help_text: str) -> argparse.ArgumentParser:
+    """Add one support parser whose help epilog documents the shared exit codes."""
+
+    return container.add_parser(name, help=help_text, description=help_text, epilog=SUPPORT_EXIT_HELP,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+
+
+def add_history_subject_arguments(parser: argparse.ArgumentParser, *, required: bool) -> None:
+    """Add the mutually exclusive login/account subject selector."""
+
+    subject = parser.add_mutually_exclusive_group(required=required)
+    subject.add_argument("--login", help="login name as presented by the client")
+    subject.add_argument("--account", help="resolved account name")
+
+
+def add_history_window_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the time window flags; --since and --from/--until are exclusive alternatives."""
+
+    parser.add_argument("--from", dest="window_from", type=rfc3339_timestamp, metavar="RFC3339",
+                        help="window start (inclusive)")
+    parser.add_argument("--until", dest="window_until", type=rfc3339_timestamp, metavar="RFC3339",
+                        help="window end (exclusive)")
+    parser.add_argument("--since", type=history_duration, metavar="DURATION",
+                        help="window from now minus DURATION until now, for example 30m, 2h or 7d")
+
+
+def add_history_page_arguments(parser: argparse.ArgumentParser, maximum: int) -> None:
+    """Add page size, cursor and bounded page-following flags."""
+
+    parser.add_argument("--limit", type=bounded_int(1, maximum), help=f"page size from 1 to {maximum}")
+    parser.add_argument("--cursor", help="next_cursor of a previous page")
+    parser.add_argument("--all", dest="all_pages", action="store_true",
+                        help=f"follow next_cursor for at most {SUPPORT_MAX_PAGES} pages and merge them")
+
+
+def add_support_commands(subcommands: Any) -> None:
+    """Expose the read-only support history API as a separate, bearer-only command group."""
+
+    support = add_support_parser(subcommands, "support", "read-only authentication and brute-force ban history")
+    groups = support.add_subparsers(dest="support_command", required=True)
+    attempts = add_support_parser(groups, "attempts", "recorded authentication attempts").add_subparsers(
+        dest="attempts_command", required=True)
+    search = add_support_parser(attempts, "search", "search the attempts of one login or account")
+    add_history_subject_arguments(search, required=True)
+    add_history_window_arguments(search)
+    search.add_argument("--client-ip", type=checked_text(is_ip_address, "an IPv4 or IPv6 address"),
+                        help="client IP address filter")
+    search.add_argument("--protocol", help="protocol filter, for example imap")
+    search.add_argument("--oidc-client-id", help="OIDC client_id filter")
+    search.add_argument("--saml-entity-id", help="SAML service provider entity ID filter")
+    add_history_page_arguments(search, SUPPORT_ATTEMPT_LIMIT)
+
+    detail = add_support_parser(attempts, "detail", "show one attempt by attempt_id")
+    detail.add_argument("--attempt-id", required=True, type=checked_text(
+        pattern_check(SUPPORT_ATTEMPT_ID), "fl1.<32 lowercase hex> or rq1.<request id>"))
+    detail.add_argument("--around", required=True, type=rfc3339_timestamp, metavar="RFC3339",
+                        help="any instant of the attempt, for example started_at from a search")
+    add_history_subject_arguments(detail, required=False)
+
+    bans = add_support_parser(groups, "bans", "recorded brute-force bans").add_subparsers(
+        dest="bans_command", required=True)
+    ban_search = add_support_parser(bans, "search", "explain the bans of one IP address or network")
+    target = ban_search.add_mutually_exclusive_group(required=True)
+    target.add_argument("--ip", type=checked_text(is_ip_address, "an IPv4 or IPv6 address"))
+    target.add_argument("--network", type=checked_text(is_cidr_network, "a network in CIDR notation"), metavar="CIDR")
+    add_history_window_arguments(ban_search)
+    ban_search.add_argument("--ban-ref", type=checked_text(pattern_check(SUPPORT_BAN_REF), "32 lowercase hex characters"))
+    add_history_subject_arguments(ban_search, required=False)
+    add_history_page_arguments(ban_search, SUPPORT_BAN_LIMIT)
+
+    for parser, query in ((search, ATTEMPTS_SEARCH), (detail, ATTEMPT_DETAIL), (ban_search, BANS_SEARCH)):
+        parser.add_argument("--audit-reference", help="ticket or case reference recorded in the server audit log",
+                            type=checked_text(pattern_check(SUPPORT_AUDIT_REFERENCE), "1 to 64 of [A-Za-z0-9._:/-]"))
+        parser.set_defaults(func=support_history, history_query=query)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse command tree."""
 
@@ -1352,6 +1839,7 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     add_reputation_commands(subcommands)
+    add_support_commands(subcommands)
 
     token = subcommands.add_parser("token", help="token cache helpers")
     token_sub = token.add_subparsers(dest="token_command", required=True)
@@ -1466,20 +1954,24 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         client = NauthilusClient(build_config(args))
-        result = args.func(client, args)
-        if getattr(args, "local_object", False):
-            print_object(result, args)
-            if getattr(args, "fail_on_entry_errors", False) and result.get("failed"):
-                return 1
-        elif isinstance(result, Response):
-            print_response(result, args)
-        else:
-            print_response(result, args)
+        outcome = args.func(client, args)
+        if not isinstance(outcome, CommandOutcome):
+            outcome = CommandOutcome(outcome)
 
-        return 0
+        if getattr(args, "local_object", False):
+            print_object(outcome.result, args)
+            if getattr(args, "fail_on_entry_errors", False) and outcome.result.get("failed"):
+                return EXIT_FAILURE
+        else:
+            print_response(outcome.result, args)
+
+        for note in outcome.notes:
+            print(note, file=sys.stderr)
+
+        return outcome.exit_code
     except (ClientError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return exc.exit_code if isinstance(exc, ClientError) else EXIT_FAILURE
 
 
 if __name__ == "__main__":

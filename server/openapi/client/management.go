@@ -102,6 +102,9 @@ type SupportedManagementClient interface {
 	PutReputationOverride(context.Context, management.PutReputationOverrideJSONRequestBody, ...management.RequestEditorFn) (*management.PutReputationOverrideResponse, error)
 	DeleteReputationOverride(context.Context, management.DeleteReputationOverrideJSONRequestBody, ...management.RequestEditorFn) (*management.DeleteReputationOverrideResponse, error)
 	ManageReputationAllocation(context.Context, management.ManageReputationAllocationJSONRequestBody, ...management.RequestEditorFn) (*management.ManageReputationAllocationResponse, error)
+	SearchAuthenticationAttempts(context.Context, management.SearchAuthenticationAttemptsJSONRequestBody, ...management.RequestEditorFn) (*management.SearchAuthenticationAttemptsResponse, error)
+	GetAuthenticationAttempt(context.Context, management.GetAuthenticationAttemptJSONRequestBody, ...management.RequestEditorFn) (*management.GetAuthenticationAttemptResponse, error)
+	SearchBruteForceBans(context.Context, management.SearchBruteForceBansJSONRequestBody, ...management.RequestEditorFn) (*management.SearchBruteForceBansResponse, error)
 }
 
 type generatedManagementClient interface {

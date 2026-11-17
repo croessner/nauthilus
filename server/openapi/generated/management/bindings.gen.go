@@ -577,6 +577,786 @@ func (e ReputationViewSchema) Valid() bool {
 	}
 }
 
+// Defines values for SupportHistoryActivationActivatingRequest.
+const (
+	NOTACULPRIT SupportHistoryActivationActivatingRequest = "NOT_A_CULPRIT"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryActivationActivatingRequest enum.
+func (e SupportHistoryActivationActivatingRequest) Valid() bool {
+	switch e {
+	case NOTACULPRIT:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryActivationKind.
+const (
+	SupportHistoryActivationKindBanActivated             SupportHistoryActivationKind = "ban_activated"
+	SupportHistoryActivationKindBanActivationUnconfirmed SupportHistoryActivationKind = "ban_activation_unconfirmed"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryActivationKind enum.
+func (e SupportHistoryActivationKind) Valid() bool {
+	switch e {
+	case SupportHistoryActivationKindBanActivated:
+		return true
+	case SupportHistoryActivationKindBanActivationUnconfirmed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptKind.
+const (
+	Flow    SupportHistoryAttemptKind = "flow"
+	Request SupportHistoryAttemptKind = "request"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptKind enum.
+func (e SupportHistoryAttemptKind) Valid() bool {
+	switch e {
+	case Flow:
+		return true
+	case Request:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptOutcome.
+const (
+	SupportHistoryAttemptOutcomeNotObserved    SupportHistoryAttemptOutcome = "not_observed"
+	SupportHistoryAttemptOutcomeRejected       SupportHistoryAttemptOutcome = "rejected"
+	SupportHistoryAttemptOutcomeSucceeded      SupportHistoryAttemptOutcome = "succeeded"
+	SupportHistoryAttemptOutcomeTechnicalError SupportHistoryAttemptOutcome = "technical_error"
+	SupportHistoryAttemptOutcomeUnknown        SupportHistoryAttemptOutcome = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptOutcome enum.
+func (e SupportHistoryAttemptOutcome) Valid() bool {
+	switch e {
+	case SupportHistoryAttemptOutcomeNotObserved:
+		return true
+	case SupportHistoryAttemptOutcomeRejected:
+		return true
+	case SupportHistoryAttemptOutcomeSucceeded:
+		return true
+	case SupportHistoryAttemptOutcomeTechnicalError:
+		return true
+	case SupportHistoryAttemptOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptOutcomeBasis.
+const (
+	SupportHistoryAttemptOutcomeBasisLegacy                SupportHistoryAttemptOutcomeBasis = "legacy"
+	SupportHistoryAttemptOutcomeBasisNone                  SupportHistoryAttemptOutcomeBasis = "none"
+	SupportHistoryAttemptOutcomeBasisPrimaryFailureKept    SupportHistoryAttemptOutcomeBasis = "primary_failure_kept"
+	SupportHistoryAttemptOutcomeBasisPrimaryFailureLatched SupportHistoryAttemptOutcomeBasis = "primary_failure_latched"
+	SupportHistoryAttemptOutcomeBasisRequestTerminalAnswer SupportHistoryAttemptOutcomeBasis = "request_terminal_answer"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptOutcomeBasis enum.
+func (e SupportHistoryAttemptOutcomeBasis) Valid() bool {
+	switch e {
+	case SupportHistoryAttemptOutcomeBasisLegacy:
+		return true
+	case SupportHistoryAttemptOutcomeBasisNone:
+		return true
+	case SupportHistoryAttemptOutcomeBasisPrimaryFailureKept:
+		return true
+	case SupportHistoryAttemptOutcomeBasisPrimaryFailureLatched:
+		return true
+	case SupportHistoryAttemptOutcomeBasisRequestTerminalAnswer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptProgress.
+const (
+	SupportHistoryAttemptProgressNone                  SupportHistoryAttemptProgress = "none"
+	SupportHistoryAttemptProgressPreCredentialRejected SupportHistoryAttemptProgress = "pre_credential_rejected"
+	SupportHistoryAttemptProgressPrimaryFailureLatched SupportHistoryAttemptProgress = "primary_failure_latched"
+	SupportHistoryAttemptProgressPrimaryRejected       SupportHistoryAttemptProgress = "primary_rejected"
+	SupportHistoryAttemptProgressPrimarySucceeded      SupportHistoryAttemptProgress = "primary_succeeded"
+	SupportHistoryAttemptProgressSecondFactorCompleted SupportHistoryAttemptProgress = "second_factor_completed"
+	SupportHistoryAttemptProgressTechnicalError        SupportHistoryAttemptProgress = "technical_error"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptProgress enum.
+func (e SupportHistoryAttemptProgress) Valid() bool {
+	switch e {
+	case SupportHistoryAttemptProgressNone:
+		return true
+	case SupportHistoryAttemptProgressPreCredentialRejected:
+		return true
+	case SupportHistoryAttemptProgressPrimaryFailureLatched:
+		return true
+	case SupportHistoryAttemptProgressPrimaryRejected:
+		return true
+	case SupportHistoryAttemptProgressPrimarySucceeded:
+		return true
+	case SupportHistoryAttemptProgressSecondFactorCompleted:
+		return true
+	case SupportHistoryAttemptProgressTechnicalError:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptProjection.
+const (
+	SupportHistoryAttemptProjectionDetail  SupportHistoryAttemptProjection = "detail"
+	SupportHistoryAttemptProjectionSupport SupportHistoryAttemptProjection = "support"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptProjection enum.
+func (e SupportHistoryAttemptProjection) Valid() bool {
+	switch e {
+	case SupportHistoryAttemptProjectionDetail:
+		return true
+	case SupportHistoryAttemptProjectionSupport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptStepsPrimary.
+const (
+	SupportHistoryAttemptStepsPrimaryNotRecorded SupportHistoryAttemptStepsPrimary = "not_recorded"
+	SupportHistoryAttemptStepsPrimaryRecorded    SupportHistoryAttemptStepsPrimary = "recorded"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptStepsPrimary enum.
+func (e SupportHistoryAttemptStepsPrimary) Valid() bool {
+	switch e {
+	case SupportHistoryAttemptStepsPrimaryNotRecorded:
+		return true
+	case SupportHistoryAttemptStepsPrimaryRecorded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryAttemptStepsSecondFactor.
+const (
+	SupportHistorySecondFactorStepNotApplicable SupportHistoryAttemptStepsSecondFactor = "not_applicable"
+	SupportHistorySecondFactorStepNotRecorded   SupportHistoryAttemptStepsSecondFactor = "not_recorded"
+	SupportHistorySecondFactorStepRecorded      SupportHistoryAttemptStepsSecondFactor = "recorded"
+	SupportHistorySecondFactorStepWithheld      SupportHistoryAttemptStepsSecondFactor = "withheld"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptStepsSecondFactor enum.
+func (e SupportHistoryAttemptStepsSecondFactor) Valid() bool {
+	switch e {
+	case SupportHistorySecondFactorStepNotApplicable:
+		return true
+	case SupportHistorySecondFactorStepNotRecorded:
+		return true
+	case SupportHistorySecondFactorStepRecorded:
+		return true
+	case SupportHistorySecondFactorStepWithheld:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanEndReason.
+const (
+	SupportHistoryBanEndReasonPlannedEndAfterWindow       SupportHistoryBanEndReason = "planned_end_after_window"
+	SupportHistoryBanEndReasonPlannedEndPassedUnconfirmed SupportHistoryBanEndReason = "planned_end_passed_unconfirmed"
+	SupportHistoryBanEndReasonReleased                    SupportHistoryBanEndReason = "released"
+	SupportHistoryBanEndReasonSupersededByNewActivation   SupportHistoryBanEndReason = "superseded_by_new_activation"
+	SupportHistoryBanEndReasonUnknown                     SupportHistoryBanEndReason = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanEndReason enum.
+func (e SupportHistoryBanEndReason) Valid() bool {
+	switch e {
+	case SupportHistoryBanEndReasonPlannedEndAfterWindow:
+		return true
+	case SupportHistoryBanEndReasonPlannedEndPassedUnconfirmed:
+		return true
+	case SupportHistoryBanEndReasonReleased:
+		return true
+	case SupportHistoryBanEndReasonSupersededByNewActivation:
+		return true
+	case SupportHistoryBanEndReasonUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanSearchResponseProjection.
+const (
+	SupportHistoryBanSearchResponseProjectionDetail  SupportHistoryBanSearchResponseProjection = "detail"
+	SupportHistoryBanSearchResponseProjectionSupport SupportHistoryBanSearchResponseProjection = "support"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanSearchResponseProjection enum.
+func (e SupportHistoryBanSearchResponseProjection) Valid() bool {
+	switch e {
+	case SupportHistoryBanSearchResponseProjectionDetail:
+		return true
+	case SupportHistoryBanSearchResponseProjectionSupport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanSearchResponseThresholdToleratedEvidence.
+const (
+	SupportHistoryBanSearchResponseThresholdToleratedEvidenceNotAssessed SupportHistoryBanSearchResponseThresholdToleratedEvidence = "not_assessed"
+	SupportHistoryBanSearchResponseThresholdToleratedEvidenceNotRead     SupportHistoryBanSearchResponseThresholdToleratedEvidence = "not_read"
+	SupportHistoryBanSearchResponseThresholdToleratedEvidenceRaw         SupportHistoryBanSearchResponseThresholdToleratedEvidence = "raw"
+	SupportHistoryBanSearchResponseThresholdToleratedEvidenceSummary     SupportHistoryBanSearchResponseThresholdToleratedEvidence = "summary"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanSearchResponseThresholdToleratedEvidence enum.
+func (e SupportHistoryBanSearchResponseThresholdToleratedEvidence) Valid() bool {
+	switch e {
+	case SupportHistoryBanSearchResponseThresholdToleratedEvidenceNotAssessed:
+		return true
+	case SupportHistoryBanSearchResponseThresholdToleratedEvidenceNotRead:
+		return true
+	case SupportHistoryBanSearchResponseThresholdToleratedEvidenceRaw:
+		return true
+	case SupportHistoryBanSearchResponseThresholdToleratedEvidenceSummary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryContributionsCrossingCandidateBasis.
+const (
+	HeuristicCrossedFlag SupportHistoryContributionsCrossingCandidateBasis = "heuristic_crossed_flag"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryContributionsCrossingCandidateBasis enum.
+func (e SupportHistoryContributionsCrossingCandidateBasis) Valid() bool {
+	switch e {
+	case HeuristicCrossedFlag:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryContributionsStatus.
+const (
+	SupportHistoryContributionsStatusAggregateOnly SupportHistoryContributionsStatus = "aggregate_only"
+	SupportHistoryContributionsStatusComplete      SupportHistoryContributionsStatus = "complete"
+	SupportHistoryContributionsStatusExpired       SupportHistoryContributionsStatus = "expired"
+	SupportHistoryContributionsStatusLossDetected  SupportHistoryContributionsStatus = "loss_detected"
+	SupportHistoryContributionsStatusNotApplicable SupportHistoryContributionsStatus = "not_applicable"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryContributionsStatus enum.
+func (e SupportHistoryContributionsStatus) Valid() bool {
+	switch e {
+	case SupportHistoryContributionsStatusAggregateOnly:
+		return true
+	case SupportHistoryContributionsStatusComplete:
+		return true
+	case SupportHistoryContributionsStatusExpired:
+		return true
+	case SupportHistoryContributionsStatusLossDetected:
+		return true
+	case SupportHistoryContributionsStatusNotApplicable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCoverageAvailability.
+const (
+	Available SupportHistoryCoverageAvailability = "available"
+	Partial   SupportHistoryCoverageAvailability = "partial"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCoverageAvailability enum.
+func (e SupportHistoryCoverageAvailability) Valid() bool {
+	switch e {
+	case Available:
+		return true
+	case Partial:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCoverageDeliveryCompleteness.
+const (
+	NotGuaranteed SupportHistoryCoverageDeliveryCompleteness = "not_guaranteed"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCoverageDeliveryCompleteness enum.
+func (e SupportHistoryCoverageDeliveryCompleteness) Valid() bool {
+	switch e {
+	case NotGuaranteed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCoverageSourcesSource.
+const (
+	SupportHistoryCoverageSourcesSourceAuthEvents               SupportHistoryCoverageSourcesSource = "auth_events"
+	SupportHistoryCoverageSourcesSourceBruteforceAttemptSummary SupportHistoryCoverageSourcesSource = "bruteforce_attempt_summary"
+	SupportHistoryCoverageSourcesSourceBruteforceAttempts       SupportHistoryCoverageSourcesSource = "bruteforce_attempts"
+	SupportHistoryCoverageSourcesSourceBruteforceLifecycle      SupportHistoryCoverageSourcesSource = "bruteforce_lifecycle"
+	SupportHistoryCoverageSourcesSourceLogins                   SupportHistoryCoverageSourcesSource = "logins"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCoverageSourcesSource enum.
+func (e SupportHistoryCoverageSourcesSource) Valid() bool {
+	switch e {
+	case SupportHistoryCoverageSourcesSourceAuthEvents:
+		return true
+	case SupportHistoryCoverageSourcesSourceBruteforceAttemptSummary:
+		return true
+	case SupportHistoryCoverageSourcesSourceBruteforceAttempts:
+		return true
+	case SupportHistoryCoverageSourcesSourceBruteforceLifecycle:
+		return true
+	case SupportHistoryCoverageSourcesSourceLogins:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCoverageSourcesState.
+const (
+	NoRowsForDeployment SupportHistoryCoverageSourcesState = "no_rows_for_deployment"
+	NotInstalled        SupportHistoryCoverageSourcesState = "not_installed"
+	NotQueried          SupportHistoryCoverageSourcesState = "not_queried"
+	Read                SupportHistoryCoverageSourcesState = "read"
+	ReadFailed          SupportHistoryCoverageSourcesState = "read_failed"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCoverageSourcesState enum.
+func (e SupportHistoryCoverageSourcesState) Valid() bool {
+	switch e {
+	case NoRowsForDeployment:
+		return true
+	case NotInstalled:
+		return true
+	case NotQueried:
+		return true
+	case Read:
+		return true
+	case ReadFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryCoverageSourcesWindowCoverage.
+const (
+	Expired          SupportHistoryCoverageSourcesWindowCoverage = "expired"
+	PartiallyExpired SupportHistoryCoverageSourcesWindowCoverage = "partially_expired"
+	WithinRetention  SupportHistoryCoverageSourcesWindowCoverage = "within_retention"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryCoverageSourcesWindowCoverage enum.
+func (e SupportHistoryCoverageSourcesWindowCoverage) Valid() bool {
+	switch e {
+	case Expired:
+		return true
+	case PartiallyExpired:
+		return true
+	case WithinRetention:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryErrorErrorCode.
+const (
+	FORBIDDEN                SupportHistoryErrorErrorCode = "FORBIDDEN"
+	HISTORYBUSY              SupportHistoryErrorErrorCode = "HISTORY_BUSY"
+	HISTORYNOTCONFIGURED     SupportHistoryErrorErrorCode = "HISTORY_NOT_CONFIGURED"
+	HISTORYREADERUNSAFE      SupportHistoryErrorErrorCode = "HISTORY_READER_UNSAFE"
+	HISTORYSOURCEUNAVAILABLE SupportHistoryErrorErrorCode = "HISTORY_SOURCE_UNAVAILABLE"
+	HISTORYTIMEOUT           SupportHistoryErrorErrorCode = "HISTORY_TIMEOUT"
+	INTERNALERROR            SupportHistoryErrorErrorCode = "INTERNAL_ERROR"
+	INVALIDATTEMPTID         SupportHistoryErrorErrorCode = "INVALID_ATTEMPT_ID"
+	INVALIDCURSOR            SupportHistoryErrorErrorCode = "INVALID_CURSOR"
+	INVALIDREQUEST           SupportHistoryErrorErrorCode = "INVALID_REQUEST"
+	QUERYTOOBROAD            SupportHistoryErrorErrorCode = "QUERY_TOO_BROAD"
+	WINDOWTOOLARGE           SupportHistoryErrorErrorCode = "WINDOW_TOO_LARGE"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryErrorErrorCode enum.
+func (e SupportHistoryErrorErrorCode) Valid() bool {
+	switch e {
+	case FORBIDDEN:
+		return true
+	case HISTORYBUSY:
+		return true
+	case HISTORYNOTCONFIGURED:
+		return true
+	case HISTORYREADERUNSAFE:
+		return true
+	case HISTORYSOURCEUNAVAILABLE:
+		return true
+	case HISTORYTIMEOUT:
+		return true
+	case INTERNALERROR:
+		return true
+	case INVALIDATTEMPTID:
+		return true
+	case INVALIDCURSOR:
+		return true
+	case INVALIDREQUEST:
+		return true
+	case QUERYTOOBROAD:
+		return true
+	case WINDOWTOOLARGE:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryEventSource.
+const (
+	SupportHistoryEventSourceAuthEvents SupportHistoryEventSource = "auth_events"
+	SupportHistoryEventSourceLogins     SupportHistoryEventSource = "logins"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryEventSource enum.
+func (e SupportHistoryEventSource) Valid() bool {
+	switch e {
+	case SupportHistoryEventSourceAuthEvents:
+		return true
+	case SupportHistoryEventSourceLogins:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryEventStage.
+const (
+	SupportHistoryEventStageLegacy                SupportHistoryEventStage = "legacy"
+	SupportHistoryEventStagePreCredential         SupportHistoryEventStage = "pre_credential"
+	SupportHistoryEventStagePrimaryAuthentication SupportHistoryEventStage = "primary_authentication"
+	SupportHistoryEventStageSecondFactor          SupportHistoryEventStage = "second_factor"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryEventStage enum.
+func (e SupportHistoryEventStage) Valid() bool {
+	switch e {
+	case SupportHistoryEventStageLegacy:
+		return true
+	case SupportHistoryEventStagePreCredential:
+		return true
+	case SupportHistoryEventStagePrimaryAuthentication:
+		return true
+	case SupportHistoryEventStageSecondFactor:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryFindingCategory.
+const (
+	SupportHistoryFindingCategoryCredential    SupportHistoryFindingCategory = "credential"
+	SupportHistoryFindingCategoryFlowState     SupportHistoryFindingCategory = "flow_state"
+	SupportHistoryFindingCategoryPolicy        SupportHistoryFindingCategory = "policy"
+	SupportHistoryFindingCategoryPreCredential SupportHistoryFindingCategory = "pre_credential"
+	SupportHistoryFindingCategorySecondFactor  SupportHistoryFindingCategory = "second_factor"
+	SupportHistoryFindingCategorySuccess       SupportHistoryFindingCategory = "success"
+	SupportHistoryFindingCategoryTechnical     SupportHistoryFindingCategory = "technical"
+	SupportHistoryFindingCategoryUnknown       SupportHistoryFindingCategory = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryFindingCategory enum.
+func (e SupportHistoryFindingCategory) Valid() bool {
+	switch e {
+	case SupportHistoryFindingCategoryCredential:
+		return true
+	case SupportHistoryFindingCategoryFlowState:
+		return true
+	case SupportHistoryFindingCategoryPolicy:
+		return true
+	case SupportHistoryFindingCategoryPreCredential:
+		return true
+	case SupportHistoryFindingCategorySecondFactor:
+		return true
+	case SupportHistoryFindingCategorySuccess:
+		return true
+	case SupportHistoryFindingCategoryTechnical:
+		return true
+	case SupportHistoryFindingCategoryUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryFindingCertainty.
+const (
+	Observed  SupportHistoryFindingCertainty = "observed"
+	Uncertain SupportHistoryFindingCertainty = "uncertain"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryFindingCertainty enum.
+func (e SupportHistoryFindingCertainty) Valid() bool {
+	switch e {
+	case Observed:
+		return true
+	case Uncertain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryHitSummaryEvidence.
+const (
+	SupportHistoryHitSummaryEvidenceNotAssessed SupportHistoryHitSummaryEvidence = "not_assessed"
+	SupportHistoryHitSummaryEvidenceNotRead     SupportHistoryHitSummaryEvidence = "not_read"
+	SupportHistoryHitSummaryEvidenceRaw         SupportHistoryHitSummaryEvidence = "raw"
+	SupportHistoryHitSummaryEvidenceSummary     SupportHistoryHitSummaryEvidence = "summary"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryHitSummaryEvidence enum.
+func (e SupportHistoryHitSummaryEvidence) Valid() bool {
+	switch e {
+	case SupportHistoryHitSummaryEvidenceNotAssessed:
+		return true
+	case SupportHistoryHitSummaryEvidenceNotRead:
+		return true
+	case SupportHistoryHitSummaryEvidenceRaw:
+		return true
+	case SupportHistoryHitSummaryEvidenceSummary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryLifecycleEventKind.
+const (
+	SupportHistoryLifecycleEventKindBanActivationUnconfirmed SupportHistoryLifecycleEventKind = "ban_activation_unconfirmed"
+	SupportHistoryLifecycleEventKindBanReleased              SupportHistoryLifecycleEventKind = "ban_released"
+	SupportHistoryLifecycleEventKindCountersReset            SupportHistoryLifecycleEventKind = "counters_reset"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryLifecycleEventKind enum.
+func (e SupportHistoryLifecycleEventKind) Valid() bool {
+	switch e {
+	case SupportHistoryLifecycleEventKindBanActivationUnconfirmed:
+		return true
+	case SupportHistoryLifecycleEventKindBanReleased:
+		return true
+	case SupportHistoryLifecycleEventKindCountersReset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryReputationState.
+const (
+	SupportHistoryReputationStateLegacyNotProjected SupportHistoryReputationState = "legacy_not_projected"
+	SupportHistoryReputationStateNoneRecorded       SupportHistoryReputationState = "none_recorded"
+	SupportHistoryReputationStateRecorded           SupportHistoryReputationState = "recorded"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryReputationState enum.
+func (e SupportHistoryReputationState) Valid() bool {
+	switch e {
+	case SupportHistoryReputationStateLegacyNotProjected:
+		return true
+	case SupportHistoryReputationStateNoneRecorded:
+		return true
+	case SupportHistoryReputationStateRecorded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryResultBasis.
+const (
+	SupportHistoryBasisEvidenceTruncated      SupportHistoryResultBasis = "evidence_truncated"
+	SupportHistoryBasisIdentityUnresolved     SupportHistoryResultBasis = "identity_unresolved"
+	SupportHistoryBasisMatchesFound           SupportHistoryResultBasis = "matches_found"
+	SupportHistoryBasisNoMatches              SupportHistoryResultBasis = "no_matches"
+	SupportHistoryBasisSourceNotInstalled     SupportHistoryResultBasis = "source_not_installed"
+	SupportHistoryBasisSourceReadFailed       SupportHistoryResultBasis = "source_read_failed"
+	SupportHistoryBasisSourceWithoutRows      SupportHistoryResultBasis = "source_without_rows"
+	SupportHistoryBasisWindowExpired          SupportHistoryResultBasis = "window_expired"
+	SupportHistoryBasisWindowPartiallyExpired SupportHistoryResultBasis = "window_partially_expired"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryResultBasis enum.
+func (e SupportHistoryResultBasis) Valid() bool {
+	switch e {
+	case SupportHistoryBasisEvidenceTruncated:
+		return true
+	case SupportHistoryBasisIdentityUnresolved:
+		return true
+	case SupportHistoryBasisMatchesFound:
+		return true
+	case SupportHistoryBasisNoMatches:
+		return true
+	case SupportHistoryBasisSourceNotInstalled:
+		return true
+	case SupportHistoryBasisSourceReadFailed:
+		return true
+	case SupportHistoryBasisSourceWithoutRows:
+		return true
+	case SupportHistoryBasisWindowExpired:
+		return true
+	case SupportHistoryBasisWindowPartiallyExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistorySubjectResolutionAccountsProvenance.
+const (
+	CurrentAccountMapping SupportHistorySubjectResolutionAccountsProvenance = "current_account_mapping"
+	RecordedAtEvent       SupportHistorySubjectResolutionAccountsProvenance = "recorded_at_event"
+	SuppliedAccount       SupportHistorySubjectResolutionAccountsProvenance = "supplied_account"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistorySubjectResolutionAccountsProvenance enum.
+func (e SupportHistorySubjectResolutionAccountsProvenance) Valid() bool {
+	switch e {
+	case CurrentAccountMapping:
+		return true
+	case RecordedAtEvent:
+		return true
+	case SuppliedAccount:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistorySubjectResolutionCurrentMapping.
+const (
+	NotAttempted SupportHistorySubjectResolutionCurrentMapping = "not_attempted"
+	Resolved     SupportHistorySubjectResolutionCurrentMapping = "resolved"
+	Unavailable  SupportHistorySubjectResolutionCurrentMapping = "unavailable"
+	Unmapped     SupportHistorySubjectResolutionCurrentMapping = "unmapped"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistorySubjectResolutionCurrentMapping enum.
+func (e SupportHistorySubjectResolutionCurrentMapping) Valid() bool {
+	switch e {
+	case NotAttempted:
+		return true
+	case Resolved:
+		return true
+	case Unavailable:
+		return true
+	case Unmapped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryWindowStatusEvidence.
+const (
+	SupportHistoryWindowStatusEvidenceNotAssessed SupportHistoryWindowStatusEvidence = "not_assessed"
+	SupportHistoryWindowStatusEvidenceNotRead     SupportHistoryWindowStatusEvidence = "not_read"
+	SupportHistoryWindowStatusEvidenceRaw         SupportHistoryWindowStatusEvidence = "raw"
+	SupportHistoryWindowStatusEvidenceSummary     SupportHistoryWindowStatusEvidence = "summary"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryWindowStatusEvidence enum.
+func (e SupportHistoryWindowStatusEvidence) Valid() bool {
+	switch e {
+	case SupportHistoryWindowStatusEvidenceNotAssessed:
+		return true
+	case SupportHistoryWindowStatusEvidenceNotRead:
+		return true
+	case SupportHistoryWindowStatusEvidenceRaw:
+		return true
+	case SupportHistoryWindowStatusEvidenceSummary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryWindowStatusStatus.
+const (
+	SupportHistoryContributionStatusAggregateOnly SupportHistoryWindowStatusStatus = "aggregate_only"
+	SupportHistoryContributionStatusComplete      SupportHistoryWindowStatusStatus = "complete"
+	SupportHistoryContributionStatusExpired       SupportHistoryWindowStatusStatus = "expired"
+	SupportHistoryContributionStatusLossDetected  SupportHistoryWindowStatusStatus = "loss_detected"
+	SupportHistoryContributionStatusNotApplicable SupportHistoryWindowStatusStatus = "not_applicable"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryWindowStatusStatus enum.
+func (e SupportHistoryWindowStatusStatus) Valid() bool {
+	switch e {
+	case SupportHistoryContributionStatusAggregateOnly:
+		return true
+	case SupportHistoryContributionStatusComplete:
+		return true
+	case SupportHistoryContributionStatusExpired:
+		return true
+	case SupportHistoryContributionStatusLossDetected:
+		return true
+	case SupportHistoryContributionStatusNotApplicable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryWindowStatusWindow.
+const (
+	ActivationWindow SupportHistoryWindowStatusWindow = "activation_window"
+	PreviousWindow   SupportHistoryWindowStatusWindow = "previous_window"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryWindowStatusWindow enum.
+func (e SupportHistoryWindowStatusWindow) Valid() bool {
+	switch e {
+	case ActivationWindow:
+		return true
+	case PreviousWindow:
+		return true
+	default:
+		return false
+	}
+}
+
 // AsyncAcceptedPayload defines model for AsyncAcceptedPayload.
 type AsyncAcceptedPayload struct {
 	JobId string `json:"jobId"`
@@ -1133,6 +1913,524 @@ type ResultEnvelope struct {
 	Session   string      `json:"session"`
 }
 
+// SupportHistoryActivation defines model for SupportHistoryActivation.
+type SupportHistoryActivation struct {
+	ActivatingRequest SupportHistoryActivationActivatingRequest `json:"activating_request"`
+	At                time.Time                                 `json:"at"`
+	BanTimeSeconds    int                                       `json:"ban_time_seconds"`
+	BucketId          *string                                   `json:"bucket_id"`
+	EffectiveLimit    *float32                                  `json:"effective_limit"`
+	FailedRequests    int                                       `json:"failed_requests"`
+	Instance          string                                    `json:"instance"`
+	Kind              SupportHistoryActivationKind              `json:"kind"`
+	PeriodSeconds     int                                       `json:"period_seconds"`
+	PlannedEnd        *time.Time                                `json:"planned_end"`
+	Rule              string                                    `json:"rule"`
+	RuleFingerprint   string                                    `json:"rule_fingerprint"`
+	StoredRule        string                                    `json:"stored_rule"`
+	Total             *float32                                  `json:"total"`
+	WindowCurrent     *int                                      `json:"window_current"`
+	WindowIndex       *int                                      `json:"window_index"`
+	WindowPrevious    *int                                      `json:"window_previous"`
+}
+
+// SupportHistoryActivationActivatingRequest defines model for SupportHistoryActivation.ActivatingRequest.
+type SupportHistoryActivationActivatingRequest string
+
+// SupportHistoryActivationKind defines model for SupportHistoryActivation.Kind.
+type SupportHistoryActivationKind string
+
+// SupportHistoryAttempt defines model for SupportHistoryAttempt.
+type SupportHistoryAttempt struct {
+	AttemptId            string                            `json:"attempt_id"`
+	Events               []SupportHistoryEvent             `json:"events"`
+	FinalOutcomeObserved bool                              `json:"final_outcome_observed"`
+	Findings             []SupportHistoryFinding           `json:"findings"`
+	Kind                 SupportHistoryAttemptKind         `json:"kind"`
+	LastObservedAt       time.Time                         `json:"last_observed_at"`
+	Outcome              SupportHistoryAttemptOutcome      `json:"outcome"`
+	OutcomeBasis         SupportHistoryAttemptOutcomeBasis `json:"outcome_basis"`
+	Progress             SupportHistoryAttemptProgress     `json:"progress"`
+	Projection           SupportHistoryAttemptProjection   `json:"projection"`
+	Recording            struct {
+		EventsTruncated    bool     `json:"events_truncated"`
+		EventsWithheld     bool     `json:"events_withheld"`
+		KnownGaps          []string `json:"known_gaps"`
+		LegacyRows         int      `json:"legacy_rows"`
+		ReplayedRowsMerged int      `json:"replayed_rows_merged"`
+	} `json:"recording"`
+	StartedAt time.Time `json:"started_at"`
+	Steps     struct {
+		Primary      SupportHistoryAttemptStepsPrimary      `json:"primary"`
+		SecondFactor SupportHistoryAttemptStepsSecondFactor `json:"second_factor"`
+	} `json:"steps"`
+}
+
+// SupportHistoryAttemptKind defines model for SupportHistoryAttempt.Kind.
+type SupportHistoryAttemptKind string
+
+// SupportHistoryAttemptOutcome defines model for SupportHistoryAttempt.Outcome.
+type SupportHistoryAttemptOutcome string
+
+// SupportHistoryAttemptOutcomeBasis defines model for SupportHistoryAttempt.OutcomeBasis.
+type SupportHistoryAttemptOutcomeBasis string
+
+// SupportHistoryAttemptProgress defines model for SupportHistoryAttempt.Progress.
+type SupportHistoryAttemptProgress string
+
+// SupportHistoryAttemptProjection defines model for SupportHistoryAttempt.Projection.
+type SupportHistoryAttemptProjection string
+
+// SupportHistoryAttemptStepsPrimary defines model for SupportHistoryAttempt.Steps.Primary.
+type SupportHistoryAttemptStepsPrimary string
+
+// SupportHistoryAttemptStepsSecondFactor defines model for SupportHistoryAttempt.Steps.SecondFactor.
+type SupportHistoryAttemptStepsSecondFactor string
+
+// SupportHistoryAttemptDetailRequest defines model for SupportHistoryAttemptDetailRequest.
+type SupportHistoryAttemptDetailRequest struct {
+	Around time.Time `json:"around"`
+
+	// AttemptId fl1.<flow_ref> or rq1.<request id>
+	AttemptId string `json:"attempt_id"`
+
+	// AuditReference Unverified ticket-like annotation recorded in the audit log only.
+	AuditReference *SupportHistoryAuditReference `json:"audit_reference,omitempty"`
+	SchemaVersion  string                        `json:"schema_version"`
+
+	// Subject Login is a claim as typed; account is a canonical account. At least one is required.
+	Subject *SupportHistorySubject `json:"subject,omitempty"`
+}
+
+// SupportHistoryAttemptDetailResponse defines model for SupportHistoryAttemptDetailResponse.
+type SupportHistoryAttemptDetailResponse struct {
+	Attempt   *SupportHistoryAttempt `json:"attempt"`
+	History   SupportHistoryCoverage `json:"history"`
+	QueriedAt time.Time              `json:"queried_at"`
+
+	// ResultBasis Match state of an answer. matches_found wins over every condition; an answer without matches names the state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows, failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
+	ResultBasis       SupportHistoryResultBasis        `json:"result_basis"`
+	SchemaVersion     string                           `json:"schema_version"`
+	SubjectResolution *SupportHistorySubjectResolution `json:"subject_resolution"`
+}
+
+// SupportHistoryAttemptSearchRequest defines model for SupportHistoryAttemptSearchRequest.
+type SupportHistoryAttemptSearchRequest struct {
+	// AuditReference Unverified ticket-like annotation recorded in the audit log only.
+	AuditReference *SupportHistoryAuditReference `json:"audit_reference,omitempty"`
+	Filter         struct {
+		ClientIp *string `json:"client_ip,omitempty"`
+
+		// From Inclusive lower bound (event time).
+		From         time.Time `json:"from"`
+		OidcClientId *string   `json:"oidc_client_id,omitempty"`
+		Protocol     *string   `json:"protocol,omitempty"`
+		SamlEntityId *string   `json:"saml_entity_id,omitempty"`
+
+		// Until Exclusive upper bound; at most 31 days after from.
+		Until time.Time `json:"until"`
+	} `json:"filter"`
+	Page          *SupportHistoryPageRequest `json:"page,omitempty"`
+	SchemaVersion string                     `json:"schema_version"`
+
+	// Subject Login is a claim as typed; account is a canonical account. At least one is required.
+	Subject SupportHistorySubject `json:"subject"`
+}
+
+// SupportHistoryAttemptSearchResponse defines model for SupportHistoryAttemptSearchResponse.
+type SupportHistoryAttemptSearchResponse struct {
+	Attempts []SupportHistoryAttempt `json:"attempts"`
+	History  SupportHistoryCoverage  `json:"history"`
+	Page     struct {
+		Limit      int     `json:"limit"`
+		NextCursor *string `json:"next_cursor"`
+
+		// ScannedUntil The search covered (scanned_until, until) completely; attempts anchored exactly at scanned_until can follow on the next page.
+		ScannedUntil time.Time `json:"scanned_until"`
+	} `json:"page"`
+	QueriedAt time.Time `json:"queried_at"`
+
+	// ResultBasis Match state of an answer. matches_found wins over every condition; an answer without matches names the state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows, failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
+	ResultBasis       SupportHistoryResultBasis       `json:"result_basis"`
+	SchemaVersion     string                          `json:"schema_version"`
+	SubjectResolution SupportHistorySubjectResolution `json:"subject_resolution"`
+}
+
+// SupportHistoryAuditReference Unverified ticket-like annotation recorded in the audit log only.
+type SupportHistoryAuditReference = string
+
+// SupportHistoryBan defines model for SupportHistoryBan.
+type SupportHistoryBan struct {
+	Activation    SupportHistoryActivation    `json:"activation"`
+	BanRef        string                      `json:"ban_ref"`
+	Contributions SupportHistoryContributions `json:"contributions"`
+	End           struct {
+		At            *time.Time                 `json:"at"`
+		Reason        SupportHistoryBanEndReason `json:"reason"`
+		ReleaseSource *string                    `json:"release_source"`
+	} `json:"end"`
+	Hits     SupportHistoryHitSummary `json:"hits"`
+	Network  string                   `json:"network"`
+	Unknowns []string                 `json:"unknowns"`
+}
+
+// SupportHistoryBanEndReason defines model for SupportHistoryBan.End.Reason.
+type SupportHistoryBanEndReason string
+
+// SupportHistoryBanSearchRequest defines model for SupportHistoryBanSearchRequest.
+type SupportHistoryBanSearchRequest struct {
+	// AuditReference Unverified ticket-like annotation recorded in the audit log only.
+	AuditReference *SupportHistoryAuditReference `json:"audit_reference,omitempty"`
+	Filter         struct {
+		BanRef *string   `json:"ban_ref,omitempty"`
+		From   time.Time `json:"from"`
+		Until  time.Time `json:"until"`
+	} `json:"filter"`
+	Page *struct {
+		Cursor *string `json:"cursor,omitempty"`
+		Limit  *int    `json:"limit,omitempty"`
+	} `json:"page,omitempty"`
+	SchemaVersion string `json:"schema_version"`
+
+	// Subject Login is a claim as typed; account is a canonical account. At least one is required.
+	Subject *SupportHistorySubject `json:"subject,omitempty"`
+
+	// Target Exactly one of ip or network.
+	Target struct {
+		Ip      *string `json:"ip,omitempty"`
+		Network *string `json:"network,omitempty"`
+	} `json:"target"`
+}
+
+// SupportHistoryBanSearchResponse defines model for SupportHistoryBanSearchResponse.
+type SupportHistoryBanSearchResponse struct {
+	Bans          []SupportHistoryBan            `json:"bans"`
+	CounterResets []SupportHistoryLifecycleEvent `json:"counter_resets"`
+	History       SupportHistoryCoverage         `json:"history"`
+	OrphanHits    SupportHistoryHitSummary       `json:"orphan_hits"`
+	Page          struct {
+		Limit      int     `json:"limit"`
+		NextCursor *string `json:"next_cursor"`
+	} `json:"page"`
+	Projection SupportHistoryBanSearchResponseProjection `json:"projection"`
+	QueriedAt  time.Time                                 `json:"queried_at"`
+	Releases   []SupportHistoryLifecycleEvent            `json:"releases"`
+
+	// ResultBasis Match state of an answer. matches_found wins over every condition; an answer without matches names the state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows, failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
+	ResultBasis   SupportHistoryResultBasis `json:"result_basis"`
+	SchemaVersion string                    `json:"schema_version"`
+	Target        struct {
+		CandidateNetworks []string `json:"candidate_networks"`
+		Ip                *string  `json:"ip"`
+	} `json:"target"`
+	ThresholdTolerated struct {
+		Count             int                                                       `json:"count"`
+		CountIsUpperBound bool                                                      `json:"count_is_upper_bound"`
+		Evidence          SupportHistoryBanSearchResponseThresholdToleratedEvidence `json:"evidence"`
+	} `json:"threshold_tolerated"`
+	UnconfirmedActivations []SupportHistoryLifecycleEvent `json:"unconfirmed_activations"`
+}
+
+// SupportHistoryBanSearchResponseProjection defines model for SupportHistoryBanSearchResponse.Projection.
+type SupportHistoryBanSearchResponseProjection string
+
+// SupportHistoryBanSearchResponseThresholdToleratedEvidence defines model for SupportHistoryBanSearchResponse.ThresholdTolerated.Evidence.
+type SupportHistoryBanSearchResponseThresholdToleratedEvidence string
+
+// SupportHistoryContribution defines model for SupportHistoryContribution.
+type SupportHistoryContribution struct {
+	Account         *string   `json:"account"`
+	AccountKnown    *bool     `json:"account_known"`
+	At              time.Time `json:"at"`
+	ClaimedUsername *string   `json:"claimed_username"`
+	ClientIp        *string   `json:"client_ip"`
+	CountSource     string    `json:"count_source"`
+	Crossed         *bool     `json:"crossed"`
+	EventId         string    `json:"event_id"`
+	Protocol        string    `json:"protocol"`
+	Redacted        bool      `json:"redacted"`
+	RequestId       string    `json:"request_id"`
+	SubjectMatch    *bool     `json:"subject_match"`
+	WindowCurrent   *int      `json:"window_current"`
+	WindowIndex     *int      `json:"window_index"`
+}
+
+// SupportHistoryContributions defines model for SupportHistoryContributions.
+type SupportHistoryContributions struct {
+	Caveats           []string `json:"caveats"`
+	CrossingCandidate *struct {
+		At            time.Time                                         `json:"at"`
+		Basis         SupportHistoryContributionsCrossingCandidateBasis `json:"basis"`
+		EventId       string                                            `json:"event_id"`
+		WindowCurrent *int                                              `json:"window_current"`
+	} `json:"crossing_candidate"`
+	DistinctClaimedNames *int                              `json:"distinct_claimed_names"`
+	Items                []SupportHistoryContribution      `json:"items"`
+	Status               SupportHistoryContributionsStatus `json:"status"`
+	Truncated            bool                              `json:"truncated"`
+	Windows              []SupportHistoryWindowStatus      `json:"windows"`
+}
+
+// SupportHistoryContributionsCrossingCandidateBasis defines model for SupportHistoryContributions.CrossingCandidate.Basis.
+type SupportHistoryContributionsCrossingCandidateBasis string
+
+// SupportHistoryContributionsStatus defines model for SupportHistoryContributions.Status.
+type SupportHistoryContributionsStatus string
+
+// SupportHistoryCoverage defines model for SupportHistoryCoverage.
+type SupportHistoryCoverage struct {
+	Availability         SupportHistoryCoverageAvailability         `json:"availability"`
+	Conditions           []string                                   `json:"conditions"`
+	ContractRowsSince    *time.Time                                 `json:"contract_rows_since"`
+	DeliveryCompleteness SupportHistoryCoverageDeliveryCompleteness `json:"delivery_completeness"`
+	Deployment           string                                     `json:"deployment"`
+	KnownLimits          []string                                   `json:"known_limits"`
+	LateEventsPossible   bool                                       `json:"late_events_possible"`
+	Sources              []struct {
+		RetentionDays  int                                         `json:"retention_days"`
+		Source         SupportHistoryCoverageSourcesSource         `json:"source"`
+		State          SupportHistoryCoverageSourcesState          `json:"state"`
+		WindowCoverage SupportHistoryCoverageSourcesWindowCoverage `json:"window_coverage"`
+	} `json:"sources"`
+}
+
+// SupportHistoryCoverageAvailability defines model for SupportHistoryCoverage.Availability.
+type SupportHistoryCoverageAvailability string
+
+// SupportHistoryCoverageDeliveryCompleteness defines model for SupportHistoryCoverage.DeliveryCompleteness.
+type SupportHistoryCoverageDeliveryCompleteness string
+
+// SupportHistoryCoverageSourcesSource defines model for SupportHistoryCoverage.Sources.Source.
+type SupportHistoryCoverageSourcesSource string
+
+// SupportHistoryCoverageSourcesState defines model for SupportHistoryCoverage.Sources.State.
+type SupportHistoryCoverageSourcesState string
+
+// SupportHistoryCoverageSourcesWindowCoverage defines model for SupportHistoryCoverage.Sources.WindowCoverage.
+type SupportHistoryCoverageSourcesWindowCoverage string
+
+// SupportHistoryDecision defines model for SupportHistoryDecision.
+type SupportHistoryDecision struct {
+	BruteForceBucket    *string  `json:"brute_force_bucket"`
+	BruteForceTolerated *bool    `json:"brute_force_tolerated"`
+	DecisionSources     []string `json:"decision_sources"`
+	FsmState            string   `json:"fsm_state"`
+	Operation           string   `json:"operation"`
+	Outcome             string   `json:"outcome"`
+	OutcomeMarker       string   `json:"outcome_marker"`
+	OutcomeStage        string   `json:"outcome_stage"`
+	PolicyRule          string   `json:"policy_rule"`
+	PolicyStatus        string   `json:"policy_status"`
+	ResponseMarker      string   `json:"response_marker"`
+	TempfailCheckpoint  string   `json:"tempfail_checkpoint"`
+	TempfailReason      string   `json:"tempfail_reason"`
+}
+
+// SupportHistoryError defines model for SupportHistoryError.
+type SupportHistoryError struct {
+	Error struct {
+		Code SupportHistoryErrorErrorCode `json:"code"`
+
+		// Message Fixed English text per code; never parse it.
+		Message string `json:"message"`
+	} `json:"error"`
+	SchemaVersion string `json:"schema_version"`
+}
+
+// SupportHistoryErrorErrorCode defines model for SupportHistoryError.Error.Code.
+type SupportHistoryErrorErrorCode string
+
+// SupportHistoryEvent defines model for SupportHistoryEvent.
+type SupportHistoryEvent struct {
+	Category      string                      `json:"category"`
+	Code          string                      `json:"code"`
+	Context       SupportHistoryEventContext  `json:"context"`
+	Decision      *SupportHistoryDecision     `json:"decision"`
+	EventId       *string                     `json:"event_id"`
+	Factor        *SupportHistoryFactor       `json:"factor"`
+	FactorRole    *string                     `json:"factor_role"`
+	Identity      SupportHistoryEventIdentity `json:"identity"`
+	Instance      string                      `json:"instance"`
+	Method        *string                     `json:"method"`
+	OccurredAt    time.Time                   `json:"occurred_at"`
+	RecordVersion int                         `json:"record_version"`
+	Reputation    *SupportHistoryReputation   `json:"reputation"`
+	RequestId     string                      `json:"request_id"`
+	Result        string                      `json:"result"`
+	Sequence      int                         `json:"sequence"`
+	Source        SupportHistoryEventSource   `json:"source"`
+	Stage         SupportHistoryEventStage    `json:"stage"`
+}
+
+// SupportHistoryEventSource defines model for SupportHistoryEvent.Source.
+type SupportHistoryEventSource string
+
+// SupportHistoryEventStage defines model for SupportHistoryEvent.Stage.
+type SupportHistoryEventStage string
+
+// SupportHistoryEventContext defines model for SupportHistoryEventContext.
+type SupportHistoryEventContext struct {
+	ClientIp        *string `json:"client_ip"`
+	GrantType       *string `json:"grant_type"`
+	OidcClientId    *string `json:"oidc_client_id"`
+	Protocol        *string `json:"protocol"`
+	SamlEntityId    *string `json:"saml_entity_id"`
+	Service         *string `json:"service"`
+	Transport       *string `json:"transport"`
+	TransportStatus *int    `json:"transport_status"`
+}
+
+// SupportHistoryEventIdentity defines model for SupportHistoryEventIdentity.
+type SupportHistoryEventIdentity struct {
+	AccountFoundAtCapture *bool   `json:"account_found_at_capture"`
+	CanonicalAccount      *string `json:"canonical_account"`
+	MatchedBy             *string `json:"matched_by"`
+	Redacted              bool    `json:"redacted"`
+	SubjectMatch          bool    `json:"subject_match"`
+	SuppliedLogin         *string `json:"supplied_login"`
+}
+
+// SupportHistoryFactor defines model for SupportHistoryFactor.
+type SupportHistoryFactor struct {
+	FailLatched bool   `json:"fail_latched"`
+	FlowEffect  string `json:"flow_effect"`
+	Reason      string `json:"reason"`
+	Result      string `json:"result"`
+}
+
+// SupportHistoryFinding defines model for SupportHistoryFinding.
+type SupportHistoryFinding struct {
+	Category    SupportHistoryFindingCategory  `json:"category"`
+	Certainty   SupportHistoryFindingCertainty `json:"certainty"`
+	Code        string                         `json:"code"`
+	EventId     *string                        `json:"event_id"`
+	Uncertainty []string                       `json:"uncertainty"`
+}
+
+// SupportHistoryFindingCategory defines model for SupportHistoryFinding.Category.
+type SupportHistoryFindingCategory string
+
+// SupportHistoryFindingCertainty defines model for SupportHistoryFinding.Certainty.
+type SupportHistoryFindingCertainty string
+
+// SupportHistoryHitSummary defines model for SupportHistoryHitSummary.
+type SupportHistoryHitSummary struct {
+	BySource  map[string]int `json:"by_source"`
+	Claimants []struct {
+		Account         *string `json:"account"`
+		ClaimedUsername *string `json:"claimed_username"`
+		Hits            int     `json:"hits"`
+	} `json:"claimants"`
+	Count                int                              `json:"count"`
+	CountIsUpperBound    bool                             `json:"count_is_upper_bound"`
+	DistinctClaimedNames *int                             `json:"distinct_claimed_names"`
+	Evidence             SupportHistoryHitSummaryEvidence `json:"evidence"`
+	IntervalApproximate  bool                             `json:"interval_approximate"`
+	SubjectHits          *int                             `json:"subject_hits"`
+}
+
+// SupportHistoryHitSummaryEvidence defines model for SupportHistoryHitSummary.Evidence.
+type SupportHistoryHitSummaryEvidence string
+
+// SupportHistoryLifecycleEvent defines model for SupportHistoryLifecycleEvent.
+type SupportHistoryLifecycleEvent struct {
+	At          time.Time                        `json:"at"`
+	BucketId    *string                          `json:"bucket_id"`
+	EventId     string                           `json:"event_id"`
+	KeysRemoved *int                             `json:"keys_removed"`
+	Kind        SupportHistoryLifecycleEventKind `json:"kind"`
+	Network     string                           `json:"network"`
+
+	// OperatorClientId Released to the detail projection only.
+	OperatorClientId *string `json:"operator_client_id"`
+	ReleaseSource    *string `json:"release_source"`
+	Rule             string  `json:"rule"`
+}
+
+// SupportHistoryLifecycleEventKind defines model for SupportHistoryLifecycleEvent.Kind.
+type SupportHistoryLifecycleEventKind string
+
+// SupportHistoryPageRequest defines model for SupportHistoryPageRequest.
+type SupportHistoryPageRequest struct {
+	// Cursor Opaque position bound to the same query; never authorizing.
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *int    `json:"limit,omitempty"`
+}
+
+// SupportHistoryReputation defines model for SupportHistoryReputation.
+type SupportHistoryReputation struct {
+	Assessments []SupportHistoryReputationAssessment `json:"assessments"`
+	State       SupportHistoryReputationState        `json:"state"`
+	Truncated   bool                                 `json:"truncated"`
+}
+
+// SupportHistoryReputationState defines model for SupportHistoryReputation.State.
+type SupportHistoryReputationState string
+
+// SupportHistoryReputationAssessment defines model for SupportHistoryReputationAssessment.
+type SupportHistoryReputationAssessment struct {
+	AgeSeconds      *int     `json:"age_seconds"`
+	Band            string   `json:"band"`
+	Confidence      *float32 `json:"confidence"`
+	Fact            string   `json:"fact"`
+	Kind            string   `json:"kind"`
+	Override        string   `json:"override"`
+	Profile         string   `json:"profile"`
+	RiskScore       *float32 `json:"risk_score"`
+	Role            string   `json:"role"`
+	Samples         *float32 `json:"samples"`
+	SourceDiversity *int     `json:"source_diversity"`
+	State           string   `json:"state"`
+	TrustScore      *float32 `json:"trust_score"`
+}
+
+// SupportHistoryResultBasis Match state of an answer. matches_found wins over every condition; an answer without matches names the state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows, failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
+type SupportHistoryResultBasis string
+
+// SupportHistorySubject Login is a claim as typed; account is a canonical account. At least one is required.
+type SupportHistorySubject struct {
+	Account *string `json:"account,omitempty"`
+	Login   *string `json:"login,omitempty"`
+}
+
+// SupportHistorySubjectResolution defines model for SupportHistorySubjectResolution.
+type SupportHistorySubjectResolution struct {
+	Accounts []struct {
+		Account    string                                            `json:"account"`
+		Provenance SupportHistorySubjectResolutionAccountsProvenance `json:"provenance"`
+	} `json:"accounts"`
+	CurrentMapping  SupportHistorySubjectResolutionCurrentMapping `json:"current_mapping"`
+	SuppliedAccount *string                                       `json:"supplied_account"`
+	SuppliedLogin   *string                                       `json:"supplied_login"`
+}
+
+// SupportHistorySubjectResolutionAccountsProvenance defines model for SupportHistorySubjectResolution.Accounts.Provenance.
+type SupportHistorySubjectResolutionAccountsProvenance string
+
+// SupportHistorySubjectResolutionCurrentMapping defines model for SupportHistorySubjectResolution.CurrentMapping.
+type SupportHistorySubjectResolutionCurrentMapping string
+
+// SupportHistoryWindowStatus defines model for SupportHistoryWindowStatus.
+type SupportHistoryWindowStatus struct {
+	CountsAreUpperBounds   bool                               `json:"counts_are_upper_bounds"`
+	Evidence               SupportHistoryWindowStatusEvidence `json:"evidence"`
+	Expected               *int                               `json:"expected"`
+	Present                *int                               `json:"present"`
+	Status                 SupportHistoryWindowStatusStatus   `json:"status"`
+	SummaryCheckUnreliable bool                               `json:"summary_check_unreliable"`
+	Window                 SupportHistoryWindowStatusWindow   `json:"window"`
+	WindowIndex            int                                `json:"window_index"`
+}
+
+// SupportHistoryWindowStatusEvidence defines model for SupportHistoryWindowStatus.Evidence.
+type SupportHistoryWindowStatusEvidence string
+
+// SupportHistoryWindowStatusStatus defines model for SupportHistoryWindowStatus.Status.
+type SupportHistoryWindowStatusStatus string
+
+// SupportHistoryWindowStatusWindow defines model for SupportHistoryWindowStatus.Window.
+type SupportHistoryWindowStatusWindow string
+
 // PageLimit defines model for PageLimit.
 type PageLimit = int
 
@@ -1179,6 +2477,24 @@ type PolicyUnavailable = PolicyError
 
 // PolicyUnsupportedMediaType defines model for PolicyUnsupportedMediaType.
 type PolicyUnsupportedMediaType = PolicyError
+
+// SupportHistoryBadRequest defines model for SupportHistoryBadRequest.
+type SupportHistoryBadRequest = SupportHistoryError
+
+// SupportHistoryBusy defines model for SupportHistoryBusy.
+type SupportHistoryBusy = SupportHistoryError
+
+// SupportHistoryForbidden defines model for SupportHistoryForbidden.
+type SupportHistoryForbidden = SupportHistoryError
+
+// SupportHistoryInternal defines model for SupportHistoryInternal.
+type SupportHistoryInternal = SupportHistoryError
+
+// SupportHistoryQueryTooBroad defines model for SupportHistoryQueryTooBroad.
+type SupportHistoryQueryTooBroad = SupportHistoryError
+
+// SupportHistoryUnavailable defines model for SupportHistoryUnavailable.
+type SupportHistoryUnavailable = SupportHistoryError
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
@@ -1230,6 +2546,15 @@ type PutReputationOverrideJSONRequestBody = ReputationOverridePutRequest
 
 // EvaluatePolicyDecisionJSONRequestBody defines body for EvaluatePolicyDecision for application/json ContentType.
 type EvaluatePolicyDecisionJSONRequestBody = PolicyDecisionRequest
+
+// GetAuthenticationAttemptJSONRequestBody defines body for GetAuthenticationAttempt for application/json ContentType.
+type GetAuthenticationAttemptJSONRequestBody = SupportHistoryAttemptDetailRequest
+
+// SearchAuthenticationAttemptsJSONRequestBody defines body for SearchAuthenticationAttempts for application/json ContentType.
+type SearchAuthenticationAttemptsJSONRequestBody = SupportHistoryAttemptSearchRequest
+
+// SearchBruteForceBansJSONRequestBody defines body for SearchBruteForceBans for application/json ContentType.
+type SearchBruteForceBansJSONRequestBody = SupportHistoryBanSearchRequest
 
 // AsPolicyRecordFieldValue0 returns the union data inside the PolicyRecordFieldValue as a PolicyRecordFieldValue0
 func (t PolicyRecordFieldValue) AsPolicyRecordFieldValue0() (PolicyRecordFieldValue0, error) {
@@ -2283,6 +3608,60 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
 	EvaluatePolicyDecision(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAuthenticationAttemptWithBody Return every recorded event of one diagnostic attempt id.
+	//
+	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+	GetAuthenticationAttemptWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAuthenticationAttempt Return every recorded event of one diagnostic attempt id.
+	//
+	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+	GetAuthenticationAttempt(ctx context.Context, body GetAuthenticationAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchAuthenticationAttemptsWithBody Search the recorded authentication attempts of one subject in a bounded window.
+	//
+	// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+	SearchAuthenticationAttemptsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchAuthenticationAttempts Search the recorded authentication attempts of one subject in a bounded window.
+	//
+	// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+	SearchAuthenticationAttempts(ctx context.Context, body SearchAuthenticationAttemptsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchBruteForceBansWithBody Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+	//
+	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+	SearchBruteForceBansWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchBruteForceBans Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+	//
+	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+	SearchBruteForceBans(ctx context.Context, body SearchBruteForceBansJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetAsyncJobStatus Get the status of an asynchronous backchannel job.
@@ -2740,6 +4119,120 @@ func (c *Client) EvaluatePolicyDecisionWithBody(ctx context.Context, contentType
 // Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
 func (c *Client) EvaluatePolicyDecision(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEvaluatePolicyDecisionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAuthenticationAttemptWithBody Return every recorded event of one diagnostic attempt id.
+//
+// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+func (c *Client) GetAuthenticationAttemptWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAuthenticationAttemptRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAuthenticationAttempt Return every recorded event of one diagnostic attempt id.
+//
+// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+func (c *Client) GetAuthenticationAttempt(ctx context.Context, body GetAuthenticationAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAuthenticationAttemptRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SearchAuthenticationAttemptsWithBody Search the recorded authentication attempts of one subject in a bounded window.
+//
+// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+func (c *Client) SearchAuthenticationAttemptsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchAuthenticationAttemptsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SearchAuthenticationAttempts Search the recorded authentication attempts of one subject in a bounded window.
+//
+// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+func (c *Client) SearchAuthenticationAttempts(ctx context.Context, body SearchAuthenticationAttemptsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchAuthenticationAttemptsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SearchBruteForceBansWithBody Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+//
+// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+func (c *Client) SearchBruteForceBansWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchBruteForceBansRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SearchBruteForceBans Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+//
+// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+func (c *Client) SearchBruteForceBans(ctx context.Context, body SearchBruteForceBansJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchBruteForceBansRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3452,6 +4945,126 @@ func NewEvaluatePolicyDecisionRequestWithBody(server string, contentType string,
 	return req, nil
 }
 
+// NewGetAuthenticationAttemptRequest calls the generic GetAuthenticationAttempt builder with application/json body
+func NewGetAuthenticationAttemptRequest(server string, body GetAuthenticationAttemptJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGetAuthenticationAttemptRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewGetAuthenticationAttemptRequestWithBody constructs an http.Request for the GetAuthenticationAttempt method, with any body, and a specified content type
+func NewGetAuthenticationAttemptRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/support/authentication-attempts/detail")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSearchAuthenticationAttemptsRequest calls the generic SearchAuthenticationAttempts builder with application/json body
+func NewSearchAuthenticationAttemptsRequest(server string, body SearchAuthenticationAttemptsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSearchAuthenticationAttemptsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSearchAuthenticationAttemptsRequestWithBody constructs an http.Request for the SearchAuthenticationAttempts method, with any body, and a specified content type
+func NewSearchAuthenticationAttemptsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/support/authentication-attempts/search")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSearchBruteForceBansRequest calls the generic SearchBruteForceBans builder with application/json body
+func NewSearchBruteForceBansRequest(server string, body SearchBruteForceBansJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSearchBruteForceBansRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSearchBruteForceBansRequestWithBody constructs an http.Request for the SearchBruteForceBans method, with any body, and a specified content type
+func NewSearchBruteForceBansRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/support/bruteforce-bans/search")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -3704,6 +5317,60 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/policy/decisions (the `EvaluatePolicyDecision` operationId).
 	EvaluatePolicyDecisionWithResponse(ctx context.Context, body EvaluatePolicyDecisionJSONRequestBody, reqEditors ...RequestEditorFn) (*EvaluatePolicyDecisionResponse, error)
+
+	// GetAuthenticationAttemptWithBodyWithResponse Return every recorded event of one diagnostic attempt id.
+	//
+	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+	GetAuthenticationAttemptWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetAuthenticationAttemptResponse, error)
+
+	// GetAuthenticationAttemptWithResponse Return every recorded event of one diagnostic attempt id.
+	//
+	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+	GetAuthenticationAttemptWithResponse(ctx context.Context, body GetAuthenticationAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*GetAuthenticationAttemptResponse, error)
+
+	// SearchAuthenticationAttemptsWithBodyWithResponse Search the recorded authentication attempts of one subject in a bounded window.
+	//
+	// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+	SearchAuthenticationAttemptsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchAuthenticationAttemptsResponse, error)
+
+	// SearchAuthenticationAttemptsWithResponse Search the recorded authentication attempts of one subject in a bounded window.
+	//
+	// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+	SearchAuthenticationAttemptsWithResponse(ctx context.Context, body SearchAuthenticationAttemptsJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchAuthenticationAttemptsResponse, error)
+
+	// SearchBruteForceBansWithBodyWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+	//
+	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+	SearchBruteForceBansWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchBruteForceBansResponse, error)
+
+	// SearchBruteForceBansWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+	//
+	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+	SearchBruteForceBansWithResponse(ctx context.Context, body SearchBruteForceBansJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchBruteForceBansResponse, error)
 }
 
 type GetAsyncJobStatusResponse struct {
@@ -5005,6 +6672,297 @@ func (r EvaluatePolicyDecisionResponse) ContentType() string {
 	return ""
 }
 
+// GetAuthenticationAttemptResponse200Headers the declared response headers of an HTTP 200 response for GetAuthenticationAttempt
+type GetAuthenticationAttemptResponse200Headers struct {
+	CacheControl *string
+}
+
+type GetAuthenticationAttemptResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SupportHistoryAttemptDetailResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *SupportHistoryBadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *SupportHistoryForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *SupportHistoryQueryTooBroad
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *SupportHistoryBusy
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *SupportHistoryInternal
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *SupportHistoryUnavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetAuthenticationAttemptResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON200() *SupportHistoryAttemptDetailResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON400() *SupportHistoryBadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON403() *SupportHistoryForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON422() *SupportHistoryQueryTooBroad {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON429() *SupportHistoryBusy {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON500() *SupportHistoryInternal {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAuthenticationAttemptResponse) GetJSON503() *SupportHistoryUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAuthenticationAttemptResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAuthenticationAttemptResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAuthenticationAttemptResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAuthenticationAttemptResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SearchAuthenticationAttemptsResponse200Headers the declared response headers of an HTTP 200 response for SearchAuthenticationAttempts
+type SearchAuthenticationAttemptsResponse200Headers struct {
+	CacheControl *string
+}
+
+type SearchAuthenticationAttemptsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SupportHistoryAttemptSearchResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *SupportHistoryBadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *SupportHistoryForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *SupportHistoryQueryTooBroad
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *SupportHistoryBusy
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *SupportHistoryInternal
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *SupportHistoryUnavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SearchAuthenticationAttemptsResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON200() *SupportHistoryAttemptSearchResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON400() *SupportHistoryBadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON403() *SupportHistoryForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON422() *SupportHistoryQueryTooBroad {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON429() *SupportHistoryBusy {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON500() *SupportHistoryInternal {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SearchAuthenticationAttemptsResponse) GetJSON503() *SupportHistoryUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchAuthenticationAttemptsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchAuthenticationAttemptsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchAuthenticationAttemptsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchAuthenticationAttemptsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SearchBruteForceBansResponse200Headers the declared response headers of an HTTP 200 response for SearchBruteForceBans
+type SearchBruteForceBansResponse200Headers struct {
+	CacheControl *string
+}
+
+type SearchBruteForceBansResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SupportHistoryBanSearchResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *SupportHistoryBadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *SupportHistoryForbidden
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *SupportHistoryQueryTooBroad
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *SupportHistoryBusy
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *SupportHistoryInternal
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *SupportHistoryUnavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SearchBruteForceBansResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON200() *SupportHistoryBanSearchResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON400() *SupportHistoryBadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON403() *SupportHistoryForbidden {
+	return r.JSON403
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON422() *SupportHistoryQueryTooBroad {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON429() *SupportHistoryBusy {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON500() *SupportHistoryInternal {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SearchBruteForceBansResponse) GetJSON503() *SupportHistoryUnavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchBruteForceBansResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchBruteForceBansResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchBruteForceBansResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchBruteForceBansResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetAsyncJobStatusWithResponse Get the status of an asynchronous backchannel job.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -5374,6 +7332,96 @@ func (c *ClientWithResponses) EvaluatePolicyDecisionWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseEvaluatePolicyDecisionResponse(rsp)
+}
+
+// GetAuthenticationAttemptWithBodyWithResponse Return every recorded event of one diagnostic attempt id.
+//
+// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+func (c *ClientWithResponses) GetAuthenticationAttemptWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetAuthenticationAttemptResponse, error) {
+	rsp, err := c.GetAuthenticationAttemptWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAuthenticationAttemptResponse(rsp)
+}
+
+// GetAuthenticationAttemptWithResponse Return every recorded event of one diagnostic attempt id.
+//
+// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/detail (the `GetAuthenticationAttempt` operationId).
+func (c *ClientWithResponses) GetAuthenticationAttemptWithResponse(ctx context.Context, body GetAuthenticationAttemptJSONRequestBody, reqEditors ...RequestEditorFn) (*GetAuthenticationAttemptResponse, error) {
+	rsp, err := c.GetAuthenticationAttempt(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAuthenticationAttemptResponse(rsp)
+}
+
+// SearchAuthenticationAttemptsWithBodyWithResponse Search the recorded authentication attempts of one subject in a bounded window.
+//
+// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+func (c *ClientWithResponses) SearchAuthenticationAttemptsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchAuthenticationAttemptsResponse, error) {
+	rsp, err := c.SearchAuthenticationAttemptsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchAuthenticationAttemptsResponse(rsp)
+}
+
+// SearchAuthenticationAttemptsWithResponse Search the recorded authentication attempts of one subject in a bounded window.
+//
+// Requires nauthilus:history_read. Filters are accepted only in the JSON body; query parameters are refused. HTTP 200 means the query was processed; `history` states which evidence was readable and `result_basis` the match state. An empty `attempts` list never proves that no login happened. Attempts are ordered by their latest subject-matching activity, newest first; pages carry no snapshot isolation, so clients deduplicate by attempt_id.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/support/authentication-attempts/search (the `SearchAuthenticationAttempts` operationId).
+func (c *ClientWithResponses) SearchAuthenticationAttemptsWithResponse(ctx context.Context, body SearchAuthenticationAttemptsJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchAuthenticationAttemptsResponse, error) {
+	rsp, err := c.SearchAuthenticationAttempts(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchAuthenticationAttemptsResponse(rsp)
+}
+
+// SearchBruteForceBansWithBodyWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+//
+// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+func (c *ClientWithResponses) SearchBruteForceBansWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchBruteForceBansResponse, error) {
+	rsp, err := c.SearchBruteForceBansWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchBruteForceBansResponse(rsp)
+}
+
+// SearchBruteForceBansWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
+//
+// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/support/bruteforce-bans/search (the `SearchBruteForceBans` operationId).
+func (c *ClientWithResponses) SearchBruteForceBansWithResponse(ctx context.Context, body SearchBruteForceBansJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchBruteForceBansResponse, error) {
+	rsp, err := c.SearchBruteForceBans(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchBruteForceBansResponse(rsp)
 }
 
 // ParseGetAsyncJobStatusResponse parses an HTTP response from a GetAsyncJobStatusWithResponse call
@@ -6439,6 +8487,270 @@ func ParseEvaluatePolicyDecisionResponse(rsp *http.Response) (*EvaluatePolicyDec
 		}
 		response.JSON503 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetAuthenticationAttemptResponse parses an HTTP response from a GetAuthenticationAttemptWithResponse call
+func ParseGetAuthenticationAttemptResponse(rsp *http.Response) (*GetAuthenticationAttemptResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAuthenticationAttemptResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SupportHistoryAttemptDetailResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest SupportHistoryBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest SupportHistoryForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest SupportHistoryQueryTooBroad
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest SupportHistoryBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest SupportHistoryInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SupportHistoryUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetAuthenticationAttemptResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSearchAuthenticationAttemptsResponse parses an HTTP response from a SearchAuthenticationAttemptsWithResponse call
+func ParseSearchAuthenticationAttemptsResponse(rsp *http.Response) (*SearchAuthenticationAttemptsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchAuthenticationAttemptsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SupportHistoryAttemptSearchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest SupportHistoryBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest SupportHistoryForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest SupportHistoryQueryTooBroad
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest SupportHistoryBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest SupportHistoryInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SupportHistoryUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SearchAuthenticationAttemptsResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSearchBruteForceBansResponse parses an HTTP response from a SearchBruteForceBansWithResponse call
+func ParseSearchBruteForceBansResponse(rsp *http.Response) (*SearchBruteForceBansResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchBruteForceBansResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SupportHistoryBanSearchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest SupportHistoryBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest SupportHistoryForbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest SupportHistoryQueryTooBroad
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest SupportHistoryBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest SupportHistoryInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SupportHistoryUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SearchBruteForceBansResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

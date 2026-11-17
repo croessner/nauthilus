@@ -637,7 +637,8 @@ type ObservabilityMetrics struct {
 
 // StorageSection groups persistence and caching backends.
 type StorageSection struct {
-	Redis Redis `mapstructure:"redis" validate:"omitempty"`
+	Redis   Redis          `mapstructure:"redis" validate:"omitempty"`
+	History HistorySection `mapstructure:"history" validate:"omitempty"`
 }
 
 // AuthSection groups the authentication request model, controls, services, and backend order.

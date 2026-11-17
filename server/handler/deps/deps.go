@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/supporthistory"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -125,4 +126,6 @@ type Deps struct {
 	RouteArtifacts *core.RouteArtifacts
 	// CallerRateLimiter is the per-client-IP HTTP rate limiter shared with the global middleware; nil when disabled.
 	CallerRateLimiter mdauth.CallerRateLimiter
+	// SupportHistory is the process-owned historical diagnosis service; nil when no history source is configured.
+	SupportHistory *supporthistory.Service
 }

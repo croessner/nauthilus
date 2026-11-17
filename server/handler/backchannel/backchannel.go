@@ -36,6 +36,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/handler/devui"
 	"github.com/croessner/nauthilus/v4/server/handler/mfa_backchannel"
 	"github.com/croessner/nauthilus/v4/server/handler/policyhttp"
+	"github.com/croessner/nauthilus/v4/server/handler/support"
 	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -366,6 +367,7 @@ func registerManagementModules(authenticatedGroup *gin.RouterGroup, deps *handle
 	cache.New(deps).Register(authenticatedGroup)
 	asyncjobs.New(deps).Register(authenticatedGroup)
 	mfa_backchannel.New(deps).Register(authenticatedGroup)
+	support.New(deps).Register(authenticatedGroup)
 }
 
 // registerOIDCSessionManagement registers OIDC session administration when OIDC is enabled.

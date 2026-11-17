@@ -18,7 +18,8 @@ this contract; they must not invent identifiers, stages, or causes that this con
   tempfails decided without a selected presentation (`finalizeUnselected`), effect-acceptance failures, panics, and
   operations whose rules select no analytics effect produce no row. "No row" never means "no request". Every row carries enough version information for clients to tell legacy rows from rows that follow
   this contract.
-- No history query API, MCP surface, or admin console is part of this contract.
+- No history query API, MCP surface, or admin console is part of this contract. The read-only support history
+  API built on it is documented in `server/docs/support_authentication_history.md`.
 
 ## 2. Writers
 
