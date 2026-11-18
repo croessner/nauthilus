@@ -91,7 +91,15 @@ func (h *OIDCHandler) AuthorizeCanonical(ctx *gin.Context) {
 		return
 	}
 
-	if requestsFreshOIDCLogin(request.prompt) && !ctx.Request.URL.Query().Has(flowdomain.FlowTicketParameter) {
+	hostedLoginTooOld := h.hostedLoginTooOld(session, request)
+	if hostedLoginTooOld && request.prompt == oidcClientAuthMethodNone {
+		h.authorizationResponse().redirectError(ctx, request.redirectURI, request.state, oidcErrorLoginRequired)
+
+		return
+	}
+
+	if (requestsFreshOIDCLogin(request.prompt) || hostedLoginTooOld) &&
+		!ctx.Request.URL.Query().Has(flowdomain.FlowTicketParameter) {
 		var err error
 
 		session, err = session.RestartLogin(ctx.Request.Context(), ctx.Writer)
@@ -106,7 +114,7 @@ func (h *OIDCHandler) AuthorizeCanonical(ctx *gin.Context) {
 	identity, authenticated := session.Identity()
 	if !authenticated {
 		if request.prompt == oidcClientAuthMethodNone {
-			redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, "login_required")
+			h.authorizationResponse().redirectError(ctx, request.redirectURI, request.state, oidcErrorLoginRequired)
 
 			return
 		}
@@ -257,6 +265,10 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 
 	oidcSession, _, err := builder(ctx, session, identity, client, request)
 	if err != nil {
+		if h.answerHostedResourceRefusal(ctx, session, state.FlowID, request, err) {
+			return
+		}
+
 		ctx.AbortWithStatus(http.StatusServiceUnavailable)
 
 		return
@@ -283,7 +295,7 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 				return
 			}
 
-			redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, "consent_required")
+			h.authorizationResponse().redirectError(ctx, request.redirectURI, request.state, "consent_required")
 
 			return
 		}
@@ -341,7 +353,7 @@ func (h *OIDCHandler) authorizeCanonicalAuthenticated(
 		return
 	}
 
-	target, err := buildOIDCCallbackRedirectURL(request.redirectURI, code, request.state)
+	target, err := h.authorizationResponse().successURL(request.redirectURI, code, request.state)
 	if err != nil {
 		_ = h.storage.DeleteSession(ctx.Request.Context(), code)
 		ctx.AbortWithStatus(http.StatusInternalServerError)
@@ -390,6 +402,48 @@ func (h *OIDCHandler) canonicalOIDCAuthorizeNeedsConsent(
 	}
 
 	return false, nil
+}
+
+// hostedLoginTooOld reports whether an authenticated session must log in again because a requested hosted
+// resource allows a younger login than the session's.
+func (h *OIDCHandler) hostedLoginTooOld(session *cookie.CanonicalSession, request oidcAuthorizeRequest) bool {
+	if _, authenticated := session.Identity(); !authenticated || len(request.resources) == 0 {
+		return false
+	}
+
+	return h.idp.HostedAuthenticationExpired(request.resources, session.Anchor.Value.CreatedAt, session.EvaluationTime())
+}
+
+// answerHostedResourceRefusal ends an authorization a hosted resource refused: a user without the user right gets
+// access_denied, a login that is still too old gets login_required. The flow is consumed first so the refused
+// request cannot be resumed. It reports whether err was such a refusal.
+func (h *OIDCHandler) answerHostedResourceRefusal(
+	ctx *gin.Context,
+	session *cookie.CanonicalSession,
+	flowID string,
+	request oidcAuthorizeRequest,
+	err error,
+) bool {
+	errorCode := ""
+
+	switch {
+	case errors.Is(err, idp.ErrHostedResourceDenied):
+		errorCode = oidcErrorAccessDenied
+	case errors.Is(err, idp.ErrHostedAuthenticationExpired):
+		errorCode = oidcErrorLoginRequired
+	default:
+		return false
+	}
+
+	if consumeErr := consumeCanonicalOIDCAuthorization(ctx.Request.Context(), session, flowID); consumeErr != nil {
+		ctx.AbortWithStatus(http.StatusConflict)
+
+		return true
+	}
+
+	h.authorizationResponse().redirectError(ctx, request.redirectURI, request.state, errorCode)
+
+	return true
 }
 
 // consentRequirementWithoutGrant decides consent cases that never consult a remembered grant.
@@ -460,6 +514,12 @@ func (h *OIDCHandler) buildCanonicalOIDCAuthorizeSession(
 	if user == nil || strings.TrimSpace(user.ID) != identity.Reference ||
 		strings.TrimSpace(user.Name) != identity.Account {
 		return nil, nil, sessionstate.ErrBindingMismatch
+	}
+
+	if err = h.idp.AdmitHostedResourceUser(
+		request.resources, user, session.Anchor.Value.CreatedAt, session.EvaluationTime(),
+	); err != nil {
+		return nil, nil, err
 	}
 
 	idTokenClaims, accessTokenClaims, err := h.idp.GetClaims(ctx, user, client, filteredScopes)
@@ -985,7 +1045,7 @@ func (h *OIDCHandler) ConsentPOSTCanonical(ctx *gin.Context) {
 
 	code := ksuid.New().String()
 
-	target, err := buildOIDCCallbackRedirectURL(
+	target, err := h.authorizationResponse().successURL(
 		pending.RedirectURI, code, selection.state.Metadata[flowdomain.FlowMetadataState],
 	)
 	if err != nil {
@@ -1188,7 +1248,7 @@ func (h *OIDCHandler) canonicalAuthorizePolicyReady(
 			return false
 		}
 
-		redirectOIDCAuthorizeError(
+		h.authorizationResponse().redirectError(
 			ctx, state.Metadata[flowdomain.FlowMetadataRedirectURI],
 			state.Metadata[flowdomain.FlowMetadataState], "interaction_required",
 		)

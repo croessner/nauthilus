@@ -16,36 +16,26 @@
 package supporthistory
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"log/slog"
 	"strings"
-	"time"
+
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
 )
 
 const auditDigestDomain = "nauthilus.support_history.audit.v1\x00"
 
-// AuditEntry is one controlled audit record of a history operation. It holds no subject in clear text, no filter
-// values, and no evidence; the subject digest lets an operator check whether a known name was looked up.
-type AuditEntry struct {
-	At             time.Time
-	Operation      string
-	CallerIdentity string
-	CallerMethod   string
-	Projection     string
-	SubjectDigest  string
-	AuditReference string
-	ResultCode     string
-	Duration       time.Duration
-	Results        int
-	Allowed        bool
-}
+// auditService names the history service in shared audit records.
+const auditService = "history"
 
-// AuditRecorder receives audit entries; it must not block.
-type AuditRecorder interface {
-	RecordHistoryAudit(ctx context.Context, entry AuditEntry)
-}
+// AuditEntry is one controlled audit record of a history operation (shared support audit type).
+type AuditEntry = supportaccess.AuditEntry
+
+// AuditRecorder receives audit entries; it must not block (shared support audit type).
+type AuditRecorder = supportaccess.AuditRecorder
+
+// LogAuditRecorder writes audit entries as structured log records (shared support audit type).
+type LogAuditRecorder = supportaccess.LogAuditRecorder
 
 // subjectDigest returns a domain-separated digest of a normalized subject, or an empty string.
 func subjectDigest(values ...string) string {
@@ -62,30 +52,4 @@ func subjectDigest(values ...string) string {
 	sum := sha256.Sum256([]byte(auditDigestDomain + strings.ToLower(joined)))
 
 	return hex.EncodeToString(sum[:16])
-}
-
-// LogAuditRecorder writes audit entries as structured log records.
-type LogAuditRecorder struct {
-	Logger *slog.Logger
-}
-
-// RecordHistoryAudit logs one audit entry at info level.
-func (r LogAuditRecorder) RecordHistoryAudit(ctx context.Context, entry AuditEntry) {
-	if r.Logger == nil {
-		return
-	}
-
-	r.Logger.LogAttrs(ctx, slog.LevelInfo, "support history access",
-		slog.String("audit", "support_history"),
-		slog.String("operation", entry.Operation),
-		slog.String("caller", entry.CallerIdentity),
-		slog.String("caller_method", entry.CallerMethod),
-		slog.String("projection", entry.Projection),
-		slog.Bool("allowed", entry.Allowed),
-		slog.String("result_code", entry.ResultCode),
-		slog.Int("results", entry.Results),
-		slog.String("subject_digest", entry.SubjectDigest),
-		slog.String("audit_reference", entry.AuditReference),
-		slog.Duration("duration", entry.Duration),
-	)
 }

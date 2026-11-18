@@ -140,6 +140,11 @@ func TestOIDCDiscoveryAndJWKSResponsesMatchOpenAPIContract(t *testing.T) {
 			assertBody: assertOIDCDiscoveryContractBody,
 		},
 		{
+			name:       "authorization server metadata",
+			path:       authorizationServerMetadataPath,
+			assertBody: assertOIDCDiscoveryContractBody,
+		},
+		{
 			name:       "jwks",
 			path:       "/oidc/jwks",
 			assertBody: assertJWKSContractBody,

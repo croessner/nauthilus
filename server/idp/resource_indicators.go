@@ -19,6 +19,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -35,6 +36,8 @@ type TokenIssueOptions struct {
 	// Resources narrows the access-token audience to a subset of the granted resources.
 	// An empty list keeps the full grant.
 	Resources []string
+	// DeviceGrant marks a device-flow issuance; a grant that carries a hosted resource is refused (invalid_target).
+	DeviceGrant bool
 }
 
 // uniqueResources removes repeated resource indicators and keeps the first-seen order.
@@ -56,7 +59,7 @@ func uniqueResources(resources []string) []string {
 
 // ValidateRequestedResources checks the RFC 8707 resource parameters of an issuing client and returns
 // them deduplicated. Every value must be an absolute URI without fragment, registered by a resource
-// server, and requestable by the issuing client.
+// server, and requestable by the issuing client. A hosted resource must be the only resource of a grant.
 func (r *ResourceRegistry) ValidateRequestedResources(issuing *config.OIDCClient, requested []string) ([]string, error) {
 	resources := uniqueResources(requested)
 
@@ -66,7 +69,32 @@ func (r *ResourceRegistry) ValidateRequestedResources(issuing *config.OIDCClient
 		}
 	}
 
+	if !r.hostedResourceExclusive(resources) {
+		return nil, ErrInvalidTarget
+	}
+
 	return resources, nil
+}
+
+// ValidateDeviceRequestedResources checks device authorization resources like ValidateRequestedResources and
+// additionally refuses hosted resources, which are never grantable through the device flow.
+func (r *ResourceRegistry) ValidateDeviceRequestedResources(issuing *config.OIDCClient, requested []string) ([]string, error) {
+	resources, err := r.ValidateRequestedResources(issuing, requested)
+	if err != nil {
+		return nil, err
+	}
+
+	if r.containsHosted(resources) {
+		return nil, ErrInvalidTarget
+	}
+
+	return resources, nil
+}
+
+// hostedResourceExclusive reports whether a resource set that names a hosted resource names nothing else, so a
+// hosted-resource token can never be replayed at another resource server.
+func (r *ResourceRegistry) hostedResourceExclusive(resources []string) bool {
+	return len(resources) <= 1 || !r.containsHosted(resources)
 }
 
 // NarrowAccessTokenResources returns the requested subset of the granted resources. Without a request
@@ -113,7 +141,41 @@ func (n *NauthilusIDP) accessTokenResources(client *config.OIDCClient, granted [
 		}
 	}
 
+	if !registry.hostedResourceExclusive(effective) {
+		return nil, ErrInvalidTarget
+	}
+
 	return narrowed, nil
+}
+
+// grantAccessTokenResources resolves the resources of one access token issued from a grant (code exchange, device
+// code, or refresh). It refuses a hosted resource on a device grant and when a hosted resource's login age is
+// exceeded.
+func (n *NauthilusIDP) grantAccessTokenResources(client *config.OIDCClient, session *OIDCSession, options TokenIssueOptions) ([]string, error) {
+	narrowed, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	if err != nil {
+		return nil, err
+	}
+
+	if options.DeviceGrant && n.ResourceRegistry().containsHosted(session.AccessTokenResources) {
+		return nil, ErrInvalidTarget
+	}
+
+	if err = n.checkHostedGrant(session, effectiveAccessTokenResources(session.AccessTokenResources, narrowed), time.Now()); err != nil {
+		return nil, err
+	}
+
+	return narrowed, nil
+}
+
+// effectiveAccessTokenResources returns the resources one access token carries: the narrowed set, or the whole
+// grant when the request did not narrow it.
+func effectiveAccessTokenResources(granted []string, narrowed []string) []string {
+	if len(narrowed) > 0 {
+		return narrowed
+	}
+
+	return granted
 }
 
 // withAccessTokenResources returns the session an access token is issued from. A narrowed resource set

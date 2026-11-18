@@ -524,6 +524,8 @@ type OIDCConfig struct {
 	DeviceCodePollingInterval          int                                 `mapstructure:"device_code_polling_interval"`
 	DeviceCodeUserCodeLength           int                                 `mapstructure:"device_code_user_code_length"`
 	DynamicClientRegistration          OIDCDynamicClientRegistrationConfig `mapstructure:"dynamic_client_registration"`
+	// HostedResources lists the protected resources Nauthilus serves itself, such as the MCP support endpoint.
+	HostedResources []OIDCHostedResource `mapstructure:"hosted_resources"`
 }
 
 // OIDCKey represents a single OIDC signing key.

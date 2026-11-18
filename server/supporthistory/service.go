@@ -19,6 +19,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
 )
 
 // Operation names used in audit records and cursor digests.
@@ -47,7 +49,7 @@ type Service struct {
 	identity IdentityResolver
 	audit    AuditRecorder
 	prefixes PrefixSource
-	gate     *gate
+	gate     *supportaccess.Gate
 	now      func() time.Time
 	timeout  time.Duration
 }
@@ -60,7 +62,7 @@ func NewService(options Options) (*Service, error) {
 
 	service := &Service{attempts: options.Attempts, bans: options.Bans, identity: options.Identity,
 		audit: options.Audit, prefixes: options.Prefixes, now: options.Now, timeout: options.Timeout,
-		gate: newGate(maxConcurrentOperations, maxConcurrentPerCaller)}
+		gate: supportaccess.NewGate(maxConcurrentOperations, maxConcurrentPerCaller, gateWait)}
 
 	if service.now == nil {
 		service.now = time.Now
@@ -100,8 +102,8 @@ func (s *Service) begin(ctx context.Context, caller Caller, operation string, ne
 	}
 
 	call := &operationCall{started: s.now(), service: s, caller: caller, entry: AuditEntry{
-		Operation: operation, CallerIdentity: caller.Identity(), CallerMethod: string(caller.Method()),
-		Projection: string(caller.projection()), SubjectDigest: subjectDigest(subject...), AuditReference: boundedReference(reference),
+		Service: auditService, Operation: operation, CallerIdentity: caller.Identity(), CallerMethod: string(caller.Method()),
+		Projection: string(caller.projection()), SubjectDigest: subjectDigest(subject...), AuditReference: supportaccess.BoundedAuditReference(reference),
 	}}
 
 	if !caller.has(need) {
@@ -116,11 +118,12 @@ func (s *Service) begin(ctx context.Context, caller Caller, operation string, ne
 		return ctx, nil, err
 	}
 
-	release, gateErr := s.gate.acquire(ctx, caller.Identity())
-	if gateErr != nil {
-		call.finish(ctx, 0, gateErr)
+	release, acquired := s.gate.Acquire(ctx, caller.Identity())
+	if !acquired {
+		busy := newError(CodeBusy, nil)
+		call.finish(ctx, 0, busy)
 
-		return ctx, nil, gateErr
+		return ctx, nil, busy
 	}
 
 	call.release = release
@@ -159,17 +162,8 @@ func (c *operationCall) finish(ctx context.Context, results int, err *Error) {
 	}
 
 	if c.service.audit != nil {
-		c.service.audit.RecordHistoryAudit(context.WithoutCancel(ctx), c.entry)
+		c.service.audit.RecordSupportAudit(context.WithoutCancel(ctx), c.entry)
 	}
-}
-
-// boundedReference keeps an unvalidated audit reference out of the log unless it matches the bounded format.
-func boundedReference(reference string) string {
-	if validateAuditReference(reference) != nil {
-		return ""
-	}
-
-	return reference
 }
 
 // mapStoreError maps store failures to stable codes; the cause stays internal.

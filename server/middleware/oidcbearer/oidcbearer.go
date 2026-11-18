@@ -23,12 +23,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	servererrors "github.com/croessner/nauthilus/v4/server/errors"
 	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
+	"github.com/croessner/nauthilus/v4/server/tokenclaims"
 	"github.com/croessner/nauthilus/v4/server/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -254,74 +254,19 @@ func hasServiceTokenClientID(claims jwt.MapClaims) bool {
 	return ok && clientID != ""
 }
 
-// HasTokenType reports whether claims carry the expected issuer-owned token purpose.
+// HasTokenType reports whether the claims carry exactly the given Nauthilus token type.
 func HasTokenType(claims jwt.MapClaims, tokenType string) bool {
-	if claims == nil || tokenType == "" {
-		return false
-	}
-
-	actual, ok := claims[definitions.ClaimTokenType].(string)
-
-	return ok && actual == tokenType
+	return tokenclaims.HasTokenType(claims, tokenType)
 }
 
-// HasAudience reports whether claims are bound to the expected audience.
+// HasAudience reports whether the normalized audience set contains audience.
 func HasAudience(claims jwt.MapClaims, audience string) bool {
-	if audience == "" {
-		return false
-	}
-
-	audiences, ok := normalizedAudienceSet(claims)
-
-	if !ok {
-		return false
-	}
-
-	_, ok = audiences[audience]
-
-	return ok
+	return tokenclaims.HasAudience(claims, audience)
 }
 
-// hasExactAudienceSet reports whether the normalized audience set contains only the expected resource.
+// hasExactAudienceSet reports whether the token targets exactly the expected audience.
 func hasExactAudienceSet(claims jwt.MapClaims, expected string) bool {
-	if expected == "" {
-		return false
-	}
-
-	audiences, ok := normalizedAudienceSet(claims)
-
-	if !ok || len(audiences) != 1 {
-		return false
-	}
-
-	_, ok = audiences[expected]
-
-	return ok
-}
-
-// normalizedAudienceSet parses supported claim shapes into one validated, deduplicated resource set.
-func normalizedAudienceSet(claims jwt.MapClaims) (map[string]struct{}, bool) {
-	if claims == nil {
-		return nil, false
-	}
-
-	audiences, err := claims.GetAudience()
-
-	if err != nil || len(audiences) == 0 {
-		return nil, false
-	}
-
-	result := make(map[string]struct{}, len(audiences))
-
-	for _, audience := range audiences {
-		if audience == "" || strings.TrimSpace(audience) != audience || !utf8.ValidString(audience) {
-			return nil, false
-		}
-
-		result[audience] = struct{}{}
-	}
-
-	return result, true
+	return tokenclaims.HasExactAudienceSet(claims, expected)
 }
 
 // ExtractBearerToken extracts the Bearer token from the Authorization header.
@@ -341,37 +286,14 @@ func ExtractBearerToken(ctx *gin.Context) (string, bool) {
 	return token, true
 }
 
-// HasScope checks whether the given claims contain a specific scope.
-// Scopes are stored as a space-separated string in the "scope" claim
-// per RFC 6749 / RFC 9068.
+// HasScope reports whether the scope claim contains scope exactly.
 func HasScope(claims jwt.MapClaims, scope string) bool {
-	if claims == nil || scope == "" {
-		return false
-	}
-
-	scopeStr, ok := claims["scope"].(string)
-	if !ok {
-		return false
-	}
-
-	for s := range strings.SplitSeq(scopeStr, " ") {
-		if s == scope {
-			return true
-		}
-	}
-
-	return false
+	return tokenclaims.HasScope(claims, scope)
 }
 
-// HasAnyScope checks whether the given claims contain at least one of the specified scopes.
+// HasAnyScope reports whether the scope claim contains at least one of scopes.
 func HasAnyScope(claims jwt.MapClaims, scopes ...string) bool {
-	for _, scope := range scopes {
-		if HasScope(claims, scope) {
-			return true
-		}
-	}
-
-	return false
+	return tokenclaims.HasAnyScope(claims, scopes...)
 }
 
 // GetClaimsFromContext retrieves the OIDC claims from the Gin context.

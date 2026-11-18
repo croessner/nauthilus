@@ -25,6 +25,7 @@ type ProductionArtifactManifest struct {
 	StartupLua         []string `mapstructure:"-"`
 	PolicyLua          []string `mapstructure:"-"`
 	HTTPClientTLS      []string `mapstructure:"-"`
+	Diagnostics        []string `mapstructure:"-"`
 	Identity           []string `mapstructure:"-"`
 	RemoteAuthority    []string `mapstructure:"-"`
 	Hooks              []string `mapstructure:"-"`
@@ -44,6 +45,7 @@ func (m ProductionArtifactManifest) SnapshotSpec() ArtifactSnapshotSpec {
 	paths = append(paths, m.StartupLua...)
 	paths = append(paths, m.PolicyLua...)
 	paths = append(paths, m.HTTPClientTLS...)
+	paths = append(paths, m.Diagnostics...)
 	paths = append(paths, m.Identity...)
 	paths = append(paths, m.RemoteAuthority...)
 	paths = append(paths, m.Hooks...)
@@ -81,6 +83,7 @@ func ProductionArtifactManifestFor(configured File) ProductionArtifactManifest {
 		StartupLua:         artifactLuaStartupPaths(lua),
 		PolicyLua:          artifactPolicyLuaPaths(configured),
 		HTTPClientTLS:      artifactHTTPClientTLSPaths(server.GetHTTPClient()),
+		Diagnostics:        artifactOperationsDiagnosticsPaths(configured),
 		Identity:           artifactIdentityPaths(configured.GetIDP()),
 		RemoteAuthority:    artifactRemoteAuthorityPaths(configured),
 		Hooks:              artifactHookPaths(lua.GetHooks()),

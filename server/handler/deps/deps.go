@@ -34,6 +34,7 @@ import (
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
+	"github.com/croessner/nauthilus/v4/server/supportops"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -128,4 +129,6 @@ type Deps struct {
 	CallerRateLimiter mdauth.CallerRateLimiter
 	// SupportHistory is the process-owned historical diagnosis service; nil when no history source is configured.
 	SupportHistory *supporthistory.Service
+	// SupportOperations is the process-owned operational diagnostics service; nil when it is not enabled.
+	SupportOperations *supportops.Service
 }

@@ -61,6 +61,7 @@ type mockOIDCCfg struct {
 	signingKey            secret.Value
 	signingKeyID          string
 	clients               []config.OIDCClient
+	hostedResources       []config.OIDCHostedResource
 	tokenEndpointAllowGET bool
 	dynamicRegistration   bool
 	dynamicPolicy         config.OIDCDynamicClientRegistrationConfig
@@ -80,7 +81,8 @@ func (m *mockOIDCCfg) GetIDP() *config.IDPSection {
 			SigningKeys: []config.OIDCKey{
 				{ID: m.signingKeyID, Key: m.signingKey, Active: true},
 			},
-			Clients: m.clients,
+			Clients:         m.clients,
+			HostedResources: m.hostedResources,
 		},
 	}
 }

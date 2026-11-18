@@ -228,7 +228,7 @@ func (h *OIDCHandler) DeviceAuthorization(ctx *gin.Context) {
 	clientID = client.ClientID
 	sp.SetAttributes(attribute.String(oidcParamClientID, clientID))
 
-	resources, err := h.validateRequestedResources(client, oidcRequestedResources(ctx))
+	resources, err := h.idp.ResourceRegistry().ValidateDeviceRequestedResources(client, oidcRequestedResources(ctx))
 	if err != nil {
 		writeOIDCInvalidTargetResponse(ctx)
 
@@ -460,7 +460,7 @@ func (h *OIDCHandler) issueDeviceCodeTokens(ctx *gin.Context, deviceCode string,
 	session := newDeviceCodeOIDCSession(request)
 
 	idToken, accessToken, refreshToken, expiresIn, err := h.idp.IssueTokensWithOptions(
-		ctx.Request.Context(), session, idp.TokenIssueOptions{Resources: oidcRequestedResources(ctx)},
+		ctx.Request.Context(), session, idp.TokenIssueOptions{Resources: oidcRequestedResources(ctx), DeviceGrant: true},
 	)
 	if errors.Is(err, idp.ErrInvalidTarget) {
 		writeOIDCInvalidTargetResponse(ctx)

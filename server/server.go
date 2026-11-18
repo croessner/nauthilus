@@ -50,6 +50,7 @@ import (
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
+	"github.com/croessner/nauthilus/v4/server/supportops"
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -102,6 +103,8 @@ type contextStore struct {
 
 	// supportHistory is the process-owned historical diagnosis service; nil when no history source is configured.
 	supportHistory *supporthistory.Service
+	// supportOperations is the process-owned operational diagnostics service; nil when it is not enabled.
+	supportOperations *supportops.Service
 
 	// bruteForceTolerate is the explicitly constructed boot-lifetime tolerance owner.
 	bruteForceTolerate tolerate.Tolerate
@@ -111,6 +114,8 @@ type contextStore struct {
 
 	// grpcAuthorityDone signals completion of the optional gRPC authority server.
 	grpcAuthorityDone <-chan struct{}
+	// mcpDone signals completion of the optional MCP endpoint.
+	mcpDone <-chan struct{}
 
 	// scriptUploads owns the background Lua script upload started by setupRedis.
 	scriptUploads scriptUploadSlot
@@ -372,6 +377,10 @@ func startHTTPServerWithOptions(ctx context.Context, store *contextStore, option
 	})
 
 	if err := startGRPCAuthorityForHTTP(runtime.store.server.ctx, runtime, options); err != nil {
+		return err
+	}
+
+	if err := startMCPForHTTP(runtime.store.server.ctx, runtime, options); err != nil {
 		return err
 	}
 
@@ -656,20 +665,21 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 
 	return func(e *gin.Engine) {
 		deps := &handlerdeps.Deps{
-			Cfg:            runtime.cfg,
-			CfgProvider:    runtime.store.cfgProvider,
-			Env:            runtime.env,
-			Logger:         runtime.logger,
-			Redis:          runtime.store.redisClient,
-			LangManager:    runtime.store.langManager,
-			TokenFlusher:   tokenStorage,
-			PolicyDecision: runtime.policyDecision,
-			PluginRunner:   runtime.store.pluginRunner,
-			Tolerate:       runtime.store.bruteForceTolerate,
-			RouteArtifacts: runtime.routeArtifacts,
-			LDAPQueue:      priorityqueue.LDAPQueue,
-			LDAPAuthQueue:  priorityqueue.LDAPAuthQueue,
-			SupportHistory: runtime.store.supportHistory,
+			Cfg:               runtime.cfg,
+			CfgProvider:       runtime.store.cfgProvider,
+			Env:               runtime.env,
+			Logger:            runtime.logger,
+			Redis:             runtime.store.redisClient,
+			LangManager:       runtime.store.langManager,
+			TokenFlusher:      tokenStorage,
+			PolicyDecision:    runtime.policyDecision,
+			PluginRunner:      runtime.store.pluginRunner,
+			Tolerate:          runtime.store.bruteForceTolerate,
+			RouteArtifacts:    runtime.routeArtifacts,
+			LDAPQueue:         priorityqueue.LDAPQueue,
+			LDAPAuthQueue:     priorityqueue.LDAPAuthQueue,
+			SupportHistory:    runtime.store.supportHistory,
+			SupportOperations: runtime.store.supportOperations,
 		}
 
 		if runtime.rateLimit != nil {

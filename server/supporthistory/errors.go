@@ -15,10 +15,10 @@
 
 package supporthistory
 
-import "errors"
+import "github.com/croessner/nauthilus/v4/server/supportaccess"
 
-// ErrorCode is a stable, transport-independent error code of the history service.
-type ErrorCode string
+// ErrorCode is a stable, transport-independent error code of the history service (shared support error type).
+type ErrorCode = supportaccess.ErrorCode
 
 const (
 	// CodeInvalidRequest marks a malformed or inconsistent request.
@@ -74,42 +74,24 @@ var errorMessages = map[ErrorCode]string{
 	CodeInternal:          "The history query failed unexpectedly.",
 }
 
-// Error is a service error with a stable code and a fixed message.
-type Error struct {
-	cause error
-	Code  ErrorCode
-}
+// Error is a service error with a stable code and a fixed message (shared support error type).
+type Error = supportaccess.Error
 
 // newError wraps an internal cause under a stable code without publishing the cause.
 func newError(code ErrorCode, cause error) *Error {
-	return &Error{Code: code, cause: cause}
+	return supportaccess.NewError(code, ErrorMessage(code), cause)
 }
 
-// Error returns the fixed message of the code.
-func (e *Error) Error() string {
-	return e.Message()
-}
-
-// Message returns the fixed public text of the code.
-func (e *Error) Message() string {
-	if message, ok := errorMessages[e.Code]; ok {
+// ErrorMessage returns the fixed public text of a history code; unknown codes get the internal-error text.
+func ErrorMessage(code ErrorCode) string {
+	if message, ok := errorMessages[code]; ok {
 		return message
 	}
 
 	return errorMessages[CodeInternal]
 }
 
-// Unwrap exposes the internal cause for logging inside the host only.
-func (e *Error) Unwrap() error {
-	return e.cause
-}
-
 // AsError returns the service error carried by err, mapping anything else to an internal error.
 func AsError(err error) *Error {
-	var serviceErr *Error
-	if errors.As(err, &serviceErr) {
-		return serviceErr
-	}
-
-	return newError(CodeInternal, err)
+	return supportaccess.AsError(err, func(cause error) *Error { return newError(CodeInternal, cause) })
 }

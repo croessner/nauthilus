@@ -65,6 +65,7 @@ type RuntimeProcessSection struct {
 type RuntimeServersSection struct {
 	HTTP RuntimeHTTPServerSection  `mapstructure:"http" validate:"omitempty"`
 	GRPC RuntimeGRPCServersSection `mapstructure:"grpc" validate:"omitempty"`
+	MCP  RuntimeMCPServerSection   `mapstructure:"mcp" validate:"omitempty"`
 }
 
 // RuntimeHTTPServerSection configures the inbound HTTP server.
@@ -611,10 +612,11 @@ func (s *AuthorityTokenCacheSection) GetRefreshLockTTL() time.Duration {
 
 // ObservabilitySection groups logging, profiling, tracing, and metrics.
 type ObservabilitySection struct {
-	Log      Log                   `mapstructure:"log" validate:"omitempty"`
-	Profiles ObservabilityProfiles `mapstructure:"profiles" validate:"omitempty"`
-	Tracing  Tracing               `mapstructure:"tracing" validate:"omitempty"`
-	Metrics  ObservabilityMetrics  `mapstructure:"metrics" validate:"omitempty"`
+	Log         Log                   `mapstructure:"log" validate:"omitempty"`
+	Profiles    ObservabilityProfiles `mapstructure:"profiles" validate:"omitempty"`
+	Tracing     Tracing               `mapstructure:"tracing" validate:"omitempty"`
+	Metrics     ObservabilityMetrics  `mapstructure:"metrics" validate:"omitempty"`
+	Diagnostics DiagnosticsSection    `mapstructure:"diagnostics" validate:"omitempty"`
 }
 
 // ObservabilityProfiles configures runtime profiling toggles.
@@ -987,6 +989,7 @@ type OIDCWireConfig struct {
 	Logout                            OIDCLogoutSection                   `mapstructure:"logout" validate:"omitempty"`
 	DeviceFlow                        OIDCDeviceFlow                      `mapstructure:"device_flow" validate:"omitempty"`
 	DynamicClientRegistration         OIDCDynamicClientRegistrationConfig `mapstructure:"dynamic_client_registration" validate:"omitempty"`
+	HostedResources                   []OIDCHostedResource                `mapstructure:"hosted_resources"`
 }
 
 // OIDCConsentSection configures consent defaults.
@@ -1382,5 +1385,6 @@ func (o OIDCWireConfig) Materialize() OIDCConfig {
 		DeviceCodePollingInterval:          o.DeviceFlow.PollingInterval,
 		DeviceCodeUserCodeLength:           o.DeviceFlow.UserCodeLength,
 		DynamicClientRegistration:          o.DynamicClientRegistration,
+		HostedResources:                    cloneHostedResources(o.HostedResources),
 	}
 }

@@ -39,6 +39,13 @@ var fixtureBase = time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 // testRouter mounts the handler below /api/v1 with a stand-in for the validated backchannel middleware.
 func testRouter(t *testing.T, service *supporthistory.Service, claims jwt.MapClaims, basic bool) *gin.Engine {
 	t.Helper()
+
+	return testRouterWithDeps(t, &handlerdeps.Deps{SupportHistory: service}, claims, basic)
+}
+
+// testRouterWithDeps mounts the handler over the given support services.
+func testRouterWithDeps(t *testing.T, deps *handlerdeps.Deps, claims jwt.MapClaims, basic bool) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
@@ -51,7 +58,7 @@ func testRouter(t *testing.T, service *supporthistory.Service, claims jwt.MapCla
 		ctx.Next()
 	})
 
-	New(&handlerdeps.Deps{SupportHistory: service}).Register(group)
+	New(deps).Register(group)
 
 	return engine
 }
@@ -190,6 +197,7 @@ func TestSupportHistoryRefusesUnsafeTransportInput(t *testing.T) {
 		"query parameters": {target + "?login=anna@example.test", searchBody()},
 		"unknown field":    {target, strings.Replace(searchBody(), `"page"`, `"role":"admin","page"`, 1)},
 		"trailing data":    {target, searchBody() + `{}`},
+		"duplicate member": {target, strings.Replace(searchBody(), `"page"`, `"subject":{"login":"bob@example.test"},"page"`, 1)},
 		"oversized body":   {target, `{"schema_version":"1","audit_reference":"` + strings.Repeat("a", 20000) + `"}`},
 	} {
 		t.Run(name, func(t *testing.T) {

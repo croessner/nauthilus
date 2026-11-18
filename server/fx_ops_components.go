@@ -349,7 +349,11 @@ func (r *restartOrchestrator) waitHTTPShutdownSignals(ctx context.Context, step 
 		}
 	}
 
-	return waitRestartDone(ctx, r.store.grpcAuthorityDone, "wait_grpc_authority_done", step)
+	if err := waitRestartDone(ctx, r.store.grpcAuthorityDone, "wait_grpc_authority_done", step); err != nil {
+		return err
+	}
+
+	return waitRestartDone(ctx, r.store.mcpDone, "wait_mcp_done", step)
 }
 
 // restartHTTPAfterStop restarts HTTP best-effort after a restart path stopped it.
@@ -592,7 +596,7 @@ func waitForServerShutdown(ctx context.Context, store *contextStore) bool {
 		}
 	}
 
-	return waitForDone(ctx, store.grpcAuthorityDone)
+	return waitForDone(ctx, store.grpcAuthorityDone) && waitForDone(ctx, store.mcpDone)
 }
 
 // waitForConfiguredBackendShutdowns waits for all configured backend workers.

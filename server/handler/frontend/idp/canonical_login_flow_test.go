@@ -667,13 +667,23 @@ func openCanonicalFixture(
 func seedCanonicalIDPFlow(t *testing.T, state *flowdomain.State) (*cookie.CanonicalRuntime, *http.Cookie, string) {
 	t.Helper()
 
-	now := time.Date(2026, time.August, 17, 12, 0, 0, 0, time.UTC)
+	return seedCanonicalIDPFlowWithClock(t, state, canonicalLoginClock{now: time.Date(2026, time.August, 17, 12, 0, 0, 0, time.UTC)})
+}
+
+// seedCanonicalIDPFlowWithClock seeds a canonical browser session whose runtime reads time from clock.
+func seedCanonicalIDPFlowWithClock(
+	t *testing.T,
+	state *flowdomain.State,
+	clock sessionstate.Clock,
+) (*cookie.CanonicalRuntime, *http.Cookie, string) {
+	t.Helper()
+
 	mini := miniredis.RunT(t)
 
 	runtime, err := cookie.NewCanonicalRuntime(
 		[]byte("canonical-login-flow-test-secret-32bytes"), 1,
 		redis.NewClient(&redis.Options{Addr: mini.Addr()}), "canonical-login-flow",
-		canonicalLoginClock{now: now}, sessionstate.NewRandomHandleGenerator(nil), false,
+		clock, sessionstate.NewRandomHandleGenerator(nil), false,
 	)
 	if err != nil {
 		t.Fatalf("create canonical runtime: %v", err)

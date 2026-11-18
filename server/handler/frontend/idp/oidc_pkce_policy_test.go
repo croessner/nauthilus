@@ -115,8 +115,9 @@ func TestRejectOIDCAuthorizeMetadataUsesExplicitErrorAndPreservesQuery(t *testin
 		state:       "state value",
 	}
 
-	_, accepted := rejectOIDCAuthorizeMetadata(ctx, &config.OIDCClient{Dynamic: true}, request, oidcErrorUnsupportedResponseType, "unsupported")
+	response := oidcAuthorizationResponse{issuer: "https://login.example.test"}
+	_, accepted := rejectOIDCAuthorizeMetadata(ctx, response, &config.OIDCClient{Dynamic: true}, request, oidcErrorUnsupportedResponseType, "unsupported")
 
 	assert.False(t, accepted)
-	assert.Equal(t, "http://127.0.0.1/callback?error=unsupported_response_type&existing=value&state=state+value", recorder.Header().Get("Location"))
+	assert.Equal(t, "http://127.0.0.1/callback?error=unsupported_response_type&existing=value&iss=https%3A%2F%2Flogin.example.test&state=state+value", recorder.Header().Get("Location"))
 }

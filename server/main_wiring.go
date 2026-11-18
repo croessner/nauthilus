@@ -534,6 +534,7 @@ func newContextStoreForRuntime(
 
 	if cfgProvider != nil && cfgProvider.Current().File != nil {
 		store.supportHistory = newSupportHistoryService(cfgProvider.Current().File, redisClient, logger)
+		store.supportOperations = newSupportOperationsService(cfgProvider.Current().File, logger)
 	}
 
 	return store

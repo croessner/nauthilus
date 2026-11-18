@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -88,27 +87,27 @@ func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request *oi
 	}
 
 	if hasOIDCPrompt(request.prompt, oidcClientAuthMethodNone) && len(strings.Fields(request.prompt)) != 1 {
-		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, "prompt=none cannot be combined with other values")
+		return rejectOIDCAuthorizeMetadata(ctx, h.authorizationResponse(), client, *request, oidcErrorInvalidRequest, "prompt=none cannot be combined with other values")
 	}
 
 	if request.responseType != oidcResponseTypeCode {
-		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorUnsupportedResponseType, "Only response_type=code is supported")
+		return rejectOIDCAuthorizeMetadata(ctx, h.authorizationResponse(), client, *request, oidcErrorUnsupportedResponseType, "Only response_type=code is supported")
 	}
 
 	codeChallengeMethod, methodErr := normalizeCodeChallengeMethod(request.codeChallenge, request.codeChallengeMethod)
 	if methodErr != nil {
-		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, methodErr.Error())
+		return rejectOIDCAuthorizeMetadata(ctx, h.authorizationResponse(), client, *request, oidcErrorInvalidRequest, methodErr.Error())
 	}
 
 	request.codeChallengeMethod = codeChallengeMethod
 
 	if client.RequiresPKCE() && request.codeChallenge == "" {
-		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidRequest, "PKCE is required for this client")
+		return rejectOIDCAuthorizeMetadata(ctx, h.authorizationResponse(), client, *request, oidcErrorInvalidRequest, "PKCE is required for this client")
 	}
 
 	resources, err := h.validateRequestedResources(client, request.resources)
 	if err != nil {
-		return rejectOIDCAuthorizeMetadata(ctx, client, *request, oidcErrorInvalidTarget, "Invalid resource")
+		return rejectOIDCAuthorizeMetadata(ctx, h.authorizationResponse(), client, *request, oidcErrorInvalidTarget, "Invalid resource")
 	}
 
 	request.resources = resources
@@ -117,9 +116,9 @@ func (h *OIDCHandler) validateOIDCAuthorizeRequest(ctx *gin.Context, request *oi
 }
 
 // rejectOIDCAuthorizeMetadata redirects dynamic-client errors only after validating the redirect URI.
-func rejectOIDCAuthorizeMetadata(ctx *gin.Context, client *config.OIDCClient, request oidcAuthorizeRequest, errorCode string, message string) (*config.OIDCClient, bool) {
+func rejectOIDCAuthorizeMetadata(ctx *gin.Context, response oidcAuthorizationResponse, client *config.OIDCClient, request oidcAuthorizeRequest, errorCode string, message string) (*config.OIDCClient, bool) {
 	if client.Dynamic {
-		redirectOIDCAuthorizeError(ctx, request.redirectURI, request.state, errorCode)
+		response.redirectError(ctx, request.redirectURI, request.state, errorCode)
 
 		return nil, false
 	}
@@ -127,51 +126,6 @@ func rejectOIDCAuthorizeMetadata(ctx *gin.Context, client *config.OIDCClient, re
 	ctx.String(http.StatusBadRequest, message)
 
 	return nil, false
-}
-
-// redirectOIDCAuthorizeError redirects an authorization error to the client.
-func redirectOIDCAuthorizeError(ctx *gin.Context, redirectURI string, state string, errorCode string) {
-	target, err := url.Parse(redirectURI)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "Invalid redirect_uri")
-
-		return
-	}
-
-	query := target.Query()
-	query.Set(definitions.LogKeyError, errorCode)
-
-	if state != "" {
-		query.Set(oidcParamState, state)
-	}
-
-	target.RawQuery = query.Encode()
-
-	ctx.Redirect(http.StatusFound, target.String())
-}
-
-// buildOIDCCallbackRedirectURL appends authorization response parameters safely.
-func buildOIDCCallbackRedirectURL(redirectURI string, code string, state string) (string, error) {
-	callbackURL, err := url.Parse(strings.TrimSpace(redirectURI))
-	if err != nil {
-		return "", err
-	}
-
-	if strings.TrimSpace(callbackURL.String()) == "" {
-		return "", fmt.Errorf("redirect_uri is missing")
-	}
-
-	query := callbackURL.Query()
-	query.Set(oidcParamCode, code)
-
-	if state != "" {
-		query.Set(oidcParamState, state)
-	}
-
-	callbackURL.RawQuery = query.Encode()
-	callbackURL.Fragment = ""
-
-	return callbackURL.String(), nil
 }
 
 // oidcAuthorizeRequestMatchesMetadata binds a request to persisted typed flow metadata.

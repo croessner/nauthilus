@@ -219,6 +219,8 @@ func TestOIDCRegisterCanonicalBindsExplicitBrowserModesWithoutLegacyFailurePage(
 		{http.MethodGet, "/oidc/logout"}, {http.MethodGet, "/logout"},
 		{http.MethodGet, "/oidc/consent"}, {http.MethodPost, "/oidc/consent"},
 		{http.MethodGet, "/.well-known/openid-configuration"}, {http.MethodPost, "/oidc/token"},
+		{http.MethodGet, authorizationServerMetadataPath},
+		{http.MethodGet, authorizationServerMetadataPath + "/*" + authorizationServerMetadataIssuerPathParam},
 		{http.MethodGet, "/oidc/userinfo"}, {http.MethodPost, "/oidc/introspect"},
 		{http.MethodGet, "/oidc/jwks"}, {http.MethodPost, "/oidc/device"},
 	} {

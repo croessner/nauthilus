@@ -232,8 +232,8 @@ type auditLog struct {
 	entries []supporthistory.AuditEntry
 }
 
-// RecordHistoryAudit stores one entry.
-func (a *auditLog) RecordHistoryAudit(_ context.Context, entry supporthistory.AuditEntry) {
+// RecordSupportAudit stores one entry.
+func (a *auditLog) RecordSupportAudit(_ context.Context, entry supporthistory.AuditEntry) {
 	a.entries = append(a.entries, entry)
 }
 

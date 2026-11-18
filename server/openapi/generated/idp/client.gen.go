@@ -23,7 +23,10 @@ type JWKS struct {
 
 // OIDCDiscovery defines model for OIDCDiscovery.
 type OIDCDiscovery struct {
-	AuthorizationEndpoint                              string                 `json:"authorization_endpoint"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+
+	// AuthorizationResponseIssParameterSupported RFC 9207; authorization responses carry the iss parameter.
+	AuthorizationResponseIssParameterSupported         *bool                  `json:"authorization_response_iss_parameter_supported,omitempty"`
 	IntrospectionEndpoint                              *string                `json:"introspection_endpoint,omitempty"`
 	IntrospectionEndpointAuthMethodsSupported          *[]string              `json:"introspection_endpoint_auth_methods_supported,omitempty"`
 	IntrospectionEndpointAuthSigningAlgValuesSupported *[]string              `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
@@ -68,6 +71,14 @@ func (a *OIDCDiscovery) UnmarshalJSON(b []byte) error {
 			return fmt.Errorf("error reading 'authorization_endpoint': %w", err)
 		}
 		delete(object, "authorization_endpoint")
+	}
+
+	if raw, found := object["authorization_response_iss_parameter_supported"]; found {
+		err = json.Unmarshal(raw, &a.AuthorizationResponseIssParameterSupported)
+		if err != nil {
+			return fmt.Errorf("error reading 'authorization_response_iss_parameter_supported': %w", err)
+		}
+		delete(object, "authorization_response_iss_parameter_supported")
 	}
 
 	if raw, found := object["introspection_endpoint"]; found {
@@ -172,6 +183,13 @@ func (a OIDCDiscovery) MarshalJSON() ([]byte, error) {
 	object["authorization_endpoint"], err = json.Marshal(a.AuthorizationEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling 'authorization_endpoint': %w", err)
+	}
+
+	if a.AuthorizationResponseIssParameterSupported != nil {
+		object["authorization_response_iss_parameter_supported"], err = json.Marshal(a.AuthorizationResponseIssParameterSupported)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'authorization_response_iss_parameter_supported': %w", err)
+		}
 	}
 
 	if a.IntrospectionEndpoint != nil {

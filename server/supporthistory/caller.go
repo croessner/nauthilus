@@ -17,31 +17,29 @@
 //
 // It reads recorded ClickHouse evidence only (contrib/plugins/clickhouse/DIAGNOSTIC_CONTRACT.md), never current
 // runtime state, and owns authorization, shared limits, correlation, interpretation, projection, coverage, and audit.
-// Transport adapters (HTTP today, MCP later) authenticate their transport, pass verified credential facts, and
+// Transport adapters (management HTTP and MCP) authenticate their transport, pass verified credential facts, and
 // serialize the returned DTOs; they contain no diagnosis logic.
 package supporthistory
 
 import (
-	"slices"
-	"strings"
-
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
 )
 
-// CredentialMethod names how a transport verified the caller.
-type CredentialMethod string
+// CredentialMethod names how a transport verified the caller (shared with the other support services).
+type CredentialMethod = supportaccess.CredentialMethod
 
-// CredentialOIDCBearer is a backchannel OAuth access token validated by the host.
-const CredentialOIDCBearer CredentialMethod = "oidc_bearer"
+const (
+	// CredentialOIDCBearer is a backchannel OAuth service access token validated by the host.
+	CredentialOIDCBearer = supportaccess.CredentialOIDCBearer
+
+	// CredentialOAuthUser is a user access token validated by the resource server of a hosted resource (MCP).
+	CredentialOAuthUser = supportaccess.CredentialOAuthUser
+)
 
 // VerifiedCredential carries facts a transport adapter has already verified. Only an adapter that validated the
 // credential itself may construct it; nothing in it is taken from request bodies or caller-supplied headers.
-type VerifiedCredential struct {
-	Method   CredentialMethod
-	ClientID string
-	Subject  string
-	Scopes   []string
-}
+type VerifiedCredential = supportaccess.VerifiedCredential
 
 // permission is the internal capability set derived from verified credential facts.
 type permission uint8
@@ -73,31 +71,23 @@ type Caller struct {
 	permissions permission
 }
 
-// NewCaller maps verified credential facts to history permissions.
+// NewCaller maps verified credential facts to history permissions. Both a backchannel service token and a user
+// token of a hosted resource map through the same scopes; a credential without a principal identity maps to nothing.
 func NewCaller(credential VerifiedCredential) Caller {
-	caller := Caller{identity: callerIdentity(credential), method: credential.Method}
-	if credential.Method != CredentialOIDCBearer || caller.identity == "" {
+	caller := Caller{identity: credential.Identity(), method: credential.Method}
+	if caller.identity == "" {
 		return caller
 	}
 
-	if slices.Contains(credential.Scopes, definitions.ScopeHistoryRead) {
+	if credential.HasScope(definitions.ScopeHistoryRead) {
 		caller.permissions |= permissionAttemptsRead
 	}
 
-	if slices.Contains(credential.Scopes, definitions.ScopeHistoryDetail) {
+	if credential.HasScope(definitions.ScopeHistoryDetail) {
 		caller.permissions |= permissionAttemptsRead | permissionDetailRead
 	}
 
 	return caller
-}
-
-// callerIdentity selects the stable audit identity of a verified credential.
-func callerIdentity(credential VerifiedCredential) string {
-	if identity := strings.TrimSpace(credential.ClientID); identity != "" {
-		return identity
-	}
-
-	return strings.TrimSpace(credential.Subject)
 }
 
 // Identity returns the host-derived audit identity.

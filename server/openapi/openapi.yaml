@@ -50,6 +50,13 @@ tags:
       Read-only historical authentication diagnosis from recorded ClickHouse evidence. Requires a backchannel bearer
       token with nauthilus:history_read; nauthilus:history_detail widens the projection. Basic credentials and
       nauthilus:admin alone grant no access.
+  - name: SupportOperations
+    x-displayName: /api/v1/support/operations
+    description: >-
+      Read-only operational diagnostics of this instance (current runtime state) and, when configured, of recorded Loki
+      log evidence through a fixed query profile. Requires a backchannel bearer token with nauthilus:operations_read.
+      Findings, hypotheses, and completeness are separate; missing data is unknown, and a local view is never a
+      cluster statement.
 paths:
   "/api/v1/custom/reputation/allocation":
     post:
@@ -1225,6 +1232,47 @@ paths:
           $ref: "#/components/responses/SupportHistoryInternal"
         "503":
           $ref: "#/components/responses/SupportHistoryUnavailable"
+  /api/v1/support/operations/diagnostics:
+    post:
+      tags:
+        - SupportOperations
+      operationId: diagnoseOperations
+      summary: Diagnose the support-relevant components from runtime state and recorded log evidence.
+      description: >-
+        Requires nauthilus:operations_read. Filters are accepted only in the JSON body; query parameters are refused.
+        HTTP 200 means the call was processed; every source states its completeness in `sources`. The runtime source
+        reports the current state of this instance only; log evidence covers the instances and window stated in its
+        coverage. Nothing is changed.
+      security:
+        - backchannelBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportOperationsDiagnosticsRequest"
+      responses:
+        "200":
+          description: Processed diagnosis; sources may be partial, unavailable, or not configured.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/SupportHistoryNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportOperationsDiagnosticsResponse"
+        "400":
+          $ref: "#/components/responses/SupportOperationsBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SupportOperationsForbidden"
+        "429":
+          $ref: "#/components/responses/SupportOperationsBusy"
+        "500":
+          $ref: "#/components/responses/SupportOperationsInternal"
+        "503":
+          $ref: "#/components/responses/SupportOperationsUnavailable"
 components:
   headers:
     SupportHistoryNoStore:
@@ -1554,6 +1602,36 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/SupportHistoryError"
+    SupportOperationsBadRequest:
+      description: Malformed request, unknown component or source, window above 24 hours, or query parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportOperationsError"
+    SupportOperationsForbidden:
+      description: The verified caller lacks nauthilus:operations_read.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportOperationsError"
+    SupportOperationsBusy:
+      description: The diagnostics concurrency gate is full; retry later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportOperationsError"
+    SupportOperationsInternal:
+      description: Unexpected service failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportOperationsError"
+    SupportOperationsUnavailable:
+      description: Operational diagnostics are not configured on this instance.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SupportOperationsError"
     PolicyDecision:
       description: Completed Policy evaluation, including an indeterminate effect when safe to construct.
       content:
@@ -1869,6 +1947,140 @@ components:
             limit: {type: integer, minimum: 1, maximum: 20}
             cursor: {type: string, maxLength: 512}
         audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+    SupportOperationsWindow:
+      type: object
+      additionalProperties: false
+      required: [from, until]
+      properties:
+        from: {type: string, format: date-time, description: Inclusive lower bound.}
+        until: {type: string, format: date-time, description: Exclusive upper bound; not in the future.}
+    SupportOperationsDiagnosticsRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        window:
+          $ref: "#/components/schemas/SupportOperationsWindow"
+          description: Defaults to the last 15 minutes; at most 24 hours.
+        components:
+          type: array
+          maxItems: 7
+          uniqueItems: true
+          description: Components to diagnose; all when absent.
+          items: {type: string, enum: [ldap, auth_backend, backend_monitoring, redis, clickhouse_export, auth_event_delivery, policy]}
+        sources:
+          type: array
+          maxItems: 2
+          uniqueItems: true
+          description: Sources to ask; all configured sources when absent.
+          items: {type: string, enum: [nauthilus_runtime, loki]}
+        audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+    SupportOperationsSourceReport:
+      type: object
+      additionalProperties: false
+      required: [coverage, name, kind, status, truncated]
+      properties:
+        coverage:
+          type: object
+          additionalProperties: false
+          required: [instances]
+          properties:
+            from: {type: string, format: date-time}
+            until: {type: string, format: date-time}
+            instances: {type: array, items: {type: string}}
+            view: {type: string, enum: [local_instance, log_labels]}
+        name: {type: string, enum: [nauthilus_runtime, loki]}
+        kind: {type: string, enum: [local_current, historical]}
+        status: {type: string, enum: [ok, partial, unavailable, timeout, not_configured, not_requested]}
+        code: {type: string, description: Stable reason code of a non-ok status.}
+        truncated: {type: boolean}
+    SupportOperationsFinding:
+      type: object
+      additionalProperties: false
+      required: [id, component, source, status, scope, observed, freshness, symptoms]
+      properties:
+        id: {type: string}
+        component: {type: string, enum: [ldap, auth_backend, backend_monitoring, redis, clickhouse_export, auth_event_delivery, policy]}
+        source: {type: string, enum: [nauthilus_runtime, loki]}
+        status: {type: string, enum: [failing, degraded, observed, not_observed, ok, unknown]}
+        scope:
+          type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: {type: string, enum: [instance, deployment]}
+            instance: {type: string}
+        labels: {type: object, additionalProperties: {type: string}, description: Observed infrastructure labels; untrusted data.}
+        observed:
+          type: object
+          additionalProperties: false
+          properties:
+            at: {type: string, format: date-time}
+            from: {type: string, format: date-time}
+            until: {type: string, format: date-time}
+        freshness:
+          type: object
+          additionalProperties: false
+          required: [observed_at, basis, age_seconds]
+          properties:
+            observed_at: {type: string, format: date-time}
+            counting_since: {type: string, format: date-time}
+            basis: {type: string, enum: [current_state, process_lifetime_counter, log_window]}
+            age_seconds: {type: integer, minimum: 0}
+        symptoms:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, count]
+            properties:
+              code: {type: string}
+              count: {type: integer, minimum: 0}
+    SupportOperationsHypothesis:
+      type: object
+      additionalProperties: false
+      required: [code, confidence, basis, finding_ids, caveats]
+      properties:
+        code: {type: string}
+        confidence: {type: string, enum: [low, medium]}
+        basis: {type: string}
+        finding_ids: {type: array, items: {type: string}}
+        caveats: {type: array, items: {type: string}}
+    SupportOperationsDiagnosticsResponse:
+      type: object
+      additionalProperties: false
+      required: [schema_version, scope, sources, findings, hypotheses, notes]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        scope:
+          type: object
+          additionalProperties: false
+          required: [window, queried_at, instance]
+          properties:
+            window: {$ref: "#/components/schemas/SupportOperationsWindow"}
+            queried_at: {type: string, format: date-time}
+            deployment: {type: string}
+            instance: {type: string}
+        sources: {type: array, items: {$ref: "#/components/schemas/SupportOperationsSourceReport"}}
+        findings: {type: array, items: {$ref: "#/components/schemas/SupportOperationsFinding"}}
+        hypotheses: {type: array, items: {$ref: "#/components/schemas/SupportOperationsHypothesis"}}
+        notes: {type: array, items: {type: string}}
+    SupportOperationsError:
+      type: object
+      additionalProperties: false
+      required: [schema_version, error]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, WINDOW_TOO_LARGE, FORBIDDEN, OPERATIONS_BUSY, OPERATIONS_NOT_CONFIGURED, INTERNAL_ERROR]
+            message: {type: string, description: Fixed English text per code; never parse it.}
     SupportHistoryCoverage:
       type: object
       additionalProperties: false

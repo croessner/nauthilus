@@ -59,6 +59,8 @@ const (
 	pathWellKnownOpenAPIJSON         = "/.well-known/openapi.json"
 	pathWellKnownOpenAPIYAML         = "/.well-known/openapi.yaml"
 	pathWellKnownOpenIDConfiguration = "/.well-known/openid-configuration"
+	pathWellKnownOAuthServer         = "/.well-known/oauth-authorization-server"
+	pathWellKnownOAuthServerIssuer   = "/.well-known/oauth-authorization-server/{issuerPath}"
 
 	managementAsyncJobStatusDone       = "DONE"
 	managementAsyncJobStatusError      = "ERROR"
@@ -94,6 +96,8 @@ var stableIDPOperations = []operationExpectation{
 	{method: methodGet, path: pathWellKnownOpenAPIYAML},
 	{method: methodGet, path: pathWellKnownOpenAPIJSON},
 	{method: methodGet, path: pathWellKnownOpenIDConfiguration},
+	{method: methodGet, path: pathWellKnownOAuthServer},
+	{method: methodGet, path: pathWellKnownOAuthServerIssuer},
 	{method: methodGet, path: pathOIDCAuthorize},
 	{method: methodPost, path: pathOIDCRegister},
 	{method: methodPost, path: "/oidc/token"},

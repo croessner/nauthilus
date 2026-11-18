@@ -96,6 +96,8 @@ func parserBackedContractDocuments() []openAPIContractDocument {
 				operationExpectation{method: methodGet, path: pathWellKnownOpenAPIYAML},
 				operationExpectation{method: methodGet, path: pathWellKnownOpenAPIJSON},
 				operationExpectation{method: methodGet, path: pathWellKnownOpenIDConfiguration},
+				operationExpectation{method: methodGet, path: pathWellKnownOAuthServer},
+				operationExpectation{method: methodGet, path: pathWellKnownOAuthServerIssuer},
 				operationExpectation{method: methodGet, path: pathOIDCAuthorize},
 				operationExpectation{method: methodPost, path: pathOIDCRegister},
 				operationExpectation{method: methodGet, path: pathOIDCJWKS},

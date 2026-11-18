@@ -287,7 +287,7 @@ func (n *NauthilusIDP) IssueTokensWithOptions(
 		return "", "", "", 0, fmt.Errorf("client not found")
 	}
 
-	accessResources, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	accessResources, err := n.grantAccessTokenResources(client, session, options)
 	if err != nil {
 		return "", "", "", 0, err
 	}
@@ -434,6 +434,7 @@ func (n *NauthilusIDP) issueIDAndAccessTokens(
 
 	// Access Token
 	accessSession := session.withAccessTokenResources(accessResources)
+	accessTokenLifetime = n.capHostedAccessTokenLifetime(accessTokenLifetime, accessSession.AccessTokenResources)
 	tokenIssuer := NewTokenIssuer(issuer, signer, accessSession, n.storage, n.tokenGen)
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIDP().OIDC.GetAccessTokenType())
 
@@ -640,7 +641,7 @@ func (n *NauthilusIDP) ExchangeRefreshTokenWithOptions(
 		return nil, "", "", "", 0, fmt.Errorf("client not found")
 	}
 
-	accessResources, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	accessResources, err := n.grantAccessTokenResources(client, session, options)
 	if err != nil {
 		return nil, "", "", "", 0, err
 	}
@@ -716,7 +717,7 @@ func (n *NauthilusIDP) exchangeDynamicRefreshToken(
 		return nil, "", "", "", 0, err
 	}
 
-	accessResources, err := n.accessTokenResources(client, session.AccessTokenResources, options.Resources)
+	accessResources, err := n.grantAccessTokenResources(client, session, options)
 	if err != nil {
 		return nil, "", "", "", 0, err
 	}
@@ -1396,6 +1397,8 @@ func (n *NauthilusIDP) GetUserByUsernameForOIDCClaimsCanonical(
 
 	effectiveScopes := n.deps.Cfg.GetIDP().OIDC.GetEffectiveCustomScopes(client)
 	attributeRequest := core.NewOIDCIdentityAttributeRequest(client, scopes, effectiveScopes)
+	n.requestHostedResourceGroups(attributeRequest, client)
+
 	typedContext := protocolContext
 	typedContext.RequestedScopes = append([]string(nil), protocolContext.RequestedScopes...)
 

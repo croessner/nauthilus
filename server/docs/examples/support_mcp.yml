@@ -1,0 +1,140 @@
+# Read-only MCP support access and operational diagnostics.
+#
+# Nauthilus is its own issuer: the MCP endpoint is the hosted resource "support-mcp", only the pre-registered public
+# client "support-cli" (Codex or Claude Code with a static client id) is admitted, and only members of the directory
+# group "nauthilus-support" pass authorization. Dynamic client registration stays available for mail clients, but a
+# dynamically registered client is never admitted to the MCP resource.
+#
+# Secrets come from the environment. Validate a copy with:
+# nauthilus --config-check --config /path/to/support_mcp.yml
+runtime:
+  instance_name: mx-1
+  servers:
+    http:
+      address: "127.0.0.1:8080"
+      trusted_proxies: ["127.0.0.1"]
+    # The MCP listener is plain HTTP on loopback; the reverse proxy terminates TLS for https://login.example.org/mcp
+    # and https://login.example.org/.well-known/oauth-protected-resource/mcp and forwards both here.
+    mcp:
+      enabled: true
+      address: "127.0.0.1:9097"
+      hosted_resource: support-mcp
+      tls_termination: trusted_reverse_proxy
+      trusted_proxies: ["127.0.0.1/32"]
+      allowed_hosts: ["login.example.org"]
+      allowed_browser_origins: []
+      limits:
+        timeout: 15s
+        max_concurrent: 8
+        max_concurrent_per_principal: 2
+        max_request_bytes: 65536
+        max_response_bytes: 1048576
+        failed_auth_per_minute: 30
+      audit:
+        enabled: true
+
+observability:
+  diagnostics:
+    operations:
+      enabled: true
+      sources:
+        nauthilus_runtime:
+          enabled: true
+        loki:
+          enabled: true
+          url: "https://loki.example.org"
+          tenant: "mail-prod"
+          selector:
+            app: nauthilus
+            namespace: mail
+          instance_label: pod
+          query_profile: nauthilus_diagnostics
+          timeout: 3s
+          max_time_window: 1h
+          max_series: 200
+          max_response_bytes: 1048576
+          bearer_token: "${LOKI_READ_TOKEN}"
+
+storage:
+  redis:
+    primary:
+      address: "127.0.0.1:6379"
+    prefix: "nt:"
+    encryption_secret: "${REDIS_ENCRYPTION_SECRET}"
+    password_nonce: "${REDIS_PASSWORD_NONCE}"
+  history:
+    clickhouse:
+      url: "http://127.0.0.1:8123/"
+      database: nauthilus
+      username: nauthilus_history
+      password: "${CLICKHOUSE_HISTORY_PASSWORD}"
+      deployment: prod
+
+identity:
+  frontend:
+    enabled: true
+    encryption_secret: "${FRONTEND_ENCRYPTION_SECRET}"
+
+  mfa:
+    totp:
+      issuer: "Nauthilus"
+
+  oidc:
+    enabled: true
+    issuer: "https://login.example.org"
+    scopes_supported:
+      - openid
+      - offline_access
+      - nauthilus:history_read
+      - nauthilus:history_detail
+      - nauthilus:operations_read
+    signing_keys:
+      - id: main
+        key: "${OIDC_SIGNING_KEY}"
+        algorithm: RS256
+        active: true
+
+    clients:
+      # One public client for Codex and Claude Code. Both use loopback redirects on a random port; static loopback
+      # redirect URIs match on any port.
+      - name: "Support CLI"
+        client_id: support-cli
+        token_endpoint_auth_method: none
+        require_pkce: true
+        redirect_uris:
+          - "http://127.0.0.1/callback"
+          - "http://localhost/callback"
+        grant_types: [authorization_code, refresh_token]
+        require_mfa: [totp, webauthn]
+        scopes:
+          - openid
+          - offline_access
+          - nauthilus:history_read
+          - nauthilus:history_detail
+          - nauthilus:operations_read
+        access_token_lifetime: 10m
+        refresh_token_lifetime: 12h
+
+    hosted_resources:
+      - name: support-mcp
+        resource: "https://login.example.org/mcp"
+        scopes:
+          - nauthilus:history_read
+          - nauthilus:history_detail
+          - nauthilus:operations_read
+        user_right:
+          from: groups
+          any_of: [nauthilus-support]
+        max_authentication_age: 12h
+        max_access_token_lifetime: 15m
+        static_clients: [support-cli]
+
+    # Mail clients may still register dynamically. Registration grants no MCP access: the hosted resource admits
+    # only its static_clients, and the support scopes are not part of the mail-client-v1 profile.
+    dynamic_client_registration:
+      enabled: true
+      profile: mail-client-v1
+      source_hmac_key: "${DCR_SOURCE_HMAC_KEY}"
+      required_scopes: [openid]
+      optional_scopes: [offline_access]
+      allow_refresh_tokens: true

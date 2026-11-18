@@ -30,9 +30,12 @@ type IntrospectedUserToken struct {
 	Resources []string
 }
 
-// ResourceRegistry maps RFC 8707 resource indicators to the static client that owns them.
+// ResourceRegistry maps RFC 8707 resource indicators to the static client that owns them and to the hosted
+// resources Nauthilus serves itself. Hosted resources have no owner client, so delegated introspection never
+// matches them.
 type ResourceRegistry struct {
 	owners map[string]*config.OIDCClient
+	hosted map[string]HostedResource
 }
 
 // NewResourceRegistry indexes the resources of every client with token introspection authority.
@@ -60,9 +63,45 @@ func NewResourceRegistry(clients []config.OIDCClient) *ResourceRegistry {
 	return &ResourceRegistry{owners: owners}
 }
 
-// ResourceRegistry builds the resource registry of the currently configured static clients.
+// NewResourceRegistryWithHosted indexes client-owned resources and the hosted resources of the configuration.
+// Configuration validation keeps hosted resources disjoint from client-owned resources.
+func NewResourceRegistryWithHosted(clients []config.OIDCClient, hosted []config.OIDCHostedResource) *ResourceRegistry {
+	registry := NewResourceRegistry(clients)
+	registry.hosted = make(map[string]HostedResource, len(hosted))
+
+	for idx := range hosted {
+		resource := &hosted[idx]
+		if _, owned := registry.owners[resource.Resource]; owned {
+			continue
+		}
+
+		registry.hosted[resource.Resource] = HostedResource{cfg: resource}
+	}
+
+	return registry
+}
+
+// ResourceRegistry builds the resource registry of the current configuration.
 func (n *NauthilusIDP) ResourceRegistry() *ResourceRegistry {
-	return NewResourceRegistry(n.deps.Cfg.GetIDP().OIDC.Clients)
+	oidc := n.deps.Cfg.GetIDP().OIDC
+
+	return NewResourceRegistryWithHosted(oidc.Clients, oidc.GetHostedResources())
+}
+
+// Hosted returns the hosted resource registered for a resource indicator.
+func (r *ResourceRegistry) Hosted(resource string) (HostedResource, bool) {
+	if r == nil {
+		return HostedResource{}, false
+	}
+
+	hosted, ok := r.hosted[resource]
+
+	return hosted, ok
+}
+
+// containsHosted reports whether resources name a hosted resource.
+func (r *ResourceRegistry) containsHosted(resources []string) bool {
+	return len(r.hostedResourcesOf(resources)) > 0
 }
 
 // ResourceOwner returns the client that owns a registered resource indicator.
@@ -76,8 +115,13 @@ func (r *ResourceRegistry) ResourceOwner(resource string) (*config.OIDCClient, b
 	return owner, owner != nil
 }
 
-// MayRequest reports whether the issuing client may obtain tokens for a registered resource.
+// MayRequest reports whether the issuing client may obtain tokens for a registered resource. A hosted resource
+// admits only its listed static clients.
 func (r *ResourceRegistry) MayRequest(issuing *config.OIDCClient, resource string) bool {
+	if hosted, ok := r.Hosted(resource); ok {
+		return hosted.Admits(issuing)
+	}
+
 	owner, ok := r.ResourceOwner(resource)
 
 	return ok && owner.TokenIntrospection.AllowsIssuingClient(issuing)

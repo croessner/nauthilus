@@ -29,6 +29,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/jsonstrict"
 )
 
 const (
@@ -62,7 +63,7 @@ func DecodeMetadata(reader io.Reader) (RegistrationRequest, *ProtocolError) { //
 		return RegistrationRequest{}, invalidClientMetadata("request body must contain valid UTF-8")
 	}
 
-	if duplicateJSONMetadataName(body) {
+	if jsonstrict.HasDuplicateNames(body) {
 		return RegistrationRequest{}, invalidClientMetadata("request body contains a duplicate metadata name")
 	}
 
@@ -228,43 +229,6 @@ func MatchRedirectURI(registered []string, candidate string) bool {
 
 		if loopbackURIWithoutPort(candidate, candidateURL) == loopbackURIWithoutPort(registeredValue, registeredURL) && loopbackHostEqual(candidateURL, registeredURL) {
 			return true
-		}
-	}
-
-	return false
-}
-
-// duplicateJSONMetadataName reports duplicate top-level registration member names.
-func duplicateJSONMetadataName(body []byte) bool {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
-		return false
-	}
-
-	seen := make(map[string]struct{})
-
-	for decoder.More() {
-		nameToken, err := decoder.Token()
-		if err != nil {
-			return false
-		}
-
-		name, ok := nameToken.(string)
-		if !ok {
-			return false
-		}
-
-		if _, exists := seen[name]; exists {
-			return true
-		}
-
-		seen[name] = struct{}{}
-
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return false
 		}
 	}
 

@@ -70,6 +70,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OIDCDiscovery"
+  /.well-known/oauth-authorization-server:
+    get:
+      tags:
+        - WellKnown
+      operationId: getOAuthAuthorizationServerMetadata
+      summary: Get RFC 8414 authorization server metadata.
+      description: Serves the same document as OIDC discovery. Issuers with a path are also served at the RFC 8414 path-insertion location below this path.
+      security: []
+      responses:
+        "200":
+          description: Authorization server metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCDiscovery"
+  /.well-known/oauth-authorization-server/{issuerPath}:
+    get:
+      tags:
+        - WellKnown
+      operationId: getOAuthAuthorizationServerMetadataForIssuerPath
+      summary: Get RFC 8414 authorization server metadata for an issuer with a path.
+      description: Path-insertion form of RFC 8414. Only the path of the configured issuer is served; any other path returns 404. Issuer paths with several segments are served the same way.
+      security: []
+      parameters:
+        - name: issuerPath
+          in: path
+          required: true
+          description: Path component of the configured issuer without the leading slash.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Authorization server metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCDiscovery"
+        "404":
+          description: The path does not belong to the configured issuer.
   /oidc/register:
     post:
       tags:
@@ -902,6 +941,9 @@ components:
           type: array
           items:
             type: string
+        authorization_response_iss_parameter_supported:
+          type: boolean
+          description: RFC 9207; authorization responses carry the iss parameter.
       additionalProperties: true
     DynamicClientRegistrationRequest:
       type: object

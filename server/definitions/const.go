@@ -382,7 +382,14 @@ const (
 	// ScopeHistoryDetail additionally releases other people's identities behind shared addresses and
 	// operator-only factor results in recorded history.
 	ScopeHistoryDetail = "nauthilus:history_detail"
+
+	// ScopeOperationsRead grants support access to read-only operational diagnostics.
+	ScopeOperationsRead = "nauthilus:operations_read"
 )
+
+// HostedResourceScopes lists the scopes a hosted resource may gate. They are read-only support scopes that only a
+// grant for a hosted resource carries to its resource server.
+var HostedResourceScopes = []string{ScopeHistoryRead, ScopeHistoryDetail, ScopeOperationsRead}
 
 const (
 	// LogKeyGUID represents the session identifier used in log entries.
@@ -946,6 +953,9 @@ const (
 
 	// OIDCFlowDeviceCode identifies the OIDC Device Authorization Grant flow (RFC 8628).
 	OIDCFlowDeviceCode = "device_code"
+
+	// OIDCFlowRefreshToken identifies the OAuth 2.0 refresh token grant.
+	OIDCFlowRefreshToken = "refresh_token"
 
 	// ProtoSAML corresponds to the "saml" protocol
 	ProtoSAML = "saml"

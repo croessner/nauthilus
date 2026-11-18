@@ -17,15 +17,13 @@ package supporthistory
 
 import (
 	"net/netip"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
-)
 
-// auditReferencePattern bounds the unverified audit annotation.
-var auditReferencePattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,64}$`)
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
+)
 
 // Subject names the person a support case is about. Login is a claim as typed; Account is a canonical account.
 type Subject struct {
@@ -113,7 +111,7 @@ func validateWindow(from, until time.Time) *Error {
 
 // validateAuditReference accepts an empty or bounded ticket-like annotation.
 func validateAuditReference(reference string) *Error {
-	if reference == "" || auditReferencePattern.MatchString(reference) {
+	if supportaccess.ValidAuditReference(reference) {
 		return nil
 	}
 

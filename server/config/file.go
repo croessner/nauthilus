@@ -2499,6 +2499,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validateGRPCAuthServer,
 		f.validateMetricsEndpointAuth,
 		f.validateHistory,
+		f.validateOperationsDiagnostics,
 		f.validateOpenAPIValidation,
 		f.validateBackendHealthCheckTLSModes,
 
@@ -2524,6 +2525,8 @@ func (f *FileSettings) validate() (err error) {
 		f.validateIDPOIDCIntrospectionSettings,
 		f.validateIDPOIDCTokenIntrospectionSettings,
 		f.validateIDPOIDCDynamicClientRegistration,
+		f.validateIDPOIDCHostedResources,
+		f.validateMCPServer,
 		f.validateIDPSAMLSigningSettings,
 		f.validateIDPSAML2SLOSettings,
 		f.validateLuaHooks,

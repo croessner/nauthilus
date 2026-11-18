@@ -373,6 +373,14 @@ func idpRouteExceptions() []routeExceptionList {
 			exactRoutes: browserOnlyMFARouteReasons(),
 		},
 		{
+			name: "RFC 8414 path-insertion catch-all",
+			exactRoutes: routeOperationReasons(
+				"catch-all that serves the documented /.well-known/oauth-authorization-server/{issuerPath} operation, "+
+					"including issuer paths with several segments",
+				routeOperation{method: contractMethodGet, path: "/.well-known/oauth-authorization-server/*issuerPath"},
+			),
+		},
+		{
 			name: "Browser-only device error routes",
 			exactRoutes: routeOperationReasons(
 				"device verification error pages are browser-only flow pages, not stable protocol operations",

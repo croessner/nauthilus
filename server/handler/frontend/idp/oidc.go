@@ -106,6 +106,7 @@ const (
 	oidcErrorSlowDown                = "slow_down"
 	oidcErrorAuthorizationPending    = "authorization_pending"
 	oidcErrorAccessDenied            = "access_denied"
+	oidcErrorLoginRequired           = "login_required"
 	oidcErrorInvalidTarget           = "invalid_target"
 )
 
@@ -239,6 +240,8 @@ func (h *OIDCHandler) Register(router gin.IRouter, runtime *cookie.CanonicalRunt
 	continuationMW := cookie.CanonicalMiddleware(runtime, cookie.CanonicalContinuation)
 
 	router.GET("/.well-known/openid-configuration", h.Discovery)
+	router.GET(authorizationServerMetadataPath, h.AuthorizationServerMetadata)
+	router.GET(authorizationServerMetadataPath+"/*"+authorizationServerMetadataIssuerPathParam, h.AuthorizationServerMetadata)
 	if h.deps.Cfg.GetIDP().OIDC.DynamicClientRegistration.Enabled {
 		if engine, ok := router.(*gin.Engine); ok {
 			engine.HandleMethodNotAllowed = true
@@ -276,33 +279,40 @@ func (h *OIDCHandler) Register(router gin.IRouter, runtime *cookie.CanonicalRunt
 
 // Discovery returns the OIDC discovery document.
 func (h *OIDCHandler) Discovery(ctx *gin.Context) {
+	ctx.JSON(http.StatusOK, h.providerMetadata())
+}
+
+// providerMetadata builds the provider metadata shared by OIDC discovery and RFC 8414. OIDC discovery metadata is a
+// superset of the RFC 8414 authorization server metadata, so both documents are the same object.
+func (h *OIDCHandler) providerMetadata() gin.H {
 	oidcCfg := h.deps.Cfg.GetIDP().OIDC
 	issuer := oidcCfg.Issuer
 
 	scopesSupported := oidcCfg.GetScopesSupported()
 	tokenEndpointAuthMethodsSupported := oidcCfg.GetTokenEndpointAuthMethodsSupported()
 	discoveryDocument := gin.H{
-		"issuer":                                        issuer,
-		"authorization_endpoint":                        issuer + "/oidc/authorize",
-		"token_endpoint":                                issuer + oidcEndpointPathToken,
-		"introspection_endpoint":                        issuer + oidcEndpointPathIntrospect,
-		"userinfo_endpoint":                             issuer + "/oidc/userinfo",
-		"jwks_uri":                                      issuer + "/oidc/jwks",
-		"end_session_endpoint":                          issuer + "/oidc/logout",
-		"device_authorization_endpoint":                 issuer + "/oidc/device",
-		"frontchannel_logout_supported":                 oidcCfg.GetFrontChannelLogoutSupported(),
-		"frontchannel_logout_session_supported":         oidcCfg.GetFrontChannelLogoutSessionSupported(),
-		"backchannel_logout_supported":                  oidcCfg.GetBackChannelLogoutSupported(),
-		"backchannel_logout_session_supported":          oidcCfg.GetBackChannelLogoutSessionSupported(),
-		"response_types_supported":                      oidcCfg.GetResponseTypesSupported(),
-		"grant_types_supported":                         oidcCfg.GetGrantTypesSupported(),
-		"subject_types_supported":                       oidcCfg.GetSubjectTypesSupported(),
-		"id_token_signing_alg_values_supported":         oidcCfg.GetIDTokenSigningAlgValuesSupported(),
-		"scopes_supported":                              scopesSupported,
-		"token_endpoint_auth_methods_supported":         tokenEndpointAuthMethodsSupported,
-		"code_challenge_methods_supported":              oidcCfg.GetCodeChallengeMethodsSupported(),
-		"introspection_endpoint_auth_methods_supported": oidcCfg.GetIntrospectionEndpointAuthMethodsSupported(),
-		"claims_supported":                              oidcCfg.GetClaimsSupported(),
+		"issuer":                                         issuer,
+		"authorization_endpoint":                         issuer + "/oidc/authorize",
+		"token_endpoint":                                 issuer + oidcEndpointPathToken,
+		"introspection_endpoint":                         issuer + oidcEndpointPathIntrospect,
+		"userinfo_endpoint":                              issuer + "/oidc/userinfo",
+		"jwks_uri":                                       issuer + "/oidc/jwks",
+		"end_session_endpoint":                           issuer + "/oidc/logout",
+		"device_authorization_endpoint":                  issuer + "/oidc/device",
+		"frontchannel_logout_supported":                  oidcCfg.GetFrontChannelLogoutSupported(),
+		"frontchannel_logout_session_supported":          oidcCfg.GetFrontChannelLogoutSessionSupported(),
+		"backchannel_logout_supported":                   oidcCfg.GetBackChannelLogoutSupported(),
+		"backchannel_logout_session_supported":           oidcCfg.GetBackChannelLogoutSessionSupported(),
+		"response_types_supported":                       oidcCfg.GetResponseTypesSupported(),
+		"grant_types_supported":                          oidcCfg.GetGrantTypesSupported(),
+		"subject_types_supported":                        oidcCfg.GetSubjectTypesSupported(),
+		"id_token_signing_alg_values_supported":          oidcCfg.GetIDTokenSigningAlgValuesSupported(),
+		"scopes_supported":                               scopesSupported,
+		"token_endpoint_auth_methods_supported":          tokenEndpointAuthMethodsSupported,
+		"code_challenge_methods_supported":               oidcCfg.GetCodeChallengeMethodsSupported(),
+		"introspection_endpoint_auth_methods_supported":  oidcCfg.GetIntrospectionEndpointAuthMethodsSupported(),
+		"claims_supported":                               oidcCfg.GetClaimsSupported(),
+		"authorization_response_iss_parameter_supported": true,
 	}
 
 	for _, customScope := range oidcCfg.CustomScopes {
@@ -323,7 +333,7 @@ func (h *OIDCHandler) Discovery(ctx *gin.Context) {
 		discoveryDocument["registration_endpoint"] = issuer + oidcRegistrationEndpointPath
 	}
 
-	ctx.JSON(http.StatusOK, discoveryDocument)
+	return discoveryDocument
 }
 
 // oidcClientCredentials carries the resolved client authentication envelope.
@@ -874,6 +884,11 @@ func clientAssertionReplayStatus(err error) string {
 	return "unavailable"
 }
 
+// authorizationResponse returns the authorization response builder for the current issuer.
+func (h *OIDCHandler) authorizationResponse() oidcAuthorizationResponse {
+	return newOIDCAuthorizationResponse(h.deps.Cfg)
+}
+
 // oidcEndpointURL builds a public endpoint URL from the configured issuer.
 func (h *OIDCHandler) oidcEndpointURL(path string) string {
 	return h.deps.Cfg.GetIDP().OIDC.Issuer + path
@@ -1079,10 +1094,18 @@ func (h *OIDCHandler) finishOIDCTokenRequest(ctx *gin.Context, grantType string,
 }
 
 // logTokenError answers a failed token issuance: an RFC 8707 target error is the client's fault
-// (invalid_target), every other failure is logged and reported as server_error.
+// (invalid_target), a hosted-resource grant whose login is too old needs a new authorization (invalid_grant),
+// and every other failure is logged and reported as server_error.
 func (h *OIDCHandler) logTokenError(ctx *gin.Context, grantType, clientID string, err error) {
 	if errors.Is(err, idp.ErrInvalidTarget) {
 		writeOIDCInvalidTargetResponse(ctx)
+
+		return
+	}
+
+	if errors.Is(err, idp.ErrHostedAuthenticationExpired) {
+		setOIDCTokenFailureReason(ctx, "hosted resource login is older than max_authentication_age")
+		ctx.JSON(http.StatusBadRequest, gin.H{definitions.LogKeyError: oidcErrorInvalidGrant})
 
 		return
 	}

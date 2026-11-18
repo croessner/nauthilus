@@ -862,7 +862,7 @@ func (h *FrontendHandler) resumeCanonicalExistingLoginSession(
 
 	satisfied := canonicalSessionSatisfiesMFAPolicy(session, policy, session.EvaluationTime())
 	if canonicalPromptNone(state) && (len(missing) > 0 || !satisfied) {
-		redirectOIDCAuthorizeError(
+		newOIDCAuthorizationResponse(h.deps.Cfg).redirectError(
 			ctx,
 			state.Metadata[flowdomain.FlowMetadataRedirectURI],
 			state.Metadata[flowdomain.FlowMetadataState],
