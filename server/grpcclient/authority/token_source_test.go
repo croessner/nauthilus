@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"io"
 	"net/http"
@@ -84,7 +83,7 @@ func TestBearerTokenSourceUsesRefreshLockForNearExpiryToken(t *testing.T) {
 		ExpiresAt:   fixedTokenSourceNow().Add(20 * time.Second),
 	})
 	mock.ExpectGet(source.cacheKey()).SetVal(cached)
-	mock.ExpectSetNX(source.lockKey(), tokenSourceAuthorityName, 10*time.Second).SetVal(false)
+	mock.Regexp().ExpectSetNX(source.lockKey(), ".+", 10*time.Second).SetVal(false)
 
 	token, err := source.Token(context.Background())
 	if err != nil {
@@ -128,10 +127,10 @@ func TestBearerTokenSourceRefreshesExpiredToken(t *testing.T) {
 		ExpiresAt:   fixedTokenSourceNow().Add(-time.Second),
 	})
 	mock.ExpectGet(source.cacheKey()).SetVal(cached)
-	mock.ExpectSetNX(source.lockKey(), tokenSourceAuthorityName, 10*time.Second).SetVal(true)
+	mock.Regexp().ExpectSetNX(source.lockKey(), ".+", 10*time.Second).SetVal(true)
 	mock.ExpectGet(source.cacheKey()).SetVal(cached)
 	mock.Regexp().ExpectSet(source.cacheKey(), ".*fresh-token.*", 90*time.Second).SetVal("OK")
-	mock.ExpectDel(source.lockKey()).SetVal(1)
+	mock.Regexp().ExpectEvalSha(releaseRefreshLockScript.Hash(), []string{source.lockKey()}, ".+").SetVal(int64(1))
 
 	token, err := source.Token(context.Background())
 	if err != nil {
@@ -178,10 +177,10 @@ func TestBearerTokenSourceBuildsPrivateKeyJWTAssertion(t *testing.T) {
 	})
 
 	mock.ExpectGet(source.cacheKey()).RedisNil()
-	mock.ExpectSetNX(source.lockKey(), tokenSourceAuthorityName, 10*time.Second).SetVal(true)
+	mock.Regexp().ExpectSetNX(source.lockKey(), ".+", 10*time.Second).SetVal(true)
 	mock.ExpectGet(source.cacheKey()).RedisNil()
 	mock.Regexp().ExpectSet(source.cacheKey(), ".*opaque-token.*", 90*time.Second).SetVal("OK")
-	mock.ExpectDel(source.lockKey()).SetVal(1)
+	mock.Regexp().ExpectEvalSha(releaseRefreshLockScript.Hash(), []string{source.lockKey()}, ".+").SetVal(int64(1))
 
 	token, err := source.Token(context.Background())
 	if err != nil {
@@ -330,15 +329,16 @@ func fixedTokenSourceNow() time.Time {
 	return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
 }
 
+// mustEncodeCachedToken seals token as a test client without an encryption secret stores it.
 func mustEncodeCachedToken(t *testing.T, token cachedBearerToken) string {
 	t.Helper()
 
-	raw, err := json.Marshal(token)
+	raw, err := newTokenCacheCodec(nil).encode(token)
 	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
+		t.Fatalf("encode cached token: %v", err)
 	}
 
-	return string(raw)
+	return raw
 }
 
 func writeEd25519PrivateKey(t *testing.T, privateKey ed25519.PrivateKey) string {

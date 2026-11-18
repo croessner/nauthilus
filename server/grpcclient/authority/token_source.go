@@ -3,6 +3,7 @@ package authority
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/idp/clientauth"
 	"github.com/croessner/nauthilus/v4/server/idp/signing"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/ksuid"
@@ -50,8 +52,8 @@ var errRefreshWithoutToken = errors.New("authority token refresh already in prog
 // refreshWaitPollInterval is how often a caller that lost the refresh lock re-reads the shared token cache.
 const refreshWaitPollInterval = 50 * time.Millisecond
 
-// compareAndDeleteTokenScript deletes the cached caller token only when its access_token still equals ARGV[1].
-// It returns 1 after the delete, 0 when no token is cached, and the cached JSON value when another replica
+// compareAndDeleteTokenScript deletes the cached caller token only when its keyed token digest still equals
+// ARGV[1]. It returns 1 after the delete, 0 when no token is cached, and the cached value when another replica
 // already replaced the token, so a token fetched elsewhere in the meantime is never discarded.
 var compareAndDeleteTokenScript = redis.NewScript(`
 local raw = redis.call("GET", KEYS[1])
@@ -60,13 +62,20 @@ if not raw then
 end
 
 local ok, cached = pcall(cjson.decode, raw)
-if ok and type(cached) == "table" and cached["access_token"] == ARGV[1] then
+if ok and type(cached) == "table" and cached["token_digest"] == ARGV[1] then
     redis.call("DEL", KEYS[1])
     return 1
 end
 
 return raw
 `)
+
+// releaseRefreshLockScript deletes the refresh lock only while it still carries the caller's lock token, so a
+// refresh that outlived the lock TTL never releases the lock another replica acquired afterwards.
+var releaseRefreshLockScript = redis.NewScript(rediscli.LuaScripts["UnlockIfTokenMatches"])
+
+// tokenCacheDigestNamespace separates the cache digest of caller bearer tokens from other keyed digests.
+const tokenCacheDigestNamespace = "authority-caller-token-cache-v1"
 
 // BearerTokenSourceOptions contains dependencies for a bearer token source.
 type BearerTokenSourceOptions struct {
@@ -99,6 +108,83 @@ type cachedBearerToken struct {
 	AccessToken string    `json:"access_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	IssuedAt    time.Time `json:"issued_at,omitzero"`
+}
+
+// sealedTokenRecord is the shared cache value. The keyed digest lets the compare-and-delete script identify a
+// rejected token, and the sealed record keeps the bearer token unreadable without the Redis encryption secret.
+type sealedTokenRecord struct {
+	TokenDigest string `json:"token_digest"`
+	Sealed      string `json:"sealed"`
+}
+
+// tokenCacheCodec seals and opens shared cache records with the edge Redis security manager.
+type tokenCacheCodec struct {
+	manager *rediscli.SecurityManager
+}
+
+// newTokenCacheCodec returns the codec of client, falling back to digest-only plaintext sealing when the client
+// has no security manager.
+func newTokenCacheCodec(client rediscli.Client) tokenCacheCodec {
+	var manager *rediscli.SecurityManager
+	if client != nil {
+		manager = client.GetSecurityManager()
+	}
+
+	if manager == nil {
+		manager = rediscli.NewSecurityManager(secret.Value{})
+	}
+
+	return tokenCacheCodec{manager: manager}
+}
+
+// digest returns the keyed digest that identifies token in the shared cache without revealing it.
+func (c tokenCacheCodec) digest(token string) string {
+	return c.manager.IndexDigest(tokenCacheDigestNamespace, token)
+}
+
+// encode seals one cache record.
+func (c tokenCacheCodec) encode(token cachedBearerToken) (string, error) {
+	plaintext, err := json.Marshal(token)
+	if err != nil {
+		return "", err
+	}
+
+	sealed, err := c.manager.Encrypt(string(plaintext))
+	if err != nil {
+		return "", fmt.Errorf("seal authority token cache record: %w", err)
+	}
+
+	raw, err := json.Marshal(sealedTokenRecord{TokenDigest: c.digest(token.AccessToken), Sealed: sealed})
+	if err != nil {
+		return "", err
+	}
+
+	return string(raw), nil
+}
+
+// decode opens one cache record. Unreadable, foreign, or pre-sealing records count as a cache miss, so the
+// regular refresh path replaces them.
+func (c tokenCacheCodec) decode(raw string) (cachedBearerToken, bool) {
+	var (
+		record sealedTokenRecord
+		cached cachedBearerToken
+	)
+
+	if err := json.Unmarshal([]byte(raw), &record); err != nil || record.Sealed == "" || record.TokenDigest == "" {
+		return cachedBearerToken{}, false
+	}
+
+	plaintext, err := c.manager.Decrypt(record.Sealed)
+	if err != nil {
+		return cachedBearerToken{}, false
+	}
+
+	if err = json.Unmarshal([]byte(plaintext), &cached); err != nil || cached.AccessToken == "" ||
+		c.digest(cached.AccessToken) != record.TokenDigest {
+		return cachedBearerToken{}, false
+	}
+
+	return cached, true
 }
 
 type tokenEndpointResponse struct {
@@ -213,7 +299,11 @@ func (s *bearerTokenSource) discardRejectedToken(ctx context.Context, rejected s
 		return replacement, nil
 	}
 
-	result, err := compareAndDeleteTokenScript.Run(ctx, s.redis.GetWriteHandle(), []string{s.cacheKey()}, rejected).Result()
+	codec := newTokenCacheCodec(s.redis)
+
+	result, err := compareAndDeleteTokenScript.Run(
+		ctx, s.redis.GetWriteHandle(), []string{s.cacheKey()}, codec.digest(rejected),
+	).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return replacement, fmt.Errorf("discard rejected authority token: %w", err)
 	}
@@ -223,9 +313,7 @@ func (s *bearerTokenSource) discardRejectedToken(ctx context.Context, rejected s
 		return replacement, nil
 	}
 
-	if err = json.Unmarshal([]byte(raw), &replacement); err != nil {
-		return cachedBearerToken{}, nil
-	}
+	replacement, _ = codec.decode(raw)
 
 	return replacement, nil
 }
@@ -256,7 +344,7 @@ func (s *bearerTokenSource) staticTokenIfConfigured() (string, bool, error) {
 // the still valid cached token or waits for the token of the lock holder. The lock holder re-reads the cache
 // first, so a token that another caller wrote just before the lock was released is not fetched again.
 func (s *bearerTokenSource) refreshCachedToken(ctx context.Context, cached cachedBearerToken, cacheOK bool) (string, error) {
-	locked, err := s.acquireRefreshLock(ctx)
+	lockToken, locked, err := s.acquireRefreshLock(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -265,7 +353,7 @@ func (s *bearerTokenSource) refreshCachedToken(ctx context.Context, cached cache
 		return s.cachedTokenDuringRefresh(ctx, cached, cacheOK)
 	}
 
-	defer s.releaseRefreshLock(ctx)
+	defer s.releaseRefreshLock(ctx, lockToken)
 
 	if current, ok := s.readCachedToken(ctx); ok && current.AccessToken != cached.AccessToken && s.tokenFresh(current) {
 		return current.AccessToken, nil
@@ -371,60 +459,57 @@ func (s *bearerTokenSource) staticToken() (string, error) {
 	return token, nil
 }
 
+// readCachedToken loads and opens the shared cache record; every failure counts as a cache miss.
 func (s *bearerTokenSource) readCachedToken(ctx context.Context) (cachedBearerToken, bool) {
-	var cached cachedBearerToken
 	if s.redis == nil || s.redis.GetReadHandle() == nil {
-		return cached, false
+		return cachedBearerToken{}, false
 	}
 
 	raw, err := s.redis.GetReadHandle().Get(ctx, s.cacheKey()).Result()
 	if err != nil {
-		return cached, false
+		return cachedBearerToken{}, false
 	}
 
-	if err = json.Unmarshal([]byte(raw), &cached); err != nil {
-		return cached, false
-	}
-
-	return cached, cached.AccessToken != ""
+	return newTokenCacheCodec(s.redis).decode(raw)
 }
 
 func (s *bearerTokenSource) tokenFresh(token cachedBearerToken) bool {
 	return s.now().Add(s.cfg.GetTokenCache().GetRefreshBeforeExpiry()).Before(token.ExpiresAt)
 }
 
-func (s *bearerTokenSource) acquireRefreshLock(ctx context.Context) (bool, error) {
+// acquireRefreshLock takes the distributed refresh lock with a random per-acquisition token. All replicas of
+// one authority client share the lock key, so only this token tells the current holder apart.
+func (s *bearerTokenSource) acquireRefreshLock(ctx context.Context) (string, bool, error) {
 	if s.redis == nil || s.redis.GetWriteHandle() == nil {
-		return true, nil
+		return "", true, nil
 	}
 
-	owner := s.authorityName
-	if owner == "" {
-		owner = s.cfg.GetClientID()
-	}
+	lockToken := rand.Text()
 
-	locked, err := s.redis.GetWriteHandle().SetNX(ctx, s.lockKey(), owner, s.cfg.GetTokenCache().GetRefreshLockTTL()).Result()
+	locked, err := s.redis.GetWriteHandle().SetNX(ctx, s.lockKey(), lockToken, s.cfg.GetTokenCache().GetRefreshLockTTL()).Result()
 	if err != nil {
-		return false, fmt.Errorf("authority token refresh lock: %w", err)
+		return "", false, fmt.Errorf("authority token refresh lock: %w", err)
 	}
 
-	return locked, nil
+	return lockToken, locked, nil
 }
 
-func (s *bearerTokenSource) releaseRefreshLock(ctx context.Context) {
-	if s.redis == nil || s.redis.GetWriteHandle() == nil {
+// releaseRefreshLock deletes the refresh lock only while it still carries lockToken.
+func (s *bearerTokenSource) releaseRefreshLock(ctx context.Context, lockToken string) {
+	if s.redis == nil || s.redis.GetWriteHandle() == nil || lockToken == "" {
 		return
 	}
 
-	_ = s.redis.GetWriteHandle().Del(ctx, s.lockKey()).Err()
+	_ = releaseRefreshLockScript.Run(ctx, s.redis.GetWriteHandle(), []string{s.lockKey()}, lockToken).Err()
 }
 
+// writeCachedToken stores the sealed token record until the token expires.
 func (s *bearerTokenSource) writeCachedToken(ctx context.Context, token cachedBearerToken) error {
 	if s.redis == nil || s.redis.GetWriteHandle() == nil {
 		return nil
 	}
 
-	raw, err := json.Marshal(token)
+	raw, err := newTokenCacheCodec(s.redis).encode(token)
 	if err != nil {
 		return err
 	}
@@ -438,7 +523,7 @@ func (s *bearerTokenSource) writeCachedToken(ctx context.Context, token cachedBe
 		ttl = time.Second
 	}
 
-	if err = s.redis.GetWriteHandle().Set(ctx, s.cacheKey(), string(raw), ttl).Err(); err != nil && err != redis.Nil {
+	if err = s.redis.GetWriteHandle().Set(ctx, s.cacheKey(), raw, ttl).Err(); err != nil && err != redis.Nil {
 		return fmt.Errorf("write authority token cache: %w", err)
 	}
 
