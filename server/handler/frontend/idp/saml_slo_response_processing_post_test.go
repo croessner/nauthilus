@@ -53,7 +53,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout_POST(t *testing.T) {
 	})
 	tx := mustIDPFanoutRunningTransaction(t, transactionID, "id-root-end-to-end-post", slodomain.SLOBindingPost, entityID, requestID)
 	state := newPendingSLOFanoutState(tx, requestID, time.Date(2026, time.March, 19, 13, 0, 0, 0, time.UTC), 0, 0)
-	mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state, true)
+	mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state)
 
 	logoutResponse := mustBuildSignedLogoutResponse(
 		t,

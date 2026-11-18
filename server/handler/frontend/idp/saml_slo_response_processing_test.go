@@ -315,7 +315,7 @@ func TestSAMLHandler_applySLOFanoutLogoutResponse_AggregatesFinalStatus(t *testi
 			handler, mock := newSLOFanoutResponseTestHandler(redisPrefix)
 			transaction := mustIDPFanoutRunningTransaction(t, transactionID, "id-root-request", slodomain.SLOBindingRedirect, entityID, requestID)
 			state := newPendingSLOFanoutState(transaction, requestID, time.Date(2026, time.March, 19, 9, 5, 0, 0, time.UTC), tc.preSuccess, tc.preFailure)
-			mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state, true)
+			mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state)
 			logoutResponse := newSLOFanoutTestLogoutResponse("id-response-aggregate", requestID, entityID, tc.responseStatus)
 
 			aggregation, err := handler.applySLOFanoutLogoutResponse(t.Context(), logoutResponse, transactionID)
@@ -424,7 +424,7 @@ func TestSAMLHandler_SLO_LogoutResponse_CompletesFanout(t *testing.T) {
 	})
 	tx := mustIDPFanoutRunningTransaction(t, transactionID, "id-root-end-to-end", slodomain.SLOBindingRedirect, entityID, requestID)
 	state := newPendingSLOFanoutState(tx, requestID, time.Date(2026, time.March, 19, 10, 0, 0, 0, time.UTC), 0, 0)
-	mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state, true)
+	mustExpectSLOFanoutStateUpdate(t, handler, mock, transactionID, requestID, state)
 
 	logoutResponse := mustBuildSignedLogoutResponse(
 		t,
@@ -535,7 +535,6 @@ func mustExpectSLOFanoutStateUpdate(
 	transactionID string,
 	requestID string,
 	state *sloFanoutTransactionState,
-	final bool,
 ) {
 	t.Helper()
 
@@ -548,13 +547,12 @@ func mustExpectSLOFanoutStateUpdate(
 	transactionKey := handler.sloFanoutStateKey(transactionID)
 
 	mock.ExpectGet(requestKey).SetVal(transactionID)
+	mock.ExpectWatch(transactionKey)
 	mock.ExpectGet(transactionKey).SetVal(string(rawState))
+	mock.ExpectTxPipeline()
 	mock.Regexp().ExpectSet(transactionKey, `.+`, time.Hour).SetVal("OK")
+	mock.ExpectTxPipelineExec()
 	mock.ExpectDel(requestKey).SetVal(1)
-
-	if final {
-		return
-	}
 }
 
 // newSLOFanoutTestLogoutResponse builds an unsigned LogoutResponse for state aggregation tests.

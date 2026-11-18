@@ -35,6 +35,7 @@ var (
 	errSLOFanoutStateUnavailable   = errors.New("slo fanout transaction state is not available")
 	errSLOFanoutResponseUnmatched  = errors.New("logout response does not correlate with an open fanout request")
 	errSLOFanoutResponseRelayState = errors.New("logout response relay state does not match fanout transaction")
+	errSLOFanoutStateConflict      = errors.New("slo fanout transaction state kept changing while applying a response")
 )
 
 type sloFanoutParticipantOutcome struct {
@@ -152,6 +153,9 @@ func newSLOFanoutTransactionState(
 	return state, nil
 }
 
+// applySLOFanoutLogoutResponse records one participant LogoutResponse in its fan-out transaction. The state is
+// updated with an optimistic WATCH/MULTI compare-and-swap on the transaction key, so concurrent responses for
+// different participants never overwrite each other's outcome. Terminal audit and metrics follow the commit.
 func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 	ctx context.Context,
 	logoutResponse *saml.LogoutResponse,
@@ -167,7 +171,7 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 		return nil, errSLOFanoutStateUnavailable
 	}
 
-	transactionID, state, err := h.loadSLOFanoutTransactionState(ctx, requestID)
+	transactionID, err := h.loadSLOFanoutTransactionID(ctx, handle, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -176,40 +180,142 @@ func (h *SAMLHandler) applySLOFanoutLogoutResponse(
 		return nil, err
 	}
 
-	participant, isPending := state.Pending[requestID]
+	// Every lost race means another participant's response was committed, so the bound covers a full fan-out.
+	for range h.sloMaxParticipants() + 1 {
+		update, commitErr := h.commitSLOFanoutResponse(ctx, handle, transactionID, requestID, logoutResponse)
+		if errors.Is(commitErr, redis.TxFailedErr) {
+			continue
+		}
+
+		if commitErr != nil {
+			return nil, commitErr
+		}
+
+		h.finishSLOFanoutResponse(ctx, handle, update)
+
+		return update.aggregation, nil
+	}
+
+	return nil, errSLOFanoutStateConflict
+}
+
+// sloFanoutResponseUpdate is the outcome of applying one LogoutResponse to a loaded transaction state.
+type sloFanoutResponseUpdate struct {
+	aggregation       *sloFanoutAggregationResult
+	transactionID     string
+	requestID         string
+	participantEntity string
+	successCount      int
+	failureCount      int
+	recorded          bool
+	final             bool
+}
+
+// commitSLOFanoutResponse applies one LogoutResponse under WATCH and writes the state only if no concurrent
+// response changed it in the meantime; redis.TxFailedErr asks the caller to retry on fresh state.
+func (h *SAMLHandler) commitSLOFanoutResponse(
+	ctx context.Context,
+	handle redis.UniversalClient,
+	transactionID string,
+	requestID string,
+	logoutResponse *saml.LogoutResponse,
+) (sloFanoutResponseUpdate, error) {
+	var update sloFanoutResponseUpdate
+
+	transactionKey := h.sloFanoutStateKey(transactionID)
+
+	err := handle.Watch(ctx, func(tx *redis.Tx) error {
+		state, err := readSLOFanoutTransactionState(ctx, tx, transactionKey, transactionID)
+		if err != nil {
+			return err
+		}
+
+		update, err = state.applyLogoutResponse(transactionID, requestID, logoutResponse, time.Now().UTC())
+		if err != nil || !update.recorded {
+			return err
+		}
+
+		rawState, err := json.Marshal(state)
+		if err != nil {
+			return fmt.Errorf("cannot encode updated slo fanout transaction state: %w", err)
+		}
+
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, transactionKey, rawState, h.sloReplayTTL())
+
+			return nil
+		})
+		if err != nil && !errors.Is(err, redis.TxFailedErr) {
+			return fmt.Errorf("cannot persist updated slo fanout transaction state: %w", err)
+		}
+
+		return err
+	}, transactionKey)
+
+	return update, err
+}
+
+// applyLogoutResponse records one pending participant's outcome and the terminal status without side effects.
+// A response for an already recorded request returns the idempotent aggregation and leaves recorded unset.
+func (s *sloFanoutTransactionState) applyLogoutResponse(
+	transactionID string,
+	requestID string,
+	logoutResponse *saml.LogoutResponse,
+	now time.Time,
+) (sloFanoutResponseUpdate, error) {
+	participant, isPending := s.Pending[requestID]
 	if !isPending {
-		if aggregation, done := state.completedFanoutAggregation(transactionID, requestID); done {
-			return aggregation, nil
+		if aggregation, done := s.completedFanoutAggregation(transactionID, requestID); done {
+			return sloFanoutResponseUpdate{aggregation: aggregation}, nil
 		}
 
-		return nil, fmt.Errorf("%w: %q", errSLOFanoutResponseUnmatched, requestID)
+		return sloFanoutResponseUpdate{}, fmt.Errorf("%w: %q", errSLOFanoutResponseUnmatched, requestID)
 	}
 
-	if err = validateSLOFanoutResponseIssuer(logoutResponse, participant); err != nil {
-		return nil, err
+	if err := validateSLOFanoutResponseIssuer(logoutResponse, participant); err != nil {
+		return sloFanoutResponseUpdate{}, err
 	}
 
-	state.recordSLOFanoutOutcome(requestID, participant, logoutResponse)
-	successCount, failureCount := state.outcomeCounts()
-	state.UpdatedAt = time.Now().UTC()
+	s.recordSLOFanoutOutcome(requestID, participant, logoutResponse)
+	successCount, failureCount := s.outcomeCounts()
+	s.UpdatedAt = now
 
-	final := len(state.Pending) == 0
-
+	final := len(s.Pending) == 0
 	if final {
-		if err = h.applyFinalSLOFanoutStatus(ctx, transactionID, requestID, participant.EntityID, state, successCount, failureCount); err != nil {
-			return nil, err
+		if err := s.Transaction.TransitionTo(aggregateSLOFanoutTerminalStatus(successCount, failureCount), now); err != nil {
+			return sloFanoutResponseUpdate{}, err
 		}
 	}
 
-	if err = state.Transaction.Validate(); err != nil {
-		return nil, err
+	if err := s.Transaction.Validate(); err != nil {
+		return sloFanoutResponseUpdate{}, err
 	}
 
-	if err = h.persistUpdatedSLOFanoutTransactionState(ctx, handle, transactionID, requestID, state, final); err != nil {
-		return nil, err
+	return sloFanoutResponseUpdate{
+		aggregation: newSLOFanoutAggregationResult(
+			transactionID, requestID, participant.EntityID, s, successCount, failureCount, final,
+		),
+		transactionID: transactionID, requestID: requestID, participantEntity: participant.EntityID,
+		successCount: successCount, failureCount: failureCount, recorded: true, final: final,
+	}, nil
+}
+
+// finishSLOFanoutResponse emits terminal observability and drops the consumed request index after a commit.
+// The index deletion is best effort: a remaining index only routes a duplicate response to the idempotent path.
+func (h *SAMLHandler) finishSLOFanoutResponse(
+	ctx context.Context,
+	handle redis.UniversalClient,
+	update sloFanoutResponseUpdate,
+) {
+	if !update.recorded {
+		return
 	}
 
-	return newSLOFanoutAggregationResult(transactionID, requestID, participant.EntityID, state, successCount, failureCount, final), nil
+	if update.final {
+		h.recordFinalSLOFanoutStatus(ctx, update)
+	}
+
+	_ = handle.Del(ctx, h.sloFanoutRequestKey(update.requestID)).Err()
 }
 
 // newSLOFanoutAggregationResult builds the public aggregation response.
@@ -327,114 +433,73 @@ func (s *sloFanoutTransactionState) recordSLOFanoutOutcome(
 	delete(s.Pending, requestID)
 }
 
-// applyFinalSLOFanoutStatus records terminal aggregation status.
-func (h *SAMLHandler) applyFinalSLOFanoutStatus(
-	ctx context.Context,
-	transactionID string,
-	requestID string,
-	participantEntityID string,
-	state *sloFanoutTransactionState,
-	successCount int,
-	failureCount int,
-) error {
-	finalStatus := aggregateSLOFanoutTerminalStatus(successCount, failureCount)
-	if err := state.Transaction.TransitionTo(finalStatus, time.Now().UTC()); err != nil {
-		return err
-	}
+// recordFinalSLOFanoutStatus records the committed terminal aggregation status in metrics and the audit log.
+func (h *SAMLHandler) recordFinalSLOFanoutStatus(ctx context.Context, update sloFanoutResponseUpdate) {
+	finalStatus := update.aggregation.Status
 
 	recordSLOTerminalStatus(slodomain.SLODirectionIDPInitiated, finalStatus)
 	h.auditSLOEvent(
 		ctx,
 		"fanout_response_aggregated",
-		transactionID,
-		requestID,
-		participantEntityID,
+		update.transactionID,
+		update.requestID,
+		update.participantEntity,
 		samlMetricLabelStatus, finalStatus,
-		"success_count", successCount,
-		"failure_count", failureCount,
-		"pending", len(state.Pending),
+		"success_count", update.successCount,
+		"failure_count", update.failureCount,
+		"pending", update.aggregation.PendingCount,
 	)
-
-	return nil
 }
 
-// persistUpdatedSLOFanoutTransactionState stores the updated transaction and request index changes.
-func (h *SAMLHandler) persistUpdatedSLOFanoutTransactionState(
+// loadSLOFanoutTransactionID resolves the fan-out transaction that issued the LogoutRequest requestID.
+func (h *SAMLHandler) loadSLOFanoutTransactionID(
 	ctx context.Context,
 	handle redis.UniversalClient,
-	transactionID string,
 	requestID string,
-	state *sloFanoutTransactionState,
-	final bool,
-) error {
-	rawState, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("cannot encode updated slo fanout transaction state: %w", err)
-	}
-
-	pipe := handle.Pipeline()
-	pipe.Set(ctx, h.sloFanoutStateKey(transactionID), rawState, h.sloReplayTTL())
-	pipe.Del(ctx, h.sloFanoutRequestKey(requestID))
-
-	if final {
-		for pendingRequestID := range state.Pending {
-			pipe.Del(ctx, h.sloFanoutRequestKey(pendingRequestID))
-		}
-	}
-
-	if _, err = pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("cannot persist updated slo fanout transaction state: %w", err)
-	}
-
-	return nil
-}
-
-func (h *SAMLHandler) loadSLOFanoutTransactionState(
-	ctx context.Context,
-	requestID string,
-) (string, *sloFanoutTransactionState, error) {
-	handle := h.sloFanoutStorageHandle()
-	if handle == nil {
-		return "", nil, errSLOFanoutStateUnavailable
-	}
-
-	requestKey := h.sloFanoutRequestKey(requestID)
-
-	transactionID, err := handle.Get(ctx, requestKey).Result()
+) (string, error) {
+	transactionID, err := handle.Get(ctx, h.sloFanoutRequestKey(requestID)).Result()
 	if errors.Is(err, redis.Nil) {
-		return "", nil, fmt.Errorf("%w: %q", errSLOFanoutResponseUnmatched, requestID)
+		return "", fmt.Errorf("%w: %q", errSLOFanoutResponseUnmatched, requestID)
 	}
 
 	if err != nil {
-		return "", nil, fmt.Errorf("cannot load slo fanout request index: %w", err)
+		return "", fmt.Errorf("cannot load slo fanout request index: %w", err)
 	}
 
 	transactionID = strings.TrimSpace(transactionID)
 	if transactionID == "" {
-		return "", nil, fmt.Errorf("slo fanout request index is missing transaction id")
+		return "", fmt.Errorf("slo fanout request index is missing transaction id")
 	}
 
-	transactionKey := h.sloFanoutStateKey(transactionID)
+	return transactionID, nil
+}
 
-	rawState, err := handle.Get(ctx, transactionKey).Bytes()
+// readSLOFanoutTransactionState loads and validates one fan-out transaction state through reader.
+func readSLOFanoutTransactionState(
+	ctx context.Context,
+	reader redis.Cmdable,
+	transactionKey string,
+	transactionID string,
+) (*sloFanoutTransactionState, error) {
+	rawState, err := reader.Get(ctx, transactionKey).Bytes()
 	if errors.Is(err, redis.Nil) {
-		return "", nil, fmt.Errorf("%w: transaction %q", errSLOFanoutResponseUnmatched, transactionID)
+		return nil, fmt.Errorf("%w: transaction %q", errSLOFanoutResponseUnmatched, transactionID)
 	}
 
 	if err != nil {
-		return "", nil, fmt.Errorf("cannot load slo fanout transaction state: %w", err)
+		return nil, fmt.Errorf("cannot load slo fanout transaction state: %w", err)
 	}
 
 	var state sloFanoutTransactionState
 	if err = json.Unmarshal(rawState, &state); err != nil {
-		return "", nil, fmt.Errorf("cannot decode slo fanout transaction state: %w", err)
+		return nil, fmt.Errorf("cannot decode slo fanout transaction state: %w", err)
 	}
 
 	if strings.TrimSpace(state.Transaction.TransactionID) == "" {
-		return "", nil, fmt.Errorf("slo fanout transaction state is invalid")
+		return nil, fmt.Errorf("slo fanout transaction state is invalid")
 	}
 
-	return transactionID, &state, nil
+	return &state, nil
 }
 
 func (h *SAMLHandler) sloFanoutStorageHandle() redis.UniversalClient {
