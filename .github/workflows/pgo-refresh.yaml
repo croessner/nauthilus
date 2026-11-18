@@ -8,7 +8,11 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+
+# One refresh at a time: two runs would race for the same fast-forward of features.
+concurrency:
+  group: pgo-refresh
+  cancel-in-progress: false
 
 env:
   GOEXPERIMENT: runtimesecret
@@ -34,6 +38,8 @@ jobs:
           npm ci --prefix contrib/identity-proxy-e2e
           npx --prefix contrib/identity-proxy-e2e playwright install --with-deps chromium
 
+      # The runner profiles a dedicated authentication workload after the release checks and refuses a candidate
+      # without enough CPU samples to describe a hot path.
       - name: Capture PGO candidate from release E2E
         run: make release-identity-proxy-e2e
 
@@ -49,61 +55,53 @@ jobs:
           path: contrib/identity-proxy-e2e/.work/pgo/candidate.pgo
           if-no-files-found: error
 
-      - name: Prepare N+1 PGO refresh branch
-        id: prepare
+      # The profile is committed to features directly: it changes optimization only, it is validated below, and the
+      # next release merges it into main. A pull request would need the repository to let GitHub Actions create pull
+      # requests and would not start the regular workflows.
+      - name: Commit the profile to features
         shell: bash
         run: |
           set -euo pipefail
 
-          candidate="${GITHUB_WORKSPACE}/contrib/identity-proxy-e2e/.work/pgo/candidate.pgo"
-          cp "${candidate}" /tmp/default.pgo
+          cp contrib/identity-proxy-e2e/.work/pgo/candidate.pgo "${RUNNER_TEMP}/default.pgo"
 
           git fetch origin features
+          git checkout -B pgo-refresh origin/features
+          cp "${RUNNER_TEMP}/default.pgo" server/default.pgo
 
-          safe_ref="${GITHUB_REF_NAME//\//-}"
-          branch="automation/pgo-${safe_ref}"
-          git checkout -B "${branch}" origin/features
-
-          cp /tmp/default.pgo server/default.pgo
-          go tool pprof -top server/default.pgo >/dev/null
-
-          # Prove that the profile can be consumed by the next server build.
-          go build -mod=vendor -pgo=server/default.pgo -trimpath -o /tmp/nauthilus-pgo ./server
+          # Prove that the next server build and its native plugins consume the profile together.
+          go build -mod=vendor -trimpath -o "${RUNNER_TEMP}/nauthilus-pgo" ./server
+          sh scripts/check-native-artifact-bundle.sh
 
           if git ls-files --error-unmatch server/default.pgo >/dev/null 2>&1 && \
              git diff --quiet -- server/default.pgo; then
-            echo "changed=false" >> "${GITHUB_OUTPUT}"
-            echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-            echo "Committed PGO profile already matches the generated candidate."
+            echo "The committed PGO profile already matches the candidate."
             exit 0
           fi
+
+          samples="$(go tool pprof -sample_index=samples -top -nodecount=1 server/default.pgo |
+            sed -n 's/.*Total samples = \([0-9][0-9]*\).*/\1/p')"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add server/default.pgo
-          git commit -m "Chore: Refresh PGO profile from ${GITHUB_REF_NAME}"
-          git push --force-with-lease origin "HEAD:refs/heads/${branch}"
+          git commit -F - <<EOF
+          Build: Refresh the PGO profile from ${GITHUB_REF_NAME}
 
-          echo "changed=true" >> "${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          - Merged CPU profile of the release identity-proxy E2E authentication workload (${samples} samples).
+          - Validated with go tool pprof, a PGO server build, and the native plugin bundle check.
+          - Server and native plugin builds share it through scripts/native-pgo-flag.sh.
+          EOF
 
-      - name: Open N+1 PGO refresh pull request
-        if: steps.prepare.outputs.changed == 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PGO_BRANCH: ${{ steps.prepare.outputs.branch }}
-        run: |
-          set -euo pipefail
+          for attempt in 1 2 3; do
+            if git push origin HEAD:refs/heads/features; then
+              exit 0
+            fi
 
-          if gh pr view "${PGO_BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq '.url' >/dev/null 2>&1; then
-            gh pr view "${PGO_BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq '.url'
-            exit 0
-          fi
+            echo "Push attempt ${attempt} was rejected; rebasing onto the current features branch."
+            git fetch origin features
+            git rebase origin/features
+          done
 
-          gh pr create \
-            --repo "${GITHUB_REPOSITORY}" \
-            --base features \
-            --head "${PGO_BRANCH}" \
-            --title "Chore: Refresh PGO profile from ${GITHUB_REF_NAME}" \
-            --body "Refreshes \`server/default.pgo\` from the release E2E workload for use by the next Nauthilus build. Go automatically applies this profile to the \`./server\` main package via the default \`-pgo=auto\` behavior. The generated profile was validated with \`go tool pprof\` and a PGO-enabled server build before this PR was opened."
+          echo "::error::The PGO profile could not be pushed to features."
+          exit 1
