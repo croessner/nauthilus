@@ -320,6 +320,29 @@ func TestHypothesisConfidenceNeverExceedsMedium(t *testing.T) {
 	}
 }
 
+// TestHypothesisSymptomClassification pins which observed symptoms speak for a backend fault: a rejected user
+// password is informational and never derives a hypothesis, while every backend fault symptom derives the
+// authentication backend hypothesis.
+func TestHypothesisSymptomClassification(t *testing.T) {
+	for symptom, wantHypothesis := range map[string]string{
+		SymptomLDAPBindRejected:          "",
+		SymptomLDAPErrors:                HypothesisAuthBackendFailures,
+		SymptomPluginBackendCallFailures: HypothesisAuthBackendFailures,
+		SymptomLuaBackendVMReplaced:      HypothesisAuthBackendFailures,
+		SymptomAuthApplicationErrors:     HypothesisAuthBackendFailures,
+	} {
+		hypotheses := deriveHypotheses([]Finding{{ID: "F1", Source: SourceRuntime, Status: StatusObserved,
+			Freshness: Freshness{Basis: BasisProcessLifetimeCounter}, Symptoms: []Symptom{{Code: symptom, Count: 1}}}})
+
+		switch {
+		case wantHypothesis == "" && len(hypotheses) != 0:
+			t.Errorf("%s must not derive a hypothesis: %+v", symptom, hypotheses)
+		case wantHypothesis != "" && (len(hypotheses) != 1 || hypotheses[0].Code != wantHypothesis):
+			t.Errorf("%s must derive %s: %+v", symptom, wantHypothesis, hypotheses)
+		}
+	}
+}
+
 // TestErrorSharing pins that diagnostics errors use the shared support error type.
 func TestErrorSharing(t *testing.T) {
 	err := newError(CodeBusy, errors.New("internal"))

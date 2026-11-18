@@ -1590,7 +1590,7 @@ func (l *ldapPoolImpl) handleLDAPSearchError(
 	ldapRequest *bktype.LDAPRequest,
 	ldapReply *bktype.LDAPReply,
 ) {
-	stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "search", ldapErrorCode(err)).Inc()
+	stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, definitions.LDAPErrorOpSearch, ldapErrorCode(err)).Inc()
 
 	if ldapError, ok := stderrors.AsType[*ldap.Error](err); ok {
 		if l.handleTypedLDAPSearchError(err, ldapError, conf, cache, negKey, ldapReply) {
@@ -1737,7 +1737,7 @@ func (l *ldapPoolImpl) processLookupModifyRequest(index int, ldapRequest *bktype
 		ldapReply.Err = err
 
 		// error metric
-		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "modify", ldapErrorCode(err)).Inc()
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, definitions.LDAPErrorOpModify, ldapErrorCode(err)).Inc()
 		msp.RecordError(err)
 	}
 }
@@ -1820,7 +1820,7 @@ func (l *ldapPoolImpl) processAuthBindRequest(index int, ldapAuthRequest *bktype
 
 		ldapReply.Err = classifyBindError(err)
 
-		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, "bind", ldapErrorCode(err)).Inc()
+		stats.GetMetrics().GetLdapErrorsTotal().WithLabelValues(l.name, definitions.LDAPErrorOpBind, ldapErrorCode(err)).Inc()
 		bsp.RecordError(err)
 	}
 

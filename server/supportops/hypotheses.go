@@ -23,11 +23,15 @@ const (
 	SymptomLDAPBreakerOpen            = "LDAP_BREAKER_OPEN"
 	SymptomLDAPBreakerHalfOpen        = "LDAP_BREAKER_HALF_OPEN"
 	SymptomLDAPErrors                 = "LDAP_ERRORS"
+	SymptomLDAPBindRejected           = "LDAP_BIND_REJECTED"
 	SymptomLDAPConnectionError        = "LDAP_CONNECTION_ERROR"
 	SymptomLDAPConnectionFailed       = "LDAP_CONNECTION_FAILED"
 	SymptomLDAPSearchError            = "LDAP_SEARCH_ERROR"
 	SymptomAuthBackendsFailed         = "AUTH_BACKENDS_FAILED"
 	SymptomUnclassifiedBackendFailure = "UNCLASSIFIED_BACKEND_TEMPFAIL"
+	SymptomAuthApplicationErrors      = "AUTH_APPLICATION_ERRORS"
+	SymptomPluginBackendCallFailures  = "PLUGIN_BACKEND_CALL_FAILURES"
+	SymptomLuaBackendVMReplaced       = "LUA_BACKEND_VM_REPLACED"
 	SymptomBackendServersDown         = "BACKEND_SERVERS_DOWN"
 	SymptomRedisPoolTimeouts          = "REDIS_POOL_TIMEOUTS"
 	SymptomRedisPipelineError         = "REDIS_PIPELINE_ERROR"
@@ -70,7 +74,8 @@ var hypothesisRules = []hypothesisRule{
 		symptoms: []string{SymptomLDAPTargetUnhealthy, SymptomLDAPBreakerOpen, SymptomLDAPBreakerHalfOpen, SymptomLDAPConnectionError,
 			SymptomLDAPConnectionFailed}},
 	{code: HypothesisAuthBackendFailures, basis: "authentication backend failures or temporary-failure answers",
-		symptoms: []string{SymptomAuthBackendsFailed, SymptomUnclassifiedBackendFailure, SymptomLDAPErrors, SymptomLDAPSearchError}},
+		symptoms: []string{SymptomAuthBackendsFailed, SymptomUnclassifiedBackendFailure, SymptomAuthApplicationErrors,
+			SymptomPluginBackendCallFailures, SymptomLuaBackendVMReplaced, SymptomLDAPErrors, SymptomLDAPSearchError}},
 	{code: HypothesisMonitoredBackendsDown, basis: "backend health monitoring reports servers that are not alive",
 		symptoms: []string{SymptomBackendServersDown}},
 	{code: HypothesisRedisDegraded, basis: "Redis pool wait timeouts or failed Redis pipelines",

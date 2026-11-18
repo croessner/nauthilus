@@ -34,7 +34,8 @@ const processStartFamily = "process_start_time_seconds"
 
 // CoreCounterFamilies are counter vectors the server registers at startup. A gathered registry omits a vector that
 // has not counted yet, so for these families an absent series means "nothing counted since process start".
-var CoreCounterFamilies = []string{familyLDAPErrors, familyRedisTimeouts, familyAuthEvents, familyPolicyTechnical}
+var CoreCounterFamilies = []string{familyLDAPErrors, familyRedisTimeouts, familyAuthEvents, familyPolicyTechnical,
+	familyPluginCalls, familyLuaVMReplaced, familyAuthAppErrors}
 
 // Source reads the local Prometheus registry.
 type Source struct {
@@ -106,7 +107,7 @@ func (s *Source) Collect(ctx context.Context, query supportops.Query) supportops
 // componentRules maps each component to its evaluator; components without runtime metrics answer unknown.
 var componentRules = map[string]func(*snapshot) []supportops.Finding{
 	supportops.ComponentLDAP:              (*snapshot).ldapFindings,
-	supportops.ComponentAuthBackend:       nil,
+	supportops.ComponentAuthBackend:       (*snapshot).authBackendFindings,
 	supportops.ComponentBackendMonitoring: (*snapshot).backendMonitoringFindings,
 	supportops.ComponentRedis:             (*snapshot).redisFindings,
 	supportops.ComponentClickHouseExport:  (*snapshot).clickHouseFindings,

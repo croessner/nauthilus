@@ -136,7 +136,7 @@ func LuaMainWorker(ctx context.Context, cfg config.File, logger *slog.Logger, re
 	priorityqueue.LuaQueue.AddBackendName(backendName)
 	priorityqueue.LuaQueue.SetMaxQueueLength(backendName, runtimeConfig.queueLength)
 
-	vmPool := vmpool.GetManager().GetOrCreate(vmpool.PoolKey("backend:"+backendName), vmpool.PoolOptions{
+	vmPool := vmpool.GetManager().GetOrCreate(vmpool.PoolKey(definitions.LuaBackendPoolKeyPrefix+backendName), vmpool.PoolOptions{
 		MaxVMs: runtimeConfig.numberOfWorkers,
 		Config: cfg,
 	})

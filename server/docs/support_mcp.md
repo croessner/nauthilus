@@ -350,13 +350,22 @@ Reads the in-process Prometheus registry; it never dials a backend and does not 
 
 | Component | Evidence | Status |
 |---|---|---|
-| `ldap` | `ldap_target_health{pool,target}`, `ldap_breaker_state{pool,target}`; `ldap_errors_total` per pool | failing / degraded / ok; observed / not_observed |
+| `ldap` | `ldap_target_health{pool,target}`, `ldap_breaker_state{pool,target}`; `ldap_errors_total` per pool, operation, and result code | failing / degraded / ok; observed / not_observed |
 | `backend_monitoring` | `backend_servers_status{server_status=wanted|alive}` | failing (none alive) / degraded / ok |
 | `redis` | `redis_connection_timeouts_total` per pool | observed / not_observed |
 | `clickhouse_export` | `nauthilus_plugin_*clickhouse*_flush_batches_total{result}`, `..._queued_rows_total{result}` | observed / not_observed |
 | `auth_event_delivery` | `plugin_auth_events_total{outcome="dropped"}` per lane | observed / not_observed |
 | `policy` | `policy_check_technical_errors_total` | observed / not_observed |
-| `auth_backend` | none (log evidence only) | unknown |
+| `auth_backend` | `plugin_calls_total{extension_point="backend"}` with result `error`, `panic`, or `timeout` per module and component; `lua_vm_replaced_total` of Lua backend VM pools (`backend:<name>`); `auth_application_errors_total` per transport | observed / not_observed |
+
+**LDAP error classification.** `ldap_errors_total` counts every failed directory operation, including the directory's
+answer to a wrong user password (`op="bind"`, result code `49`). That answer is an outcome about the client, not a
+fault of the directory, so it is reported as the informational symptom `LDAP_BIND_REJECTED` and never derives a
+hypothesis. Every other operation and code stays `LDAP_ERRORS`; the finding labels carry `pool`, `op`, and `code`
+(`network` and `other` mean a failure below the LDAP protocol). Plugin calls that ended `canceled` (client gone) or
+`admission_limited` (host capacity) and Lua VM pools of other roles are not backend evidence and are not counted.
+`auth_backend` findings are labeled with `kind` (`plugin`, `lua`, `application`) and `name`; a Lua backend that
+fails without replacing its VM, and a plugin that reports a fault inside a successful result, are not visible here.
 
 ### `loki` (optional, historical)
 

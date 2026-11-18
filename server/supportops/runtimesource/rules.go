@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 	"github.com/croessner/nauthilus/v4/server/supportops"
 )
 
@@ -33,6 +35,21 @@ const (
 	familyRedisTimeouts      = "redis_connection_timeouts_total"
 	familyAuthEvents         = "plugin_auth_events_total"
 	familyPolicyTechnical    = "policy_check_technical_errors_total"
+	familyPluginCalls        = "plugin_calls_total"
+	familyLuaVMReplaced      = "lua_vm_replaced_total"
+	familyAuthAppErrors      = "auth_application_errors_total"
+	labelOp                  = "op"
+	labelCode                = "code"
+	labelModule              = "module"
+	labelComponent           = "component"
+	labelExtensionPoint      = "extension_point"
+	labelKey                 = "key"
+	labelTransport           = "transport"
+	labelKind                = "kind"
+	labelName                = "name"
+	kindPlugin               = "plugin"
+	kindLua                  = "lua"
+	kindApplication          = "application"
 	labelPool                = "pool"
 	labelTarget              = "target"
 	labelServerStatus        = "server_status"
@@ -49,7 +66,21 @@ const (
 	targetHealthHealthyValue = 1
 )
 
+const (
+	// groupKeySeparator joins group label values into one ordering key.
+	groupKeySeparator = "\x1f"
+
+	// backendExtensionPoint is the plugin_calls_total extension point of native authentication backends.
+	backendExtensionPoint = string(pluginregistry.ComponentKindBackend)
+
+	// luaBackendPoolPrefix prefixes the lua_vm_replaced_total key of a Lua backend VM pool.
+	luaBackendPoolPrefix = definitions.LuaBackendPoolKeyPrefix
+)
+
 var (
+	// pluginFailureResults are the plugin_calls_total results that mean a faulty plugin backend call.
+	pluginFailureResults = []string{definitions.PluginCallResultError, definitions.PluginCallResultPanic, definitions.PluginCallResultTimeout}
+
 	// clickHouseFlushFamilies matches the plugin's scoped flush counters of every row and event stream.
 	clickHouseFlushFamilies = regexp.MustCompile(`^nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_flush_batches_total$`)
 
@@ -110,8 +141,19 @@ func (s *snapshot) ldapFindings() []supportops.Finding {
 		findings = append(findings, *states[key])
 	}
 
-	return append(findings, s.counterFindings(supportops.ComponentLDAP, s.familySeries(familyLDAPErrors), labelPool,
-		supportops.SymptomLDAPErrors)...)
+	return append(findings, s.classifiedCounterFindings(supportops.ComponentLDAP, s.familySeries(familyLDAPErrors),
+		[]string{labelPool, labelOp, labelCode}, classifyLDAPError)...)
+}
+
+// classifyLDAPError separates the directory's answer to a rejected user password from a directory error. The pool
+// itself reads every non-transport bind error as a credential rejection, so the result code 49 of a user bind is an
+// outcome about the client; every other operation and code stays a directory error.
+func classifyLDAPError(labels map[string]string) string {
+	if labels[labelOp] == definitions.LDAPErrorOpBind && labels[labelCode] == definitions.LDAPResultCodeInvalidCredentials {
+		return supportops.SymptomLDAPBindRejected
+	}
+
+	return supportops.SymptomLDAPErrors
 }
 
 // raise records a symptom and keeps the worse status.
@@ -230,47 +272,174 @@ func filterSeries(input []series, label string, values []string) []series {
 	return kept
 }
 
-// counterFindings sums lifetime counters per group label (or overall for an empty label). A registered family that
-// counted nothing answers not_observed; an absent family answers nothing, so the component becomes unknown.
+// classifier maps the labels of one counter series to the symptom it raises.
+type classifier func(labels map[string]string) string
+
+// counterGroup accumulates the series of one lifetime-counter finding.
+type counterGroup struct {
+	labels  map[string]string
+	symptom string
+	total   float64
+}
+
+// counterFindings sums lifetime counters per group label (or overall for an empty label) under one symptom. A
+// registered family that counted nothing answers not_observed; an absent family answers nothing, so the component
+// becomes unknown.
 func (s *snapshot) counterFindings(component string, input []series, groupLabel string, symptom string) []supportops.Finding {
+	var groupLabels []string
+	if groupLabel != "" {
+		groupLabels = []string{groupLabel}
+	}
+
+	return s.classifiedCounterFindings(component, input, groupLabels, func(map[string]string) string { return symptom })
+}
+
+// classifiedCounterFindings sums lifetime counters per combination of group labels and symptom, so a classifier can
+// split one family into several symptoms. Findings are ordered by their group label values.
+func (s *snapshot) classifiedCounterFindings(component string, input []series, groupLabels []string, classify classifier) []supportops.Finding {
 	if input == nil {
 		return nil
 	}
 
-	totals := map[string]float64{}
-	groups := []string{}
-
-	for _, entry := range input {
-		group := entry.labels[groupLabel]
-		if _, seen := totals[group]; !seen {
-			groups = append(groups, group)
-		}
-
-		totals[group] += entry.value
-	}
-
+	groups := groupCounters(input, groupLabels, classify)
 	if len(groups) == 0 {
 		return []supportops.Finding{s.finding(component, supportops.BasisProcessLifetimeCounter, supportops.StatusNotObserved, nil)}
 	}
 
-	slices.SortFunc(groups, strings.Compare)
-
 	findings := make([]supportops.Finding, 0, len(groups))
 
 	for _, group := range groups {
-		var labels map[string]string
-		if groupLabel != "" {
-			labels = map[string]string{groupLabel: group}
-		}
-
-		finding := s.finding(component, supportops.BasisProcessLifetimeCounter, supportops.StatusNotObserved, labels)
-		if total := count(totals[group]); total > 0 {
+		finding := s.finding(component, supportops.BasisProcessLifetimeCounter, supportops.StatusNotObserved, group.labels)
+		if total := count(group.total); total > 0 {
 			finding.Status = supportops.StatusObserved
-			finding.Symptoms = []supportops.Symptom{{Code: symptom, Count: total}}
+			finding.Symptoms = []supportops.Symptom{{Code: group.symptom, Count: total}}
 		}
 
 		findings = append(findings, finding)
 	}
 
 	return findings
+}
+
+// groupCounters sums the series per group label values and symptom, ordered by those values.
+func groupCounters(input []series, groupLabels []string, classify classifier) []*counterGroup {
+	byKey := map[string]*counterGroup{}
+	keys := []string{}
+
+	for _, entry := range input {
+		symptom := classify(entry.labels)
+		values := make([]string, 0, len(groupLabels))
+
+		for _, name := range groupLabels {
+			values = append(values, entry.labels[name])
+		}
+
+		key := strings.Join(values, groupKeySeparator) + groupKeySeparator + symptom
+
+		group, seen := byKey[key]
+		if !seen {
+			group = &counterGroup{symptom: symptom, labels: pickLabels(entry.labels, groupLabels)}
+			byKey[key] = group
+
+			keys = append(keys, key)
+		}
+
+		group.total += entry.value
+	}
+
+	slices.SortFunc(keys, strings.Compare)
+
+	groups := make([]*counterGroup, 0, len(keys))
+	for _, key := range keys {
+		groups = append(groups, byKey[key])
+	}
+
+	return groups
+}
+
+// pickLabels returns the named labels of one series; no names give no labels.
+func pickLabels(labels map[string]string, names []string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+
+	picked := make(map[string]string, len(names))
+	for _, name := range names {
+		picked[name] = labels[name]
+	}
+
+	return picked
+}
+
+// authBackendFindings reports the runtime evidence of failing authentication backends since process start: failed
+// native plugin backend calls, replaced Lua backend VMs, and unexpected authentication application errors.
+func (s *snapshot) authBackendFindings() []supportops.Finding {
+	return s.classifiedCounterFindings(supportops.ComponentAuthBackend, s.authBackendSeries(), []string{labelKind, labelName},
+		func(labels map[string]string) string { return authBackendSymptoms[labels[labelKind]] })
+}
+
+// authBackendSymptoms maps the evidence kind of authBackendSeries to its symptom.
+var authBackendSymptoms = map[string]string{
+	kindPlugin:      supportops.SymptomPluginBackendCallFailures,
+	kindLua:         supportops.SymptomLuaBackendVMReplaced,
+	kindApplication: supportops.SymptomAuthApplicationErrors,
+}
+
+// authBackendEvidence projects the series of one counter family onto a kind/name pair; it returns false for series
+// that are not backend fault evidence.
+type authBackendEvidence struct {
+	family  string
+	kind    string
+	project func(labels map[string]string) (string, bool)
+}
+
+// authBackendEvidenceTable lists the counter families behind the auth_backend component.
+var authBackendEvidenceTable = []authBackendEvidence{
+	{family: familyPluginCalls, kind: kindPlugin, project: pluginBackendFailure},
+	{family: familyLuaVMReplaced, kind: kindLua, project: luaBackendVM},
+	{family: familyAuthAppErrors, kind: kindApplication, project: func(labels map[string]string) (string, bool) {
+		return labels[labelTransport], true
+	}},
+}
+
+// authBackendSeries merges the evidence families into series labeled with kind and name. It is nil when none of the
+// families is known, so the component answers unknown, and empty when they are known but counted nothing.
+func (s *snapshot) authBackendSeries() []series {
+	var merged []series
+
+	for _, evidence := range authBackendEvidenceTable {
+		input := s.familySeries(evidence.family)
+		if input == nil {
+			continue
+		}
+
+		if merged == nil {
+			merged = []series{}
+		}
+
+		for _, entry := range input {
+			if name, counts := evidence.project(entry.labels); counts {
+				merged = append(merged, series{labels: map[string]string{labelKind: evidence.kind, labelName: name}, value: entry.value})
+			}
+		}
+	}
+
+	return merged
+}
+
+// pluginBackendFailure names the module and component of a failed native plugin backend call. Canceled calls are
+// client outcomes and admission-limited calls are host capacity limits, so only these results count.
+func pluginBackendFailure(labels map[string]string) (string, bool) {
+	if labels[labelExtensionPoint] != backendExtensionPoint || !slices.Contains(pluginFailureResults, labels[labelResult]) {
+		return "", false
+	}
+
+	return labels[labelModule] + "/" + labels[labelComponent], true
+}
+
+// luaBackendVM names the pool of a replaced Lua backend VM; VM pools of other roles are not backend evidence.
+func luaBackendVM(labels map[string]string) (string, bool) {
+	key := labels[labelKey]
+
+	return key, strings.HasPrefix(key, luaBackendPoolPrefix)
 }

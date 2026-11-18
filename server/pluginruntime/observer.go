@@ -30,10 +30,10 @@ import (
 
 const (
 	pluginCallResultOK               = "ok"
-	pluginCallResultError            = "error"
-	pluginCallResultPanic            = "panic"
+	pluginCallResultError            = definitions.PluginCallResultError
+	pluginCallResultPanic            = definitions.PluginCallResultPanic
 	pluginCallResultCanceled         = "canceled"
-	pluginCallResultTimeout          = "timeout"
+	pluginCallResultTimeout          = definitions.PluginCallResultTimeout
 	pluginCallResultAdmissionLimited = "admission_limited"
 	pluginLogFieldErrorClass         = "plugin_error_class"
 )

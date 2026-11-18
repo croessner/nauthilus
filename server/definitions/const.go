@@ -323,6 +323,39 @@ const BackendMonitoringReloadTimeout = 2 * time.Second
 // and the underlying LDAP workers are unavailable or stuck.
 const LuaLDAPReplyTimeout = 5 * time.Second
 
+// LDAP error metric vocabulary shared by the LDAP pool (writer) and the support diagnostics (reader) of the
+// ldap_errors_total counter.
+const (
+	// LDAPErrorOpSearch labels failed directory searches.
+	LDAPErrorOpSearch = "search"
+
+	// LDAPErrorOpModify labels failed directory modifications.
+	LDAPErrorOpModify = "modify"
+
+	// LDAPErrorOpBind labels failed user binds.
+	LDAPErrorOpBind = "bind"
+
+	// LDAPResultCodeInvalidCredentials is the decimal LDAP result code (49) with which a directory rejects the
+	// password of a user bind. It is an answer about the client, not a fault of the directory.
+	LDAPResultCodeInvalidCredentials = "49"
+)
+
+// Backend failure vocabulary shared by its writers and the support diagnostics (reader).
+const (
+	// PluginCallResultError labels a native plugin call that returned an error (plugin_calls_total).
+	PluginCallResultError = "error"
+
+	// PluginCallResultPanic labels a native plugin call that panicked.
+	PluginCallResultPanic = "panic"
+
+	// PluginCallResultTimeout labels a native plugin call that exceeded its deadline.
+	PluginCallResultTimeout = "timeout"
+
+	// LuaBackendPoolKeyPrefix prefixes the VM pool key of a Lua backend; the suffix is the backend name
+	// (lua_vm_replaced_total key label).
+	LuaBackendPoolKeyPrefix = "backend:"
+)
+
 // StatusClientClosedRequest is a non-standard HTTP status used by some proxies (e.g. Nginx) to indicate
 // the client closed the connection before the server could send a response.
 // Useful for logging/metrics when ctx.Request.Context() is canceled.

@@ -18,6 +18,7 @@ package runtimesource
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -62,6 +63,10 @@ func newRegistry(t *testing.T) (*prometheus.Registry, map[string]*prometheus.Gau
 		familyLDAPErrors:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: familyLDAPErrors}, []string{labelPool, "op", "code"}),
 		familyRedisTimeouts: prometheus.NewCounterVec(prometheus.CounterOpts{Name: familyRedisTimeouts}, []string{labelPoolName}),
 		familyAuthEvents:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: familyAuthEvents}, []string{labelOutcome, labelLane}),
+		familyPluginCalls: prometheus.NewCounterVec(prometheus.CounterOpts{Name: familyPluginCalls},
+			[]string{labelModule, labelComponent, labelExtensionPoint, "method", labelResult}),
+		familyLuaVMReplaced: prometheus.NewCounterVec(prometheus.CounterOpts{Name: familyLuaVMReplaced}, []string{labelKey}),
+		familyAuthAppErrors: prometheus.NewCounterVec(prometheus.CounterOpts{Name: familyAuthAppErrors}, []string{labelTransport}),
 		"nauthilus_plugin_clickhouse_clickhouse_flush_batches_total": prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "nauthilus_plugin_clickhouse_clickhouse_flush_batches_total"}, []string{labelResult}),
 	}
@@ -106,7 +111,7 @@ func TestRuntimeFindings(t *testing.T) {
 
 	for component, status := range map[string]supportops.Status{
 		supportops.ComponentRedis: supportops.StatusNotObserved, supportops.ComponentAuthEventDelivery: supportops.StatusNotObserved,
-		supportops.ComponentPolicy: supportops.StatusNotObserved, supportops.ComponentAuthBackend: supportops.StatusUnknown,
+		supportops.ComponentPolicy: supportops.StatusNotObserved, supportops.ComponentAuthBackend: supportops.StatusNotObserved,
 	} {
 		singleFinding(t, result, component, status)
 	}
@@ -137,6 +142,91 @@ func singleFinding(t *testing.T, result supportops.SourceResult, component strin
 	}
 
 	return findings[0]
+}
+
+// ldapCounterCase is one expected lifetime-counter finding of the LDAP error classification.
+type ldapCounterCase struct {
+	labels  map[string]string
+	symptom string
+	count   int64
+}
+
+// TestRuntimeLDAPErrorsAreClassified pins that a rejected user password (bind, result code 49) is reported as its
+// own informational symptom per pool, operation, and code, while every other directory error stays LDAP_ERRORS.
+func TestRuntimeLDAPErrorsAreClassified(t *testing.T) {
+	registry, _, counters := newRegistry(t)
+
+	counters[familyLDAPErrors].WithLabelValues("auth", "bind", "49").Add(3)
+	counters[familyLDAPErrors].WithLabelValues("auth", "bind", "network").Add(1)
+	counters[familyLDAPErrors].WithLabelValues("lookup", "search", "32").Add(2)
+
+	result := New(registry, CoreCounterFamilies...).Collect(context.Background(), testRuntimeQuery())
+	want := []ldapCounterCase{
+		{map[string]string{labelPool: "auth", labelOp: "bind", labelCode: "49"}, supportops.SymptomLDAPBindRejected, 3},
+		{map[string]string{labelPool: "auth", labelOp: "bind", labelCode: "network"}, supportops.SymptomLDAPErrors, 1},
+		{map[string]string{labelPool: "lookup", labelOp: "search", labelCode: "32"}, supportops.SymptomLDAPErrors, 2},
+	}
+
+	findings := findingsOf(result, supportops.ComponentLDAP)
+	if len(findings) != len(want) {
+		t.Fatalf("ldap findings = %+v, want %d", findings, len(want))
+	}
+
+	for index, expected := range want {
+		finding := findings[index]
+		if finding.Status != supportops.StatusObserved || !maps.Equal(finding.Labels, expected.labels) ||
+			len(finding.Symptoms) != 1 || finding.Symptoms[0].Code != expected.symptom || finding.Symptoms[0].Count != expected.count {
+			t.Errorf("finding %d = %+v, want %+v", index, finding, expected)
+		}
+	}
+}
+
+// TestRuntimeAuthBackendEvidence pins the runtime evidence of the auth_backend component: failed native plugin
+// backend calls, replaced Lua backend VMs, and unexpected authentication application errors. Other plugin extension
+// points, non-failure results, and Lua VM pools of other roles never count.
+func TestRuntimeAuthBackendEvidence(t *testing.T) {
+	registry, _, counters := newRegistry(t)
+	calls := counters[familyPluginCalls]
+
+	calls.WithLabelValues("rns", "directory", "backend", "VerifyPassword", "ok").Add(100)
+	calls.WithLabelValues("rns", "directory", "backend", "VerifyPassword", "error").Add(2)
+	calls.WithLabelValues("rns", "directory", "backend", "ListAccounts", "timeout").Add(1)
+	calls.WithLabelValues("rns", "directory", "backend", "VerifyPassword", "canceled").Add(7)
+	calls.WithLabelValues("rns", "directory", "backend", "VerifyPassword", "admission_limited").Add(5)
+	calls.WithLabelValues("rep", "scorer", "filter", "Evaluate", "error").Add(9)
+	counters[familyLuaVMReplaced].WithLabelValues("backend:legacy").Add(2)
+	counters[familyLuaVMReplaced].WithLabelValues("feature:geo").Add(8)
+	counters[familyAuthAppErrors].WithLabelValues("http").Add(4)
+
+	result := New(registry, CoreCounterFamilies...).Collect(context.Background(), testRuntimeQuery())
+	want := []ldapCounterCase{
+		{map[string]string{labelKind: kindApplication, labelName: "http"}, supportops.SymptomAuthApplicationErrors, 4},
+		{map[string]string{labelKind: kindLua, labelName: "backend:legacy"}, supportops.SymptomLuaBackendVMReplaced, 2},
+		{map[string]string{labelKind: kindPlugin, labelName: "rns/directory"}, supportops.SymptomPluginBackendCallFailures, 3},
+	}
+
+	findings := findingsOf(result, supportops.ComponentAuthBackend)
+	if len(findings) != len(want) {
+		t.Fatalf("auth_backend findings = %+v, want %d", findings, len(want))
+	}
+
+	for index, expected := range want {
+		finding := findings[index]
+		if finding.Status != supportops.StatusObserved || !maps.Equal(finding.Labels, expected.labels) ||
+			finding.Freshness.Basis != supportops.BasisProcessLifetimeCounter || len(finding.Symptoms) != 1 ||
+			finding.Symptoms[0].Code != expected.symptom || finding.Symptoms[0].Count != expected.count {
+			t.Errorf("finding %d = %+v, want %+v", index, finding, expected)
+		}
+	}
+}
+
+// TestRuntimeAuthBackendNothingCounted pins that registered but silent backend counters answer one not_observed
+// finding, never one per family and never ok.
+func TestRuntimeAuthBackendNothingCounted(t *testing.T) {
+	registry, _, _ := newRegistry(t)
+
+	result := New(registry, CoreCounterFamilies...).Collect(context.Background(), testRuntimeQuery())
+	singleFinding(t, result, supportops.ComponentAuthBackend, supportops.StatusNotObserved)
 }
 
 // TestRuntimeAbsentDataIsUnknown pins that unregistered families never answer ok or not_observed.
