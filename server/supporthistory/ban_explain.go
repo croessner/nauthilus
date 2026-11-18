@@ -40,7 +40,7 @@ func (s *Service) explainBan(ctx context.Context, scope banScope, instance banIn
 	row := instance.activation
 	ban := Ban{BanRef: row.EventID, Network: row.Network, End: instance.end, Unknowns: []string{},
 		Activation: Activation{At: row.At.UTC(), Kind: row.Kind, Rule: row.Rule, StoredRule: row.StoredRule,
-			RuleFingerprint: row.RuleFingerprint, Instance: row.Instance, BucketID: optional(row.BucketID),
+			RuleFingerprint: row.RuleFingerprint, Instance: recordedText(row.Instance), BucketID: recorded(row.BucketID),
 			WindowIndex: row.WindowIndex, WindowCurrent: row.WindowCurrent, WindowPrevious: row.WindowPrevious,
 			Total: row.Total, EffectiveLimit: row.EffectiveLimit, PlannedEnd: row.ExpiresAt,
 			ActivatingRequest: activatingRequest, PeriodSeconds: row.PeriodSeconds,
@@ -122,8 +122,8 @@ func (s *Service) hitSummary(ctx context.Context, scope banScope, kind string, n
 	}
 
 	for _, claimant := range aggregate.Claimants {
-		summary.Claimants = append(summary.Claimants, Claimant{ClaimedUsername: optional(claimant.ClaimedUsername),
-			Account: optional(claimant.Account), Hits: claimant.Hits})
+		summary.Claimants = append(summary.Claimants, Claimant{ClaimedUsername: recorded(claimant.ClaimedUsername),
+			Account: recorded(claimant.Account), Hits: claimant.Hits})
 	}
 
 	return summary

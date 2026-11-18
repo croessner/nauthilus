@@ -492,7 +492,7 @@ func lifecycleEvent(row LifecycleRecord, projection Projection) LifecycleEvent {
 		BucketID: optional(row.BucketID), ReleaseSource: optional(row.ReleaseSource), KeysRemoved: row.KeysRemoved}
 
 	if projection == ProjectionDetail {
-		event.OperatorClientID = optional(row.OperatorClientID)
+		event.OperatorClientID = recorded(row.OperatorClientID)
 	}
 
 	return event

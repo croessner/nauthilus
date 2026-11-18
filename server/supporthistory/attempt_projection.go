@@ -15,7 +15,14 @@
 
 package supporthistory
 
-import "time"
+import (
+	"time"
+
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
+)
+
+// maxRecordedRunes bounds one recorded free-text value in a support answer.
+const maxRecordedRunes = 256
 
 // Reputation evidence states.
 const (
@@ -31,6 +38,17 @@ func optional(value string) *string {
 	}
 
 	return &value
+}
+
+// recorded returns a recorded free-text value bounded and cleaned for a support answer, or nil when it is empty.
+// Recorded values can carry text a client typed; they leave the host as data only (see supportaccess.SanitizeText).
+func recorded(value string) *string {
+	return optional(recordedText(value))
+}
+
+// recordedText bounds and cleans a recorded free-text value for a support answer.
+func recordedText(value string) string {
+	return supportaccess.SanitizeText(value, maxRecordedRunes)
 }
 
 // stringValue dereferences an optional string.
@@ -51,7 +69,7 @@ func identityProjection(input attemptInput, matched bool, by string, login, acco
 		return identity
 	}
 
-	identity.SuppliedLogin, identity.CanonicalAccount, identity.AccountFound = optional(login), optional(account), found
+	identity.SuppliedLogin, identity.CanonicalAccount, identity.AccountFound = recorded(login), recorded(account), found
 
 	return identity
 }
@@ -62,15 +80,15 @@ func projectLogin(record LoginRecord, input attemptInput) projectedEvent {
 	matched, by := input.matcher.identityOfLogin(record)
 
 	event := Event{
-		OccurredAt: record.At.UTC(), EventID: optional(record.EventID), Source: sourceNameLogins,
-		RequestID: record.Session, Instance: record.Instance, Stage: reading.stage, Result: reading.result,
+		OccurredAt: record.At.UTC(), EventID: recorded(record.EventID), Source: sourceNameLogins,
+		RequestID: recordedText(record.Session), Instance: recordedText(record.Instance), Stage: reading.stage, Result: reading.result,
 		Code: reading.code, Category: reading.category, RecordVersion: record.ContractVersion,
-		Method:   optional(record.Method),
+		Method:   recorded(record.Method),
 		Identity: identityProjection(input, matched, by, record.Username, record.Account, record.UserFound),
-		Context: EventContext{ClientIP: optional(record.ClientIP), Protocol: optional(record.Protocol),
-			Service: optional(record.Service), OIDCClientID: optional(record.OIDCClientID),
-			SAMLEntityID: optional(record.SAMLEntityID), GrantType: optional(record.GrantType),
-			Transport: optional(record.Transport), TransportStatus: record.TransportStatus},
+		Context: EventContext{ClientIP: recorded(record.ClientIP), Protocol: recorded(record.Protocol),
+			Service: recorded(record.Service), OIDCClientID: recorded(record.OIDCClientID),
+			SAMLEntityID: recorded(record.SAMLEntityID), GrantType: recorded(record.GrantType),
+			Transport: recorded(record.Transport), TransportStatus: record.TransportStatus},
 	}
 
 	if record.ContractVersion >= 1 {
@@ -94,10 +112,10 @@ func decisionOf(record LoginRecord, identityReleased bool) *Decision {
 
 	return &Decision{
 		Operation: record.Operation, Outcome: record.Outcome, OutcomeStage: record.OutcomeStage,
-		OutcomeMarker: record.OutcomeMarker, ResponseMarker: record.ResponseMarker, PolicyRule: record.PolicyRule,
-		TempFailReason: record.TempFailReason, TempFailCheckpoint: record.TempFailCheckpoint,
+		OutcomeMarker: record.OutcomeMarker, ResponseMarker: record.ResponseMarker, PolicyRule: recordedText(record.PolicyRule),
+		TempFailReason: recordedText(record.TempFailReason), TempFailCheckpoint: record.TempFailCheckpoint,
 		PolicyStatus: record.PolicyStatus, FSMState: record.FSMState, DecisionSources: sources,
-		BruteForceBucket: optional(record.BruteForceBucket), BruteForceTolerated: record.BruteForceTolerated,
+		BruteForceBucket: recorded(record.BruteForceBucket), BruteForceTolerated: record.BruteForceTolerated,
 		AnsweredStatusCode: code, AnsweredStatusMessage: message,
 	}
 }
@@ -118,7 +136,7 @@ func answeredStatusOf(record LoginRecord) (*int, *string) {
 		code = &value
 	}
 
-	return code, optional(record.AnsweredStatusMessage)
+	return code, recorded(record.AnsweredStatusMessage)
 }
 
 // reputationOf reports structured reputation evidence; an empty projection is "none recorded", never neutral,
@@ -144,13 +162,13 @@ func projectAuthEvent(record AuthEventRecord, input attemptInput) projectedEvent
 	role := record.FactorRole
 
 	event := Event{
-		OccurredAt: record.At.UTC(), EventID: optional(record.EventID), Source: sourceNameAuthEvents,
-		RequestID: record.RequestID, Instance: record.Instance, Stage: reading.stage, Result: reading.result,
+		OccurredAt: record.At.UTC(), EventID: recorded(record.EventID), Source: sourceNameAuthEvents,
+		RequestID: recordedText(record.RequestID), Instance: recordedText(record.Instance), Stage: reading.stage, Result: reading.result,
 		Code: reading.code, Category: reading.category, RecordVersion: record.EventVersion,
-		FactorRole: optional(role), Method: optional(record.Method),
+		FactorRole: optional(role), Method: recorded(record.Method),
 		Identity: identityProjection(input, matched, by, "", record.Account, nil),
-		Context: EventContext{ClientIP: optional(record.ClientIP), Protocol: optional(record.Protocol),
-			OIDCClientID: optional(record.ClientID), SAMLEntityID: optional(record.SAMLEntityID)},
+		Context: EventContext{ClientIP: recorded(record.ClientIP), Protocol: recorded(record.Protocol),
+			OIDCClientID: recorded(record.ClientID), SAMLEntityID: recorded(record.SAMLEntityID)},
 	}
 
 	if record.EventType == eventTypeMFA {

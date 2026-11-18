@@ -285,8 +285,8 @@ func projectContribution(scope banScope, item CountedRecord) Contribution {
 		return contribution
 	}
 
-	contribution.ClaimedUsername, contribution.Account = optional(item.ClaimedUsername), optional(item.Account)
-	contribution.ClientIP = optional(item.ClientIP)
+	contribution.ClaimedUsername, contribution.Account = recorded(item.ClaimedUsername), recorded(item.Account)
+	contribution.ClientIP = recorded(item.ClientIP)
 
 	if scope.matcher != nil {
 		_, byLogin := scope.matcher.logins[item.ClaimedUsername]
