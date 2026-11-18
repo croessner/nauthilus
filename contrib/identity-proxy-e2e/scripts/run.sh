@@ -7,6 +7,10 @@ COMPOSE=(docker compose --project-directory "${ROOT_DIR}" -f "${ROOT_DIR}/docker
 PGO_DIR="${ROOT_DIR}/.work/pgo"
 PLUGIN_RELOAD_DIR="${ROOT_DIR}/.work/plugin-reload"
 PLUGIN_RELOAD_URL="http://127.0.0.1:38083"
+# Seconds the PGO workload runs before the profiles start (token, connections, account provisioning) and after they
+# end, so every sampled second carries request traffic.
+PGO_LOAD_WARMUP_SECONDS=3
+PGO_LOAD_TAIL_SECONDS=5
 PGO_PIDS=()
 # Second-factor outcomes the browser smoke must leave in nauthilus.auth_events as method|result|reason|flow_effect.
 CLICKHOUSE_EXPECTED_EVENTS=(
@@ -43,7 +47,8 @@ Commands:
   plugin-reload  Prove that SIGHUP applies native plugin config and refuses artifact changes.
   clickhouse-events  Prove that browser MFA flows produced the expected auth_events rows in ClickHouse.
   clickhouse-history Prove browser OIDC completion events reach the history API and the owner Python client.
-  smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks.
+  smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks
+                 (with NAUTHILUS_E2E_PGO=1 followed by the PGO authentication workload).
   down           Stop and remove the E2E stack.
 
 Environment:
@@ -51,8 +56,9 @@ Environment:
   NAUTHILUS_E2E_IMAGE=...      Image used by docker-compose.
   NAUTHILUS_E2E_FORCE=1        Regenerate key material in prepare.
   NAUTHILUS_E2E_SAML_URL=...   Override the SAML SP login URL; set empty to skip SAML.
-  NAUTHILUS_E2E_PGO=1          Capture and merge CPU profiles while the smoke workload runs.
+  NAUTHILUS_E2E_PGO=1          After the checks pass, run an authentication workload and merge its CPU profiles.
   NAUTHILUS_E2E_PGO_SECONDS=N  CPU profile duration per Nauthilus instance (default: 30).
+  NAUTHILUS_E2E_PGO_MIN_SAMPLES=N  Minimum CPU samples a candidate must carry (default: 1000).
 USAGE
 }
 
@@ -69,6 +75,11 @@ prepare_pgo_capture() {
 
   if ! [[ "${NAUTHILUS_E2E_PGO_SECONDS:-30}" =~ ^[1-9][0-9]*$ ]]; then
     echo "NAUTHILUS_E2E_PGO_SECONDS must be a positive integer." >&2
+    return 2
+  fi
+
+  if ! [[ "${NAUTHILUS_E2E_PGO_MIN_SAMPLES:-1000}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "NAUTHILUS_E2E_PGO_MIN_SAMPLES must be a positive integer." >&2
     return 2
   fi
 
@@ -96,12 +107,8 @@ capture_pgo_profile() {
   PGO_PIDS+=("$!")
 }
 
-# Collect CPU profiles concurrently while the smoke workload executes.
+# Collect CPU profiles of all three instances concurrently.
 start_pgo_capture() {
-  if ! pgo_enabled; then
-    return
-  fi
-
   echo "Capturing ${NAUTHILUS_E2E_PGO_SECONDS:-30}s PGO CPU profiles from authority, edge-a, and edge-b."
   capture_pgo_profile authority http://127.0.0.1:38081
   capture_pgo_profile edge-a https://127.0.0.1:38080 -k
@@ -150,11 +157,70 @@ finish_pgo_capture() {
       "${PGO_DIR}/edge-b.pprof" \
       > "${PGO_DIR}/candidate.pgo.tmp" || exit $?
     go tool pprof -top "${PGO_DIR}/candidate.pgo.tmp" >/dev/null || exit $?
+    require_pgo_samples "${PGO_DIR}/candidate.pgo.tmp" || exit $?
     mv "${PGO_DIR}/candidate.pgo.tmp" "${PGO_DIR}/candidate.pgo" || exit $?
   ) || return $?
 
   echo "PGO candidate written to ${PGO_DIR}/candidate.pgo"
-  echo "Review it before promoting it to server/default.pgo."
+  echo "The PGO refresh workflow promotes release candidates to server/default.pgo."
+}
+
+# Refuse a candidate whose CPU samples cannot describe a hot path: a profile of idle instances only adds noise to the
+# compiler's decisions.
+require_pgo_samples() {
+  local profile="$1"
+  local minimum="${NAUTHILUS_E2E_PGO_MIN_SAMPLES:-1000}"
+  local samples
+
+  samples="$(go tool pprof -sample_index=samples -top -nodecount=1 "${profile}" |
+    sed -n 's/.*Total samples = \([0-9][0-9]*\).*/\1/p')"
+
+  if [[ -z "${samples}" || "${samples}" -lt "${minimum}" ]]; then
+    echo "PGO candidate carries ${samples:-no} CPU samples; at least ${minimum} are required." >&2
+    return 1
+  fi
+
+  echo "PGO candidate carries ${samples} CPU samples."
+}
+
+# Run the authentication workload of the PGO capture. The load client is built first, the profiles start after a
+# short warm-up, and the workload outlasts them, so the candidate samples request handling instead of idle time.
+pgo_workload() {
+  if ! pgo_enabled; then
+    return
+  fi
+
+  local seconds="${NAUTHILUS_E2E_PGO_SECONDS:-30}"
+  local load_client="${PGO_DIR}/pgo-load"
+  local load_pid
+  local status=0
+
+  (
+    cd "${REPO_DIR}" &&
+      GOEXPERIMENT=runtimesecret GOCACHE="${GOCACHE:-/tmp/nauthilus-go-cache}" \
+        go build -mod=vendor -o "${load_client}" ./contrib/identity-proxy-e2e/cmd/smoke
+  ) || return $?
+
+  (
+    cd "${REPO_DIR}" &&
+      exec "${load_client}" --mode pgo-load \
+        --load-duration "$((seconds + PGO_LOAD_WARMUP_SECONDS + PGO_LOAD_TAIL_SECONDS))s" \
+        --edge-client-id "${HISTORY_CLIENT_ID}" --edge-client-secret "${HISTORY_CLIENT_SECRET}"
+  ) &
+  load_pid=$!
+
+  sleep "${PGO_LOAD_WARMUP_SECONDS}"
+  start_pgo_capture
+  wait "${load_pid}" || status=$?
+
+  if [[ "${status}" -ne 0 ]]; then
+    echo "The PGO authentication workload failed." >&2
+    cancel_pgo_capture
+
+    return "${status}"
+  fi
+
+  finish_pgo_capture
 }
 
 prepare() {
@@ -496,7 +562,6 @@ smoke() {
   reset_stack
   prepare_pgo_capture
   up
-  start_pgo_capture
 
   rpc_pre_browser || status=$?
   if [[ "${status}" -eq 0 ]]; then
@@ -519,9 +584,7 @@ smoke() {
   fi
 
   if [[ "${status}" -eq 0 ]]; then
-    finish_pgo_capture || status=$?
-  else
-    cancel_pgo_capture
+    pgo_workload || status=$?
   fi
 
   return "${status}"

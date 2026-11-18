@@ -103,6 +103,11 @@ type options struct {
 	username               string
 	password               string
 	webauthnUsername       string
+	edgeURL                string
+	edgeClientID           string
+	edgeClientSecret       string
+	loadDuration           time.Duration
+	loadWorkers            int
 }
 
 type runner struct {
@@ -130,7 +135,7 @@ func main() {
 func parseOptions() options {
 	var opts options
 
-	flag.StringVar(&opts.mode, "mode", modePreBrowser, "smoke mode: pre-browser or post-browser")
+	flag.StringVar(&opts.mode, "mode", modePreBrowser, "smoke mode: pre-browser, post-browser, or pgo-load")
 	flag.StringVar(&opts.authorityTokenURL, "authority-token-url", "http://localhost:38081/oidc/token", "authority token endpoint URL reachable from the host")
 	flag.StringVar(&opts.authorityTokenAudience, "authority-token-audience", "http://authority:38081/oidc/token", "private_key_jwt audience expected by the authority")
 	flag.StringVar(&opts.authorityManagementURL, "authority-management-url", "http://localhost:38081", "authority management API base URL reachable from the host")
@@ -145,6 +150,11 @@ func parseOptions() options {
 	flag.StringVar(&opts.username, "username", "split-user@example.test", "smoke username")
 	flag.StringVar(&opts.password, "password", "split-password", "smoke password")
 	flag.StringVar(&opts.webauthnUsername, "webauthn-username", "split-user@example.test.mfa", "username registered by the browser WebAuthn smoke")
+	flag.StringVar(&opts.edgeURL, "edge-url", "https://127.0.0.1:38080", "edge-a base URL reachable from the host (pgo-load)")
+	flag.StringVar(&opts.edgeClientID, "edge-client-id", "", "edge backchannel client id with nauthilus:authenticate (pgo-load)")
+	flag.StringVar(&opts.edgeClientSecret, "edge-client-secret", "", "edge backchannel client secret (pgo-load)")
+	flag.DurationVar(&opts.loadDuration, "load-duration", 35*time.Second, "authentication workload duration (pgo-load)")
+	flag.IntVar(&opts.loadWorkers, "load-workers", 12, "concurrent authentication workers (pgo-load)")
 	flag.Parse()
 
 	return opts
@@ -162,6 +172,8 @@ func run(opts options) error {
 		return smoke.runPreBrowser(context.Background())
 	case modePostBrowser:
 		return smoke.runPostBrowser(context.Background())
+	case modePGOLoad:
+		return smoke.runPGOLoad(context.Background())
 	default:
 		return fmt.Errorf("unknown mode %q", opts.mode)
 	}
@@ -215,7 +227,22 @@ func loadTransportCredentials(opts options) (credentials.TransportCredentials, e
 		return nil, fmt.Errorf("load mTLS client certificate: %w", err)
 	}
 
-	caPEM, err := os.ReadFile(filepath.Join(opts.workDir, "certs", "e2e-ca.crt"))
+	roots, err := loadE2ERoots(opts.workDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		ServerName:   opts.serverName,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      roots,
+	}), nil
+}
+
+// loadE2ERoots returns a certificate pool that trusts only the generated E2E CA.
+func loadE2ERoots(workDir string) (*x509.CertPool, error) {
+	caPEM, err := os.ReadFile(filepath.Join(workDir, "certs", "e2e-ca.crt"))
 	if err != nil {
 		return nil, fmt.Errorf("read E2E CA certificate: %w", err)
 	}
@@ -225,12 +252,7 @@ func loadTransportCredentials(opts options) (credentials.TransportCredentials, e
 		return nil, errors.New("parse E2E CA certificate")
 	}
 
-	return credentials.NewTLS(&tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		ServerName:   opts.serverName,
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      roots,
-	}), nil
+	return roots, nil
 }
 
 func (r *runner) close() {
@@ -386,19 +408,38 @@ func (r *runner) acquireToken(parent context.Context, scopes []string) (string, 
 	form.Set("client_assertion", assertion)
 	form.Set("scope", strings.Join(scopes, " "))
 
+	return tokenRequest{client: http.DefaultClient, url: r.opts.authorityTokenURL, form: form, name: "authority caller"}.exchange(parent)
+}
+
+// tokenRequest is one OAuth client-credentials token request; prepare adds client authentication when the form does
+// not carry it.
+type tokenRequest struct {
+	client  *http.Client
+	form    url.Values
+	prepare func(*http.Request)
+	url     string
+	name    string
+}
+
+// exchange posts the token request and returns its access token.
+func (t tokenRequest) exchange(parent context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, r.opts.authorityTokenURL, strings.NewReader(form.Encode()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, strings.NewReader(t.form.Encode()))
 	if err != nil {
 		return "", err
 	}
 
 	request.Header.Set("content-type", "application/x-www-form-urlencoded")
 
-	response, err := http.DefaultClient.Do(request)
+	if t.prepare != nil {
+		t.prepare(request)
+	}
+
+	response, err := t.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("request authority caller token: %w", err)
+		return "", fmt.Errorf("request %s token: %w", t.name, err)
 	}
 
 	defer func() {
@@ -407,11 +448,11 @@ func (r *runner) acquireToken(parent context.Context, scopes []string) (string, 
 
 	var payload tokenResponse
 	if err = json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return "", fmt.Errorf("decode authority caller token response: %w", err)
+		return "", fmt.Errorf("decode %s token response: %w", t.name, err)
 	}
 
 	if response.StatusCode != http.StatusOK || payload.AccessToken == "" {
-		return "", fmt.Errorf("authority caller token failed: status=%d error=%s description=%s", response.StatusCode, payload.Error, payload.Description)
+		return "", fmt.Errorf("%s token failed: status=%d error=%s description=%s", t.name, response.StatusCode, payload.Error, payload.Description)
 	}
 
 	return payload.AccessToken, nil

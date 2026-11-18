@@ -265,6 +265,8 @@ NAUTHILUS_E2E_SKIP_BUILD=1 contrib/identity-proxy-e2e/scripts/run.sh smoke
 5. `redis-check`: checks that authority Redis and edge Redis cannot reach each other.
 6. `browser`: drives positive and negative OIDC, device-code, TOTP, recovery-code, WebAuthn, SAML, and multi-edge flows.
 7. `rpc --mode post-browser`: reads authority-side WebAuthn state and confirms sign-count advancement.
+8. With `NAUTHILUS_E2E_PGO=1` (release gate): after the ClickHouse and plugin-reload checks, `cmd/smoke --mode pgo-load`
+   drives edge HTTP and authority gRPC authentication while the CPU profiles run; see [PGO.md](PGO.md).
 
 Expected successful output includes:
 
@@ -587,6 +589,9 @@ The browser smoke covers live malformed SSO and SLO payload-shape attacks. The G
 | `NAUTHILUS_E2E_STRICT_TLS`           | unset                              | Set to `1` to keep Node TLS verification enabled.                              |
 | `NAUTHILUS_E2E_HEADED`               | unset                              | Set to `1` to run Chromium with a visible window.                              |
 | `NAUTHILUS_E2E_TRACE`                | unset                              | Set to `1` for extra browser smoke trace output.                               |
+| `NAUTHILUS_E2E_PGO`                  | unset                              | Set to `1` to run the PGO authentication workload and merge its CPU profiles.  |
+| `NAUTHILUS_E2E_PGO_SECONDS`          | `30`                               | CPU profile duration per Nauthilus instance.                                   |
+| `NAUTHILUS_E2E_PGO_MIN_SAMPLES`      | `1000`                             | Minimum CPU samples a PGO candidate must carry.                                |
 | `NAUTHILUS_E2E_SAML_URL`             | `https://localhost:39095/saml/login` | SAML SP login URL; set to an empty string to intentionally skip SAML.        |
 
 ## Generated Material And Secrets
