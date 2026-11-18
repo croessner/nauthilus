@@ -695,6 +695,20 @@ sequenceDiagram
     H -->> B: 200 OK {active: true, scope: "...", sub: "...", ...}
 ```
 
+### 3.1a Authorization Server Metadata, Issuer Identification, and Hosted Resources
+
+The provider metadata is served at `/.well-known/openid-configuration` and, unchanged, as RFC 8414 authorization
+server metadata at `/.well-known/oauth-authorization-server` (for an issuer with a path also at the path-insertion
+location `/.well-known/oauth-authorization-server/<issuer path>`, which answers 404 for any other path). Every
+authorization response, code or error, carries the RFC 9207 `iss` parameter
+(`authorization_response_iss_parameter_supported: true`).
+
+`identity.oidc.hosted_resources` declares protected resources that Nauthilus serves itself, such as the read-only MCP
+support endpoint. A hosted resource admits only its `static_clients` (never a dynamic client), requires the user right
+from directory groups at authorization, forces a new login after `max_authentication_age`, caps access-token lifetime,
+is never combined with another resource in one grant, and is never granted through the device flow. See
+[support_mcp.md](support_mcp.md).
+
 ### 3.2 Restricted Native Dynamic Client Registration
 
 When `identity.oidc.dynamic_client_registration.enabled` is true, the OIDC handler exposes `POST /oidc/register` and

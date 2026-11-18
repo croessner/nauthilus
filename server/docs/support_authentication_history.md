@@ -321,6 +321,11 @@ never persons.
 
 ## 9. Privacy and audit
 
+The same operations are available as MCP tools (`authentication_attempts_search`, `authentication_attempt_detail`,
+`bruteforce_history`) through the shared operation table `server/supportapi`; both transports render identical bytes.
+Recorded free text in answers is cleaned (control, format, and bidirectional characters replaced) and bounded to
+256 runes before it leaves the host. See [support_mcp.md](support_mcp.md).
+
 Filters travel only in bodies; responses are `no-store`. Each operation that reaches the service, allowed, denied, or
 invalid, writes one structured log
 record (`audit=support_history`): operation, caller client id, method, projection, result code, result count, duration,
