@@ -8,8 +8,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/core/cookie"
 	"github.com/croessner/nauthilus/v4/server/handler/deps"
+	"github.com/croessner/nauthilus/v4/server/security"
 	"github.com/croessner/nauthilus/v4/server/sessionstate"
 )
 
@@ -51,5 +53,13 @@ func NewCanonicalBrowserRuntime(handlerDeps *deps.Deps) (*cookie.CanonicalRuntim
 		canonicalSystemClock{},
 		sessionstate.NewRandomHandleGenerator(nil),
 		!handlerDeps.Env.GetDevMode(),
+		cookie.WithPayloadCipher(canonicalPayloadCipher(server)),
 	)
+}
+
+// canonicalPayloadCipher seals browser-session payloads with storage.redis.encryption_secret. Unlike the shared
+// Redis security manager it never accepts plaintext once a secret is configured, so records written before
+// sealing, or modified in Redis, fail closed instead of being trusted.
+func canonicalPayloadCipher(server *config.ServerSection) sessionstate.PayloadCipher {
+	return security.NewManager(server.GetRedis().GetEncryptionSecret(), security.WithAllowEmptySecret())
 }

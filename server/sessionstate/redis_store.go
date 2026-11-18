@@ -213,12 +213,23 @@ var (
 	ErrRevoked          = errors.New("session record revoked")
 	ErrInvalidTTL       = errors.New("session record invalid TTL")
 	ErrActiveFlowLimit  = errors.New("session active flow limit reached")
+	// ErrPayloadUnreadable classifies a record whose payload cannot be opened or decoded, for example after the
+	// payload encryption secret changed. Repositories purge such records and report them as not found as well.
+	ErrPayloadUnreadable = errors.New("session record payload unreadable")
 )
 
 const maxActiveProtocolFlows = 16
 
-// RedisStoreConfig defines namespace and write-amortization policy for typed stores.
+// PayloadCipher seals typed record payloads before they reach Redis. Implementations must authenticate the
+// ciphertext so that a modified payload fails to open; without a configured secret they may pass it through.
+type PayloadCipher interface {
+	Encrypt(plaintext string) (string, error)
+	Decrypt(ciphertext string) (string, error)
+}
+
+// RedisStoreConfig defines namespace, payload sealing, and write-amortization policy for typed stores.
 type RedisStoreConfig struct {
+	PayloadCipher PayloadCipher
 	Prefix        string
 	DefaultTTL    time.Duration
 	TouchInterval time.Duration
@@ -260,11 +271,21 @@ type RedisStores struct {
 // RedisRepository persists one typed record family under an exclusive owner namespace.
 type RedisRepository[T any] struct {
 	client        redis.UniversalClient
+	clock         Clock
+	cipher        PayloadCipher
 	keyspace      Keyspace
 	owner         Owner
-	clock         Clock
 	defaultTTL    time.Duration
 	requireParent bool
+}
+
+// repositoryBase carries the dependencies every typed repository of one store set shares.
+type repositoryBase struct {
+	client     redis.UniversalClient
+	clock      Clock
+	cipher     PayloadCipher
+	keyspace   Keyspace
+	defaultTTL time.Duration
 }
 
 // NewRedisStores creates the complete typed repository set without activating browser paths.
@@ -291,18 +312,19 @@ func NewRedisStores(
 	stores := &RedisStores{
 		keyspace: keyspace, client: client, clock: clock, touchWindow: touchWindow,
 	}
-	stores.Session = newRedisRepository[SessionAnchor](client, keyspace, OwnerSessionAnchor, clock, defaultTTL, false)
-	stores.OIDC = newRedisRepository[OIDCFlow](client, keyspace, OwnerOIDCFlow, clock, defaultTTL, true)
-	stores.SAML = newRedisRepository[SAMLFlow](client, keyspace, OwnerSAMLFlow, clock, defaultTTL, true)
-	stores.SelfService = newRedisRepository[SelfServiceFlow](
-		client, keyspace, OwnerSelfServiceFlow, clock, defaultTTL, true,
-	)
-	stores.Enrollment = newRedisRepository[EnrollmentRecord](client, keyspace, OwnerEnrollment, clock, defaultTTL, true)
-	stores.StepUp = newRedisRepository[StepUpRecord](client, keyspace, OwnerStepUp, clock, defaultTTL, true)
-	stores.Ceremony = newRedisRepository[CeremonyRecord](client, keyspace, OwnerWebAuthnCeremony, clock, defaultTTL, true)
-	stores.TOTPRecovery = newRedisRepository[TOTPRecoveryRecord](client, keyspace, OwnerTOTPRecovery, clock, defaultTTL, true)
-	stores.Consent = newRedisRepository[ConsentGrant](client, keyspace, OwnerConsent, clock, defaultTTL, false)
-	stores.Logout = newRedisRepository[LogoutIndex](client, keyspace, OwnerConsent, clock, defaultTTL, true)
+	base := repositoryBase{
+		client: client, clock: clock, cipher: config.PayloadCipher, keyspace: keyspace, defaultTTL: defaultTTL,
+	}
+	stores.Session = newRedisRepository[SessionAnchor](base, OwnerSessionAnchor, false)
+	stores.OIDC = newRedisRepository[OIDCFlow](base, OwnerOIDCFlow, true)
+	stores.SAML = newRedisRepository[SAMLFlow](base, OwnerSAMLFlow, true)
+	stores.SelfService = newRedisRepository[SelfServiceFlow](base, OwnerSelfServiceFlow, true)
+	stores.Enrollment = newRedisRepository[EnrollmentRecord](base, OwnerEnrollment, true)
+	stores.StepUp = newRedisRepository[StepUpRecord](base, OwnerStepUp, true)
+	stores.Ceremony = newRedisRepository[CeremonyRecord](base, OwnerWebAuthnCeremony, true)
+	stores.TOTPRecovery = newRedisRepository[TOTPRecoveryRecord](base, OwnerTOTPRecovery, true)
+	stores.Consent = newRedisRepository[ConsentGrant](base, OwnerConsent, false)
+	stores.Logout = newRedisRepository[LogoutIndex](base, OwnerConsent, true)
 
 	return stores, nil
 }
@@ -323,16 +345,10 @@ func normalizedStoreDurations(config RedisStoreConfig) (time.Duration, time.Dura
 }
 
 // newRedisRepository constructs one typed repository with explicit parent policy.
-func newRedisRepository[T any](
-	client redis.UniversalClient,
-	keyspace Keyspace,
-	owner Owner,
-	clock Clock,
-	defaultTTL time.Duration,
-	requireParent bool,
-) *RedisRepository[T] {
+func newRedisRepository[T any](base repositoryBase, owner Owner, requireParent bool) *RedisRepository[T] {
 	return &RedisRepository[T]{
-		client: client, keyspace: keyspace, owner: owner, clock: clock, defaultTTL: defaultTTL, requireParent: requireParent,
+		client: base.client, clock: base.clock, cipher: base.cipher, keyspace: base.keyspace, owner: owner,
+		defaultTTL: base.defaultTTL, requireParent: requireParent,
 	}
 }
 
@@ -377,7 +393,23 @@ func (r *RedisRepository[T]) Load(ctx context.Context, reference Reference) (Ver
 		return empty, ErrExpired
 	}
 
-	return r.decode(values, reference)
+	result, err := r.decode(values, reference)
+	if errors.Is(err, ErrPayloadUnreadable) {
+		// The revision check keeps a record that a concurrent writer replaced in the meantime.
+		_ = r.client.Eval(ctx, redisDeleteScript, []string{key}, values["revision"]).Err()
+	}
+
+	return result, unreadableAsNotFound(err)
+}
+
+// unreadableAsNotFound reports an unreadable payload also as a missing record, so callers restart the affected
+// state instead of failing on it until the record expires.
+func unreadableAsNotFound(err error) error {
+	if errors.Is(err, ErrPayloadUnreadable) {
+		return errors.Join(ErrNotFound, err)
+	}
+
+	return err
 }
 
 // Commit atomically creates or compare-and-swap updates one typed record.
@@ -387,9 +419,9 @@ func (r *RedisRepository[T]) Commit(ctx context.Context, request CommitRequest[T
 		return 0, err
 	}
 
-	payload, err := json.Marshal(request.Value)
+	payload, err := r.sealPayload(request.Value)
 	if err != nil {
-		return 0, fmt.Errorf("session redis commit: encode payload: %w", err)
+		return 0, fmt.Errorf("session redis commit: %w", err)
 	}
 
 	metadata := r.commitMetadata(request.Value, ttl)
@@ -477,7 +509,9 @@ func (r *RedisRepository[T]) Consume(ctx context.Context, request DeleteRequest)
 		return empty, err
 	}
 
-	return r.decode(values, request.Reference)
+	consumed, err := r.decode(values, request.Reference)
+
+	return consumed, unreadableAsNotFound(err)
 }
 
 func redisHashResult(result []any) (map[string]string, error) {
@@ -707,8 +741,8 @@ func (r *RedisRepository[T]) decode(values map[string]string, reference Referenc
 		return result, ErrBindingMismatch
 	}
 
-	if err = json.Unmarshal([]byte(values["payload"]), &result.Value); err != nil {
-		return result, fmt.Errorf("session redis load: decode payload: %w", err)
+	if err = r.openPayload(values["payload"], &result.Value); err != nil {
+		return result, err
 	}
 
 	if err = validateRecordBinding(result.Value, reference); err != nil {
@@ -719,6 +753,45 @@ func (r *RedisRepository[T]) decode(values map[string]string, reference Referenc
 	normalizeLoadedRecord(&result.Value, result.Revision, expiresAt, values)
 
 	return result, nil
+}
+
+// sealPayload encodes one typed value and encrypts it when a payload cipher is configured.
+func (r *RedisRepository[T]) sealPayload(value T) (string, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode payload: %w", err)
+	}
+
+	if r.cipher == nil {
+		return string(payload), nil
+	}
+
+	sealed, err := r.cipher.Encrypt(string(payload))
+	if err != nil {
+		return "", fmt.Errorf("seal payload: %w", err)
+	}
+
+	return sealed, nil
+}
+
+// openPayload decrypts and decodes one stored payload; every failure is classified as ErrPayloadUnreadable.
+func (r *RedisRepository[T]) openPayload(stored string, value *T) error {
+	plaintext := stored
+
+	if r.cipher != nil {
+		opened, err := r.cipher.Decrypt(stored)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrPayloadUnreadable, err)
+		}
+
+		plaintext = opened
+	}
+
+	if err := json.Unmarshal([]byte(plaintext), value); err != nil {
+		return fmt.Errorf("%w: %w", ErrPayloadUnreadable, err)
+	}
+
+	return nil
 }
 
 // parseRedisTime parses one required millisecond timestamp field.
@@ -1345,7 +1418,9 @@ func consumeIndexedRecord[T any](
 			return empty, decodeErr
 		}
 
-		return repository.decode(values, request.Reference)
+		consumed, decodeErr := repository.decode(values, request.Reference)
+
+		return consumed, unreadableAsNotFound(decodeErr)
 	}
 
 	return empty, ErrRevisionConflict
@@ -1540,9 +1615,9 @@ func appendSerializedTransactionMutation[T any](
 	key string,
 	ttl time.Duration,
 ) error {
-	payload, err := json.Marshal(request.Value)
+	payload, err := repository.sealPayload(request.Value)
 	if err != nil {
-		return fmt.Errorf("session redis transaction: encode payload: %w", err)
+		return fmt.Errorf("session redis transaction: %w", err)
 	}
 
 	metadata := repository.commitMetadata(request.Value, ttl)
@@ -1558,7 +1633,7 @@ func appendSerializedTransactionMutation[T any](
 func commitArguments(
 	owner Owner,
 	expected Revision,
-	payload []byte,
+	payload string,
 	metadata commitMetadata,
 	ttl time.Duration,
 ) []any {

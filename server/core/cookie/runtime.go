@@ -109,6 +109,16 @@ type CanonicalRuntime struct {
 	secure    bool
 }
 
+// CanonicalRuntimeOption adjusts optional typed-store policy of a canonical runtime.
+type CanonicalRuntimeOption func(*sessionstate.RedisStoreConfig)
+
+// WithPayloadCipher seals every typed record payload with cipher before it reaches Redis.
+func WithPayloadCipher(cipher sessionstate.PayloadCipher) CanonicalRuntimeOption {
+	return func(config *sessionstate.RedisStoreConfig) {
+		config.PayloadCipher = cipher
+	}
+}
+
 // NewCanonicalRuntime validates the envelope and typed Redis store configuration.
 func NewCanonicalRuntime(
 	secret []byte,
@@ -118,6 +128,7 @@ func NewCanonicalRuntime(
 	clock sessionstate.Clock,
 	generator sessionstate.HandleGenerator,
 	secure bool,
+	options ...CanonicalRuntimeOption,
 ) (*CanonicalRuntime, error) {
 	codec, err := NewEnvelopeCodec(secret, keyEpoch)
 	if err != nil {
@@ -132,9 +143,12 @@ func NewCanonicalRuntime(
 	digestSecret := sha256.Sum256(digestInput)
 	clear(digestInput)
 
-	stores, err := sessionstate.NewRedisStores(client, digestSecret[:], clock, sessionstate.RedisStoreConfig{
-		Prefix: prefix + ":browser-session",
-	})
+	storeConfig := sessionstate.RedisStoreConfig{Prefix: prefix + ":browser-session"}
+	for _, option := range options {
+		option(&storeConfig)
+	}
+
+	stores, err := sessionstate.NewRedisStores(client, digestSecret[:], clock, storeConfig)
 	if err != nil {
 		return nil, err
 	}

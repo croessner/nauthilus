@@ -121,6 +121,48 @@ func TestNewCanonicalBrowserRuntimeUsesExplicitV1Composition(t *testing.T) {
 	}
 }
 
+// TestNewCanonicalBrowserRuntimeSealsPayloadsWithRedisSecret proves that the composition root seals every
+// browser-session payload with storage.redis.encryption_secret instead of storing readable JSON.
+func TestNewCanonicalBrowserRuntimeSealsPayloadsWithRedisSecret(t *testing.T) {
+	mini := miniredis.RunT(t)
+	cfg := &canonicalRuntimeConfig{server: config.ServerSection{
+		Redis: config.Redis{Prefix: "canonical-sealed", EncryptionSecret: secret.New("canonical-redis-payload-secret")},
+		Frontend: config.Frontend{
+			EncryptionSecret: secret.New("canonical-runtime-composition-secret-32bytes"),
+		},
+	}}
+
+	runtime, err := NewCanonicalBrowserRuntime(&deps.Deps{
+		Cfg: cfg, Env: &config.EnvironmentSettings{DevMode: true},
+		Redis: rediscli.NewTestClient(redis.NewClient(&redis.Options{Addr: mini.Addr()})),
+	})
+	if err != nil {
+		t.Fatalf("compose canonical browser runtime: %v", err)
+	}
+
+	if _, err = runtime.Create(context.Background(), httptest.NewRecorder(), false); err != nil {
+		t.Fatalf("create canonical browser session: %v", err)
+	}
+
+	anchors := 0
+
+	for _, key := range mini.Keys() {
+		if !strings.Contains(key, ":session_anchor:") {
+			continue
+		}
+
+		anchors++
+
+		if payload := mini.HGet(key, "payload"); payload == "" || strings.HasPrefix(payload, "{") {
+			t.Fatalf("anchor payload is not sealed: %q", payload)
+		}
+	}
+
+	if anchors != 1 {
+		t.Fatalf("anchor records = %d, want 1", anchors)
+	}
+}
+
 func TestFrontendRegisterCanonicalBindsLoginAndProtectedRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

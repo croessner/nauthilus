@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/security"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -597,6 +599,7 @@ func newRedisStoresFixture(t *testing.T) redisStoresFixture {
 	clock := &mutableClock{now: time.Unix(1_800_000_000, 0).UTC()}
 
 	stores, err := NewRedisStores(client, []byte("key-derivation-secret-with-32-bytes"), clock, RedisStoreConfig{
+		PayloadCipher: security.NewManager(secret.New("payload-encryption-secret"), security.WithAllowEmptySecret()),
 		Prefix:        "browser-session",
 		TouchInterval: 5 * time.Minute,
 	})
