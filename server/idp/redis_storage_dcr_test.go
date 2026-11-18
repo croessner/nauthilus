@@ -333,7 +333,7 @@ func TestDynamicAccessTokenValidationChecksUserEpoch(t *testing.T) {
 		t.Fatalf("StoreAccessToken() error = %v", err)
 	}
 
-	if err := storage.advanceDynamicUserEpoch(ctx, session.UserID); err != nil {
+	if err := storage.advanceDynamicUserEpoch(ctx, storage.keys.subject(session.UserID)); err != nil {
 		t.Fatalf("advanceDynamicUserEpoch() error = %v", err)
 	}
 

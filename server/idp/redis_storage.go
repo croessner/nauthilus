@@ -625,13 +625,13 @@ func (s *RedisTokenStorage) DynamicUserEpoch(ctx context.Context, userID string)
 	return epoch, nil
 }
 
-// advanceDynamicUserEpoch invalidates every epoch-bound token minted for an earlier epoch.
+// advanceDynamicUserEpoch invalidates every epoch-bound token minted for an earlier epoch of one subject slot.
 // A subject without an epoch key starts at oidcSubjectEpochFloor, so the first revocation yields floor+1.
-func (s *RedisTokenStorage) advanceDynamicUserEpoch(ctx context.Context, userID string) error {
+func (s *RedisTokenStorage) advanceDynamicUserEpoch(ctx context.Context, owner oidcSubjectKeys) error {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
-	return s.redis.GetWriteHandle().Eval(writeCtx, subjectEpochAdvanceScript, []string{s.keys.subject(userID).epoch()}, oidcSubjectEpochFloor).Err()
+	return s.redis.GetWriteHandle().Eval(writeCtx, subjectEpochAdvanceScript, []string{owner.epoch()}, oidcSubjectEpochFloor).Err()
 }
 
 // verifyEpochBoundSession rejects state outside its subject slot or issued before a subject-wide revocation.
@@ -753,8 +753,17 @@ func (s *RedisTokenStorage) DeleteRefreshToken(ctx context.Context, token string
 
 // DeleteUserRefreshTokens removes all refresh tokens for a given user from Redis.
 func (s *RedisTokenStorage) DeleteUserRefreshTokens(ctx context.Context, userID string) error {
-	staticErr := s.deleteUserTrackedTokens(ctx, userID, oidcStaticRefreshToken, oidcStaticUserRefreshTokens)
-	dynamicErr := s.deleteUserDynamicRefreshTokens(ctx, userID)
+	if userID == "" {
+		return nil
+	}
+
+	return s.deleteSubjectRefreshTokens(ctx, s.keys.subject(userID))
+}
+
+// deleteSubjectRefreshTokens removes the static and dynamic refresh tokens of one subject slot.
+func (s *RedisTokenStorage) deleteSubjectRefreshTokens(ctx context.Context, owner oidcSubjectKeys) error {
+	staticErr := s.deleteSubjectTrackedTokens(ctx, owner, oidcStaticRefreshToken, oidcStaticUserRefreshTokens)
+	dynamicErr := s.deleteSubjectDynamicRefreshTokens(ctx, owner)
 
 	return stderrors.Join(staticErr, dynamicErr)
 }
@@ -785,13 +794,12 @@ func (s *RedisTokenStorage) DeleteDynamicRefreshToken(ctx context.Context, token
 	return nil
 }
 
-// deleteUserDynamicRefreshTokens revokes every active DCR refresh family for a user.
-func (s *RedisTokenStorage) deleteUserDynamicRefreshTokens(ctx context.Context, userID string) error {
+// deleteSubjectDynamicRefreshTokens revokes every active DCR refresh family of one subject slot.
+func (s *RedisTokenStorage) deleteSubjectDynamicRefreshTokens(ctx context.Context, owner oidcSubjectKeys) error {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
 	handle := s.redis.GetWriteHandle()
-	owner := s.keys.subject(userID)
 	indexKey := owner.index(oidcUserRefreshTokensKeyKind)
 
 	references, err := handle.SMembers(writeCtx, indexKey).Result()
@@ -928,20 +936,20 @@ func (s *RedisTokenStorage) deleteTrackedToken(ctx context.Context, owner oidcSu
 
 // DeleteUserAccessTokens removes all access tokens for a given user from Redis.
 func (s *RedisTokenStorage) DeleteUserAccessTokens(ctx context.Context, userID string) error {
-	return s.deleteUserTrackedTokens(ctx, userID, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
-}
-
-// deleteUserTrackedTokens removes every indexed record of one token class, the index, and the locators.
-func (s *RedisTokenStorage) deleteUserTrackedTokens(ctx context.Context, userID string, recordKind string, indexKind string) error {
 	if userID == "" {
 		return nil
 	}
 
+	return s.deleteSubjectTrackedTokens(ctx, s.keys.subject(userID), oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
+}
+
+// deleteSubjectTrackedTokens removes every indexed record of one token class of a subject slot, the index,
+// and the locators.
+func (s *RedisTokenStorage) deleteSubjectTrackedTokens(ctx context.Context, owner oidcSubjectKeys, recordKind string, indexKind string) error {
 	writeCtx, cancel := s.redisWriteContext(ctx)
 	defer cancel()
 
 	handle := s.redis.GetWriteHandle()
-	owner := s.keys.subject(userID)
 	indexKey := owner.index(indexKind)
 
 	references, err := handle.SMembers(writeCtx, indexKey).Result()
@@ -1080,15 +1088,22 @@ func (s *RedisTokenStorage) FlushUserTokens(ctx context.Context, userID string) 
 		return nil
 	}
 
-	epochErr := s.advanceDynamicUserEpoch(ctx, userID)
+	return s.flushSubject(ctx, s.keys.subject(userID))
+}
+
+// flushSubject advances the revocation epoch of one subject slot, removes its indexed tokens, and records
+// the audit outcome. The epoch comes first, so every token of the subject is unusable even when a cleanup
+// step fails.
+func (s *RedisTokenStorage) flushSubject(ctx context.Context, owner oidcSubjectKeys) error {
+	epochErr := s.advanceDynamicUserEpoch(ctx, owner)
 	if epochErr != nil {
 		s.auditor.Record(ctx, dcr.AuditEvent{Operation: dcr.AuditOperationUserRevocation, Outcome: dcr.AuditOutcomeFailed, Reason: "epoch_update_failed"})
 
 		return epochErr
 	}
 
-	accessErr := s.DeleteUserAccessTokens(ctx, userID)
-	refreshErr := s.DeleteUserRefreshTokens(ctx, userID)
+	accessErr := s.deleteSubjectTrackedTokens(ctx, owner, oidcAccessTokenKeyKind, oidcUserAccessTokensKeyKind)
+	refreshErr := s.deleteSubjectRefreshTokens(ctx, owner)
 
 	err := stderrors.Join(accessErr, refreshErr)
 	if err != nil {

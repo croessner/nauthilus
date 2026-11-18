@@ -435,6 +435,13 @@ func (n *NauthilusIDP) issueIDAndAccessTokens(
 	// Access Token
 	accessSession := session.withAccessTokenResources(accessResources)
 	accessTokenLifetime = n.capHostedAccessTokenLifetime(accessTokenLifetime, accessSession.AccessTokenResources)
+
+	if err = n.bindAccountSubject(ctx, client, session, accessTokenLifetime); err != nil {
+		sp.RecordError(err)
+
+		return "", "", 0, err
+	}
+
 	tokenIssuer := NewTokenIssuer(issuer, signer, accessSession, n.storage, n.tokenGen)
 	accessTokenType := client.GetAccessTokenType(n.deps.Cfg.GetIDP().OIDC.GetAccessTokenType())
 
@@ -455,6 +462,30 @@ func (n *NauthilusIDP) issueIDAndAccessTokens(
 	session.AccessTokenIssuedAt, session.AccessTokenExpiresAt = accessSession.AccessTokenIssuedAt, accessSession.AccessTokenExpiresAt
 
 	return idTokenString, accessTokenString, accessTokenLifetime, nil
+}
+
+// bindAccountSubject makes the session's subject reachable by an account-scoped flush before any user token
+// leaves the IdP. The binding covers the access token and, with offline access, the refresh token lifetime.
+func (n *NauthilusIDP) bindAccountSubject(ctx context.Context, client *config.OIDCClient, session *OIDCSession, accessTokenLifetime time.Duration) error {
+	bindingLifetime := accessTokenLifetime
+	if slices.Contains(session.Scopes, definitions.ScopeOfflineAccess) {
+		bindingLifetime = max(bindingLifetime, n.refreshTokenLifetime(client))
+	}
+
+	if err := n.storage.BindAccountSubject(ctx, session, bindingLifetime); err != nil {
+		return fmt.Errorf("bind token subject to account: %w", err)
+	}
+
+	return nil
+}
+
+// refreshTokenLifetime returns the client's refresh token lifetime or the configured default.
+func (n *NauthilusIDP) refreshTokenLifetime(client *config.OIDCClient) time.Duration {
+	if client.RefreshTokenLifetime != 0 {
+		return client.RefreshTokenLifetime
+	}
+
+	return n.deps.Cfg.GetIDP().OIDC.GetDefaultRefreshTokenLifetime()
 }
 
 func (n *NauthilusIDP) issueIDToken(
@@ -507,10 +538,7 @@ func (n *NauthilusIDP) storeRefreshTokenSession(
 		refreshToken = generatedRefreshToken
 	}
 
-	refreshTokenLifetime := client.RefreshTokenLifetime
-	if refreshTokenLifetime == 0 {
-		refreshTokenLifetime = n.deps.Cfg.GetIDP().OIDC.GetDefaultRefreshTokenLifetime()
-	}
+	refreshTokenLifetime := n.refreshTokenLifetime(client)
 
 	// Link the access token to the refresh token session so it can be
 	// invalidated during token rotation or reuse.

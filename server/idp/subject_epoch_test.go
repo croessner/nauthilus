@@ -152,7 +152,7 @@ func TestSubjectEpochStartsAtFloorAndFlushAdvancesFromIt(t *testing.T) {
 		t.Fatalf("GetAccessTokenAuthoritative() for a floor-epoch token error = %v", err)
 	}
 
-	requireNoError(t, storage.advanceDynamicUserEpoch(ctx, subject))
+	requireNoError(t, storage.advanceDynamicUserEpoch(ctx, storage.keys.subject(subject)))
 
 	if current := handle.Get(ctx, testUserTokenEpochKey(subject)).Val(); current != testSubjectEpochAfterFlush {
 		t.Fatalf("epoch after first revocation = %q, want %q", current, testSubjectEpochAfterFlush)

@@ -67,11 +67,13 @@ var listAccountsNegotiator = contentneg.New(
 	"text/plain",
 )
 
-// TokenFlusher abstracts the ability to flush all OIDC/SAML2 tokens for a user.
-// It is implemented by idp.RedisTokenStorage and injected into restAdminDeps to
-// avoid a cyclic import between core and idp.
+// TokenFlusher abstracts the ability to flush all OIDC tokens issued for a backend account.
+//
+// The admin flush only knows account names, while tokens are keyed by the backend unique user ID, so the
+// implementation resolves the account's subjects itself. It is implemented by idp.RedisTokenStorage and
+// injected into restAdminDeps to avoid a cyclic import between core and idp.
 type TokenFlusher interface {
-	FlushUserTokens(ctx context.Context, userID string) error
+	FlushAccountTokens(ctx context.Context, account string) error
 }
 
 type userCacheFlushScriptRunner interface {
@@ -1626,13 +1628,13 @@ func logAffectedAccountFlushError(logger *slog.Logger, guid string, msg string, 
 	)
 }
 
-// flushIDPTokens delegates token removal for all affected identity accounts.
+// flushIDPTokens delegates token removal for all affected backend accounts.
 func flushIDPTokens(ctx context.Context, deps restAdminDeps, guid string, accountNames []string) {
 	if deps.TokenFlusher != nil {
 		logger := deps.effectiveLogger()
 
 		for _, accountName := range accountNames {
-			if err := deps.TokenFlusher.FlushUserTokens(ctx, accountName); err != nil {
+			if err := deps.TokenFlusher.FlushAccountTokens(ctx, accountName); err != nil {
 				level.Error(logger).Log(
 					definitions.LogKeyGUID, guid,
 					definitions.LogKeyMsg, "Error while flushing IDP tokens",

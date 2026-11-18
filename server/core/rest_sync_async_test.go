@@ -181,8 +181,9 @@ type recordingTokenFlusher struct {
 	users []string
 }
 
-func (f *recordingTokenFlusher) FlushUserTokens(_ context.Context, userID string) error {
-	f.users = append(f.users, userID)
+// FlushAccountTokens records each account the admin flush asks to revoke.
+func (f *recordingTokenFlusher) FlushAccountTokens(_ context.Context, account string) error {
+	f.users = append(f.users, account)
 
 	return nil
 }

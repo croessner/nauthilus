@@ -24,6 +24,10 @@ import (
 const (
 	// oidcSubjectSlotDigestDomain domain-separates subject hash tags from every other token digest.
 	oidcSubjectSlotDigestDomain = "nauthilus-oidc-token-subject\x00"
+	// oidcAccountSlotDigestDomain domain-separates account hash tags from subject slots and token digests.
+	oidcAccountSlotDigestDomain = "nauthilus-oidc-token-account\x00"
+	// oidcAccountSubjectsKeyKind names the set of subject slots that received tokens for one account.
+	oidcAccountSubjectsKeyKind = "subjects"
 	// oidcSubjectEpochKeyKind names the per-subject revocation epoch inside a subject slot.
 	oidcSubjectEpochKeyKind = "epoch"
 	// oidcSubjectEpochFloor is the epoch of a subject without an epoch key and the lower bound of every valid
@@ -45,6 +49,15 @@ var subjectEpochFloorValue = mustParseSubjectEpoch(oidcSubjectEpochFloor)
 const subjectEpochAdvanceScript = `
 redis.call('SET', KEYS[1], ARGV[1], 'NX')
 return redis.call('INCR', KEYS[1])
+`
+
+// accountSubjectBindScript records one subject slot for an account and raises the set TTL to the longest
+// token lifetime bound through it. A set without TTL reports -1 and therefore always receives one. It touches
+// a single key.
+const accountSubjectBindScript = `
+redis.call('SADD', KEYS[1], ARGV[1])
+if redis.call('PTTL', KEYS[1]) < tonumber(ARGV[2]) then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
+return 1
 `
 
 // mustParseSubjectEpoch converts the compile-time epoch floor and fails fast on an invalid constant.
@@ -95,7 +108,20 @@ type oidcSubjectKeys struct {
 // revocation epoch after a rotation and silently revive revoked tokens. It keeps arbitrary subject
 // identifiers, including braces, out of the hash tag and gives every subject a fixed-length tag.
 func oidcSubjectSlot(subject string) string {
-	sum := sha256.Sum256([]byte(oidcSubjectSlotDigestDomain + subject))
+	return oidcSlotDigest(oidcSubjectSlotDigestDomain, subject)
+}
+
+// oidcAccountSlot derives the stable hash tag of one backend account name.
+//
+// It is unkeyed for the same reason as oidcSubjectSlot: a secret rotation must not hide the subjects an
+// account-scoped flush has to revoke.
+func oidcAccountSlot(account string) string {
+	return oidcSlotDigest(oidcAccountSlotDigestDomain, account)
+}
+
+// oidcSlotDigest returns the hex SHA-256 digest of a domain-separated identifier.
+func oidcSlotDigest(domain string, value string) string {
+	sum := sha256.Sum256([]byte(domain + value))
 
 	return hex.EncodeToString(sum[:])
 }
@@ -124,6 +150,13 @@ func (k oidcTokenKeys) subject(subject string) oidcSubjectKeys {
 // subjectBySlot returns the key builder for an already resolved subject slot.
 func (k oidcTokenKeys) subjectBySlot(slot string) oidcSubjectKeys {
 	return oidcSubjectKeys{slot: slot, base: k.prefix + "oidc:subject:{" + slot + "}:"}
+}
+
+// accountSubjects returns the set of subject slots that received tokens issued for one account.
+//
+// It lives in the account's own slot and never takes part in a multi-key operation.
+func (k oidcTokenKeys) accountSubjects(account string) string {
+	return k.prefix + "oidc:account:{" + oidcAccountSlot(account) + "}:" + oidcAccountSubjectsKeyKind
 }
 
 // locator returns the single-key pointer from a bearer reference to its subject slot.
