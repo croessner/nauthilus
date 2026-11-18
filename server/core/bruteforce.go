@@ -442,7 +442,7 @@ func (a *AuthState) storeBruteForceRuntimeHints(ctx *gin.Context, eval bruteForc
 
 	bfRepeating := eval.alreadyTriggered || (a.Security.BruteForceCounter[eval.rules[eval.ruleNumber].Name] >= eval.rules[eval.ruleNumber].GetFailedRequests())
 	if !bfRepeating && bfClientNet != "" {
-		bfRepeating = a.bruteForceBanExists(ctx, bfClientNet)
+		bfRepeating = bruteForceBanExists(ctx.Request.Context(), a.cfg(), a.deps.Redis, bfClientNet)
 	}
 
 	a.Runtime.BFClientNet = bfClientNet
@@ -466,14 +466,14 @@ func (a *AuthState) bruteForceClientNetwork(eval bruteForceRuleEvaluation) strin
 	return ""
 }
 
-// bruteForceBanExists checks whether the matched network is already banned.
-func (a *AuthState) bruteForceBanExists(ctx *gin.Context, clientNet string) bool {
-	prefix := a.cfg().GetServer().GetRedis().GetPrefix()
-	banKey := rediscli.GetBruteForceBanKey(prefix, clientNet)
+// bruteForceBanExists checks whether the network has an active ban. Read errors count as "not banned",
+// so the runtime hint never blocks an authentication on its own.
+func bruteForceBanExists(ctx context.Context, cfg config.File, redisClient rediscli.Client, network string) bool {
+	banKey := rediscli.GetBruteForceBanKey(cfg.GetServer().GetRedis().GetPrefix(), network)
 
 	stats.GetMetrics().GetRedisReadCounter().Inc()
 
-	existsVal, err := a.deps.Redis.GetReadHandle().Exists(ctx.Request.Context(), banKey).Result()
+	existsVal, err := redisClient.GetReadHandle().Exists(ctx, banKey).Result()
 
 	return err == nil && existsVal > 0
 }

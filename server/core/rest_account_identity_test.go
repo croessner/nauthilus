@@ -155,7 +155,7 @@ func TestAsyncCacheFlushJobFailsWhenAccountMappingsCannotBeRead(t *testing.T) {
 	}
 }
 
-func TestCacheFlushKeepsLuaAccountPrecedenceWithoutMappingRead(t *testing.T) {
+func TestCacheFlushKeepsLuaAccountPrecedenceWhenMappingReadFails(t *testing.T) {
 	fixture := newAccountHistoryFixture(t)
 	fixture.deps.AccountMappings = failingAccountMappingReader{}
 
@@ -167,5 +167,9 @@ func TestCacheFlushKeepsLuaAccountPrecedenceWithoutMappingRead(t *testing.T) {
 
 	if !slices.Equal(scope.cleanupAccountNames, []string{"erin", "erin@example.test"}) || !slices.Equal(scope.tokenAccountNames, []string{"erin"}) {
 		t.Fatalf("scope = %+v", scope)
+	}
+
+	if fields := scope.hashFields.GetStringSlice(); !slices.Equal(fields, []string{"erin@example.test"}) {
+		t.Fatalf("hash fields after failed best-effort read = %v, want only the legacy field", fields)
 	}
 }

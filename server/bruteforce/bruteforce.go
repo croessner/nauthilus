@@ -472,7 +472,8 @@ func (bm *bucketManagerImpl) getBruteForceBucketBaseKey(rule *config.BruteForceR
 	var sb strings.Builder
 
 	sb.WriteString(bm.cfg().GetServer().GetRedis().GetPrefix())
-	sb.WriteString("bf:{")
+	sb.WriteString(definitions.RedisBruteForceBucketPrefix)
+	sb.WriteByte('{')
 	sb.WriteString(bruteForceBucketHashTag(netStr, protocolPart, oidcCIDPart))
 	sb.WriteString("}:")
 	sb.WriteString(strconv.FormatInt(bucketWindowSeconds(rule.Period), 10))
@@ -634,11 +635,11 @@ func (bm *bucketManagerImpl) preparePasswordHistoryLoad(readHandle redis.Univers
 		bm:             bm,
 		readHandle:     readHandle,
 		accountSkipMsg: account.skipMsg,
-		ipSetKey:       passwordHistoryRedisKey(prefix, definitions.RedisPwHashKey, "", scopedIP),
+		ipSetKey:       PasswordHistoryRedisKey(prefix, "", scopedIP),
 	}
 
 	if account.name != "" {
-		plan.accountSetKey = passwordHistoryRedisKey(prefix, definitions.RedisPwHashKey, account.name, scopedIP)
+		plan.accountSetKey = PasswordHistoryRedisKey(prefix, account.name, scopedIP)
 	}
 
 	return plan
@@ -663,7 +664,7 @@ func (bm *bucketManagerImpl) passwordHistoryAccount() passwordHistoryAccount {
 	return passwordHistoryAccount{skipMsg: "Skipping account-scoped history: no accountName"}
 }
 
-// scopedPasswordHistoryIP returns the RWP-scoped client IP used in password-history keys.
+// scopedPasswordHistoryIP returns the RWP-scoped client IP used in password-history and RWP window keys.
 func (bm *bucketManagerImpl) scopedPasswordHistoryIP() string {
 	scoped := bm.clientIP
 	if bm.scoper != nil {
@@ -671,43 +672,6 @@ func (bm *bucketManagerImpl) scopedPasswordHistoryIP() string {
 	}
 
 	return scoped
-}
-
-// passwordHistoryRedisKey formats the Redis key used by password-history sets and counters.
-func passwordHistoryRedisKey(prefix string, baseKey string, accountName string, scopedIP string) string {
-	if accountName == "" {
-		var sb strings.Builder
-
-		sb.WriteString(prefix)
-		sb.WriteString(baseKey)
-		sb.WriteString(":{")
-		sb.WriteString(scopedIP)
-		sb.WriteString("}:")
-		sb.WriteString(scopedIP)
-
-		return sb.String()
-	}
-
-	var sbHashTag strings.Builder
-
-	sbHashTag.WriteString(accountName)
-	sbHashTag.WriteByte(':')
-	sbHashTag.WriteString(scopedIP)
-
-	hashTag := sbHashTag.String()
-
-	var sb strings.Builder
-
-	sb.WriteString(prefix)
-	sb.WriteString(baseKey)
-	sb.WriteString(":{")
-	sb.WriteString(hashTag)
-	sb.WriteString("}:")
-	sb.WriteString(accountName)
-	sb.WriteByte(':')
-	sb.WriteString(scopedIP)
-
-	return sb.String()
 }
 
 // setKey returns the prepared Redis set key for account-scoped or IP-scoped history.
@@ -2448,36 +2412,24 @@ func (bm *bucketManagerImpl) buildRWPKeyAndHash() (allowKey string, passwordHash
 		return "", ""
 	}
 
-	scoped := bm.clientIP
-	if bm.scoper != nil {
-		scoped = bm.scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, bm.clientIP)
-	}
-
-	acct := ""
-	if bm.username != "" {
-		acct = accountcache.GetAccountMappingField(bm.username, bm.protocol, bm.oidcCID)
-	}
-
-	if acct == "" {
-		acct = bm.accountName
-	}
-
-	if acct == "" {
+	identity := bm.rwpIdentity()
+	if identity == "" {
 		return "", ""
 	}
 
-	cfg := bm.cfg()
-	prefix := cfg.GetServer().GetRedis().GetPrefix()
+	prefix := bm.cfg().GetServer().GetRedis().GetPrefix()
 
-	var sb strings.Builder
+	return RWPAllowanceRedisKey(prefix, bm.scopedPasswordHistoryIP(), identity), passwordHash
+}
 
-	sb.WriteString(prefix)
-	sb.WriteString(definitions.RedisBFRWPAllowPrefix)
-	sb.WriteString(scoped)
-	sb.WriteByte(':')
-	sb.WriteString(acct)
+// rwpIdentity returns the login identity segment of the RWP key: the account-mapping field of a named
+// login, otherwise the resolved account name. The user flush relies on this order to find the windows.
+func (bm *bucketManagerImpl) rwpIdentity() string {
+	if bm.username != "" {
+		return accountcache.GetAccountMappingField(bm.username, bm.protocol, bm.oidcCID)
+	}
 
-	return sb.String(), passwordHash
+	return bm.accountName
 }
 
 // currentPasswordHash returns the full normalized password hash used by every Redis read and write.

@@ -1367,13 +1367,13 @@ func processUserCmd(ctx *gin.Context, deps restAdminDeps, userCmd *admin.FlushUs
 		definitions.LogKeyMsg, "Invalidated local authentication caches",
 		"removed", localRemoved,
 	)
-	userKeys, ipAddressSet := collectUserCacheFlushKeys(ctx, deps, guid, scope.cleanupAccountNames)
+	userKeys, ipAddressSet := collectUserCacheFlushKeys(ctx, deps, guid, scope)
 	removedKeySet := flushUserBruteForceIPKeys(ctx, deps, guid, ipAddressSet)
 
 	flushPasswordHistorySets(ctx, deps, guid, scope.cleanupAccountNames, removedKeySet)
 	flushAffectedAccounts(ctx, deps, guid, scope.cleanupAccountNames, removedKeySet)
 
-	removedKeys = removeUserFromCache(ctx, deps, userCmd, userKeys, guid, false, scope.hashFields.GetStringSlice())
+	removedKeys = removeUserFromCache(ctx, deps, userCmd, userKeys, guid, scope.hashFields.GetStringSlice())
 	for _, removedKey := range removedKeys {
 		removedKeySet.Set(removedKey)
 	}
@@ -1412,31 +1412,13 @@ func runUserCacheFlushScript(ctx context.Context, deps restAdminDeps, username s
 // used. A mapping read failure is returned so the flush fails visibly instead of silently skipping the
 // canonical account.
 func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, username string, guid string, luaResult *cacheflush.Result) (userCacheFlushScope, error) {
-	logger := deps.effectiveLogger()
-	cleanupAccounts := config.NewStringSet()
-	tokenAccounts := config.NewStringSet()
-
-	var (
-		mappedAccounts config.StringSet
-		hashFields     config.StringSet
-		err            error
-	)
-
-	// If the Lua script provided an account name, use it directly instead of looking up account mappings.
-	if luaResult != nil && luaResult.AccountName != "" {
-		_ = level.Info(logger).Log(
-			definitions.LogKeyGUID, guid,
-			definitions.LogKeyMsg, "Lua cache flush script provided account name, skipping account lookup",
-			"account", luaResult.AccountName,
-		)
-
-		mappedAccounts = config.NewStringSet()
-		mappedAccounts.Set(luaResult.AccountName)
-
-		hashFields = config.NewStringSet()
-	} else if mappedAccounts, hashFields, err = collectUserAccountMappings(ctx, deps, username); err != nil {
+	mappedAccounts, hashFields, err := resolveFlushAccountMappings(ctx, deps, username, guid, luaResult)
+	if err != nil {
 		return userCacheFlushScope{}, err
 	}
+
+	cleanupAccounts := config.NewStringSet()
+	tokenAccounts := config.NewStringSet()
 
 	for _, accountName := range mappedAccounts.GetStringSlice() {
 		cleanupAccounts.Set(accountName)
@@ -1463,13 +1445,58 @@ func resolveUserCacheFlushScope(ctx context.Context, deps restAdminDeps, usernam
 	}, nil
 }
 
+// resolveFlushAccountMappings returns the accounts and owned user-hash fields of one flushed login name.
+//
+// A Lua-provided account replaces the mapped accounts, but the login name still owns its composite
+// `<username>|<protocol>|<oidc_cid>` fields. They are read best effort on that path: a read failure only
+// leaves those fields in place and never fails the flush.
+func resolveFlushAccountMappings(
+	ctx context.Context,
+	deps restAdminDeps,
+	username string,
+	guid string,
+	luaResult *cacheflush.Result,
+) (config.StringSet, config.StringSet, error) {
+	if luaResult == nil || luaResult.AccountName == "" {
+		return collectUserAccountMappings(ctx, deps, username)
+	}
+
+	logger := deps.effectiveLogger()
+
+	_ = level.Info(logger).Log(
+		definitions.LogKeyGUID, guid,
+		definitions.LogKeyMsg, "Lua cache flush script provided account name, using it instead of mapped accounts",
+		"account", luaResult.AccountName,
+	)
+
+	accounts := config.NewStringSet()
+	accounts.Set(luaResult.AccountName)
+
+	_, fields, err := collectUserAccountMappings(ctx, deps, username)
+	if err != nil {
+		_ = level.Warn(logger).Log(
+			definitions.LogKeyGUID, guid,
+			definitions.LogKeyMsg, "Owned account-mapping fields could not be read; only the legacy field is flushed",
+			definitions.LogKeyUsername, username,
+			definitions.LogKeyError, err,
+		)
+
+		fields = config.NewStringSet()
+	}
+
+	return accounts, fields, nil
+}
+
 // collectUserCacheFlushKeys gathers Redis cache keys and brute-force IPs for the flush scope.
-func collectUserCacheFlushKeys(ctx context.Context, deps restAdminDeps, guid string, accountNames []string) (config.StringSet, config.StringSet) {
+func collectUserCacheFlushKeys(ctx context.Context, deps restAdminDeps, guid string, scope userCacheFlushScope) (config.StringSet, config.StringSet) {
 	userKeys := config.NewStringSet()
 	ipAddressSet := config.NewStringSet()
+	loginIdentities := scope.hashFields.GetStringSlice()
 
-	for _, accountName := range accountNames {
-		ipAddresses, keys := prepareRedisUserKeys(ctx, deps, guid, accountName)
+	sort.Strings(loginIdentities)
+
+	for _, accountName := range scope.cleanupAccountNames {
+		ipAddresses, keys := prepareRedisUserKeys(ctx, deps, guid, accountName, loginIdentities)
 		for _, ipAddress := range ipAddresses {
 			ipAddressSet.Set(ipAddress)
 		}
@@ -1672,13 +1699,13 @@ func getIPsFromPWHistSet(ctx context.Context, deps restAdminDeps, accountName st
 
 // addDefaultPositiveCacheKey adds the legacy default positive-cache key.
 func addDefaultPositiveCacheKey(userKeys config.StringSet, prefix string, accountName string) {
-	userKeys.Set(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + accountName)
+	userKeys.Set(backend.PositivePasswordCacheKey(prefix, definitions.DefaultPositiveCacheName, accountName))
 }
 
-// addPasswordHistoryKeys adds account-scoped and IP-scoped password-history set keys for one identifier.
-func addPasswordHistoryKeys(userKeys config.StringSet, prefix string, accountName string, identifier string) {
-	userKeys.Set(fmt.Sprintf("%s%s:{%s:%s}:%s:%s", prefix, definitions.RedisPwHashKey, accountName, identifier, accountName, identifier))
-	userKeys.Set(fmt.Sprintf("%s%s:{%s}:%s", prefix, definitions.RedisPwHashKey, identifier, identifier))
+// addPasswordHistoryKeys adds account-scoped and IP-scoped password-history set keys for one scoped address.
+func addPasswordHistoryKeys(userKeys config.StringSet, prefix string, accountName string, scopedIP string) {
+	userKeys.Set(bruteforce.PasswordHistoryRedisKey(prefix, accountName, scopedIP))
+	userKeys.Set(bruteforce.PasswordHistoryRedisKey(prefix, "", scopedIP))
 }
 
 // addTolerationKeys adds the toleration hash and ZSET keys of one scoped identifier.
@@ -1688,30 +1715,38 @@ func addTolerationKeys(userKeys config.StringSet, prefix string, identifier stri
 	}
 }
 
-// addRWPAllowanceKey adds one repeating-wrong-password allowance key.
-func addRWPAllowanceKey(userKeys config.StringSet, prefix string, accountName string, identifier string) {
-	userKeys.Set(prefix + definitions.RedisBFRWPAllowPrefix + identifier + ":" + accountName)
+// addRWPAllowanceKeys adds the repeating-wrong-password windows of every login identity for one scoped address.
+func addRWPAllowanceKeys(userKeys config.StringSet, prefix string, scopedIP string, identities []string) {
+	for _, identity := range identities {
+		userKeys.Set(bruteforce.RWPAllowanceRedisKey(prefix, scopedIP, identity))
+	}
+}
+
+// rwpScopedIPs returns the raw address and, when IP scoping changes it, its RWP-scoped form. The raw form
+// covers state written before the scoping was configured.
+func rwpScopedIPs(scoper ipscoper.IPScoper, ip string) []string {
+	scoped := scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, ip)
+	if scoped == ip {
+		return []string{ip}
+	}
+
+	return []string{ip, scoped}
 }
 
 // addIPScopedUserKeys adds all IP-derived keys for an account.
-func addIPScopedUserKeys(userKeys config.StringSet, cfg config.File, prefix string, accountName string, ip string) {
+//
+// RWP windows are keyed by login identity: the account-mapping fields of the flushed login name for named
+// logins, and the account name for requests without a username.
+func addIPScopedUserKeys(userKeys config.StringSet, cfg config.File, prefix string, accountName string, ip string, loginIdentities []string) {
+	rwpIdentities := append([]string{accountName}, loginIdentities...)
 	scoper := ipscoper.NewIPScoper().WithCfg(cfg)
-	scopedRWP := scoper.Scope(ipscoper.ScopeRepeatingWrongPassword, ip)
-	scopedTol := scoper.Scope(ipscoper.ScopeTolerations, ip)
 
-	addPasswordHistoryKeys(userKeys, prefix, accountName, ip)
-
-	if scopedRWP != ip {
-		addPasswordHistoryKeys(userKeys, prefix, accountName, scopedRWP)
+	for _, scopedIP := range rwpScopedIPs(scoper, ip) {
+		addPasswordHistoryKeys(userKeys, prefix, accountName, scopedIP)
+		addRWPAllowanceKeys(userKeys, prefix, scopedIP, rwpIdentities)
 	}
 
-	addTolerationKeys(userKeys, prefix, scopedTol)
-
-	addRWPAllowanceKey(userKeys, prefix, accountName, ip)
-
-	if scopedRWP != ip {
-		addRWPAllowanceKey(userKeys, prefix, accountName, scopedRWP)
-	}
+	addTolerationKeys(userKeys, prefix, scoper.Scope(ipscoper.ScopeTolerations, ip))
 }
 
 // addProtocolPositiveCacheKeys adds positive-cache keys for all configured protocols.
@@ -1723,7 +1758,7 @@ func addProtocolPositiveCacheKeys(userKeys config.StringSet, cfg config.File, de
 }
 
 // prepareRedisUserKeys generates a set of Redis keys related to the provided user and their IPs for cleanup or processing.
-func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, accountName string) ([]string, config.StringSet) {
+func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, accountName string, loginIdentities []string) ([]string, config.StringSet) {
 	cfg := deps.effectiveCfg()
 	logger := deps.effectiveLogger()
 
@@ -1742,7 +1777,7 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 	addDefaultPositiveCacheKey(userKeys, prefix, accountName)
 
 	for _, ip := range ips {
-		addIPScopedUserKeys(userKeys, cfg, prefix, accountName, ip)
+		addIPScopedUserKeys(userKeys, cfg, prefix, accountName, ip, loginIdentities)
 	}
 
 	addProtocolPositiveCacheKeys(userKeys, cfg, deps, prefix, accountName)
@@ -1750,24 +1785,12 @@ func prepareRedisUserKeys(ctx context.Context, deps restAdminDeps, guid string, 
 	return ips, userKeys
 }
 
-// removeUserFromCache removes a user and related keys from the cache based on the given parameters and context.
-// Parameters: ctx is the request context, userCmd contains user info, userKeys is a set of keys to remove,
-// guid is a unique identifier for logs, and removeHash indicates whether to delete the entire hash or specific fields.
-// Returns a slice of strings representing the removed keys.
-func removeUserFromCache(ctx context.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool, hashFields []string) []string {
-	// Legacy wrapper: delegate to deps-based implementation using injected defaults.
-	return removeUserFromCacheWithDeps(
-		ctx,
-		userCmd,
-		userKeys,
-		guid,
-		removeHash,
-		hashFields,
-		deps,
-	)
-}
+// userHashRemovalCommands is the number of user-hash commands queued in front of the per-user UNLINKs.
+const userHashRemovalCommands = 1
 
-func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, removeHash bool, hashFields []string, deps restAdminDeps) []string {
+// removeUserFromCache removes the owned user-hash fields and the collected per-user keys in one pipeline.
+// It returns the keys whose UNLINK removed data.
+func removeUserFromCache(ctx context.Context, deps restAdminDeps, userCmd *admin.FlushUserCmd, userKeys config.StringSet, guid string, hashFields []string) []string {
 	removedKeys := make([]string, 0)
 
 	cfg := deps.effectiveCfg()
@@ -1783,7 +1806,7 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 	sort.Strings(keys)
 
 	pipe := redisClient.GetWriteHandle().Pipeline()
-	queueUserHashRemoval(ctx, pipe, prefix, userCmd.User, removeHash, hashFields)
+	queueUserHashRemoval(ctx, pipe, prefix, userCmd.User, hashFields)
 
 	// Queue deletion of all user keys
 	for _, userKey := range keys {
@@ -1802,25 +1825,11 @@ func removeUserFromCacheWithDeps(ctx context.Context, userCmd *admin.FlushUserCm
 		return removedKeys
 	}
 
-	// Calculate the offset for cmds based on whether we flushed one shard or 256
-	offset := userKeyPipelineOffset(removeHash)
-
-	removedKeys = appendRemovedUserKeys(logger, guid, keys, cmds, offset, removedKeys)
-
-	return removedKeys
+	return appendRemovedUserKeys(logger, guid, keys, cmds, userHashRemovalCommands, removedKeys)
 }
 
-// queueUserHashRemoval queues hash cleanup before per-user key removal.
-func queueUserHashRemoval(ctx context.Context, pipe redis.Pipeliner, prefix string, username string, removeHash bool, hashFields []string) {
-	if removeHash {
-		for i := range 256 {
-			shardKey := fmt.Sprintf("%s%s:{%02x}", prefix, definitions.RedisUserHashKey, i)
-			pipe.Del(ctx, shardKey)
-		}
-
-		return
-	}
-
+// queueUserHashRemoval queues the removal of the login name's owned user-hash fields.
+func queueUserHashRemoval(ctx context.Context, pipe redis.Pipeliner, prefix string, username string, hashFields []string) {
 	redisKey := rediscli.GetUserHashKey(prefix, username)
 
 	fields := append([]string(nil), hashFields...)
@@ -1830,15 +1839,6 @@ func queueUserHashRemoval(ctx context.Context, pipe redis.Pipeliner, prefix stri
 
 	sort.Strings(fields)
 	pipe.HDel(ctx, redisKey, fields...)
-}
-
-// userKeyPipelineOffset returns where user-key unlink results start in the pipeline.
-func userKeyPipelineOffset(removeHash bool) int {
-	if removeHash {
-		return 256
-	}
-
-	return 1
 }
 
 // appendRemovedUserKeys appends keys whose Redis UNLINK result removed at least one key.

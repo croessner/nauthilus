@@ -24,7 +24,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
-	"github.com/croessner/nauthilus/v4/server/stats"
 
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -169,18 +168,6 @@ func (s *bruteForceHintState) applyRepeatingRule(
 	}
 
 	s.foundRepeating = true
-}
-
-// bruteForceBanExists checks whether the candidate network has an active ban.
-func bruteForceBanExists(ctx context.Context, cfg config.File, redisClient rediscli.Client, candidate string) bool {
-	prefix := cfg.GetServer().GetRedis().GetPrefix()
-	banKey := rediscli.GetBruteForceBanKey(prefix, candidate)
-
-	stats.GetMetrics().GetRedisReadCounter().Inc()
-
-	existsVal, err := redisClient.GetReadHandle().Exists(ctx, banKey).Result()
-
-	return err == nil && existsVal > 0
 }
 
 // applyFallbackRule records the first eligible fallback network.

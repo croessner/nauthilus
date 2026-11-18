@@ -541,13 +541,16 @@ func TestProcessUserCmdInvalidatesLocalAuthCachesForLuaAlias(t *testing.T) {
 	prefix := config.GetFile().GetServer().GetRedis().GetPrefix()
 	expectIdentityCacheFence(mock, prefix)
 	shardKey := rediscli.GetUserHashKey(prefix, user)
+	mappingField := accountcache.GetAccountMappingField(user, "imap", "")
 
+	// The Lua account replaces the mapped account, but the login name's own mapping fields are still flushed.
+	expectAccountMappingScan(mock, shardKey, user, mappingField, "stale-account")
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(alias, config.GetFile())).SetVal(1)
 	mock.ExpectUnlink(bruteforce.GetPWHistIPsRedisKey(user, config.GetFile())).SetVal(1)
 	mock.ExpectSRem(prefix+definitions.RedisAffectedAccountsKey, alias, user).SetVal(2)
 	mock.ExpectZRem(affectedAccountsRetentionTestKey(prefix), alias, user).SetVal(2)
 	mock.ExpectZRem(rediscli.GetAffectedAccountsIndexKey(prefix), alias, user).SetVal(2)
-	mock.ExpectHDel(shardKey, user).SetVal(1)
+	mock.ExpectHDel(shardKey, user, mappingField).SetVal(2)
 	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + alias).SetVal(1)
 	mock.ExpectUnlink(prefix + definitions.RedisUserPositiveCachePrefix + "__default__:" + user).SetVal(1)
 

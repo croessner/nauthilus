@@ -1034,8 +1034,15 @@ const (
 	// RedisUserPositiveCachePrefix is the prefix used for positive user cache entries in Redis.
 	RedisUserPositiveCachePrefix = "UCP:"
 
+	// DefaultPositiveCacheName is the positive-cache namespace used when no backend defines a cache name.
+	DefaultPositiveCacheName = "__default__"
+
 	// RedisBFRWPAllowPrefix represents the prefix used for repeating wrong password allowance in Redis.
 	RedisBFRWPAllowPrefix = "bf:rwp:allow:"
+
+	// RedisBruteForceBucketPrefix is the prefix of brute-force bucket window keys. The bucket builder
+	// continues it with the `{<network>[|p=<protocol>][|oidc=<client_id>]}` hash tag.
+	RedisBruteForceBucketPrefix = "bf:"
 
 	// RedisBruteForceBanPrefix is the prefix for individual per-network ban keys (String keys with TTL).
 	RedisBruteForceBanPrefix = "bf:ban:"
