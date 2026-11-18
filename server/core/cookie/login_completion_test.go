@@ -55,6 +55,7 @@ type loginCompletionFixture struct {
 	runtime    *CanonicalRuntime
 	session    *CanonicalSession
 	oldCookie  *http.Cookie
+	redis      *miniredis.Miniredis
 	oldHandle  sessionstate.Handle
 	newHandle  sessionstate.Handle
 	flowHandle sessionstate.Handle
@@ -349,6 +350,15 @@ func TestLoginCompletionPublishesSeparateMasterUserMFAIdentity(t *testing.T) {
 func newLoginCompletionFixture(t *testing.T) *loginCompletionFixture {
 	t.Helper()
 
+	return newLoginCompletionFixtureWithClock(
+		t, canonicalRuntimeClock{now: time.Date(2026, time.August, 17, 18, 0, 0, 0, time.UTC)},
+	)
+}
+
+// newLoginCompletionFixtureWithClock creates an anonymous old session whose runtime reads time from clock.
+func newLoginCompletionFixtureWithClock(t *testing.T, clock sessionstate.Clock) *loginCompletionFixture {
+	t.Helper()
+
 	oldHandle := sessionstate.Handle(strings.Repeat("A", 43))
 	newHandle := sessionstate.Handle(strings.Repeat("B", 43))
 	mini := miniredis.RunT(t)
@@ -356,8 +366,7 @@ func newLoginCompletionFixture(t *testing.T) *loginCompletionFixture {
 	runtime, err := NewCanonicalRuntime(
 		[]byte("login-completion-test-secret-32-bytes"), 1,
 		redis.NewClient(&redis.Options{Addr: mini.Addr()}), "login-completion",
-		canonicalRuntimeClock{now: time.Date(2026, time.August, 17, 18, 0, 0, 0, time.UTC)},
-		&loginCompletionGenerator{handles: []sessionstate.Handle{oldHandle, newHandle}}, false,
+		clock, &loginCompletionGenerator{handles: []sessionstate.Handle{oldHandle, newHandle}}, false,
 	)
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -371,7 +380,7 @@ func newLoginCompletionFixture(t *testing.T) *loginCompletionFixture {
 	}
 
 	return &loginCompletionFixture{
-		runtime: runtime, session: session, oldCookie: writer.Result().Cookies()[0],
+		runtime: runtime, session: session, oldCookie: writer.Result().Cookies()[0], redis: mini,
 		oldHandle: oldHandle, newHandle: newHandle, flowHandle: sessionstate.Handle(strings.Repeat("O", 43)),
 	}
 }

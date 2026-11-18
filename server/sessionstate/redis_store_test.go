@@ -257,16 +257,18 @@ func TestRedisStoresBoundTouchesAndPurgeOrphans(t *testing.T) {
 		t.Fatalf("commit anchor: %v", err)
 	}
 
-	touched, err := fixture.stores.TouchSession(ctx, anchorReference, 20*time.Minute)
-	if err != nil || touched {
-		t.Fatalf("early touch: touched=%t err=%v", touched, err)
+	touch := TouchRequest{Reference: anchorReference, IdleTTL: 20 * time.Minute}
+
+	receipt, err := fixture.stores.TouchSession(ctx, touch)
+	if err != nil || receipt.Touched {
+		t.Fatalf("early touch: receipt=%#v err=%v", receipt, err)
 	}
 
 	fixture.clock.Advance(6 * time.Minute)
 
-	touched, err = fixture.stores.TouchSession(ctx, anchorReference, 20*time.Minute)
-	if err != nil || !touched {
-		t.Fatalf("bounded touch: touched=%t err=%v", touched, err)
+	receipt, err = fixture.stores.TouchSession(ctx, touch)
+	if err != nil || !receipt.Touched || !receipt.IdleExpiresAt.Equal(fixture.clock.Now().Add(20*time.Minute)) {
+		t.Fatalf("bounded touch: receipt=%#v err=%v", receipt, err)
 	}
 
 	stepUp := StepUpRecord{Record: Record{Handle: child}, Session: session}
@@ -278,7 +280,8 @@ func TestRedisStoresBoundTouchesAndPurgeOrphans(t *testing.T) {
 		t.Fatalf("commit step-up: %v", err)
 	}
 
-	if err = fixture.stores.Session.Delete(ctx, DeleteRequest{Reference: anchorReference, ExpectedRevision: 2}); err != nil {
+	// A touch moves only lifetime metadata, so content writers keep the committed revision.
+	if err = fixture.stores.Session.Delete(ctx, DeleteRequest{Reference: anchorReference, ExpectedRevision: 1}); err != nil {
 		t.Fatalf("delete parent: %v", err)
 	}
 

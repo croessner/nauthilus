@@ -235,9 +235,41 @@ func (r *CanonicalRuntime) Open(ctx context.Context, request *http.Request) (*Ca
 		return nil, errors.Join(ErrEnvelopeRejected, sessionstate.ErrBindingMismatch)
 	}
 
+	if err = r.touch(ctx, reference, &anchor.Value); err != nil {
+		return nil, err
+	}
+
 	return &CanonicalSession{
 		Handle: envelope.Session, Anchor: anchor, Stores: r.stores, clock: r.clock, runtime: r,
 	}, nil
+}
+
+// touch slides the idle expiry of a loaded anchor and its logout index for browser activity and mirrors the
+// stored lifetime into the loaded value, so later commits in the same request keep the extended window.
+// A missing or revoked anchor rejects the envelope; other Redis failures fail closed as they are.
+func (r *CanonicalRuntime) touch(
+	ctx context.Context,
+	reference sessionstate.Reference,
+	anchor *sessionstate.SessionAnchor,
+) error {
+	receipt, err := r.stores.TouchSession(ctx, sessionstate.TouchRequest{
+		Reference: reference,
+		Children:  appendCanonicalOwnedChildren(nil, sessionstate.OwnerConsent, reference.Session, anchor.LogoutIndexes),
+		IdleTTL:   canonicalIdleTTL,
+	})
+	if errors.Is(err, sessionstate.ErrNotFound) || errors.Is(err, sessionstate.ErrRevoked) {
+		return errors.Join(ErrEnvelopeRejected, err)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	anchor.IdleExpiresAt = receipt.IdleExpiresAt
+	anchor.ExpiresAt = receipt.IdleExpiresAt
+	anchor.LastTouchedAt = receipt.LastTouchedAt
+
+	return nil
 }
 
 // PurgeBrowser deletes every pre-cutover and canonical browser representation.

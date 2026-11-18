@@ -112,28 +112,44 @@ redis.call('DEL', KEYS[2])
 return values
 `
 
+// redisTouchScript slides one live anchor's idle expiry up to its absolute expiry and moves the listed
+// anchor-lifetime children along. It returns {status, idle_expires_at_ms, last_touched_at_ms}; status 1 means
+// touched, 0 means still inside the write-amortization window, -2 missing or expired, -3 revoked.
+// The revision stays unchanged because only lifetime metadata moves; content writers keep their CAS.
 const redisTouchScript = `
 local revision = redis.call('HGET', KEYS[1], 'revision')
-if not revision then return -2 end
-if redis.call('HGET', KEYS[1], 'revoked') == '1' then return -3 end
+if not revision then return {-2, 0, 0} end
+if redis.call('HGET', KEYS[1], 'revoked') == '1' or redis.call('HGET', KEYS[1], 'tombstone') == '1' then
+  return {-3, 0, 0}
+end
 local absolute = tonumber(redis.call('HGET', KEYS[1], 'absolute_expires_at_ms') or '0')
+local idle = tonumber(redis.call('HGET', KEYS[1], 'idle_expires_at_ms') or '0')
 local last_touched = tonumber(redis.call('HGET', KEYS[1], 'last_touched_at_ms') or '0')
 local now = tonumber(ARGV[1])
-if absolute <= now then
+if absolute <= now or idle <= now then
   redis.call('DEL', KEYS[1])
-  return -2
+  return {-2, 0, 0}
 end
-if last_touched > 0 and now - last_touched < tonumber(ARGV[2]) then return 0 end
+if last_touched > 0 and now - last_touched < tonumber(ARGV[2]) then return {0, idle, last_touched} end
 local idle_expiry = now + tonumber(ARGV[3])
 if idle_expiry > absolute then idle_expiry = absolute end
-local next_revision = tonumber(revision) + 1
+if idle_expiry < idle then idle_expiry = idle end
+local expiry = tostring(idle_expiry)
 redis.call('HSET', KEYS[1],
-  'revision', tostring(next_revision),
   'last_touched_at_ms', tostring(now),
-  'idle_expires_at_ms', tostring(idle_expiry),
-  'expires_at_ms', tostring(idle_expiry))
+  'idle_expires_at_ms', expiry,
+  'expires_at_ms', expiry)
 redis.call('PEXPIRE', KEYS[1], tostring(idle_expiry - now))
-return 1
+for index = 2, #KEYS do
+  if redis.call('EXISTS', KEYS[index]) == 1 then
+    redis.call('HSET', KEYS[index],
+      'expires_at_ms', expiry,
+      'idle_expires_at_ms', expiry,
+      'absolute_expires_at_ms', expiry)
+    redis.call('PEXPIRE', KEYS[index], tostring(idle_expiry - now))
+  end
+end
+return {1, idle_expiry, now}
 `
 
 const redisTransactionScript = `
@@ -827,39 +843,83 @@ func boolRedisValue(value bool) string {
 	return "0"
 }
 
-// TouchSession refreshes idle expiry only after the configured write-amortization window.
-func (s *RedisStores) TouchSession(
-	ctx context.Context,
-	reference Reference,
-	idleTTL time.Duration,
-) (bool, error) {
-	if s == nil || s.client == nil || s.clock == nil || idleTTL <= 0 {
-		return false, ErrInvalidTTL
+// TouchRequest slides one anchor's idle expiry. Children are records that share the anchor lifetime, such as
+// the per-browser logout index; short-lived flow records keep their own TTL.
+type TouchRequest struct {
+	Reference Reference
+	Children  []OwnedReference
+	IdleTTL   time.Duration
+}
+
+// TouchReceipt reports the anchor lifetime metadata after one touch attempt.
+type TouchReceipt struct {
+	IdleExpiresAt time.Time
+	LastTouchedAt time.Time
+	Touched       bool
+}
+
+// TouchSession refreshes idle expiry only after the configured write-amortization window and never beyond the
+// absolute expiry. It fails closed with ErrNotFound for missing or expired anchors and ErrRevoked for revoked ones.
+func (s *RedisStores) TouchSession(ctx context.Context, request TouchRequest) (TouchReceipt, error) {
+	if s == nil || s.client == nil || s.clock == nil || request.IdleTTL <= 0 {
+		return TouchReceipt{}, ErrInvalidTTL
 	}
 
-	key, err := s.keyspace.Key(OwnerSessionAnchor, reference)
+	keys, err := s.touchKeys(request)
 	if err != nil {
-		return false, err
+		return TouchReceipt{}, err
 	}
 
-	result, err := s.client.Eval(ctx, redisTouchScript, []string{key},
+	result, err := s.client.Eval(ctx, redisTouchScript, keys,
 		strconv.FormatInt(s.clock.Now().UnixMilli(), 10),
 		strconv.FormatInt(s.touchWindow.Milliseconds(), 10),
-		strconv.FormatInt(idleTTL.Milliseconds(), 10),
-	).Int64()
+		strconv.FormatInt(request.IdleTTL.Milliseconds(), 10),
+	).Int64Slice()
 	if err != nil {
-		return false, fmt.Errorf("session redis touch: %w", err)
+		return TouchReceipt{}, fmt.Errorf("session redis touch: %w", err)
 	}
 
-	switch result {
+	return touchReceipt(result)
+}
+
+// touchKeys derives the anchor key followed by the same-session child keys that share its lifetime.
+func (s *RedisStores) touchKeys(request TouchRequest) ([]string, error) {
+	anchorKey, err := s.keyspace.Key(OwnerSessionAnchor, request.Reference)
+	if err != nil {
+		return nil, err
+	}
+
+	childKeys, err := s.revocationChildKeys(request.Reference.Session, request.Children)
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]string{anchorKey}, childKeys...), nil
+}
+
+// touchReceipt maps the touch script reply to a typed receipt or a fail-closed classification.
+func touchReceipt(result []int64) (TouchReceipt, error) {
+	if len(result) != 3 {
+		return TouchReceipt{}, ErrBindingMismatch
+	}
+
+	switch result[0] {
 	case -3:
-		return false, ErrRevoked
+		return TouchReceipt{}, ErrRevoked
 	case -2:
-		return false, ErrNotFound
-	case 0:
-		return false, nil
+		return TouchReceipt{}, ErrNotFound
+	case 0, 1:
+		if result[1] <= 0 || result[2] <= 0 {
+			return TouchReceipt{}, ErrBindingMismatch
+		}
+
+		return TouchReceipt{
+			IdleExpiresAt: time.UnixMilli(result[1]).UTC(),
+			LastTouchedAt: time.UnixMilli(result[2]).UTC(),
+			Touched:       result[0] == 1,
+		}, nil
 	default:
-		return true, nil
+		return TouchReceipt{}, ErrBindingMismatch
 	}
 }
 
