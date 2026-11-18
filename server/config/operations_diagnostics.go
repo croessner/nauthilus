@@ -75,8 +75,8 @@ type OperationsDiagnosticsSources struct {
 
 // namedHistoricalSource pairs a historical source with its configuration key.
 type namedHistoricalSource struct {
-	settings *HistoricalDiagnosticsSource
-	name     string
+	settings *HistoricalDiagnosticsSource `mapstructure:"-"`
+	name     string                       `mapstructure:"-"`
 }
 
 // historical returns the historical sources in response order.
