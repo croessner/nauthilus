@@ -193,7 +193,7 @@ func formAndHeaderCredentialPresenceCases() []credentialPresenceCase {
 			wantUsername: credentialPresenceUsername},
 		{name: "nginx percent-encoded space in username", service: definitions.ServNginx, method: http.MethodGet,
 			headers: map[string]string{"Auth-User": "Vorname%20Nachname", "Auth-Pass": credentialPresenceSecret},
-			wantOK: true, wantUsername: "Vorname Nachname", wantPassword: true},
+			wantOK:  true, wantUsername: "Vorname Nachname", wantPassword: true},
 		{name: "nginx empty username and password", service: definitions.ServNginx, method: http.MethodGet,
 			headers: map[string]string{"Auth-User": "", "Auth-Pass": ""}, wantOK: true},
 		{name: "header missing username", service: definitions.ServHeader, method: http.MethodGet,
