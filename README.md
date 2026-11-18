@@ -113,6 +113,8 @@ make guardrails
 - Policy Decision Service operations guide: [server/docs/policy_operations.md](server/docs/policy_operations.md)
 - Load-test error classification and logging: [server/docs/load_test_observability.md](server/docs/load_test_observability.md)
 - NOTICE field filtering: [server/docs/notice_logging.md](server/docs/notice_logging.md)
+- Redis keyspace reference: [server/docs/development/redis_keyspace.md](server/docs/development/redis_keyspace.md)
+- ClickHouse data model reference: [server/docs/development/clickhouse_data_model.md](server/docs/development/clickhouse_data_model.md)
 - Policy HTTP client guide: [server/openapi/client/README.md](server/openapi/client/README.md)
 - Policy gRPC client guide: [api/policy/v1/README.md](api/policy/v1/README.md)
 
