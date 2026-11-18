@@ -43,7 +43,7 @@ func (e profileEntry) query(instanceLabel string, fixed []string) func(int64) st
 		increases := make([]string, 0, len(e.selectors))
 
 		for _, selector := range e.selectors {
-			increases = append(increases, fmt.Sprintf("increase(%s[%ds])", selector.render(fixed), rangeSeconds))
+			increases = append(increases, selector.increase(fixed, rangeSeconds))
 		}
 
 		return fmt.Sprintf("sum by (%s) (%s)", instanceLabel, strings.Join(increases, " or "))
@@ -76,11 +76,11 @@ var diagnosticsProfile = []profileEntry{
 	{supportops.ComponentAuthEventDelivery, supportops.SymptomAuthEventsDropped, []seriesSelector{
 		{name: metricnames.AuthEvents, matchers: []string{equal(metricnames.LabelOutcome, metricnames.OutcomeDropped)}}}},
 	{supportops.ComponentClickHouseExport, supportops.SymptomClickHouseFlushFailed, []seriesSelector{
-		{matchers: []string{
+		{anyName: true, matchers: []string{
 			nameMatching(metricnames.ClickHouseFlushFamilyPattern),
 			anyOf(metricnames.LabelResult, metricnames.ClickHouseFlushFailures...)}}}},
 	{supportops.ComponentClickHouseExport, supportops.SymptomClickHouseRowsDropped, []seriesSelector{
-		{matchers: []string{
+		{anyName: true, matchers: []string{
 			nameMatching(metricnames.ClickHouseQueueFamilyPattern),
 			anyOf(metricnames.LabelResult, metricnames.ClickHouseQueueLosses...)}}}},
 	{supportops.ComponentPolicy, supportops.SymptomPolicyTechnicalErrors, []seriesSelector{

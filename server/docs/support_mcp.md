@@ -421,7 +421,10 @@ same counter families and the same classification as the runtime source:
 | `clickhouse_export` | `CLICKHOUSE_FLUSH_FAILED`, `CLICKHOUSE_ROWS_DROPPED` | the plugin's scoped flush and enqueue counters with a failure `result` |
 | `policy` | `POLICY_CHECK_TECHNICAL_ERRORS` | `policy_check_technical_errors_total` |
 
-Gauges (LDAP target health, breaker state, monitored backend servers) stay with the runtime source.
+Gauges (LDAP target health, breaker state, monitored backend servers) stay with the runtime source. The ClickHouse
+streams are matched by name pattern; because `increase()` drops the metric name, those two queries keep the family as a
+label (`label_replace`) and run on a subquery with a 15-second step, so streams that share every other label never
+collide.
 
 The selector (for example `{job: nauthilus}`), tenant (`X-Scope-OrgID`, read by Mimir and Cortex), credentials, and
 endpoint are fixed in the configuration; no caller value reaches a query, no series leaves Prometheus, redirects are

@@ -217,10 +217,10 @@ func TestPrometheusQueryBoundary(t *testing.T) {
 		`sum by (instance) (increase(ldap_errors_total{op="bind",code="49",app="nauthilus",job="nauthilus"}[1800s]))`,
 		`sum by (instance) (increase(ldap_errors_total{op!="bind",app="nauthilus",job="nauthilus"}[1800s]) or ` +
 			`increase(ldap_errors_total{op="bind",code!="49",app="nauthilus",job="nauthilus"}[1800s]))`,
-		`sum by (instance) (increase({__name__=~"nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_flush_batches_total",` +
-			`result=~"http_error|status_error|no_url",app="nauthilus",job="nauthilus"}[1800s]))`,
-		`sum by (instance) (increase({__name__=~"nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_queued_rows_total",` +
-			`result=~"dropped|dropped_reject_limit|encode_error",app="nauthilus",job="nauthilus"}[1800s]))`,
+		`sum by (instance) (increase(label_replace({__name__=~"nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_flush_batches_total",` +
+			`result=~"http_error|status_error|no_url",app="nauthilus",job="nauthilus"}, "family", "$1", "__name__", "(.+)")[1800s:15s]))`,
+		`sum by (instance) (increase(label_replace({__name__=~"nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_queued_rows_total",` +
+			`result=~"dropped|dropped_reject_limit|encode_error",app="nauthilus",job="nauthilus"}, "family", "$1", "__name__", "(.+)")[1800s:15s]))`,
 	}
 
 	if len(fake.requests) != len(want) {

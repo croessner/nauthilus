@@ -39,6 +39,13 @@ const (
 	// codePrefix starts every failure code of the source, such as PROMETHEUS_TIMEOUT.
 	codePrefix = "PROMETHEUS"
 
+	// subqueryStepSeconds is the resolution of the subquery that keeps metric families apart; it is finer than any
+	// sensible scrape interval, so no scrape is skipped.
+	subqueryStepSeconds = 15
+
+	// familyLabel keeps the metric family on the series of a name-pattern selector.
+	familyLabel = "family"
+
 	// minCoverageSamples is the smallest sample count that proves an instance was scraped inside the window: a
 	// counter increase needs two samples.
 	minCoverageSamples = 2
@@ -112,10 +119,25 @@ func profileQueries(instanceLabel string, fixed []string) []windowsource.Entry {
 	return entries
 }
 
-// seriesSelector is one PromQL series selector without the fixed matchers of the configuration.
+// seriesSelector is one PromQL series selector without the fixed matchers of the configuration. A selector that
+// matches metric names by pattern sets anyName.
 type seriesSelector struct {
 	name     string
 	matchers []string
+	anyName  bool
+}
+
+// increase renders the increase of the selector's series over rangeSeconds. increase() drops the metric name, so
+// series of different families that share every other label would collide ("vector cannot contain metrics with the
+// same labelset"); a selector that matches names by pattern therefore keeps the family as a label and runs on a
+// subquery, which the label rewrite needs.
+func (s seriesSelector) increase(fixed []string, rangeSeconds int64) string {
+	if s.anyName {
+		return fmt.Sprintf(`increase(label_replace(%s, %s, "$1", %s, "(.+)")[%ds:%ds])`, s.render(fixed),
+			strconv.Quote(familyLabel), strconv.Quote(nameLabel), rangeSeconds, subqueryStepSeconds)
+	}
+
+	return fmt.Sprintf("increase(%s[%ds])", s.render(fixed), rangeSeconds)
 }
 
 // render returns the selector with the fixed matchers appended.
