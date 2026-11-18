@@ -28,5 +28,17 @@ run_test testdata/lua/plugins/subject_test_context_chain_no_auth_without_environ
 run_test testdata/lua/plugins/subject_idp_policy_wrapper.lua subject testdata/lua/plugins/subject_idp_policy_test.json
 run_test testdata/lua/plugins/cache_flush_wrapper.lua cache_flush testdata/lua/plugins/cache_flush_test.json
 
+# Redis key layout fixtures (testdata/lua/plugins/lib/redis_layout_probe.lua)
+run_test testdata/lua/plugins/subject_account_centric_monitoring_wrapper.lua subject testdata/lua/plugins/subject_account_centric_monitoring_test.json
+run_test testdata/lua/plugins/environment_global_pattern_monitoring_wrapper.lua environment testdata/lua/plugins/environment_global_pattern_monitoring_test.json
+run_test testdata/lua/plugins/environment_account_longwindow_metrics_wrapper.lua environment testdata/lua/plugins/environment_account_longwindow_metrics_test.json
+run_test testdata/lua/plugins/subject_soft_delay_wrapper.lua subject testdata/lua/plugins/subject_soft_delay_test.json
+run_test testdata/lua/plugins/subject_account_protection_mode_wrapper.lua subject testdata/lua/plugins/subject_account_protection_mode_test.json
+run_test testdata/lua/plugins/action_dynamic_response_wrapper.lua action testdata/lua/plugins/action_dynamic_response_no_username_test.json
+run_test testdata/lua/plugins/action_dynamic_response_wrapper.lua action testdata/lua/plugins/action_dynamic_response_attacked_test.json
+run_test testdata/lua/plugins/action_haveibeenpwnd_wrapper.lua action testdata/lua/plugins/action_haveibeenpwnd_test.json
+run_test testdata/lua/plugins/hook_distributed_brute_force_test_wrapper.lua hook testdata/lua/plugins/hook_distributed_brute_force_test_test.json
+run_test testdata/lua/plugins/hook_distributed_brute_force_admin_wrapper.lua hook testdata/lua/plugins/hook_distributed_brute_force_admin_test.json
+
 GOEXPERIMENT=runtimesecret go test ./server/testing/luatest -run '^TestClickhouseAction(ExportsValidatedShortPasswordHash|RejectsMalformedPasswordHash)$' -count=1 -v
 GOEXPERIMENT=runtimesecret go test ./server/lualib/policyprovider -run '^TestLua' -count=1 -v

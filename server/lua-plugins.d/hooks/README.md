@@ -26,12 +26,17 @@ Access the plugin through HTTP requests with the following query parameters:
     - `attempts`, `unique_ips`, `unique_users`, `ips_per_user`, `threat_level`
     - Warm-up (from dynamic_response): `warmup` object with `requirements` (seconds, min_users, min_attempts), `progress` (seconds, users, attempts, overall), `first_seen_ts`, `elapsed_seconds`, `warmed_up`. Legacy top-level fields: `warmup_progress` (overall 0.0-1.0), `warmup_complete` (boolean)
 - `action=reset_protection`: Resets all protection measures (also resets `threat_level` to 0.0)
-- `action=reset_account&username=<username>`: Resets protection for a specific account
+- `action=reset_account&username=<username>`: Removes the account from the attacked-account, protection-mode, and
+  CAPTCHA/step-up sets and deletes its per-account monitoring keys. Brute-force state (password histories, toleration
+  sets, affected accounts) belongs to the server; remove it with the server's user flush endpoint.
+- `protocol=<protocol>`: Selects the per-protocol monitoring keys for `get_metrics` (attacked accounts) and
+  `reset_account` (default `unknown`, the protocol the plugins use when a request has none)
 
 Environment:
 - `DYNAMIC_RESPONSE_WARMUP_SECONDS` (optional): gating minimum time since first activity (default 3600)
 - `DYNAMIC_RESPONSE_WARMUP_MIN_USERS` (optional): minimum unique users observed (default 1000)
 - `DYNAMIC_RESPONSE_WARMUP_MIN_ATTEMPTS` (optional): minimum total auth attempts observed (default 10000)
+- `CUSTOM_REDIS_POOL_NAME` (optional): the Redis pool the monitoring plugins write to (default: "default")
 
 Example: `https://nauthilus-server/api/v1/custom/distributed-brute-force-admin?action=get_metrics`
 
@@ -54,6 +59,10 @@ Access the plugin through HTTP requests with the following query parameters:
 - `username=<username>`: Specifies the target account for the simulation
 - `num_ips=<number>`: Sets the number of IPs to use in the attack (default: 20)
 - `country_code=<code>`: Optional country code for regional attack simulation
+- `protocol=<protocol>`: Protocol of the simulated attempts and the detection check (default `unknown`)
+
+The simulation writes the same global pattern, per-account, and attacked-account keys that the monitoring plugins
+write (`share/nauthilus_keys.lua`) and uses the pool named by `CUSTOM_REDIS_POOL_NAME`.
 
 Example: `https://nauthilus-server/api/v1/custom/distributed-brute-force-test?action=run_test&username=testuser&num_ips=30&country_code=RU`
 

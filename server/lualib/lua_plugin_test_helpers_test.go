@@ -15,7 +15,13 @@
 
 package lualib
 
-import lua "github.com/yuin/gopher-lua"
+import (
+	"path/filepath"
+	"testing"
+
+	gluacrypto "github.com/tengattack/gluacrypto/crypto"
+	lua "github.com/yuin/gopher-lua"
+)
 
 const (
 	luaFnGetenv       = "getenv"
@@ -75,4 +81,20 @@ func requireLuaTableGlobal(t luaTestFailer, L *lua.LState, name string) *lua.LTa
 // luaTestFailer captures the subset of testing.TB used by Lua helper assertions.
 type luaTestFailer interface {
 	Fatalf(format string, args ...any)
+}
+
+// useLuaPluginShareModules lets bundled plugins load the real modules under lua-plugins.d/share, such as
+// nauthilus_keys and nauthilus_redis_pool, on top of the stubs a test preloads.
+func useLuaPluginShareModules(t *testing.T, L *lua.LState) {
+	t.Helper()
+
+	pkg, ok := L.GetGlobal("package").(*lua.LTable)
+	if !ok {
+		t.Fatal("Lua package table missing")
+	}
+
+	current := L.GetField(pkg, "path").String()
+	pattern := filepath.ToSlash(filepath.Join("..", "lua-plugins.d", "share", "?.lua"))
+	L.SetField(pkg, "path", lua.LString(pattern+";"+current))
+	L.PreloadModule("glua_crypto", gluacrypto.Loader)
 }

@@ -1,0 +1,17 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom"
+    }
+  },
+  "context": {
+    "session": "dbf-test-hook-session-1"
+  },
+  "http_request": {
+    "method": "GET",
+    "path": "/api/v1/custom/dbf-test?action=simulate_attack&username=alice@example.test&num_ips=12&protocol=imap"
+  },
+  "expected_output": {
+    "error_expected": false
+  }
+}

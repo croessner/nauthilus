@@ -38,6 +38,7 @@ local N = "security_metrics"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 local policy_facts = require("nauthilus_policy_facts")
 
 local prom = require("nauthilus_prometheus")
@@ -46,7 +47,6 @@ local time = require("time")
 
 local PER_USER_ENABLED = nauthilus_util.toboolean(nauthilus_util.getenv("SECURITY_METRICS_PER_USER_ENABLED", "false"))
 local SAMPLE_RATE = tonumber(nauthilus_util.getenv("SECURITY_METRICS_SAMPLE_RATE", "1")) or 0
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 -- Deterministic string hash (djb2) to support stable sampling by username
 -- Pure Lua implementation using modulo to keep values in unsigned 32-bit range
@@ -64,14 +64,6 @@ local function djb2_hash(s)
     return hash
 end
 
-local function protocol_segment(request)
-    local protocol = request.protocol
-    if protocol == nil or protocol == "" then
-        return "unknown"
-    end
-    return protocol
-end
-
 -- Decide whether to emit per-user metrics for this username
 -- Rules:
 --  - Only when SECURITY_METRICS_PER_USER_ENABLED=true
@@ -82,14 +74,12 @@ local function should_emit_per_user(client, username, request)
         return false
     end
 
-    local protocol = protocol_segment(request)
-
     if not PER_USER_ENABLED then
         return false
     end
 
     -- Always include protected accounts (check hash flag set by account_protection_mode)
-    local prot_hash_key = nauthilus_util.get_redis_key(request, "acct:" .. nauthilus_keys.account_tag(username) .. username .. ":proto:" .. protocol .. ":protection")
+    local prot_hash_key = nauthilus_keys.account_state_key(request, username, request.protocol, "protection")
     local prot_active = nauthilus_redis.redis_hget(client, prot_hash_key, "active")
     if prot_active == "true" then
         return true
@@ -116,27 +106,25 @@ function nauthilus_call_environment(request)
 
     local username = request.username or request.account or ""
     local now = time.unix()
-    local protocol = protocol_segment(request)
+    local protocol = nauthilus_keys.protocol(request.protocol)
 
-    -- Get Redis connection
-    local client = "default"
-    if CUSTOM_REDIS_POOL ~= "default" then
-        local err
-        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-        nauthilus_util.if_error_raise(err)
-    end
+    local client = nauthilus_redis_pool.connection()
 
     -- Per-account gauges (guarded to avoid high cardinality)
     if username ~= "" and should_emit_per_user(client, username, request) then
-        local tag = nauthilus_keys.account_tag(username)
+        -- account_key builds the names account_longwindow_metrics.lua and account_centric_monitoring.lua write.
+        local function account_key(namespace, suffix)
+            return nauthilus_keys.account_key(request, namespace, username, protocol, suffix)
+        end
+
         -- Batch reads: PFCOUNT(24h,7d) + fallback ZCOUNTs + failure ZCOUNTs (1h,24h,7d)
         local cmds = {
-            { "pfcount", nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":proto:" .. protocol .. ":ips:86400") },
-            { "pfcount", nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":proto:" .. protocol .. ":ips:604800") },
-            { "zcount", nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:86400"), tostring(now - 86400), tostring(now) },
-            { "zcount", nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:604800"), tostring(now - 604800), tostring(now) },
+            { "pfcount", account_key("hll:acct", "ips:86400") },
+            { "pfcount", account_key("hll:acct", "ips:604800") },
+            { "zcount", account_key("multilayer:account", "ips:86400"), tostring(now - 86400), tostring(now) },
+            { "zcount", account_key("multilayer:account", "ips:604800"), tostring(now - 604800), tostring(now) },
         }
-        local zkey = nauthilus_util.get_redis_key(request, "z:acct:" .. tag .. username .. ":proto:" .. protocol .. ":fails")
+        local zkey = account_key("z:acct", "fails")
         table.insert(cmds, {"zcount", zkey, tostring(now - 3600), tostring(now)})   -- 5
         table.insert(cmds, {"zcount", zkey, tostring(now - 86400), tostring(now)})  -- 6
         table.insert(cmds, {"zcount", zkey, tostring(now - 604800), tostring(now)}) -- 7
@@ -162,21 +150,21 @@ function nauthilus_call_environment(request)
         -- Fallback to multilayer failures if zero
         if f1h == 0 then
             local r2, e2 = nauthilus_redis.redis_pipeline(client, "read", {
-                { "zcount", nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:3600"), tostring(now - 3600), tostring(now) }
+                { "zcount", account_key("multilayer:account", "fails:3600"), tostring(now - 3600), tostring(now) }
             })
             nauthilus_util.if_error_raise(e2)
             f1h = tonumber(r2[1] and r2[1].value or 0) or 0
         end
         if f24 == 0 then
             local r2, e2 = nauthilus_redis.redis_pipeline(client, "read", {
-                { "zcount", nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:86400"), tostring(now - 86400), tostring(now) }
+                { "zcount", account_key("multilayer:account", "fails:86400"), tostring(now - 86400), tostring(now) }
             })
             nauthilus_util.if_error_raise(e2)
             f24 = tonumber(r2[1] and r2[1].value or 0) or 0
         end
         if f7d == 0 then
             local r2, e2 = nauthilus_redis.redis_pipeline(client, "read", {
-                { "zcount", nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:604800"), tostring(now - 604800), tostring(now) }
+                { "zcount", account_key("multilayer:account", "fails:604800"), tostring(now - 604800), tostring(now) }
             })
             nauthilus_util.if_error_raise(e2)
             f7d = tonumber(r2[1] and r2[1].value or 0) or 0
@@ -193,12 +181,12 @@ function nauthilus_call_environment(request)
 
     -- Global ips_per_user over 24h and 7d (requires global_pattern_monitoring.lua to collect these windows)
     local cmds = {
-        { "zcount", nauthilus_util.get_redis_key(request, "multilayer:global:auth_attempts:86400"), tostring(now - 86400), tostring(now) },
-        { "zcount", nauthilus_util.get_redis_key(request, "multilayer:global:unique_ips:86400"), tostring(now - 86400), tostring(now) },
-        { "zcount", nauthilus_util.get_redis_key(request, "multilayer:global:unique_users:86400"), tostring(now - 86400), tostring(now) },
-        { "zcount", nauthilus_util.get_redis_key(request, "multilayer:global:auth_attempts:604800"), tostring(now - 604800), tostring(now) },
-        { "zcount", nauthilus_util.get_redis_key(request, "multilayer:global:unique_ips:604800"), tostring(now - 604800), tostring(now) },
-        { "zcount", nauthilus_util.get_redis_key(request, "multilayer:global:unique_users:604800"), tostring(now - 604800), tostring(now) },
+        { "zcount", nauthilus_keys.global_window_key(request, "auth_attempts", 86400), tostring(now - 86400), tostring(now) },
+        { "zcount", nauthilus_keys.global_window_key(request, "unique_ips", 86400), tostring(now - 86400), tostring(now) },
+        { "zcount", nauthilus_keys.global_window_key(request, "unique_users", 86400), tostring(now - 86400), tostring(now) },
+        { "zcount", nauthilus_keys.global_window_key(request, "auth_attempts", 604800), tostring(now - 604800), tostring(now) },
+        { "zcount", nauthilus_keys.global_window_key(request, "unique_ips", 604800), tostring(now - 604800), tostring(now) },
+        { "zcount", nauthilus_keys.global_window_key(request, "unique_users", 604800), tostring(now - 604800), tostring(now) },
     }
     local gres, gerr = nauthilus_redis.redis_pipeline(client, "read", cmds)
     nauthilus_util.if_error_raise(gerr)
@@ -219,7 +207,7 @@ function nauthilus_call_environment(request)
     prom.set_gauge("security_global_ips_per_user", g7d, { window = "7d" })
 
     -- Accounts in protection mode (size of Redis set maintained by account_protection_mode.lua)
-    local prot_set = nauthilus_util.get_redis_key(request, "acct:protection_active:proto:" .. protocol)
+    local prot_set = nauthilus_keys.protection_active_key(request, protocol)
     local prot_count = tonumber(nauthilus_redis.redis_scard(client, prot_set) or 0) or 0
     prom.set_gauge("security_accounts_in_protection_mode_total", prot_count, { })
     policy_facts.emit_many("security_metrics", {

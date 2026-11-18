@@ -24,50 +24,32 @@ local N = "global_pattern_monitoring"
 --  - lua.plugin.global_pattern.ips_per_user
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_context = require("nauthilus_context")
 local time = require("time")
 
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
-
 function nauthilus_call_environment(request)
     if request.no_auth then
         return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
     end
 
-    -- Get Redis connection
-    local custom_pool = "default"
-    if CUSTOM_REDIS_POOL ~= "default" then
-        local err_redis_client
-
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-        nauthilus_util.if_error_raise(err_redis_client)
-    end
+    local custom_pool = nauthilus_redis_pool.connection()
 
     -- Track metrics via single server-side script
     local timestamp = time.unix()
-    local window_sizes = {60, 300, 900, 3600, 86400, 604800} -- 1min, 5min, 15min, 1hour, 24h, 7d
+    local window_sizes = nauthilus_keys.GLOBAL_WINDOWS -- 1min, 5min, 15min, 1hour, 24h, 7d
     -- Use request.session directly for a stable identifier
     local request_id = tostring(request.session or "")
     local username_value = request.username or request.account or ""
 
-    local keys = {}
-    for _, w in ipairs(window_sizes) do
-        table.insert(keys, nauthilus_util.get_redis_key(request, "multilayer:global:auth_attempts:" .. w))
-        table.insert(keys, nauthilus_util.get_redis_key(request, "multilayer:global:unique_ips:" .. w))
-        table.insert(keys, nauthilus_util.get_redis_key(request, "multilayer:global:unique_users:" .. w))
-    end
-    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
+    -- All keys share the global hash tag, so GPM_TrackAndCurrent keeps its names on Redis Cluster.
     local hour_key = time.format(timestamp, "2006-01-02-15", "UTC")
-    local historical_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:historical_metrics:" .. hour_key)
-    table.insert(keys, current_metrics_key)
-    table.insert(keys, historical_metrics_key)
-
-    local per_attempt_key = nauthilus_util.get_redis_key(request, "multilayer:global:metrics:" .. timestamp)
+    local keys = nauthilus_keys.global_pattern_keys(request, timestamp, hour_key)
     local per_attempt_ttl = 3600
-    table.insert(keys, per_attempt_key)
 
     local args = {
         timestamp,

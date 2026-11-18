@@ -34,6 +34,7 @@ Postmaster
 local N = "haveibeenpwnd"
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_mail = require("nauthilus_mail")
@@ -48,7 +49,6 @@ local template = require("template")
 
 local HCCR = "http_client_concurrent_requests_total"
 
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 local SMTP_USE_LMTP = nauthilus_util.getenv("SMTP_USE_LMTP", "false")
 local SMTP_SERVER = nauthilus_util.getenv("SMTP_SERVER", "localhost")
 local SMTP_PORT = nauthilus_util.getenv("SMTP_PORT", "25")
@@ -65,13 +65,7 @@ function nauthilus_call_action(request)
         local redis_key = nauthilus_util.get_redis_key(request, "HAVEIBEENPWND:" .. crypto.md5(request.account))
         local hash = string.lower(crypto.sha1(request.password))
 
-        local custom_pool = "default"
-        if CUSTOM_REDIS_POOL ~= "default" then
-            local err_redis_client
-
-            custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-            nauthilus_util.if_error_raise(err_redis_client)
-        end
+        local custom_pool = nauthilus_redis_pool.connection()
 
         -- Fast-path: check local cache first to avoid Redis/HTTP on repeated attempts
         local cache_key = "hibp:" .. (request.account or "") .. ":" .. hash:sub(1, 5)

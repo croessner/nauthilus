@@ -55,6 +55,30 @@ The bridge is intentionally decision-neutral. It preserves `guid`, `status`, and
 GeoIP policy service when they already exist, while adding native fields such as `asn`, `asn_org`, `asn_prefix`, and
 `asn_registry` for logging, analytics, and future reputation scoring.
 
+### nauthilus_keys.lua
+Builds the Redis keys of the bundled monitoring, protection, and response plugins so that writers, readers, and the
+brute-force hooks agree on one layout:
+
+- per-account keys: `<prefix><namespace>:<account_tag><username>:proto:<protocol>:<suffix>`
+- per-protocol sets: `<prefix><name>:proto:<protocol>`
+- global pattern keys: `<prefix>multilayer:global:<global_tag><name>`
+
+`account_tag(username)` is `{<KEY_HASHTAG_PREFIX><md5(username)>}` and `global_tag()` is
+`{<KEY_HASHTAG_PREFIX>global}` (prefix default `acm-`). Every multi-key Redis script of `init/init.lua` receives keys
+with one shared tag, so Redis Cluster clients send them unchanged. `USE_KEY_HASHTAGS=false` empties both tags; use it
+only on standalone or Sentinel Redis.
+
+**Functions:** `protocol`, `account_tag`, `global_tag`, `account_key`, `account_state_key`, `protocol_key`,
+`attacked_accounts_key`, `protection_active_key`, `spray_key`, `global_key`, `global_window_key`,
+`current_metrics_key`, `historical_metrics_key`, and the script key lists `account_window_keys`,
+`account_longwindow_keys`, `account_keys`, and `global_pattern_keys`.
+
+### nauthilus_redis_pool.lua
+Resolves the Redis handle of the bundled plugins. `connection()` returns the literal `"default"` (the server picks its
+read or write handle per call) or, when `CUSTOM_REDIS_POOL_NAME` is set, the connection of that pool. Pass its result
+as the first argument of every `nauthilus_redis` call; the pool name string itself would silently select the default
+handle. `name()` and `is_custom()` let `init/init.lua` register the pool.
+
 ### nauthilus_util.lua
 A comprehensive utility module that provides common functions used throughout the Nauthilus plugin system.
 

@@ -14,6 +14,8 @@
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 
 local nauthilus_http_request = require("nauthilus_http_request")
 local nauthilus_redis = require("nauthilus_redis")
@@ -55,8 +57,8 @@ local function ensure_startup_settings(redis_handle, request)
     return settings
 end
 
--- Helper function to get metrics from Redis
-local function get_metrics(redis_handle, request)
+-- Helper function to get metrics from Redis; attacked accounts are reported for one protocol.
+local function get_metrics(redis_handle, request, protocol)
     local metrics = {}
 
     -- Make sure startup-related settings exist
@@ -64,8 +66,8 @@ local function get_metrics(redis_handle, request)
 
     -- Keys
     local settings_key = nauthilus_util.get_redis_key(request, "multilayer:global:settings")
-    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
-    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
+    local current_metrics_key = nauthilus_keys.current_metrics_key(request)
+    local attacked_accounts_key = nauthilus_keys.attacked_accounts_key(request, protocol)
     local blocked_regions_key = nauthilus_util.get_redis_key(request, "multilayer:global:blocked_regions")
     local rate_limited_ips_key = nauthilus_util.get_redis_key(request, "multilayer:global:rate_limited_ips")
     local captcha_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts")
@@ -182,45 +184,24 @@ local function reset_protection_measures(redis_handle, request)
     return true
 end
 
--- Helper function to reset a specific account
-local function reset_account(redis_handle, username, request)
+-- reset_account clears the bundled-plugin state of one account for one protocol: its attacked-account,
+-- protection-mode, and CAPTCHA/step-up memberships and every per-account monitoring key. Brute-force state
+-- (password histories, toleration sets, affected accounts) belongs to the server; its user flush removes it.
+local function reset_account(redis_handle, username, protocol, request)
     if not username or username == "" then
         return false, "Username is required"
     end
 
-    -- Prepare keys and members
-    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
     local captcha_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:global:captcha_accounts")
-
-    local window = 3600 -- 1 hour window
-    local ip_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":ips:" .. window)
-    local fail_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":fails:" .. window)
-
-    -- Load all IPs seen for this account (read) to build the deletion pipeline
-    local pw_hist_ips_key = nauthilus_util.get_redis_key(request, "PW_HIST_IPS:" .. username)
-    local ips = nauthilus_redis.redis_smembers(redis_handle, pw_hist_ips_key) or {}
-
-    -- Build a single write pipeline to delete all related keys and set entries
-    local affected_accounts_key = nauthilus_util.get_redis_key(request, "affected_accounts")
     local pipeline_cmds = {
-        {"zrem", attacked_accounts_key, { username }},
+        {"zrem", nauthilus_keys.attacked_accounts_key(request, protocol), username},
+        {"srem", nauthilus_keys.protection_active_key(request, protocol), username},
         {"srem", captcha_accounts_key, username},
-        {"del", ip_key},
-        {"del", fail_key},
-        { "srem", affected_accounts_key, username },
     }
 
-    for _, ip in ipairs(ips) do
-        table.insert(pipeline_cmds, {"del", "PW_HIST:" .. username .. ":" .. ip})
-        table.insert(pipeline_cmds, {"del", "PW_HIST:" .. ip})
-        table.insert(pipeline_cmds, {"del", "PW_HIST_META:" .. ip})
-        table.insert(pipeline_cmds, {"del", "bf:TR:" .. ip})
-        table.insert(pipeline_cmds, {"del", "bf:TR:" .. ip .. ":P"})
-        table.insert(pipeline_cmds, {"del", "bf:TR:" .. ip .. ":N"})
+    for _, key in ipairs(nauthilus_keys.account_keys(request, username, protocol)) do
+        table.insert(pipeline_cmds, {"del", key})
     end
-
-    -- Finally, drop the set of IPs for this account
-    table.insert(pipeline_cmds, {"del", pw_hist_ips_key})
 
     local _, pipe_err = nauthilus_redis.redis_pipeline(redis_handle, "write", pipeline_cmds)
     nauthilus_util.if_error_raise(pipe_err)
@@ -237,12 +218,12 @@ function nauthilus_run_hook(request)
     result.caller = N .. ".lua"
     result.session = session
 
-    -- Get Redis connection
-    local redis_pool = "default"
-    local redis_handle = nauthilus_redis.get_redis_connection(redis_pool)
+    -- Use the pool the monitoring plugins write to
+    local redis_handle = nauthilus_redis_pool.connection()
 
-    -- Get action parameter
+    -- Get action parameter; protocol selects the per-protocol monitoring keys (default "unknown")
     local action = nauthilus_http_request.get_http_query_param("action")
+    local protocol = nauthilus_keys.protocol(nauthilus_http_request.get_http_query_param("protocol"))
 
     if not action or action == "" then
         -- Default action is to get metrics
@@ -251,7 +232,7 @@ function nauthilus_run_hook(request)
 
     if action == "get_metrics" then
         -- Get metrics from Redis
-        local metrics = get_metrics(redis_handle, request)
+        local metrics = get_metrics(redis_handle, request, protocol)
 
         -- Check if we have any meaningful data
         local has_data = false
@@ -288,12 +269,13 @@ function nauthilus_run_hook(request)
             result.message = "Missing required parameter: username"
         else
             -- Reset account
-            local success, error_message = reset_account(redis_handle, username, request)
+            local success, error_message = reset_account(redis_handle, username, protocol, request)
 
             if success then
                 result.status = "success"
                 result.message = "Account reset successfully"
                 result.username = username
+                result.protocol = protocol
             else
                 result.level = "error"
                 result.status = "error"

@@ -1,0 +1,36 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "PROTECT_BACKOFF_MIN_MS": "1",
+      "PROTECT_BACKOFF_MAX_MS": "2"
+    }
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "client_ip": "192.0.2.50",
+    "protocol": "imap",
+    "session": "protection-session-1",
+    "authenticated": true,
+    "no_auth": false
+  },
+  "redis": {
+    "initial_data": {
+      "hashes": {
+        "ntc:acct:{acm-2960a687c8031d3d105b67802b5e130e}alice@example.test:proto:imap:longwindow": {
+          "uniq_ips_24h": "40",
+          "uniq_ips_7d": "80",
+          "fails_24h": "20",
+          "fails_7d": "40"
+        }
+      }
+    }
+  },
+  "expected_output": {
+    "logs_contain": [
+      "policy_fact_account_protection_active"
+    ],
+    "error_expected": false
+  }
+}

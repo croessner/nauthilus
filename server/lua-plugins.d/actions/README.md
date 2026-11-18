@@ -95,9 +95,9 @@ Checks user credentials against the "Have I Been Pwned" database to identify com
 Native replacement: configure the bundled Go plugin `haveibeenpwnd` and reference the native policy effect ID
 `authn/plugin.haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, cache behavior, and SMTP/LMTP
 mail notification through `Host.Mail("haveibeenpwnd")`. Enable mail in `plugins.modules[].config.mail` and add the
-`mail` capability beside `credentials` before restart. During migration, account for the Lua gate mismatch:
-`init/init.lua` returns `send_email`, while this action checks `send_mail`. The native plugin intentionally avoids that
-script and uses a direct Redis `HSETNX` on the `send_mail` hash field.
+`mail` capability beside `credentials` before restart. Both claim the notification once through the `send_mail`
+hash field: this action through the `nauthilus_send_mail_hash` script that `init/init.lua` uploads, the native plugin
+through a direct Redis `HSETNX`.
 
 **Capabilities:**
 - Securely checks passwords against known data breaches

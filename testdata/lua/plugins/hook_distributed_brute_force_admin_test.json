@@ -1,0 +1,51 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom"
+    }
+  },
+  "context": {
+    "session": "dbf-admin-hook-session-1"
+  },
+  "http_request": {
+    "method": "GET",
+    "path": "/api/v1/custom/dbf-admin?action=reset_account&username=alice@example.test&protocol=imap"
+  },
+  "redis": {
+    "initial_data": {
+      "hashes": {
+        "ntc:acct:{acm-2960a687c8031d3d105b67802b5e130e}alice@example.test:proto:imap:protection": {
+          "active": "true"
+        },
+        "ntc:acct:{acm-2960a687c8031d3d105b67802b5e130e}alice@example.test:proto:imap:longwindow": {
+          "fails_24h": "20"
+        }
+      },
+      "sets": {
+        "ntc:acct:protection_active:proto:imap": ["alice@example.test"],
+        "ntc:multilayer:global:captcha_accounts": ["alice@example.test"]
+      },
+      "zsets": {
+        "ntc:multilayer:distributed_attack:accounts:proto:imap": [
+          {
+            "member": "alice@example.test",
+            "score": 1700000000
+          },
+          {
+            "member": "bob@example.test",
+            "score": 1700000000
+          }
+        ],
+        "ntc:multilayer:account:{acm-2960a687c8031d3d105b67802b5e130e}alice@example.test:proto:imap:fails:3600": [
+          {
+            "member": "seeded-failure",
+            "score": 1700000000
+          }
+        ]
+      }
+    }
+  },
+  "expected_output": {
+    "error_expected": false
+  }
+}

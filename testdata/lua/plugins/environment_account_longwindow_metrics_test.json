@@ -1,0 +1,25 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom"
+    }
+  },
+  "password": {
+    "generated_hash": "deadbeef"
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "password": "not-the-real-secret",
+    "client_ip": "192.0.2.30",
+    "protocol": "imap",
+    "session": "alm-session-1",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "expected_output": {
+    "environment_triggered": false,
+    "environment_abort": false,
+    "error_expected": false
+  }
+}

@@ -2132,6 +2132,12 @@ func LoaderModPsnetMock(mockData *PsnetMock) lua.LGFunction {
 			return 1
 		}))
 
+		L.SetField(mod, "register_connection_target", L.NewFunction(func(L *lua.LState) int {
+			_ = mockData.RecordCall("register_connection_target", L.OptString(1, ""))
+
+			return 0
+		}))
+
 		L.Push(mod)
 
 		return 1
@@ -2564,9 +2570,11 @@ func LoaderModUtilMock(mockData *UtilMock) lua.LGFunction {
 		L.SetField(mod, "get_redis_key", L.NewFunction(utilRedisKeyMock(mockData)))
 		L.SetField(mod, "if_error_raise", L.NewFunction(utilIfErrorRaiseMock(mockData)))
 		L.SetField(mod, "print_result", L.NewFunction(utilPrintResultMock(mockData)))
-		L.SetField(mod, "is_table", L.NewFunction(utilIsTableMock(mockData)))
+		L.SetField(mod, "is_table", L.NewFunction(utilTypeCheckMock(mockData, "is_table", lua.LTTable)))
 		L.SetField(mod, "table_length", L.NewFunction(utilTableLengthMock(mockData)))
-		L.SetField(mod, "is_string", L.NewFunction(utilIsStringMock(mockData)))
+		L.SetField(mod, "is_string", L.NewFunction(utilTypeCheckMock(mockData, "is_string", lua.LTString)))
+		L.SetField(mod, "is_number", L.NewFunction(utilTypeCheckMock(mockData, "is_number", lua.LTNumber)))
+		L.SetField(mod, "toboolean", L.NewFunction(utilToBooleanMock(mockData)))
 
 		L.Push(mod)
 
@@ -2671,8 +2679,13 @@ func utilIfErrorRaiseMock(mockData *UtilMock) lua.LGFunction {
 		errValue := L.CheckAny(1)
 		_ = mockData.RecordCall("if_error_raise", errValue.String())
 
-		if errValue.Type() != lua.LTNil {
-			L.RaiseError("%s", errValue.String())
+		// Mirror nauthilus_util.if_error_raise: falsy values, Redis misses, and "OK" are not errors.
+		if !lua.LVAsBool(errValue) {
+			return 0
+		}
+
+		if message := errValue.String(); message != "redis: nil" && message != "OK" {
+			L.RaiseError("%s", message)
 		}
 
 		return 0
@@ -2688,12 +2701,24 @@ func utilPrintResultMock(mockData *UtilMock) lua.LGFunction {
 	}
 }
 
-// utilIsTableMock returns the is_table mock callback.
-func utilIsTableMock(mockData *UtilMock) lua.LGFunction {
+// utilTypeCheckMock returns an is_<type> mock callback that compares the Lua value type.
+func utilTypeCheckMock(mockData *UtilMock, name string, want lua.LValueType) lua.LGFunction {
 	return func(L *lua.LState) int {
-		_ = mockData.RecordCall("is_table", "")
-		_, ok := L.CheckAny(1).(*lua.LTable)
-		L.Push(lua.LBool(ok))
+		_ = mockData.RecordCall(name, "")
+
+		L.Push(lua.LBool(L.CheckAny(1).Type() == want))
+
+		return 1
+	}
+}
+
+// utilToBooleanMock mirrors nauthilus_util.toboolean: "false", "0", and "" are false.
+func utilToBooleanMock(mockData *UtilMock) lua.LGFunction {
+	return func(L *lua.LState) int {
+		value := strings.ToLower(L.CheckString(1))
+		_ = mockData.RecordCall("toboolean", value)
+
+		L.Push(lua.LBool(value != "false" && value != "0" && value != ""))
 
 		return 1
 	}
@@ -2719,17 +2744,6 @@ func luaTableLength(tbl *lua.LTable) int {
 	})
 
 	return length
-}
-
-// utilIsStringMock returns the is_string mock callback.
-func utilIsStringMock(mockData *UtilMock) lua.LGFunction {
-	return func(L *lua.LState) int {
-		_ = mockData.RecordCall("is_string", "")
-
-		L.Push(lua.LBool(L.CheckAny(1).Type() == lua.LTString))
-
-		return 1
-	}
 }
 
 // LoaderModCacheMock creates a mock nauthilus_cache module.
@@ -2990,6 +3004,19 @@ func (m *MockLogger) LogStatus(msg string) {
 	m.Log(fmt.Sprintf("[STATUS] %s", msg))
 }
 
+// customLogValueString mirrors lualib.LoggingManager.AddCustomLog: strings, numbers, and booleans are logged as
+// values, a missing value as an empty string, and every other type as "UNSUPPORTED".
+func customLogValueString(value lua.LValue) string {
+	switch value.Type() {
+	case lua.LTNil:
+		return ""
+	case lua.LTString, lua.LTNumber, lua.LTBool:
+		return value.String()
+	default:
+		return "UNSUPPORTED"
+	}
+}
+
 // SetupBuiltinTable configures the global nauthilus_builtin table used by real scripts.
 func SetupBuiltinTable(L *lua.LState, logger *MockLogger) {
 	if L == nil {
@@ -2998,7 +3025,7 @@ func SetupBuiltinTable(L *lua.LState, logger *MockLogger) {
 
 	lualib.SetBuiltinTableForAll(L, func(L *lua.LState) int {
 		logKey := L.CheckString(1)
-		logValue := L.OptString(2, "")
+		logValue := customLogValueString(L.Get(2))
 
 		if logger != nil {
 			logger.Log(fmt.Sprintf("[CUSTOM] %s: %s", logKey, logValue))

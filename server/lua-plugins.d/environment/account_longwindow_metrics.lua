@@ -29,6 +29,7 @@ local N = "account_longwindow_metrics"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
@@ -37,14 +38,19 @@ local nauthilus_prometheus = require("nauthilus_prometheus")
 local nauthilus_password = require("nauthilus_password")
 local time = require("time")
 
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
-
-local function protocol_segment(request)
-    local protocol = request.protocol
-    if protocol == nil or protocol == "" then
-        return "unknown"
+-- record_spray_token adds a password token to every global spray window. The windows are global, so each one is
+-- written in its own single-key call: ALM_TrackAndSnapshot only receives keys with the account hash tag.
+local function record_spray_token(client, request, pw_token, now)
+    for _, window in ipairs(nauthilus_keys.LONG_WINDOWS) do
+        local _, err = nauthilus_redis.redis_run_script(
+            client,
+            "",
+            "ZAddRemExpire",
+            { nauthilus_keys.spray_key(request, window) },
+            { now, pw_token, 0, now - window, window * 2 }
+        )
+        nauthilus_util.if_error_raise(err)
     end
-    return protocol
 end
 
 function nauthilus_call_environment(request)
@@ -60,15 +66,9 @@ function nauthilus_call_environment(request)
     local now = time.unix()
     -- Use request.session directly for per-request identifier
     local req_id = tostring(request.session or "")
-    local protocol = protocol_segment(request)
+    local protocol = nauthilus_keys.protocol(request.protocol)
 
-    -- Get Redis connection
-    local client = "default"
-    if CUSTOM_REDIS_POOL ~= "default" then
-        local err
-        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-        nauthilus_util.if_error_raise(err)
-    end
+    local client = nauthilus_redis_pool.connection()
 
     -- Server-side tracking and snapshot via ALM_TrackAndSnapshot (single RTT)
     local pw_token
@@ -81,27 +81,18 @@ function nauthilus_call_environment(request)
 
     local uniq24, uniq7d, fails_24h, fails_7d = 0, 0, 0, 0
     if username and username ~= "" then
-        local tag = nauthilus_keys.account_tag(username)
         local scoped = client_ip
         if client_ip and client_ip ~= "" then
             local s = nauthilus_misc.scoped_ip("lua_generic", client_ip)
             if s and s ~= "" then scoped = s end
         end
 
-        local keys = {
-            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":proto:" .. protocol .. ":ips:86400"),
-            nauthilus_util.get_redis_key(request, "hll:acct:" .. tag .. username .. ":proto:" .. protocol .. ":ips:604800"),
-            nauthilus_util.get_redis_key(request, "z:acct:" .. tag .. username .. ":proto:" .. protocol .. ":fails"),
-            nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":longwindow"),
-            nauthilus_util.get_redis_key(request, "z:spray:pw:86400"),
-            nauthilus_util.get_redis_key(request, "z:spray:pw:604800"),
-        }
+        local keys = nauthilus_keys.account_longwindow_keys(request, username, protocol)
         local args = {
             now,
             scoped or "",
             authenticated and 1 or 0,
             req_id,
-            pw_token or "",
         }
 
         local sres, serr = nauthilus_redis.redis_run_script(client, "", "ALM_TrackAndSnapshot", keys, args)
@@ -111,6 +102,10 @@ function nauthilus_call_environment(request)
             uniq7d = tonumber(sres[2] or 0) or 0
             fails_24h = tonumber(sres[3] or 0) or 0
             fails_7d = tonumber(sres[4] or 0) or 0
+        end
+
+        if pw_token and pw_token ~= "" then
+            record_spray_token(client, request, pw_token, now)
         end
     end
 

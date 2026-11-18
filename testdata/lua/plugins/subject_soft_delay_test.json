@@ -1,0 +1,44 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "SOFT_DELAY_MIN_MS": "1",
+      "SOFT_DELAY_MAX_MS": "2"
+    }
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "client_ip": "192.0.2.40",
+    "protocol": "imap",
+    "session": "soft-delay-session-1",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "redis": {
+    "initial_data": {
+      "hashes": {
+        "ntc:acct:{acm-2960a687c8031d3d105b67802b5e130e}alice@example.test:proto:imap:longwindow": {
+          "uniq_ips_24h": "40",
+          "uniq_ips_7d": "80",
+          "fails_24h": "20",
+          "fails_7d": "40"
+        }
+      },
+      "zsets": {
+        "ntc:multilayer:distributed_attack:accounts:proto:imap": [
+          {
+            "member": "alice@example.test",
+            "score": 1700000000
+          }
+        ]
+      }
+    }
+  },
+  "expected_output": {
+    "logs_contain": [
+      "policy_fact_soft_delay_applied_ms"
+    ],
+    "error_expected": false
+  }
+}

@@ -17,6 +17,7 @@ local N = "dynamic_response"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 
 local nauthilus_mail = require("nauthilus_mail")
 local nauthilus_redis = require("nauthilus_redis")
@@ -28,7 +29,6 @@ local time = require("time")
 local template = require("template")
 
 local ALERTS_ENABLED = nauthilus_util.toboolean(nauthilus_util.getenv("ADMIN_ALERTS_ENABLED", "true"))
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 local ADMIN_ALERT_MIN_UNIQUE_IPS = tonumber(nauthilus_util.getenv("ADMIN_ALERT_MIN_UNIQUE_IPS", "100")) or 100
 local ADMIN_ALERT_MIN_IPS_PER_USER = tonumber(nauthilus_util.getenv("ADMIN_ALERT_MIN_IPS_PER_USER", "2.5")) or 2.5
 local ADMIN_ALERT_REQUIRE_EVIDENCE = nauthilus_util.toboolean(nauthilus_util.getenv("ADMIN_ALERT_REQUIRE_EVIDENCE", "false"))
@@ -77,12 +77,7 @@ local function notify_administrators(request, subject, metrics)
     local alerts_enabled = ALERTS_ENABLED
 
     -- Resolve Redis client for rate limiting
-    local client = "default"
-    if CUSTOM_REDIS_POOL ~= "default" then
-        local err
-        client, err = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-        nauthilus_util.if_error_raise(err)
-    end
+    local client = nauthilus_redis_pool.connection()
 
     local now = time.unix()
 
@@ -397,53 +392,42 @@ function nauthilus_call_action(request)
         return
     end
 
-    -- Get Redis connection
-    local custom_pool = "default"
-    if CUSTOM_REDIS_POOL ~= "default" then
-        local err_redis_client
-
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-        nauthilus_util.if_error_raise(err_redis_client)
-    end
+    local custom_pool = nauthilus_redis_pool.connection()
 
     -- Get current timestamp
     local timestamp = time.unix()
     local username = request.username
     local client_ip = request.client_ip
+    local protocol = nauthilus_keys.protocol(request.protocol)
 
     -- Calculate threat level based on various factors
     local threat_level = 0.0
     local metrics = {}
 
     -- Prepare Redis keys
-    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
-    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
+    local attacked_accounts_key = nauthilus_keys.attacked_accounts_key(request, protocol)
+    local current_metrics_key = nauthilus_keys.current_metrics_key(request)
 
-    -- Batch: ZSCORE (attack_score) + HMGET (current metrics) in one read pipeline
-    local read_cmds = {}
-    if username and username ~= "" then
+    -- Batch: HMGET (current metrics) + ZSCORE (attack_score, only with a username) in one read pipeline
+    local has_username = (username ~= nil and username ~= "")
+    local read_cmds = {
+        {"hmget", current_metrics_key, "attempts", "unique_ips", "unique_users", "ips_per_user"},
+    }
+    if has_username then
         table.insert(read_cmds, {"zscore", attacked_accounts_key, username})
-    else
-        -- placeholder to keep indices simple; will be ignored later
-        table.insert(read_cmds, {"echo", "noop"})
     end
-    table.insert(read_cmds, {"hmget", current_metrics_key, "attempts", "unique_ips", "unique_users", "ips_per_user"})
 
     local res, rp_err = nauthilus_redis.redis_pipeline(custom_pool, "read", read_cmds)
     nauthilus_util.if_error_raise(rp_err)
 
-    local idx = 1
     local attack_score
-    if username and username ~= "" then
-        if type(res) == "table" and type(res[idx]) == "table" and res[idx].ok ~= false then
-            attack_score = res[idx].value
-        end
+    if has_username and type(res) == "table" and type(res[2]) == "table" and res[2].ok ~= false then
+        attack_score = res[2].value
     end
-    idx = idx + 1
 
     local attempts, unique_ips, unique_users, ips_per_user = 0, 0, 0, 0
-    if type(res) == "table" and type(res[idx]) == "table" and res[idx].ok ~= false and type(res[idx].value) == "table" then
-        local vals = res[idx].value
+    if type(res) == "table" and type(res[1]) == "table" and res[1].ok ~= false and type(res[1].value) == "table" then
+        local vals = res[1].value
         attempts = tonumber(vals[1] or 0) or 0
         unique_ips = tonumber(vals[2] or 0) or 0
         unique_users = tonumber(vals[3] or 0) or 0
@@ -471,7 +455,7 @@ function nauthilus_call_action(request)
 
     -- Check historical patterns to detect sudden spikes (HMGET in same style)
     local hour_key = time.format(timestamp - 3600, "2006-01-02-15", "UTC") -- Previous hour
-    local historical_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:historical_metrics:" .. hour_key)
+    local historical_metrics_key = nauthilus_keys.historical_metrics_key(request, hour_key)
 
     local hist_res, hist_err = nauthilus_redis.redis_pipeline(custom_pool, "read", {
         {"hmget", historical_metrics_key, "attempts", "unique_ips"},
@@ -590,7 +574,7 @@ function nauthilus_call_action(request)
     -- Per-account step-up hint: if a step-up flag exists for this username,
     -- add the account temporarily to captcha/step-up set to help HTTP/OIDC flows.
     if username and username ~= "" then
-        local stepup_key = nauthilus_util.get_redis_key(request, "acct:" .. nauthilus_keys.account_tag(username) .. username .. ":stepup")
+        local stepup_key = nauthilus_keys.account_state_key(request, username, protocol, "stepup")
         local required = nauthilus_redis.redis_hget(custom_pool, stepup_key, "required")
         if required == "true" then
             local args = {15 * 60} -- 15 minutes TTL
@@ -718,7 +702,6 @@ function nauthilus_call_action(request)
     -- Adaptive reset/hysteresis for monitoring_mode to avoid getting stuck in permanent monitoring
     local ok_threshold = MONITORING_OK_STREAK_MIN
     local ok_streak_key = nauthilus_util.get_redis_key(request, "multilayer:global:ok_streak")
-    local attacked_accounts_key_reset = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
 
     local function disable_monitoring_mode()
         local _, err_clear = nauthilus_redis.redis_run_script(
@@ -751,7 +734,7 @@ function nauthilus_call_action(request)
 
         if streak >= ok_threshold then
             -- Only disable monitoring if there are no currently attacked accounts
-            local attacked_accounts = nauthilus_redis.redis_zrange(custom_pool, attacked_accounts_key_reset, 0, -1, "WITHSCORES") or {}
+            local attacked_accounts = nauthilus_redis.redis_zrange(custom_pool, attacked_accounts_key, 0, -1, "WITHSCORES") or {}
             local any_attacked = nauthilus_util.table_length(attacked_accounts)
 
             -- Require also that global ratios look benign to prevent flapping

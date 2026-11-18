@@ -1,0 +1,22 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "SECURITY_METRICS_PER_USER_ENABLED": "true"
+    }
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "client_ip": "192.0.2.20",
+    "protocol": "imap",
+    "session": "gpm-session-1",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "expected_output": {
+    "environment_triggered": false,
+    "environment_abort": false,
+    "error_expected": false
+  }
+}

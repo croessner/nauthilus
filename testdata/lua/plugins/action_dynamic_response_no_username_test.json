@@ -1,0 +1,23 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "ADMIN_ALERTS_ENABLED": "false"
+    }
+  },
+  "context": {
+    "username": "",
+    "account": "",
+    "client_ip": "192.0.2.60",
+    "protocol": "imap",
+    "session": "dynamic-response-session-1",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "expected_output": {
+    "logs_contain": [
+      "dynamic_response_response: normal"
+    ],
+    "error_expected": false
+  }
+}

@@ -17,11 +17,11 @@
 -- The subject source turns long-window account metrics and account-centric attack flags
 -- into policy-visible Lua subject-source results plus request-local policy facts.
 --
--- Keys used:
---  - ntc:acct:<username>:proto:<protocol>:longwindow (HSET by account_longwindow_metrics.lua)
+-- Keys used (built by share/nauthilus_keys.lua; <acct_tag> is the account hash tag):
+--  - ntc:acct:<acct_tag><username>:proto:<protocol>:longwindow (HSET by account_longwindow_metrics.lua)
 --  - ntc:multilayer:distributed_attack:accounts:proto:<protocol> (ZSET by account_centric_monitoring.lua)
---  - ntc:acct:<username>:proto:<protocol>:protection (HASH: active, reason, backoff_level, until_ts)
---  - ntc:acct:<username>:proto:<protocol>:stepup (HASH: required=true, reason, until_ts)
+--  - ntc:acct:<acct_tag><username>:proto:<protocol>:protection (HASH: active, reason, backoff_level, until_ts)
+--  - ntc:acct:<acct_tag><username>:proto:<protocol>:stepup (HASH: required=true, reason, until_ts)
 --  - ntc:acct:protection_active:proto:<protocol> (SET: active usernames)
 --
 -- Env thresholds (defaults conservative):
@@ -47,6 +47,7 @@ local N = "account_protection_mode"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
@@ -65,14 +66,6 @@ local function getenv_num(name, def)
     return v
 end
 
-local function protocol_segment(request)
-    local protocol = request.protocol
-    if protocol == nil or protocol == "" then
-        return "unknown"
-    end
-    return protocol
-end
-
 local THRESH_UNIQ24 = getenv_num("PROTECT_THRESH_UNIQ24", 12)
 local THRESH_UNIQ7D = getenv_num("PROTECT_THRESH_UNIQ7D", 30)
 local THRESH_FAIL24 = getenv_num("PROTECT_THRESH_FAIL24", 7)
@@ -81,7 +74,6 @@ local BACKOFF_MIN_MS = getenv_num("PROTECT_BACKOFF_MIN_MS", 150)
 local BACKOFF_MAX_MS = getenv_num("PROTECT_BACKOFF_MAX_MS", 1000)
 local BACKOFF_MAX_LEVEL = getenv_num("PROTECT_BACKOFF_MAX_LEVEL", 5)
 local MODE_TTL = getenv_num("PROTECT_MODE_TTL_SEC", 3600)
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 local ENFORCE_REJECT = nauthilus_util.toboolean(nauthilus_util.getenv("PROTECT_ENFORCE_REJECT", "false"))
 
 local function clamp(v, lo, hi)
@@ -90,9 +82,10 @@ local function clamp(v, lo, hi)
     return v
 end
 
-local function compute_under_protection(pool, username, request)
+-- compute_under_protection evaluates the long-window and attack signals of one account and protocol.
+local function compute_under_protection(conn, username, request)
     -- Check short-lived in-process cache first
-    local protocol = protocol_segment(request)
+    local protocol = nauthilus_keys.protocol(request.protocol)
 
     local ckey = "prot:" .. (username or "") .. ":proto:" .. protocol
     local cached = nauthilus_cache.cache_get(ckey)
@@ -100,9 +93,8 @@ local function compute_under_protection(pool, username, request)
         return cached.under, cached.metrics, cached.backoff_level, true
     end
 
-    local tag = nauthilus_keys.account_tag(username)
-    local lw_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":longwindow")
-    local prot_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":protection")
+    local lw_key = nauthilus_keys.account_state_key(request, username, protocol, "longwindow")
+    local prot_key = nauthilus_keys.account_state_key(request, username, protocol, "protection")
 
     -- Pipeline the related user-specific reads (same slot)
     local cmds = {
@@ -112,7 +104,7 @@ local function compute_under_protection(pool, username, request)
         { "hget", lw_key, "fails_7d" },
         { "hget", prot_key, "backoff_level" },
     }
-    local res, err = nauthilus_redis.redis_pipeline(pool, "read", cmds)
+    local res, err = nauthilus_redis.redis_pipeline(conn, "read", cmds)
     nauthilus_util.if_error_raise(err)
 
     -- Normalize structured pipeline results
@@ -131,7 +123,7 @@ local function compute_under_protection(pool, username, request)
     local backoff_level = tonumber(val(5) or "0") or 0
 
     -- Separate call for the global attack set to avoid cross-slot pipeline issues
-    local attacked_val, err_a = nauthilus_redis.redis_zscore(pool, nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts:proto:" .. protocol), username)
+    local attacked_val, err_a = nauthilus_redis.redis_zscore(conn, nauthilus_keys.attacked_accounts_key(request, protocol), username)
     nauthilus_util.if_error_raise(err_a)
     local attacked = (attacked_val ~= nil and attacked_val ~= false and attacked_val ~= "")
 
@@ -171,10 +163,11 @@ function nauthilus_call_subject(request)
 
     local ip = request.client_ip
     local now = time.unix()
-    local protocol = protocol_segment(request)
+    local protocol = nauthilus_keys.protocol(request.protocol)
+    local conn = nauthilus_redis_pool.connection()
 
     -- Evaluate protection state
-    local under, m, current_backoff, from_cache = compute_under_protection(CUSTOM_REDIS_POOL, username, request)
+    local under, m, current_backoff, from_cache = compute_under_protection(conn, username, request)
 
     if under then
         local backoff_level = clamp(current_backoff + 1, 1, BACKOFF_MAX_LEVEL)
@@ -199,7 +192,6 @@ function nauthilus_call_subject(request)
             time.sleep(applied_ms / 1000.0)
         end
 
-        local tag = nauthilus_keys.account_tag(username)
         local hits_str = table.concat(m.hits, ",")
 
         -- Record state and hints in Redis only if not from cache, to save write-RTTs
@@ -207,7 +199,7 @@ function nauthilus_call_subject(request)
             local until_ts = now + MODE_TTL
             local pipe_cmds = {
                 {
-                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":protection") },
+                    "run_script", "", "HSetMultiExpire", { nauthilus_keys.account_state_key(request, username, protocol, "protection") },
                     {
                         MODE_TTL,
                         "active", "true",
@@ -218,11 +210,11 @@ function nauthilus_call_subject(request)
                     }
                 },
                 {
-                    "run_script", "", "SAddMultiExpire", { nauthilus_util.get_redis_key(request, "acct:protection_active:proto:" .. protocol) },
+                    "run_script", "", "SAddMultiExpire", { nauthilus_keys.protection_active_key(request, protocol) },
                     { MODE_TTL, username }
                 },
                 {
-                    "run_script", "", "HSetMultiExpire", { nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":proto:" .. protocol .. ":stepup") },
+                    "run_script", "", "HSetMultiExpire", { nauthilus_keys.account_state_key(request, username, protocol, "stepup") },
                     {
                         MODE_TTL,
                         "required", "true",
@@ -232,7 +224,7 @@ function nauthilus_call_subject(request)
                     }
                 }
             }
-            local _, err = nauthilus_redis.redis_pipeline(CUSTOM_REDIS_POOL, "write", pipe_cmds)
+            local _, err = nauthilus_redis.redis_pipeline(conn, "write", pipe_cmds)
             nauthilus_util.if_error_raise(err)
         end
 

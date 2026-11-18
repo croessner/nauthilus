@@ -14,6 +14,7 @@
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 
 local nauthilus_prometheus = require("nauthilus_prometheus")
 local nauthilus_psnet = require("nauthilus_psnet")
@@ -23,7 +24,6 @@ local time = require("time")
 
 local N = "init"
 
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 local INIT_REDIS_WAIT_TIMEOUT_SEC = tonumber(nauthilus_util.getenv("INIT_REDIS_WAIT_TIMEOUT_SEC", "30")) or 30
 local INIT_REDIS_PING_INTERVAL_MS = tonumber(nauthilus_util.getenv("INIT_REDIS_PING_INTERVAL_MS", "200")) or 200
 local INIT_REDIS_BACKOFF_ENABLED = (nauthilus_util.getenv("INIT_REDIS_BACKOFF_ENABLED", "true")):lower()
@@ -83,9 +83,8 @@ function nauthilus_run_hook(request)
 
     result.caller = N .. ".lua"
 
-    local custom_pool = "default"
-    if CUSTOM_REDIS_POOL ~= "default" then
-        local _, err_redis_reg = nauthilus_redis.register_redis_pool(CUSTOM_REDIS_POOL, "standalone", {
+    if nauthilus_redis_pool.is_custom() then
+        local _, err_redis_reg = nauthilus_redis.register_redis_pool(nauthilus_redis_pool.name(), "standalone", {
             address = "localhost:6379",
             password = "",
             db = 3,
@@ -94,16 +93,15 @@ function nauthilus_run_hook(request)
             tls_enabled = false
         })
         nauthilus_util.if_error_raise(err_redis_reg)
-
-        local err_redis_client
-
-        custom_pool, err_redis_client = nauthilus_redis.get_redis_connection(CUSTOM_REDIS_POOL)
-        nauthilus_util.if_error_raise(err_redis_client)
     end
+
+    local custom_pool = nauthilus_redis_pool.connection()
 
     -- Before any Redis script uploads or commands, ensure Redis is reachable.
     wait_for_redis(custom_pool, logging)
 
+    -- nauthilus_send_mail_hash claims the leak notification once; actions/haveibeenpwnd.lua sends mail only when the
+    -- first element is 'send_mail'.
     local script = [[
         local redis_key = KEYS[1]
         local send_mail = redis.call('HGET', redis_key, 'send_mail')
@@ -111,7 +109,7 @@ function nauthilus_run_hook(request)
         if send_mail == false then
             redis.call('HSET', redis_key, 'send_mail', '1')
 
-            return {'send_email', redis_key}
+            return {'send_mail', redis_key}
         else
             return {'email_already_sent'}
         end
@@ -219,29 +217,27 @@ function nauthilus_run_hook(request)
     result["IncrementAndExpire"] = incr_sha1
 
     -- 6) ACM_TrackAndAggregate: single server-side processing for account_centric_monitoring
-    --    Keys (order):
+    --    Keys (order, all with the same account hash tag; see share/nauthilus_keys.lua account_window_keys):
     --      1..3: ips:{w} for w in {W1,W2,W3}
     --      4..6: fails:{w} for w in {W1,W2,W3}
     --      7..9: metrics:{w} for w in {W1,W2,W3}
-    --      10: attacked_accounts_key
-    --    ARGV: now_ts, client_ip, fail_id, is_authenticated (0|1), attack_ttl,
+    --    ARGV: now_ts, client_ip, fail_id, is_authenticated (0|1),
     --          TH_UNIQ_1H, TH_UNIQ_24H, TH_UNIQ_7D, TH_FAIL_MIN_24H, TH_RATIO,
-    --          W1, W2, W3, username
+    --          W1, W2, W3
+    --    The caller flags a suspicious account in the global attacked-accounts ZSET with a separate single-key call.
     local acm_script = [[
         local now_ts = tonumber(ARGV[1])
         local client_ip = ARGV[2]
         local fail_id = ARGV[3]
         local is_auth = tonumber(ARGV[4]) or 0
-        local attack_ttl = tonumber(ARGV[5]) or 43200
-        local TH_U1H = tonumber(ARGV[6]) or 12
-        local TH_U24H = tonumber(ARGV[7]) or 25
-        local TH_U7D = tonumber(ARGV[8]) or 60
-        local TH_F24H = tonumber(ARGV[9]) or 8
-        local TH_RATIO = tonumber(ARGV[10]) or 1.2
-        local W1 = tonumber(ARGV[11]) or 3600
-        local W2 = tonumber(ARGV[12]) or 86400
-        local W3 = tonumber(ARGV[13]) or 604800
-        local username = ARGV[14]
+        local TH_U1H = tonumber(ARGV[5]) or 12
+        local TH_U24H = tonumber(ARGV[6]) or 25
+        local TH_U7D = tonumber(ARGV[7]) or 60
+        local TH_F24H = tonumber(ARGV[8]) or 8
+        local TH_RATIO = tonumber(ARGV[9]) or 1.2
+        local W1 = tonumber(ARGV[10]) or 3600
+        local W2 = tonumber(ARGV[11]) or 86400
+        local W3 = tonumber(ARGV[12]) or 604800
 
         local wins = {W1, W2, W3}
 
@@ -276,11 +272,6 @@ function nauthilus_run_hook(request)
         local suspicious = 0
         if ((ui1 >= TH_U1H or ui2 >= TH_U24H) and ui3 >= TH_U7D and fa2 >= TH_F24H and ratio_ok) then
             suspicious = 1
-            -- add to attacked accounts
-            local attacked_key = KEYS[10]
-            redis.call('ZADD', attacked_key, now_ts, username)
-            redis.call('ZREMRANGEBYSCORE', attacked_key, '-inf', now_ts - attack_ttl)
-            redis.call('EXPIRE', attacked_key, attack_ttl * 2)
         end
 
         return {ui1, fa1, r1, ui2, fa2, r2, ui3, fa3, suspicious}
@@ -292,7 +283,7 @@ function nauthilus_run_hook(request)
 
     -- 6b) GPM_TrackAndCurrent: server-side processing for global_pattern_monitoring
     --     For each window, add attempt/ip/user, prune, expire; compute 1h metrics; update current & historical hashes.
-    --     KEYS:
+    --     KEYS (all with the global hash tag; see share/nauthilus_keys.lua global_pattern_keys):
     --       For each window w in ARGV windows list (W_COUNT windows):
     --         ga:w (auth_attempts), gi:w (unique_ips), gu:w (unique_users)
     --       After that:
@@ -414,21 +405,20 @@ function nauthilus_run_hook(request)
     result["GPM_TrackAndCurrent"] = gpm_sha1
 
     -- 6c) ALM_TrackAndSnapshot: server-side processing for account_longwindow_metrics
-    --     KEYS: hll_24h, hll_7d, z_fails, h_longwindow, z_spray_24h, z_spray_7d
-    --     ARGV: now, scoped_ip, authenticated(0|1), req_id, pw_token (or empty)
+    --     KEYS (all with the same account hash tag; see share/nauthilus_keys.lua account_longwindow_keys):
+    --       hll_24h, hll_7d, z_fails, h_longwindow
+    --     ARGV: now, scoped_ip, authenticated(0|1), req_id
+    --     The caller records password-spray tokens in the global spray ZSETs with separate single-key calls.
     local alm_script = [[
         local now_ts = tonumber(ARGV[1])
         local scoped_ip = ARGV[2]
         local is_auth = tonumber(ARGV[3]) or 0
         local req_id = ARGV[4]
-        local pw_token = ARGV[5]
 
         local HLL24 = KEYS[1]
         local HLL7D = KEYS[2]
         local ZFAIL = KEYS[3]
         local HLONG = KEYS[4]
-        local ZSPR24 = KEYS[5]
-        local ZSPR7D = KEYS[6]
 
         -- HLL updates and TTLs
         if scoped_ip and scoped_ip ~= '' then
@@ -443,18 +433,6 @@ function nauthilus_run_hook(request)
             redis.call('ZADD', ZFAIL, now_ts, req_id)
             redis.call('ZREMRANGEBYSCORE', ZFAIL, 0, now_ts - 604800)
             redis.call('EXPIRE', ZFAIL, 604800 * 2)
-        end
-
-        -- Password spray tokens (optional)
-        if pw_token and pw_token ~= '' then
-            -- 24h
-            redis.call('ZADD', ZSPR24, now_ts, pw_token)
-            redis.call('ZREMRANGEBYSCORE', ZSPR24, 0, now_ts - 86400)
-            redis.call('EXPIRE', ZSPR24, 86400 * 2)
-            -- 7d
-            redis.call('ZADD', ZSPR7D, now_ts, pw_token)
-            redis.call('ZREMRANGEBYSCORE', ZSPR7D, 0, now_ts - 604800)
-            redis.call('EXPIRE', ZSPR7D, 604800 * 2)
         end
 
         -- Compute counts

@@ -14,6 +14,8 @@
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 local nauthilus_util = require("nauthilus_util")
+local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 
 local nauthilus_http_request = require("nauthilus_http_request")
 local nauthilus_redis = require("nauthilus_redis")
@@ -83,53 +85,44 @@ local function generate_random_ip()
     return ip
 end
 
--- Helper function to simulate a distributed brute force attack
-local function simulate_distributed_attack(redis_handle, username, num_ips, country_code, request)
+-- simulate_distributed_attack writes num_ips failed attempts against one account into the keys the monitoring plugins
+-- read: the global pattern windows and current metrics, the per-protocol account windows, and the attacked-account set.
+local function simulate_distributed_attack(redis_handle, username, num_ips, country_code, protocol, request)
     local timestamp = time.unix()
-    local window_sizes = {60, 300, 900, 3600} -- 1min, 5min, 15min, 1hour
 
     -- Simulate multiple IPs attempting to access the same account
     for i = 1, num_ips do
         local ip = generate_random_ip()
+        local request_id = "test-" .. username .. "-" .. i
 
         -- Build batched pipeline commands to reduce round trips
         local pipeline_cmds = {}
 
+        -- add_window queues one sliding-window update through the ZAddRemExpire script.
+        local function add_window(key, member, window)
+            table.insert(pipeline_cmds, {"run_script", "", "ZAddRemExpire", {key}, {timestamp, member, 0, timestamp - window, window * 2}})
+        end
+
         -- Track global authentication metrics in sliding windows
-        for _, window in ipairs(window_sizes) do
-            local request_id = "test-" .. username .. "-" .. i
-
-            -- Add authentication attempt
-            local key = nauthilus_util.get_redis_key(request, "global:auth_attempts:" .. window)
-            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {key}, {timestamp, request_id, 0, timestamp - window, window * 2}})
-
-            -- Add unique IP
-            local ip_key_w = nauthilus_util.get_redis_key(request, "global:unique_ips:" .. window)
-            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key_w}, {timestamp, ip, 0, timestamp - window, window * 2}})
-
-            -- Add unique username
-            local user_key = nauthilus_util.get_redis_key(request, "global:unique_users:" .. window)
-            table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {user_key}, {timestamp, username, 0, timestamp - window, window * 2}})
+        for _, window in ipairs(nauthilus_keys.GLOBAL_WINDOWS) do
+            add_window(nauthilus_keys.global_window_key(request, "auth_attempts", window), request_id, window)
+            add_window(nauthilus_keys.global_window_key(request, "unique_ips", window), ip, window)
+            add_window(nauthilus_keys.global_window_key(request, "unique_users", window), username, window)
         end
 
         -- Track account-specific metrics
-        local window = 3600 -- 1 hour window
-
-        -- Add IP to account's unique IPs
-        local ip_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":ips:" .. window)
-        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {ip_key}, {timestamp, ip, 0, timestamp - window, window * 2}})
-
-        -- Add failed attempt for account
-        local fail_key = nauthilus_util.get_redis_key(request, "account:" .. username .. ":fails:" .. window)
-        table.insert(pipeline_cmds, {"run_script", "ZAddRemExpire", {fail_key}, {timestamp, "test-fail-" .. i, 0, timestamp - window, window * 2}})
+        for _, window in ipairs(nauthilus_keys.ACCOUNT_WINDOWS) do
+            add_window(nauthilus_keys.account_key(request, "multilayer:account", username, protocol, "ips:" .. window), ip, window)
+            add_window(nauthilus_keys.account_key(request, "multilayer:account", username, protocol, "fails:" .. window), "test-fail-" .. i, window)
+        end
 
         -- Increment country count and country set if country code is provided
         if country_code and country_code ~= "" then
             local country_key = nauthilus_util.get_redis_key(request, "multilayer:global:country:" .. country_code)
-            table.insert(pipeline_cmds, {"run_script", "IncrementAndExpire", {country_key}, {24 * 3600}})
+            table.insert(pipeline_cmds, {"run_script", "", "IncrementAndExpire", {country_key}, {24 * 3600}})
 
             local countries_key = nauthilus_util.get_redis_key(request, "multilayer:global:countries")
-            table.insert(pipeline_cmds, {"run_script", "AddToSetAndExpire", {countries_key}, {country_code, 24 * 3600}})
+            table.insert(pipeline_cmds, {"run_script", "", "AddToSetAndExpire", {countries_key}, {country_code, 24 * 3600}})
         end
 
         -- Execute the pipeline batch
@@ -138,7 +131,7 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
     end
 
     -- Update global metrics
-    local current_metrics_key = nauthilus_util.get_redis_key(request, "multilayer:global:current_metrics")
+    local current_metrics_key = nauthilus_keys.current_metrics_key(request)
 
     -- Get current metrics (bundle via HMGET)
     local res, rerr = nauthilus_redis.redis_pipeline(redis_handle, "read", {
@@ -163,10 +156,10 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
 
     -- Store updated metrics
     local _, err_script = nauthilus_redis.redis_run_script(
-        redis_handle, 
-        "", 
-        "HSetMultiExpire", 
-        {current_metrics_key}, 
+        redis_handle,
+        "",
+        "HSetMultiExpire",
+        {current_metrics_key},
         {
             3600, -- Expire after 1 hour
             "attempts", attempts,
@@ -177,18 +170,23 @@ local function simulate_distributed_attack(redis_handle, username, num_ips, coun
     )
     nauthilus_util.if_error_raise(err_script)
 
-    -- Mark account as under attack if many IPs are targeting it
+    -- Mark account as under attack if many IPs are targeting it (no pruning, expire after 1 hour)
     if num_ips > 10 then
-        local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
-        nauthilus_redis.redis_zadd(redis_handle, attacked_accounts_key, {num_ips, username})
-        nauthilus_redis.redis_expire(redis_handle, attacked_accounts_key, 3600) -- Expire after 1 hour
+        local _, err_flag = nauthilus_redis.redis_run_script(
+            redis_handle,
+            "",
+            "ZAddRemExpire",
+            {nauthilus_keys.attacked_accounts_key(request, protocol)},
+            {timestamp, username, 0, "", 3600}
+        )
+        nauthilus_util.if_error_raise(err_flag)
     end
 
     return true
 end
 
 -- Helper function to check if the attack was detected
-local function check_attack_detection(redis_handle, username, request)
+local function check_attack_detection(redis_handle, username, protocol, request)
     local detection_result = {}
 
     -- Check threat level
@@ -196,7 +194,7 @@ local function check_attack_detection(redis_handle, username, request)
     detection_result.threat_level = tonumber(threat_level) or 0.0
 
     -- Check if account is marked as under attack
-    local attacked_accounts_key = nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts")
+    local attacked_accounts_key = nauthilus_keys.attacked_accounts_key(request, protocol)
     local attack_score = nauthilus_redis.redis_zscore(redis_handle, attacked_accounts_key, username)
     detection_result.account_under_attack = (attack_score ~= nil)
     detection_result.attack_score = attack_score
@@ -234,12 +232,12 @@ function nauthilus_run_hook(request)
     result.caller = N .. ".lua"
     result.session = session
 
-    -- Get Redis connection
-    local redis_pool = "default"
-    local redis_handle = nauthilus_redis.get_redis_connection(redis_pool)
+    -- Use the pool the monitoring plugins write to
+    local redis_handle = nauthilus_redis_pool.connection()
 
-    -- Get action parameter
+    -- Get action parameter; protocol selects the per-protocol monitoring keys (default "unknown")
     local action = nauthilus_http_request.get_http_query_param("action")
+    local protocol = nauthilus_keys.protocol(nauthilus_http_request.get_http_query_param("protocol"))
 
     if not action or action == "" then
         result.level = "error"
@@ -266,7 +264,7 @@ function nauthilus_run_hook(request)
         local num_ips = tonumber(num_ips_str) or 20 -- Default to 20 IPs
 
         -- Simulate attack
-        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code, request) then
+        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code, protocol, request) then
             result.level = "error"
             result.status = "error"
             result.message = "Failed to simulate attack"
@@ -302,7 +300,7 @@ function nauthilus_run_hook(request)
         end
 
         -- Check if attack was detected
-        local detection_result = check_attack_detection(redis_handle, username, request)
+        local detection_result = check_attack_detection(redis_handle, username, protocol, request)
 
         result.status = "success"
         result.message = "Detection check completed"
@@ -360,7 +358,7 @@ function nauthilus_run_hook(request)
         end
 
         -- Simulate attack
-        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code, request) then
+        if not simulate_distributed_attack(redis_handle, username, num_ips, country_code, protocol, request) then
             result.level = "error"
             result.status = "error"
             result.message = "Failed to simulate attack"
@@ -373,7 +371,7 @@ function nauthilus_run_hook(request)
         time.sleep(1)
 
         -- Check if attack was detected
-        local detection_result = check_attack_detection(redis_handle, username, request)
+        local detection_result = check_attack_detection(redis_handle, username, protocol, request)
 
         result.status = "success"
         result.message = "Test completed"

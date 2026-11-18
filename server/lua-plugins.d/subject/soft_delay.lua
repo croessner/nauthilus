@@ -33,6 +33,7 @@ local N = "soft_delay"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
@@ -50,7 +51,6 @@ local threshold_uniq24 = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ2
 local threshold_uniq7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_UNIQ24", "20"))
 local threshold_fail24 = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_FAIL24", "5"))
 local threshold_fail7d = tonumber(nauthilus_util.getenv("SOFT_DELAY_THRESH_FAIL7D", "10"))
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
 
 local function clamp(v, lo, hi)
     if v < lo then return lo end
@@ -58,15 +58,17 @@ local function clamp(v, lo, hi)
     return v
 end
 
-local function get_metrics(pool, username, request)
-    local ckey = "sdm:" .. (username or "")
+-- get_metrics reads the long-window snapshot and the attack flag that account_longwindow_metrics.lua and
+-- account_centric_monitoring.lua write for the account and protocol of the request.
+local function get_metrics(conn, username, request)
+    local protocol = nauthilus_keys.protocol(request.protocol)
+    local ckey = "sdm:" .. (username or "") .. ":proto:" .. protocol
     local cached = nauthilus_cache.cache_get(ckey)
     if cached and type(cached) == "table" then
         return cached, true
     end
 
-    local tag = nauthilus_keys.account_tag(username)
-    local snap_key = nauthilus_util.get_redis_key(request, "acct:" .. tag .. username .. ":longwindow")
+    local snap_key = nauthilus_keys.account_state_key(request, username, protocol, "longwindow")
 
     -- Pipeline the related user-specific reads
     local cmds = {
@@ -75,7 +77,7 @@ local function get_metrics(pool, username, request)
         { "hget", snap_key, "fails_24h" },
         { "hget", snap_key, "fails_7d" },
     }
-    local res, err = nauthilus_redis.redis_pipeline(pool, "read", cmds)
+    local res, err = nauthilus_redis.redis_pipeline(conn, "read", cmds)
     nauthilus_util.if_error_raise(err)
 
     if type(res) ~= "table" then
@@ -98,7 +100,7 @@ local function get_metrics(pool, username, request)
     local fail7d = tonumber(val(4) or "0") or 0
 
     -- Separate call for the global attack set
-    local attack_score, err_a = nauthilus_redis.redis_zscore(pool, nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts"), username)
+    local attack_score, err_a = nauthilus_redis.redis_zscore(conn, nauthilus_keys.attacked_accounts_key(request, protocol), username)
     nauthilus_util.if_error_raise(err_a)
 
     local metrics = {
@@ -125,7 +127,7 @@ function nauthilus_call_subject(request)
         return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
     end
 
-    local m, _ = get_metrics(CUSTOM_REDIS_POOL, username, request)
+    local m, _ = get_metrics(nauthilus_redis_pool.connection(), username, request)
     local applied_delay_ms = 0
 
     local risky = false

@@ -26,13 +26,14 @@ local N = "account_centric_monitoring"
 
 local nauthilus_util = require("nauthilus_util")
 local nauthilus_keys = require("nauthilus_keys")
+local nauthilus_redis_pool = require("nauthilus_redis_pool")
 local policy_facts = require("nauthilus_policy_facts")
 
 local nauthilus_redis = require("nauthilus_redis")
 local nauthilus_otel = require("nauthilus_opentelemetry")
 
 -- Module-scope configuration (read once)
-local windows = {3600, 86400, 604800} -- 1h, 24h, 7d
+local windows = nauthilus_keys.ACCOUNT_WINDOWS -- 1h, 24h, 7d
 
 local function getenv_num(name, def)
     local v = tonumber(nauthilus_util.getenv(name, "") or "")
@@ -61,14 +62,17 @@ local ACM_INFO_LOG = nauthilus_util.toboolean(nauthilus_util.getenv("ACM_INFO_LO
 
 local time = require("time")
 
-local CUSTOM_REDIS_POOL = nauthilus_util.getenv("CUSTOM_REDIS_POOL_NAME", "default")
-
-local function protocol_segment(request)
-    local protocol = request.protocol
-    if protocol == nil or protocol == "" then
-        return "unknown"
-    end
-    return protocol
+-- flag_attacked_account records a suspicious account in the per-protocol attacked-accounts ZSET. The set is global,
+-- so it is written in its own single-key call: ACM_TrackAndAggregate only receives keys with the account hash tag.
+local function flag_attacked_account(conn, request, username, protocol, now)
+    local _, err = nauthilus_redis.redis_run_script(
+        conn,
+        "",
+        "ZAddRemExpire",
+        { nauthilus_keys.attacked_accounts_key(request, protocol) },
+        { now, username, 0, now - ATTACK_TTL_SEC, ATTACK_TTL_SEC * 2 }
+    )
+    nauthilus_util.if_error_raise(err)
 end
 
 function nauthilus_call_subject(request)
@@ -84,28 +88,15 @@ function nauthilus_call_subject(request)
         return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
     end
 
-    local protocol = protocol_segment(request)
+    local protocol = nauthilus_keys.protocol(request.protocol)
 
     -- Hold per-window metrics explicitly
     local uniq_1h, uniq_24h, uniq_7d = 0, 0, 0
     local fails_1h, fails_24h, fails_7d = 0, 0, 0
     local ratio_1h, ratio_24h = 0, 0
 
-    local tag = nauthilus_keys.account_tag(username)
     local w1, w2, w3 = windows[1], windows[2], windows[3]
-
-    local keys = {
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:" .. w1),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:" .. w2),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":ips:" .. w3),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:" .. w1),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:" .. w2),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":fails:" .. w3),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":metrics:" .. w1),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":metrics:" .. w2),
-        nauthilus_util.get_redis_key(request, "multilayer:account:" .. tag .. username .. ":proto:" .. protocol .. ":metrics:" .. w3),
-        nauthilus_util.get_redis_key(request, "multilayer:distributed_attack:accounts:proto:" .. protocol),
-    }
+    local keys = nauthilus_keys.account_window_keys(request, username, protocol)
 
     local fail_id = ""
     if not request.authenticated then
@@ -118,13 +109,12 @@ function nauthilus_call_subject(request)
         request.client_ip or "",
         fail_id,
         request.authenticated and 1 or 0,
-        ATTACK_TTL_SEC,
         TH_UNIQ_1H, TH_UNIQ_24H, TH_UNIQ_7D, TH_FAIL_MIN_24H, TH_RATIO,
         w1, w2, w3,
-        username,
     }
 
-    local res, err_script = nauthilus_redis.redis_run_script(CUSTOM_REDIS_POOL, "", "ACM_TrackAndAggregate", keys, args)
+    local conn = nauthilus_redis_pool.connection()
+    local res, err_script = nauthilus_redis.redis_run_script(conn, "", "ACM_TrackAndAggregate", keys, args)
     nauthilus_util.if_error_raise(err_script)
 
     if nauthilus_util.is_table(res) then
@@ -137,6 +127,10 @@ function nauthilus_call_subject(request)
         local ui3 = tonumber(res[7] or 0) or 0
         local fa3 = tonumber(res[8] or 0) or 0
         local suspicious = (tostring(res[9]) == "1" or res[9] == 1)
+
+        if suspicious then
+            flag_attacked_account(conn, request, username, protocol, timestamp)
+        end
 
         uniq_1h, fails_1h, ratio_1h = ui1, fa1, r1
         uniq_24h, fails_24h, ratio_24h = ui2, fa2, r2

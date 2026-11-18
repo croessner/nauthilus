@@ -1,0 +1,40 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "ADMIN_ALERTS_ENABLED": "false"
+    }
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "client_ip": "192.0.2.61",
+    "protocol": "imap",
+    "session": "dynamic-response-session-2",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "redis": {
+    "initial_data": {
+      "hashes": {
+        "ntc:acct:{acm-2960a687c8031d3d105b67802b5e130e}alice@example.test:proto:imap:stepup": {
+          "required": "true"
+        }
+      },
+      "zsets": {
+        "ntc:multilayer:distributed_attack:accounts:proto:imap": [
+          {
+            "member": "alice@example.test",
+            "score": 1700000000
+          }
+        ]
+      }
+    }
+  },
+  "expected_output": {
+    "logs_contain": [
+      "dynamic_response_response: moderate"
+    ],
+    "error_expected": false
+  }
+}

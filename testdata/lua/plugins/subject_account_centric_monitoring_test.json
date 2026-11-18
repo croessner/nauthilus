@@ -1,0 +1,27 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "GPM_THRESH_UNIQ_1H": "1",
+      "GPM_THRESH_UNIQ_24H": "1",
+      "GPM_THRESH_UNIQ_7D": "1",
+      "GPM_MIN_FAILS_24H": "1",
+      "GPM_THRESH_IP_TO_FAIL_RATIO": "1"
+    }
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "client_ip": "192.0.2.10",
+    "protocol": "imap",
+    "session": "acm-session-1",
+    "authenticated": false,
+    "no_auth": false
+  },
+  "expected_output": {
+    "logs_contain": [
+      "policy_fact_account_monitoring_attack_detected"
+    ],
+    "error_expected": false
+  }
+}

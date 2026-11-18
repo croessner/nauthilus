@@ -23,6 +23,9 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// globalPatternMonitoringPerAttemptKey is the per-second metrics key for the fixed test time.
+const globalPatternMonitoringPerAttemptKey = "nt:multilayer:global:{acm-global}metrics:1700000000"
+
 func TestGlobalPatternMonitoringPassesPerAttemptKeyAsRedisKey(t *testing.T) {
 	L := newGlobalPatternMonitoringTestState(t)
 	defer L.Close()
@@ -40,6 +43,7 @@ func newGlobalPatternMonitoringTestState(t *testing.T) *lua.LState {
 	L := lua.NewState()
 	preloadGlobalPatternMonitoringModules(L)
 	preloadGlobalPatternMonitoringBuiltin(L)
+	useLuaPluginShareModules(t, L)
 
 	return L
 }
@@ -60,6 +64,10 @@ func preloadGlobalPatternMonitoringUtilModule(L *lua.LState) {
 		L.SetFuncs(mod, map[string]lua.LGFunction{
 			"getenv": func(L *lua.LState) int {
 				L.Push(lua.LString(L.OptString(2, "")))
+				return 1
+			},
+			"toboolean": func(L *lua.LState) int {
+				L.Push(lua.LBool(L.CheckString(1) == "true"))
 				return 1
 			},
 			"get_redis_key": func(L *lua.LState) int {
@@ -163,19 +171,27 @@ func callGlobalPatternMonitoringEnvironment(t *testing.T, L *lua.LState) {
 	}
 }
 
-// assertGlobalPatternMonitoringKeys verifies the per-attempt key is passed as a Redis key.
+// assertGlobalPatternMonitoringKeys verifies the per-attempt key is passed as a Redis key and that every key shares
+// the global hash tag, so a Redis Cluster client does not rewrite the script keys.
 func assertGlobalPatternMonitoringKeys(t *testing.T, keysTbl *lua.LTable) {
 	t.Helper()
 
-	var perAttemptKeys []string
+	var (
+		perAttemptKeys []string
+		untaggedKeys   []string
+	)
 
 	keyCount := 0
 
 	keysTbl.ForEach(func(_ lua.LValue, v lua.LValue) {
 		keyCount++
 
-		if strings.Contains(v.String(), "multilayer:global:metrics:1700000000") {
+		if v.String() == globalPatternMonitoringPerAttemptKey {
 			perAttemptKeys = append(perAttemptKeys, v.String())
+		}
+
+		if !strings.HasPrefix(v.String(), "nt:multilayer:global:{acm-global}") {
+			untaggedKeys = append(untaggedKeys, v.String())
 		}
 	})
 
@@ -186,13 +202,17 @@ func assertGlobalPatternMonitoringKeys(t *testing.T, keysTbl *lua.LTable) {
 	if len(perAttemptKeys) != 1 {
 		t.Fatalf("per-attempt key occurrences in KEYS = %d, want 1", len(perAttemptKeys))
 	}
+
+	if len(untaggedKeys) > 0 {
+		t.Fatalf("keys without the global hash tag: %v", untaggedKeys)
+	}
 }
 
 // assertGlobalPatternMonitoringArgs verifies the per-attempt key does not leak into argv.
 func assertGlobalPatternMonitoringArgs(t *testing.T, argsTbl *lua.LTable) {
 	t.Helper()
 	argsTbl.ForEach(func(_ lua.LValue, v lua.LValue) {
-		if strings.Contains(v.String(), "multilayer:global:metrics:1700000000") {
+		if strings.Contains(v.String(), globalPatternMonitoringPerAttemptKey) {
 			t.Fatalf("per-attempt key leaked into ARGV: %q", v.String())
 		}
 	})

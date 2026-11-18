@@ -1,0 +1,40 @@
+{
+  "util": {
+    "envs": {
+      "CUSTOM_REDIS_POOL_NAME": "lua-custom",
+      "SMTP_SERVER": "smtp.example.test"
+    }
+  },
+  "context": {
+    "username": "alice@example.test",
+    "account": "alice@example.test",
+    "password": "password",
+    "client_ip": "192.0.2.70",
+    "protocol": "imap",
+    "session": "hibp-session-1",
+    "authenticated": true,
+    "no_auth": false
+  },
+  "http_client": {
+    "responses": [
+      {
+        "status_code": 200,
+        "body": "0018A45C4D1DEF81644B54AB7F969B88D65:1\n1E4C9B93F3F0682250B6CF8331B7EE68FD8:42\n"
+      }
+    ]
+  },
+  "mail": {
+    "expected_calls": [
+      {
+        "method": "send_mail",
+        "arg_contains": "smtp.example.test"
+      }
+    ]
+  },
+  "expected_output": {
+    "logs_contain": [
+      "haveibeenpwnd_action: leaked"
+    ],
+    "error_expected": false
+  }
+}

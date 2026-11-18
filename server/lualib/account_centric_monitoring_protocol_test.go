@@ -39,7 +39,7 @@ func newAccountCentricMonitoringTestState(t *testing.T) *lua.LState {
 
 	L := lua.NewState()
 	preloadAccountMonitoringModules(t, L)
-	addLuaPluginSharePath(t, L)
+	useLuaPluginShareModules(t, L)
 
 	return L
 }
@@ -49,7 +49,6 @@ func preloadAccountMonitoringModules(t *testing.T, L *lua.LState) {
 	t.Helper()
 
 	preloadAccountMonitoringUtilModule(L)
-	preloadAccountMonitoringKeysModule(L)
 	preloadAccountMonitoringRedisModule(L)
 	preloadInMemoryContextModule(L)
 	L.PreloadModule("nauthilus_policy", LoaderPolicyStatelessForTest())
@@ -100,11 +99,6 @@ func preloadAccountMonitoringUtilModule(L *lua.LState) {
 
 		return 1
 	})
-}
-
-// preloadAccountMonitoringKeysModule installs the key helper functions used by the script.
-func preloadAccountMonitoringKeysModule(L *lua.LState) {
-	preloadStringFunctionModule(L, "nauthilus_keys", "account_tag", "")
 }
 
 // preloadAccountMonitoringRedisModule captures Redis script keys for assertions.
@@ -225,17 +219,4 @@ func LoaderPolicyStatelessForTest() lua.LGFunction {
 
 		return 1
 	}
-}
-
-func addLuaPluginSharePath(t *testing.T, L *lua.LState) {
-	t.Helper()
-
-	pkg, ok := L.GetGlobal("package").(*lua.LTable)
-	if !ok {
-		t.Fatal("Lua package table missing")
-	}
-
-	current := L.GetField(pkg, "path").String()
-	pattern := filepath.ToSlash(filepath.Join("..", "lua-plugins.d", "share", "?.lua"))
-	L.SetField(pkg, "path", lua.LString(pattern+";"+current))
 }

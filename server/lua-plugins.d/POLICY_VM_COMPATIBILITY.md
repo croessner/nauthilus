@@ -88,6 +88,7 @@ environment, subject, and action Policy VM profile:
 | `share/nauthilus_geoip_bridge.lua` | captured-library | Shared bridge; availability follows the owning VM profile. |
 | `share/nauthilus_keys.lua` | captured-library | Shared key helper; its `nauthilus_util` dependency makes it unavailable in Policy VMs. |
 | `share/nauthilus_policy_facts.lua` | captured-library | Shared request-local Policy fact emitter. |
+| `share/nauthilus_redis_pool.lua` | captured-library | Shared Redis pool resolver; its `nauthilus_util` dependency and named-pool lookup make it unavailable in Policy VMs. |
 | `share/nauthilus_util.lua` | captured-library | Process/backend helper; its environment lookup and cache mutations make the whole module unavailable in Policy VMs. |
 | `examples/otel_demo.lua` | standalone-example | Standalone OpenTelemetry API demonstration with no callback entry point. |
 

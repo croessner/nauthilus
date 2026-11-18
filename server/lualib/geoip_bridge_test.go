@@ -175,7 +175,7 @@ func newGeoIPBridgeTestState(t *testing.T) *lua.LState {
 	t.Helper()
 
 	L := lua.NewState()
-	addLuaPluginSharePath(t, L)
+	useLuaPluginShareModules(t, L)
 	preloadContextStateModule(L)
 
 	return L
