@@ -439,6 +439,20 @@ samples inside the window (a counter increase needs two). A scrape that drops co
 requested component reads `unknown` for the deployment instead of a false `not_observed`. Check this once when
 connecting a Prometheus: the source report lists the covered instances.
 
+The scrape must keep the families the profile reads: `nauthilus_version_info`, `ldap_errors_total`,
+`redis_connection_timeouts_total`, `plugin_auth_events_total`, `policy_check_technical_errors_total`,
+`plugin_calls_total`, `lua_vm_replaced_total`, `auth_application_errors_total`, and the ClickHouse plugin streams. A
+`metric_relabel_configs` keep rule that already lists the plugin families only needs this alternation added (Prometheus
+anchors the expression):
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [__name__]
+    action: keep
+    regex: >-
+      nauthilus_version_info|ldap_errors_total|redis_connection_timeouts_total|plugin_auth_events_total|policy_check_technical_errors_total|plugin_calls_total|lua_vm_replaced_total|auth_application_errors_total|nauthilus_plugin_.*clickhouse.*_(flush_batches|queued_rows)_total
+```
+
 The instance label is the series label that names an instance (`instance` is the scrape address; a relabeled `pod`
 label reads better). Values outside a plain pattern are replaced by a digest. Counts are rounded: `increase()`
 extrapolates, and a series that first appears inside the window counts only from its second sample, so a restart of the
