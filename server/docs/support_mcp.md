@@ -139,8 +139,8 @@ The MCP listener is plain HTTP on its own address (default `127.0.0.1:9097`) beh
 ### What leaves the host
 
 Answers contain recorded or observed data: logins and accounts of the named subject, client IPs, protocols, client
-ids, internal instance names, LDAP pool and target names, Redis pool names, and Loki instance labels. Recorded free
-text is cleaned (control, format, and bidirectional characters replaced) and bounded; Loki instance labels outside a
+ids, internal instance names, LDAP pool and target names, Redis pool names, and Loki and Prometheus instance labels. Recorded free
+text is cleaned (control, format, and bidirectional characters replaced) and bounded; Loki and Prometheus instance labels outside a
 plain pattern are replaced by a digest. The tool descriptions and the server instructions tell the model to treat
 every string as untrusted data; this does not make natural-language content harmless, so operators should not expose
 the endpoint to clients they do not trust.
@@ -197,14 +197,21 @@ observability:
           instance_label: pod
           query_profile: nauthilus_diagnostics
           bearer_token: "${LOKI_READ_TOKEN}"
+        prometheus:
+          enabled: true
+          url: "https://prometheus.example.org"
+          selector: {job: nauthilus}
+          instance_label: instance
+          query_profile: nauthilus_diagnostics
+          bearer_token: "${PROMETHEUS_READ_TOKEN}"
 ```
 
 Validation at load rejects, among others: unknown keys (for example a `dynamic_clients` block), a hosted resource
 that is not HTTPS (plain HTTP only for loopback), owned by a client, or reserved; scopes outside the support scopes;
 a user right other than `groups`/`group_dns`; static clients that are missing, dynamic, confidential without PKCE,
-allowed other grants, or require no MFA; an HTTPS resource without trusted proxies; Loki URLs with query or user info,
-selectors or tenants with unsafe characters, more than one Loki credential, a query profile other than
-`nauthilus_diagnostics`, and limits above their ceilings.
+allowed other grants, or require no MFA; an HTTPS resource without trusted proxies; Loki and Prometheus URLs with
+query or user info, selectors or tenants with unsafe characters, more than one credential per source, a query profile
+other than `nauthilus_diagnostics`, and limits above their ceilings.
 
 **Reload behaviour.** The MCP listener and the diagnostics sources are built when the HTTP servers start, from the
 same configuration snapshot as the IdP handlers; on stop, in-flight tool calls drain (at most 5 seconds) before the
@@ -335,11 +342,12 @@ operations keep their contract unchanged.
 
 A request names an optional window (default: the last 15 minutes, at most 24 hours, not in the future), optional
 components (`ldap`, `auth_backend`, `backend_monitoring`, `redis`, `clickhouse_export`, `auth_event_delivery`,
-`policy`), and optional sources (`nauthilus_runtime`, `loki`).
+`policy`), and optional sources (`nauthilus_runtime`, `loki`, `prometheus`).
 
 **Rules.** Missing data is `unknown`, never `ok`. Runtime findings describe this instance now (`current_state` for
 gauges; `process_lifetime_counter` with `counting_since` for counters, which never claim anything about the window).
-Log findings count lines inside the covered window (`log_window`). `not_observed` requires proven coverage. Findings
+Log findings count lines inside the covered window (`log_window`); Prometheus findings count the increase of fixed
+counters inside it (`metric_window`). `not_observed` requires proven coverage. Findings
 of different sources are never merged; hypotheses relate them, are listed separately, reach at most `medium`
 confidence (only when current state and log evidence agree), and always carry caveats. A failing or truncated source
 never fails the call; its report says `partial`, `timeout`, `unavailable`, `not_configured`, or `not_requested`.
@@ -394,6 +402,45 @@ a test:
 | `redis` | `REDIS_WRITE_PIPELINE_FAILED` | `Execute write pipeline failed` |
 | `clickhouse_export` | `CLICKHOUSE_FLUSH_FAILED` | `clickhouse pending batch flush failed` |
 
+### `prometheus` (optional, historical and cluster-wide)
+
+Complements the instance-local runtime view: it asks one Prometheus for every scraped instance and ties the counts to
+the requested window. Only the compiled `nauthilus_diagnostics` profile runs: instant queries of the form
+`sum by (<instance_label>) (increase(<series>{<selector>}[<window>s]))`, evaluated at the end of the window, over the
+same counter families and the same classification as the runtime source:
+
+| Component | Symptom | Series |
+|---|---|---|
+| `ldap` | `LDAP_BIND_REJECTED` | `ldap_errors_total{op="bind",code="49"}` |
+| `ldap` | `LDAP_ERRORS` | every other `ldap_errors_total` series |
+| `auth_backend` | `PLUGIN_BACKEND_CALL_FAILURES` | `plugin_calls_total{extension_point="backend",result=~"error\|panic\|timeout"}` |
+| `auth_backend` | `LUA_BACKEND_VM_REPLACED` | `lua_vm_replaced_total{key=~"backend:.+"}` |
+| `auth_backend` | `AUTH_APPLICATION_ERRORS` | `auth_application_errors_total` |
+| `redis` | `REDIS_POOL_TIMEOUTS` | `redis_connection_timeouts_total` |
+| `auth_event_delivery` | `AUTH_EVENTS_DROPPED` | `plugin_auth_events_total{outcome="dropped"}` |
+| `clickhouse_export` | `CLICKHOUSE_FLUSH_FAILED`, `CLICKHOUSE_ROWS_DROPPED` | the plugin's scoped flush and enqueue counters with a failure `result` |
+| `policy` | `POLICY_CHECK_TECHNICAL_ERRORS` | `policy_check_technical_errors_total` |
+
+Gauges (LDAP target health, breaker state, monitored backend servers) stay with the runtime source.
+
+The selector (for example `{job: nauthilus}`), tenant (`X-Scope-OrgID`, read by Mimir and Cortex), credentials, and
+endpoint are fixed in the configuration; no caller value reaches a query, no series leaves Prometheus, redirects are
+never followed, and answers are bounded by `max_response_bytes` and `max_series` (truncation marks the source
+`partial`). Windows above `max_time_window` are clipped to their newest part (`PROMETHEUS_WINDOW_CLIPPED`). Failure
+codes are `PROMETHEUS_UNREACHABLE`, `PROMETHEUS_QUERY_REJECTED`, `PROMETHEUS_RESULT_TRUNCATED`, and
+`PROMETHEUS_TIMEOUT`.
+
+**Coverage.** An instance counts as covered only when the core gauge `nauthilus_version_info` has at least two scrape
+samples inside the window (a counter increase needs two). A scrape that drops core metrics (for example a
+`metric_relabel_configs` keep rule that lets only plugin metrics through) therefore yields no coverage, and every
+requested component reads `unknown` for the deployment instead of a false `not_observed`. Check this once when
+connecting a Prometheus: the source report lists the covered instances.
+
+The instance label is the series label that names an instance (`instance` is the scrape address; a relabeled `pod`
+label reads better). Values outside a plain pattern are replaced by a digest. Counts are rounded: `increase()`
+extrapolates, and a series that first appears inside the window counts only from its second sample, so a restart of the
+only instance can hide the first increments.
+
 ## 8. Limits and known gaps
 
 - Only Nauthilus as the issuer is supported; external authorization servers are not.
@@ -403,6 +450,8 @@ a test:
   client from `static_clients` or a user-wide token revocation takes effect immediately.
 - No JSON-RPC batches, no server-to-client requests, no SSE streams (`JSONResponse` mode), no browser clients.
 - Loki evidence counts messages; it carries no first/last-seen times and depends on the configured retention.
+- Prometheus evidence is only as complete as the scrape: sampling gaps, a relabeling that drops core metrics (reported
+  as `unknown`), and counter resets inside the window limit it. It carries no first/last-seen times either.
 - History stays bound to its contract (ClickHouse only, 31-day window).
 
 ## 9. Verification

@@ -21,29 +21,33 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/pluginregistry"
 	"github.com/croessner/nauthilus/v4/server/supportops"
+	"github.com/croessner/nauthilus/v4/server/supportops/metricnames"
 )
 
-// Metric families and labels read by the rule table. They are defined in server/stats, server/policy/observability,
-// and the ClickHouse plugin; the rule tests pin them.
+// Metric families and labels read by the rule table. The vocabulary shared with the Prometheus source lives in
+// package metricnames; the gauges and labels below are read from the in-process registry only. The rule tests pin
+// them.
 const (
 	familyLDAPTargetHealth   = "ldap_target_health"
 	familyLDAPBreakerState   = "ldap_breaker_state"
-	familyLDAPErrors         = "ldap_errors_total"
 	familyBackendServers     = "backend_servers_status"
-	familyRedisTimeouts      = "redis_connection_timeouts_total"
-	familyAuthEvents         = "plugin_auth_events_total"
-	familyPolicyTechnical    = "policy_check_technical_errors_total"
-	familyPluginCalls        = "plugin_calls_total"
-	familyLuaVMReplaced      = "lua_vm_replaced_total"
-	familyAuthAppErrors      = "auth_application_errors_total"
-	labelOp                  = "op"
-	labelCode                = "code"
+	familyLDAPErrors         = metricnames.LDAPErrors
+	familyRedisTimeouts      = metricnames.RedisTimeouts
+	familyAuthEvents         = metricnames.AuthEvents
+	familyPolicyTechnical    = metricnames.PolicyTechnical
+	familyPluginCalls        = metricnames.PluginCalls
+	familyLuaVMReplaced      = metricnames.LuaVMReplaced
+	familyAuthAppErrors      = metricnames.AuthApplicationErrors
+	labelOp                  = metricnames.LabelOp
+	labelCode                = metricnames.LabelCode
+	labelExtensionPoint      = metricnames.LabelExtensionPoint
+	labelKey                 = metricnames.LabelKey
+	labelOutcome             = metricnames.LabelOutcome
+	labelResult              = metricnames.LabelResult
+	outcomeDropped           = metricnames.OutcomeDropped
 	labelModule              = "module"
 	labelComponent           = "component"
-	labelExtensionPoint      = "extension_point"
-	labelKey                 = "key"
 	labelTransport           = "transport"
 	labelKind                = "kind"
 	labelName                = "name"
@@ -54,44 +58,24 @@ const (
 	labelTarget              = "target"
 	labelServerStatus        = "server_status"
 	labelPoolName            = "pool_name"
-	labelOutcome             = "outcome"
 	labelLane                = "lane"
-	labelResult              = "result"
 	labelMetric              = "metric"
 	serverStatusWanted       = "wanted"
 	serverStatusAlive        = "alive"
-	outcomeDropped           = "dropped"
 	breakerStateOpen         = 1
 	breakerStateHalfOpen     = 2
 	targetHealthHealthyValue = 1
-)
 
-const (
 	// groupKeySeparator joins group label values into one ordering key.
 	groupKeySeparator = "\x1f"
-
-	// backendExtensionPoint is the plugin_calls_total extension point of native authentication backends.
-	backendExtensionPoint = string(pluginregistry.ComponentKindBackend)
-
-	// luaBackendPoolPrefix prefixes the lua_vm_replaced_total key of a Lua backend VM pool.
-	luaBackendPoolPrefix = definitions.LuaBackendPoolKeyPrefix
 )
 
 var (
-	// pluginFailureResults are the plugin_calls_total results that mean a faulty plugin backend call.
-	pluginFailureResults = []string{definitions.PluginCallResultError, definitions.PluginCallResultPanic, definitions.PluginCallResultTimeout}
-
 	// clickHouseFlushFamilies matches the plugin's scoped flush counters of every row and event stream.
-	clickHouseFlushFamilies = regexp.MustCompile(`^nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_flush_batches_total$`)
+	clickHouseFlushFamilies = regexp.MustCompile("^" + metricnames.ClickHouseFlushFamilyPattern + "$")
 
 	// clickHouseQueueFamilies matches the plugin's scoped enqueue counters of every row and event stream.
-	clickHouseQueueFamilies = regexp.MustCompile(`^nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_queued_rows_total$`)
-
-	// clickHouseFlushFailures are the flush results that lose or delay rows.
-	clickHouseFlushFailures = []string{"http_error", "status_error", "no_url"}
-
-	// clickHouseQueueLosses are the enqueue results that never reach ClickHouse.
-	clickHouseQueueLosses = []string{"dropped", "dropped_reject_limit", "encode_error"}
+	clickHouseQueueFamilies = regexp.MustCompile("^" + metricnames.ClickHouseQueueFamilyPattern + "$")
 )
 
 // ldapTarget keys one LDAP pool target.
@@ -214,8 +198,8 @@ func (s *snapshot) redisFindings() []supportops.Finding {
 
 // clickHouseFindings reports failed flushes and lost rows of the ClickHouse export streams since process start.
 func (s *snapshot) clickHouseFindings() []supportops.Finding {
-	flushes := filterSeries(s.matchingSeries(clickHouseFlushFamilies, labelMetric), labelResult, clickHouseFlushFailures)
-	losses := filterSeries(s.matchingSeries(clickHouseQueueFamilies, labelMetric), labelResult, clickHouseQueueLosses)
+	flushes := filterSeries(s.matchingSeries(clickHouseFlushFamilies, labelMetric), labelResult, metricnames.ClickHouseFlushFailures)
+	losses := filterSeries(s.matchingSeries(clickHouseQueueFamilies, labelMetric), labelResult, metricnames.ClickHouseQueueLosses)
 
 	if !s.hasFamily(clickHouseFlushFamilies) && !s.hasFamily(clickHouseQueueFamilies) {
 		return nil
@@ -430,7 +414,7 @@ func (s *snapshot) authBackendSeries() []series {
 // pluginBackendFailure names the module and component of a failed native plugin backend call. Canceled calls are
 // client outcomes and admission-limited calls are host capacity limits, so only these results count.
 func pluginBackendFailure(labels map[string]string) (string, bool) {
-	if labels[labelExtensionPoint] != backendExtensionPoint || !slices.Contains(pluginFailureResults, labels[labelResult]) {
+	if labels[labelExtensionPoint] != metricnames.BackendExtensionPoint || !slices.Contains(metricnames.PluginFailureResults, labels[labelResult]) {
 		return "", false
 	}
 
@@ -441,5 +425,5 @@ func pluginBackendFailure(labels map[string]string) (string, bool) {
 func luaBackendVM(labels map[string]string) (string, bool) {
 	key := labels[labelKey]
 
-	return key, strings.HasPrefix(key, luaBackendPoolPrefix)
+	return key, strings.HasPrefix(key, metricnames.LuaBackendPoolPrefix)
 }

@@ -54,11 +54,12 @@ const (
 	ConfidenceLow    = "low"
 	ConfidenceMedium = "medium"
 
-	CaveatLocalInstanceOnly       = "LOCAL_INSTANCE_ONLY"
-	CaveatCounterNotWindowBound   = "COUNTER_NOT_BOUND_TO_WINDOW"
-	CaveatLogEvidenceNotCurrent   = "LOG_EVIDENCE_IS_NOT_CURRENT_STATE"
-	CaveatSingleSourceEvidence    = "SINGLE_SOURCE_EVIDENCE"
-	CaveatCorrelationNotCausation = "CORRELATION_IS_NOT_CAUSATION"
+	CaveatLocalInstanceOnly        = "LOCAL_INSTANCE_ONLY"
+	CaveatCounterNotWindowBound    = "COUNTER_NOT_BOUND_TO_WINDOW"
+	CaveatLogEvidenceNotCurrent    = "LOG_EVIDENCE_IS_NOT_CURRENT_STATE"
+	CaveatMetricEvidenceNotCurrent = "METRIC_EVIDENCE_IS_NOT_CURRENT_STATE"
+	CaveatSingleSourceEvidence     = "SINGLE_SOURCE_EVIDENCE"
+	CaveatCorrelationNotCausation  = "CORRELATION_IS_NOT_CAUSATION"
 )
 
 // hypothesisRule derives one hypothesis from findings that show any of its symptoms.
@@ -87,7 +88,7 @@ var hypothesisRules = []hypothesisRule{
 }
 
 // deriveHypotheses applies the rule table to findings that show a symptom. Confidence is medium only when current
-// state and log evidence agree; it is never higher, and every hypothesis carries its caveats.
+// state and historical (log or metric) evidence agree; it is never higher, and every hypothesis carries its caveats.
 func deriveHypotheses(findings []Finding) []Hypothesis {
 	hypotheses := []Hypothesis{}
 
@@ -138,8 +139,9 @@ func buildHypothesis(rule hypothesisRule, matched []Finding) Hypothesis {
 
 	_, fromRuntime := sources[SourceRuntime]
 	_, fromLogs := sources[SourceLoki]
+	_, fromMetrics := sources[SourcePrometheus]
 
-	if fromRuntime && fromLogs && currentState {
+	if fromRuntime && (fromLogs || fromMetrics) && currentState {
 		hypothesis.Confidence = ConfidenceMedium
 	}
 
@@ -157,6 +159,10 @@ func buildHypothesis(rule hypothesisRule, matched []Finding) Hypothesis {
 
 	if fromLogs {
 		hypothesis.Caveats = append(hypothesis.Caveats, CaveatLogEvidenceNotCurrent)
+	}
+
+	if fromMetrics {
+		hypothesis.Caveats = append(hypothesis.Caveats, CaveatMetricEvidenceNotCurrent)
 	}
 
 	return hypothesis

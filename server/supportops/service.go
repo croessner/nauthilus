@@ -199,7 +199,7 @@ func boundedResult(ctx context.Context, source Source, result SourceResult) Sour
 
 // sourceKind returns the fixed kind of a known source name.
 func sourceKind(name string) SourceKind {
-	if name == SourceLoki {
+	if IsHistorical(name) {
 		return SourceKindHistorical
 	}
 

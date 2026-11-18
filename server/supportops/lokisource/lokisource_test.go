@@ -33,6 +33,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/croessner/nauthilus/v4/server/supportops"
+	"github.com/croessner/nauthilus/v4/server/supportops/windowsource"
 )
 
 const (
@@ -209,7 +210,7 @@ func TestLokiQueryAndTenantBoundary(t *testing.T) {
 			t.Fatalf("query %d = %q", index, got)
 		}
 
-		if request.Header.Get(tenantHeader) != testTenant || request.Header.Get("Authorization") != "Bearer loki-token" {
+		if request.Header.Get(windowsource.TenantHeader) != testTenant || request.Header.Get("Authorization") != "Bearer loki-token" {
 			t.Fatalf("request %d headers = %v", index, request.Header)
 		}
 
@@ -318,7 +319,7 @@ func TestLokiUnsafeInstanceLabelIsDigested(t *testing.T) {
 	fake := &fakeLoki{answers: map[string]string{"": vector(hostile, "3")}}
 
 	result := newTestSource(t, fake, nil).Collect(context.Background(), testQuery(supportops.ComponentRedis))
-	if len(result.Report.Coverage.Instances) != 1 || !strings.HasPrefix(result.Report.Coverage.Instances[0], instanceDigestPrefix) {
+	if len(result.Report.Coverage.Instances) != 1 || !strings.HasPrefix(result.Report.Coverage.Instances[0], windowsource.InstanceDigestPrefix) {
 		t.Fatalf("instances = %v", result.Report.Coverage.Instances)
 	}
 }

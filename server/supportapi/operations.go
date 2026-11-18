@@ -113,7 +113,7 @@ var operations = []Operation{
 		Scopes: []string{definitions.ScopeOperationsRead},
 		Description: "Diagnose LDAP, authentication backends, backend monitoring, Redis, the ClickHouse export, event " +
 			"delivery, and policy checks from this instance's current runtime state and, when configured, recorded " +
-			"Loki log evidence. Findings and hypotheses are separate; unknown means missing data, and the runtime " +
+			"Loki log evidence and Prometheus metric counts. Findings and hypotheses are separate; unknown means missing data, and the runtime " +
 			"view is local to one instance.",
 		execute: func(ctx context.Context, services Services, credential supportaccess.VerifiedCredential, raw []byte) (any, error) {
 			var request supportops.DiagnosticsRequest

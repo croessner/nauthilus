@@ -573,6 +573,7 @@ syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprivacy_policy_url\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsproduced_facts\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprofile\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprofile_version\ze:/
+syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprometheus\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprometheus_timer\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zspropagators\ze:/
 syntax match nauthilusKeyL3 /^\(\s\{4,\}\|\s\+-\s\+\)\zsprotocol\ze:/

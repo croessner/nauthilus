@@ -15,7 +15,10 @@
 
 package lokisource
 
-import "github.com/croessner/nauthilus/v4/server/supportops"
+import (
+	"github.com/croessner/nauthilus/v4/server/supportops"
+	"github.com/croessner/nauthilus/v4/server/supportops/windowsource"
+)
 
 // profileEntry binds one symptom to one exact log message literal of the Nauthilus code base.
 type profileEntry struct {
@@ -37,14 +40,12 @@ var diagnosticsProfile = []profileEntry{
 	{supportops.ComponentClickHouseExport, supportops.SymptomClickHouseFlushFailed, "clickhouse pending batch flush failed"},
 }
 
-// profileComponents returns the profile entries of the requested components in profile order.
-func profileComponents(query supportops.Query) []profileEntry {
-	var entries []profileEntry
+// profileQueries converts the compiled profile into engine entries; count builds the query of one literal.
+func profileQueries(count func(literal string) func(int64) string) []windowsource.Entry {
+	entries := make([]windowsource.Entry, 0, len(diagnosticsProfile))
 
 	for _, entry := range diagnosticsProfile {
-		if query.Wants(entry.component) {
-			entries = append(entries, entry)
-		}
+		entries = append(entries, windowsource.Entry{Component: entry.component, Symptom: entry.symptom, Query: count(entry.literal)})
 	}
 
 	return entries

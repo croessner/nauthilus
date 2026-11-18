@@ -39,12 +39,18 @@ var Components = []string{
 
 // Source names. Requests may only name these sources.
 const (
-	SourceRuntime = "nauthilus_runtime"
-	SourceLoki    = "loki"
+	SourceRuntime    = "nauthilus_runtime"
+	SourceLoki       = "loki"
+	SourcePrometheus = "prometheus"
 )
 
 // SourceNames lists every source in response order.
-var SourceNames = []string{SourceRuntime, SourceLoki}
+var SourceNames = []string{SourceRuntime, SourceLoki, SourcePrometheus}
+
+// IsHistorical reports whether the named source reports recorded evidence inside the requested window.
+func IsHistorical(name string) bool {
+	return name == SourceLoki || name == SourcePrometheus
+}
 
 // SourceKind tells whether a source reports the current local state or recorded history.
 type SourceKind string
@@ -126,12 +132,16 @@ const (
 
 	// BasisLogWindow is a count of log lines inside the covered window.
 	BasisLogWindow FreshnessBasis = "log_window"
+
+	// BasisMetricWindow is the increase of a counter inside the covered window.
+	BasisMetricWindow FreshnessBasis = "metric_window"
 )
 
 // Coverage views.
 const (
 	CoverageLocalInstance = "local_instance"
 	CoverageLogLabels     = "log_labels"
+	CoverageMetricLabels  = "metric_labels"
 )
 
 // Note codes explain how to read a result.

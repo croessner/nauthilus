@@ -54,6 +54,18 @@ observability:
           max_series: 200
           max_response_bytes: 1048576
           bearer_token: "${LOKI_READ_TOKEN}"
+        prometheus:
+          enabled: true
+          url: "https://prometheus.example.org"
+          selector:
+            job: nauthilus
+          instance_label: instance
+          query_profile: nauthilus_diagnostics
+          timeout: 3s
+          max_time_window: 1h
+          max_series: 200
+          max_response_bytes: 1048576
+          bearer_token: "${PROMETHEUS_READ_TOKEN}"
 
 storage:
   redis:

@@ -42,6 +42,7 @@ func setSupportMCPExampleSecrets(t *testing.T) {
 
 	t.Setenv("OIDC_SIGNING_KEY", string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})))
 	t.Setenv("LOKI_READ_TOKEN", "example-loki-token")
+	t.Setenv("PROMETHEUS_READ_TOKEN", "example-prometheus-token")
 	t.Setenv("REDIS_ENCRYPTION_SECRET", "example-redis-encryption-secret-2026")
 	t.Setenv("REDIS_PASSWORD_NONCE", "example-redis-password-nonce-2026")
 	t.Setenv("CLICKHOUSE_HISTORY_PASSWORD", "example-history-reader")
@@ -121,9 +122,15 @@ func assertExampleDiagnostics(t *testing.T, settings *config.FileSettings) {
 	t.Helper()
 
 	operations := settings.GetOperationsDiagnostics()
-	if !operations.Enabled || !operations.Sources.Loki.Enabled || operations.Sources.Loki.BearerToken.IsZero() ||
-		operations.Sources.Loki.GetQueryProfile() != config.LokiQueryProfileNauthilusDiagnostics {
+	if !operations.Enabled {
 		t.Fatalf("operations = %+v", operations)
+	}
+
+	for name, source := range map[string]*config.HistoricalDiagnosticsSource{"loki": &operations.Sources.Loki,
+		"prometheus": &operations.Sources.Prometheus} {
+		if !source.Enabled || source.BearerToken.IsZero() || source.GetQueryProfile() != config.DiagnosticsQueryProfileNauthilus {
+			t.Fatalf("%s source = %+v", name, source)
+		}
 	}
 }
 
@@ -148,6 +155,9 @@ func TestSupportMCPExampleRejectsUnsafeVariants(t *testing.T) {
 		"window above 24 hours":   {"max_time_window: 1h", "max_time_window: 48h", "max_time_window"},
 		"two loki credentials":    {`bearer_token: "${LOKI_READ_TOKEN}"`, "bearer_token: \"${LOKI_READ_TOKEN}\"\n          basic_auth:\n            username: u\n            password: p", "mutually exclusive"},
 		"oversized mcp requests":  {"max_request_bytes: 65536", "max_request_bytes: 4194304", "max_request_bytes"},
+		"prometheus url query":    {`url: "https://prometheus.example.org"`, `url: "https://prometheus.example.org?q=1"`, "sources.prometheus.url"},
+		"prometheus selector":     {"job: nauthilus", `job: 'nauth"ilus'`, "sources.prometheus.selector"},
+		"prometheus two secrets":  {`bearer_token: "${PROMETHEUS_READ_TOKEN}"`, "bearer_token: \"${PROMETHEUS_READ_TOKEN}\"\n          basic_auth:\n            username: u\n            password: p", "sources.prometheus"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := loadSupportMCPExample(t, func(content string) string {

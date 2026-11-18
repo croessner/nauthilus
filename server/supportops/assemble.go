@@ -95,7 +95,15 @@ func resultNotes(plan requestPlan, query Query, result *DiagnosticsResult) []str
 	notes := []string{NoteValuesAreUntrusted}
 
 	for _, report := range result.Sources {
-		notes = append(notes, sourceNotes(report, plan, query)...)
+		for _, note := range sourceNotes(report, plan, query) {
+			if !slices.Contains(notes, note) {
+				notes = append(notes, note)
+			}
+		}
+	}
+
+	if !hasActiveHistoricalSource(result.Sources) {
+		notes = append(notes, NoteNoHistoricalSource)
 	}
 
 	if len(result.Hypotheses) > 0 {
@@ -119,14 +127,27 @@ func sourceNotes(report SourceReport, plan requestPlan, query Query) []string {
 		}
 
 		return notes
-	case SourceLoki:
-		switch {
-		case report.Status == SourceStatusNotRequested || report.Status == SourceStatusNotConfigured:
-			return []string{NoteNoHistoricalSource}
-		case report.Status != SourceStatusOK || report.Truncated:
+	case SourceLoki, SourcePrometheus:
+		if isInactive(report) {
+			return nil
+		}
+
+		if report.Status != SourceStatusOK || report.Truncated {
 			return []string{NoteHistoricalSourceIncomplete}
 		}
 	}
 
 	return nil
+}
+
+// isInactive reports whether a source did not run for this request.
+func isInactive(report SourceReport) bool {
+	return report.Status == SourceStatusNotRequested || report.Status == SourceStatusNotConfigured
+}
+
+// hasActiveHistoricalSource reports whether any historical source ran for this request.
+func hasActiveHistoricalSource(reports []SourceReport) bool {
+	return slices.ContainsFunc(reports, func(report SourceReport) bool {
+		return IsHistorical(report.Name) && !isInactive(report)
+	})
 }

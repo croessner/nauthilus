@@ -16,98 +16,64 @@
 // Package lokisource is the optional historical source of the operational diagnostics. It runs only the compiled
 // nauthilus_diagnostics profile: metric LogQL queries that count lines with fixed message literals per instance,
 // below a selector and tenant fixed in the configuration. No caller value reaches a query, no log line leaves Loki,
-// redirects are never followed, and every answer is bounded in bytes and series.
+// redirects are never followed, and every answer is bounded in bytes and series. The query mechanics are shared with
+// the other historical sources through package windowsource.
 package lokisource
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/croessner/nauthilus/v4/server/supportops"
+	"github.com/croessner/nauthilus/v4/server/supportops/windowsource"
 )
 
 const (
-	// maxParallelQueries bounds the concurrent requests one diagnostics call sends to Loki.
-	maxParallelQueries = 4
+	queryPath = "/loki/api/v1/query"
 
-	instanceDigestPrefix = "sha256:"
+	// codePrefix starts every failure code of the source, such as LOKI_TIMEOUT.
+	codePrefix = "LOKI"
 
 	// messageField is the slog message key of every Nauthilus log line (definitions.LogKeyMsg).
 	messageField = "msg"
+
+	// minCoverageLines is the smallest line count that proves an instance logged inside the window.
+	minCoverageLines = 1
 )
 
-// safeInstancePattern lets plain instance names through; anything else is replaced by a digest.
-var safeInstancePattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
-
 // Config is the fixed connection and query boundary of one Loki source.
-type Config struct {
-	Selector         map[string]string
-	HTTPClient       *http.Client
-	BaseURL          *url.URL
-	BearerToken      secret.Value
-	Password         secret.Value
-	Username         string
-	Tenant           string
-	InstanceLabel    string
-	Timeout          time.Duration
-	MaxTimeWindow    time.Duration
-	MaxSeries        int
-	MaxResponseBytes int64
-}
+type Config = windowsource.Connection
 
-// Source is the Loki diagnostics source.
+// Source is the Loki diagnostics source: the shared window engine with the compiled log profile.
 type Source struct {
-	client        *queryClient
-	selector      string
-	instanceLabel string
-	timeout       time.Duration
-	maxTimeWindow time.Duration
+	*windowsource.Engine
 }
 
 // New validates the boundary and builds the source. The HTTP client never follows redirects.
 func New(cfg Config) (*Source, error) {
-	if cfg.BaseURL == nil || cfg.InstanceLabel == "" || len(cfg.Selector) == 0 || cfg.MaxSeries <= 0 ||
-		cfg.MaxResponseBytes <= 0 || cfg.Timeout <= 0 || cfg.MaxTimeWindow <= 0 {
-		return nil, errors.New("loki diagnostics source is incompletely configured")
+	count := func(literal string) func(int64) string {
+		return func(rangeSeconds int64) string {
+			return countQuery(cfg.InstanceLabel, streamSelector(cfg.Selector), literal, rangeSeconds)
+		}
 	}
 
-	client := &http.Client{}
-
-	if cfg.HTTPClient != nil {
-		copied := *cfg.HTTPClient
-		client = &copied
+	engine, err := windowsource.New(cfg, windowsource.Profile{Name: supportops.SourceLoki, CodePrefix: codePrefix,
+		QueryPath: queryPath, TimeParam: lokiTime, Basis: supportops.BasisLogWindow, View: supportops.CoverageLogLabels,
+		MinCoverage: minCoverageLines, Coverage: count(""), Entries: profileQueries(count)})
+	if err != nil {
+		return nil, err
 	}
 
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-
-	return &Source{
-		client: &queryClient{http: client, endpoint: cfg.BaseURL, bearerToken: cfg.BearerToken, password: cfg.Password,
-			username: cfg.Username, tenant: cfg.Tenant, maxResponseBytes: cfg.MaxResponseBytes, maxSeries: cfg.MaxSeries},
-		selector: streamSelector(cfg.Selector), instanceLabel: cfg.InstanceLabel, timeout: cfg.Timeout,
-		maxTimeWindow: cfg.MaxTimeWindow,
-	}, nil
+	return &Source{Engine: engine}, nil
 }
 
-// Name returns the source name.
-func (s *Source) Name() string {
-	return supportops.SourceLoki
-}
-
-// Kind returns the source kind.
-func (s *Source) Kind() supportops.SourceKind {
-	return supportops.SourceKindHistorical
+// lokiTime renders the evaluation time as the Unix nanoseconds Loki expects.
+func lokiTime(at time.Time) string {
+	return strconv.FormatInt(at.UnixNano(), 10)
 }
 
 // streamSelector renders the fixed selector with quoted values in label order.
@@ -129,13 +95,13 @@ func streamSelector(selector map[string]string) string {
 
 // countQuery returns the metric query counting matching lines per instance over rangeSeconds. A profile literal
 // is matched only as the value of the log message field, never anywhere in the line.
-func (s *Source) countQuery(literal string, rangeSeconds int64) string {
+func countQuery(instanceLabel string, selector string, literal string, rangeSeconds int64) string {
 	filter := ""
 	if literal != "" {
 		filter = " |~ " + strconv.Quote(messagePattern(literal))
 	}
 
-	return fmt.Sprintf("sum by (%s) (count_over_time(%s%s [%ds]))", s.instanceLabel, s.selector, filter, rangeSeconds)
+	return fmt.Sprintf("sum by (%s) (count_over_time(%s%s [%ds]))", instanceLabel, selector, filter, rangeSeconds)
 }
 
 // messagePattern returns the RE2 line filter that matches literal as the complete msg field of a slog JSON line
@@ -146,67 +112,4 @@ func messagePattern(literal string) string {
 	quoted := regexp.QuoteMeta(literal)
 
 	return `"` + messageField + `":"` + quoted + `"|(^|\s)` + messageField + `="` + quoted + `"`
-}
-
-// Collect runs the coverage query and the profile queries of the requested components inside the window.
-func (s *Source) Collect(ctx context.Context, query supportops.Query) supportops.SourceResult {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-
-	window, clipped := s.coveredWindow(query.Window)
-	collection := newCollection(s, query, window)
-
-	if clipped {
-		collection.degrade(supportops.SourceStatusPartial, "LOKI_WINDOW_CLIPPED")
-	}
-
-	entries := profileComponents(query)
-	if len(entries) == 0 {
-		return collection.result(nil)
-	}
-
-	coverage, ok := collection.run(ctx, profileEntry{})
-	if !ok {
-		return collection.result(nil)
-	}
-
-	counts := make([][]vectorSample, len(entries))
-	failed := make([]bool, len(entries))
-	semaphore := make(chan struct{}, maxParallelQueries)
-
-	var wait sync.WaitGroup
-
-	for index, entry := range entries {
-		wait.Go(func() {
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			samples, succeeded := collection.run(ctx, entry)
-			counts[index], failed[index] = samples, !succeeded
-		})
-	}
-
-	wait.Wait()
-
-	return collection.result(collection.findings(entries, coverage, counts, failed))
-}
-
-// coveredWindow clips the requested window to its newest MaxTimeWindow part.
-func (s *Source) coveredWindow(requested supportops.Window) (supportops.Window, bool) {
-	if requested.Until.Sub(requested.From) <= s.maxTimeWindow {
-		return requested, false
-	}
-
-	return supportops.Window{From: requested.Until.Add(-s.maxTimeWindow), Until: requested.Until}, true
-}
-
-// instanceName returns a plain instance label value, or a digest for anything that is not a plain name.
-func instanceName(value string) string {
-	if safeInstancePattern.MatchString(value) {
-		return value
-	}
-
-	sum := sha256.Sum256([]byte(value))
-
-	return instanceDigestPrefix + hex.EncodeToString(sum[:8])
 }
