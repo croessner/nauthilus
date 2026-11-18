@@ -220,9 +220,10 @@ native-plugins-build-check: ## Build the bundled native plugins with -buildmode=
 	@set -eu; \
 	test -n "$(BUNDLED_NATIVE_PLUGINS)" || { echo "no bundled native plugins found in Dockerfile"; exit 1; }; \
 	mkdir -p "$(CURDIR)/$(NATIVE_PLUGINS_CHECK_DIR)"; \
+	pgo_flag="$$(sh scripts/native-pgo-flag.sh)"; \
 	for plugin in $(BUNDLED_NATIVE_PLUGINS); do \
-		echo "building native plugin $$plugin"; \
-		(cd contrib/plugins/$$plugin && GOEXPERIMENT=runtimesecret go build -mod=vendor -tags=netgo -buildmode=plugin -trimpath -o "$(CURDIR)/$(NATIVE_PLUGINS_CHECK_DIR)/$$plugin.so" .); \
+		echo "building native plugin $$plugin ($$pgo_flag)"; \
+		(cd contrib/plugins/$$plugin && GOEXPERIMENT=runtimesecret go build -mod=vendor -tags=netgo -buildmode=plugin -trimpath "$$pgo_flag" -o "$(CURDIR)/$(NATIVE_PLUGINS_CHECK_DIR)/$$plugin.so" .); \
 	done
 
 .PHONY: reputation-worker-check

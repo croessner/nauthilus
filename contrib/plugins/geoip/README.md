@@ -47,10 +47,12 @@ for the previous settings discards its result instead of publishing it.
 ## Build
 
 ```sh
-GOEXPERIMENT=runtimesecret go build -buildmode=plugin -o build/geoip.so .
+make build
 ```
 
-The `build/` directory and local `.so` artifacts are ignored by Git.
+The target embeds the native artifact identity and compiles with the server PGO profile through
+`scripts/native-pgo-flag.sh`, as the release image does; a plugin built without that profile is refused by a PGO-built
+server. The `build/` directory and local `.so` artifacts are ignored by Git.
 
 ## Configuration
 

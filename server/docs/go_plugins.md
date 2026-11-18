@@ -37,7 +37,15 @@ The disposable bundle check builds a probe plus sample, GeoIP, and reputation fi
 or starting plugin services.
 
 Build the server and every plugin from one unchanged source snapshot with the same toolchain and tags.
-The fingerprint includes the target OS and architecture, C/C++ compiler commands, and CGO flags.
+The fingerprint includes the target OS and architecture, C/C++ compiler commands, CGO flags, and the
+server PGO profile `server/default.pgo`.
+
+The server consumes `server/default.pgo` through Go's default `-pgo=auto`, and PGO optimizes every
+package of the binary. A plugin compiled without the same profile fails Go's package check
+(`plugin was built with a different version of package ...`). The repository builds take the flag from
+`sh scripts/native-pgo-flag.sh`; an out-of-tree plugin passes the same flag, for example
+`-pgo=/path/to/nauthilus/server/default.pgo`, or `-pgo=off` for a revision without a profile. See
+`contrib/identity-proxy-e2e/PGO.md` for the profile lifecycle.
 Container builds set the target environment before calculating the identity. The identity is a build
 coherence check and supplements Go's own ABI checks; it does not attest external compiler binaries.
 Sign the resulting plugins and record checksums only after the build. Publish server, plugins,

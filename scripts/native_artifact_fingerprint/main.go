@@ -129,9 +129,14 @@ func includeEmbeddedInputs(root, tags string, selected map[string]struct{}) erro
 	return nil
 }
 
-// compilerInput includes code and dependency locks while excluding runtime configuration and credentials.
+// serverPGOProfile is the profile the server main package consumes through -pgo=auto; native plugins must be compiled
+// with it too (scripts/native-pgo-flag.sh), so it is a compiler input of every native artifact.
+const serverPGOProfile = "server/default.pgo"
+
+// compilerInput includes code, dependency locks, and the server PGO profile while excluding runtime configuration and
+// credentials.
 func compilerInput(path string) bool {
-	if path == "go.mod" || path == "go.sum" || path == "vendor/modules.txt" {
+	if path == "go.mod" || path == "go.sum" || path == "vendor/modules.txt" || path == serverPGOProfile {
 		return true
 	}
 

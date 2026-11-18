@@ -1615,10 +1615,11 @@ Guidelines for module config:
 
 ## Build And Compatibility
 
-Build plugins with the same Go toolchain and module dependency versions as Nauthilus:
+Build plugins with the same Go toolchain, module dependency versions, and PGO profile as Nauthilus:
 
 ```sh
-GOEXPERIMENT=runtimesecret go build -buildmode=plugin -o build/customer_sql.so ./path/to/plugin
+GOEXPERIMENT=runtimesecret go build -buildmode=plugin -pgo=/path/to/nauthilus/server/default.pgo \
+  -o build/customer_sql.so ./path/to/plugin
 ```
 
 Compatibility requirements:
@@ -1626,6 +1627,9 @@ Compatibility requirements:
 - The plugin must import the same `pluginapi/v1` package path as the host binary.
 - The plugin must set `Metadata().APIVersion` to `pluginapi.APIVersion`.
 - The plugin artifact and host should be built from dependency-compatible module graphs.
+- The plugin must be compiled with the host revision's `server/default.pgo` (`-pgo=off` for a revision without one);
+  otherwise Go refuses it with `plugin was built with a different version of package ...`. In the repository,
+  `sh scripts/native-pgo-flag.sh` prints the matching flag.
 - The artifact must be loaded from an allowlisted absolute `.so` path in production.
 
 Go's plugin loader cannot unload or replace a plugin after `plugin.Open`. Replacing a `.so` artifact requires a process

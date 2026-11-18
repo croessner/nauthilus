@@ -20,6 +20,8 @@ const (
 	dockerfileRequiredPluginSigningSecret  = "required secret check"
 	dockerfileRepoOwnedPluginSigner        = "repo-owned plugin signer"
 	dockerfileRuntimePluginCopy            = `COPY --from=builder ["/usr/local/lib/nauthilus/plugins/", "/usr/local/lib/nauthilus/plugins/"]`
+	dockerfileNativePGOFlag                = `NATIVE_PGO_FLAG="$(sh ./scripts/native-pgo-flag.sh)"`
+	dockerfileNativePGOFlagUse             = `-trimpath "${NATIVE_PGO_FLAG}"`
 )
 
 var dockerfileBundledNativePlugins = []string{"geoip", "clickhouse", "haveibeenpwnd", "reputation"}
@@ -117,7 +119,8 @@ func TestDockerfileStableBuildsPluginCapableImage(t *testing.T) {
 	}
 }
 
-// assertDockerfileBuildsBundledPlugins verifies the Dockerfile keeps every bundled plugin on the server tag set.
+// assertDockerfileBuildsBundledPlugins verifies the Dockerfile keeps every bundled plugin on the server tag set and PGO
+// profile.
 func assertDockerfileBuildsBundledPlugins(t *testing.T, dockerfile string, dockerfileName string, buildCommand string) {
 	t.Helper()
 
@@ -128,6 +131,8 @@ func assertDockerfileBuildsBundledPlugins(t *testing.T, dockerfile string, docke
 	if !strings.Contains(dockerfile, buildCommand) {
 		t.Fatalf("%s plugin build must use the same tag set as the server build", dockerfileName)
 	}
+
+	assertDockerfileSharesServerPGOProfile(t, dockerfile, dockerfileName, buildCommand)
 
 	for _, plugin := range dockerfileBundledNativePlugins {
 		expectedArtifact := "/usr/local/lib/nauthilus/plugins/" + plugin + ".so"
@@ -140,6 +145,24 @@ func assertDockerfileBuildsBundledPlugins(t *testing.T, dockerfile string, docke
 		if strings.Contains(dockerfile, expectedArtifact) || strings.Contains(dockerfile, expectedSignature) {
 			t.Fatalf("%s must not hard-code %s outside the bundled plugin loop", dockerfileName, plugin)
 		}
+	}
+}
+
+// assertDockerfileSharesServerPGOProfile verifies that the server and every bundled plugin compile with the one flag of
+// scripts/native-pgo-flag.sh: a server built with server/default.pgo refuses plugins compiled without it.
+func assertDockerfileSharesServerPGOProfile(t *testing.T, dockerfile string, dockerfileName string, pluginBuildCommand string) {
+	t.Helper()
+
+	if strings.Count(dockerfile, dockerfileNativePGOFlag) != 2 {
+		t.Fatalf("%s must compute the native PGO flag for the server build and for the plugin build", dockerfileName)
+	}
+
+	if strings.Count(dockerfile, dockerfileNativePGOFlagUse) != 2 {
+		t.Fatalf("%s server and plugin builds must both pass the native PGO flag", dockerfileName)
+	}
+
+	if !strings.Contains(dockerfile, pluginBuildCommand+" "+dockerfileNativePGOFlagUse) {
+		t.Fatalf("%s plugin build must pass the native PGO flag", dockerfileName)
 	}
 }
 

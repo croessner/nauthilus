@@ -2,7 +2,8 @@ package main
 
 import "testing"
 
-// TestCompilerInputsIncludeVendoredSources preserves dependency-code coverage independently of lockfiles.
+// TestCompilerInputsIncludeVendoredSources preserves dependency-code coverage independently of lockfiles, and binds the
+// server PGO profile that the host and every native plugin are compiled with.
 func TestCompilerInputsIncludeVendoredSources(t *testing.T) {
 	for _, test := range []struct {
 		path string
@@ -13,6 +14,8 @@ func TestCompilerInputsIncludeVendoredSources(t *testing.T) {
 		{"vendor/example.test/library/bridge.h", true},
 		{"pluginapi/v1/opaque_identifier.go", true},
 		{"vendor/modules.txt", true},
+		{"server/default.pgo", true},
+		{"contrib/identity-proxy-e2e/.work/pgo/candidate.pgo", false},
 		{"runtime/credentials.secret", false},
 		{"temp/config.yml", false},
 	} {
