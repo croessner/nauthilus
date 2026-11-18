@@ -19,7 +19,8 @@ env:
 
 jobs:
   refresh-profile:
-    runs-on: ubuntu-latest
+    # Pinned: Playwright installs Chromium only on the Ubuntu releases it supports, and ubuntu-latest moved to 26.04.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout profiled revision
