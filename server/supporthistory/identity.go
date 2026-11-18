@@ -15,7 +15,12 @@
 
 package supporthistory
 
-import "context"
+import (
+	"context"
+	"iter"
+	"maps"
+	"slices"
+)
 
 // Current mapping states of a subject resolution.
 const (
@@ -105,16 +110,45 @@ func (m subjectMatcher) withRecordedAccounts(login string, rows []LoginRecord) s
 		return m
 	}
 
-	accounts := make([]ResolvedAccount, 0, len(m.accounts)+1)
-	for account, provenance := range m.accounts {
-		accounts = append(accounts, ResolvedAccount{Account: account, Provenance: provenance})
-	}
+	return m.withClaimedAccounts(func(yield func(string, string) bool) {
+		for _, row := range rows {
+			if !yield(row.Username, row.Account) {
+				return
+			}
+		}
+	})
+}
 
-	for _, row := range rows {
-		if _, ok := m.logins[row.Username]; ok && row.Account != "" {
-			accounts = append(accounts, ResolvedAccount{Account: row.Account, Provenance: provenanceRecorded})
+// withCountedAccounts adds accounts recorded on counted brute-force rows that claim a subject login, so aliases of
+// the same account match in ban projections and attributions alike.
+func (m subjectMatcher) withCountedAccounts(items []CountedRecord) subjectMatcher {
+	return m.withClaimedAccounts(func(yield func(string, string) bool) {
+		for _, item := range items {
+			if !yield(item.ClaimedUsername, item.Account) {
+				return
+			}
+		}
+	})
+}
+
+// withClaimedAccounts returns a copy of the matcher that also matches every account recorded at event time with a
+// claim of one of the subject's login variants (one hop); today's mapping is never consulted.
+func (m subjectMatcher) withClaimedAccounts(claims iter.Seq2[string, string]) subjectMatcher {
+	extended := subjectMatcher{logins: m.logins, accounts: maps.Clone(m.accounts), filter: m.filter,
+		match: SubjectMatch{Logins: m.match.Logins, Accounts: slices.Clone(m.match.Accounts)}}
+
+	for name, account := range claims {
+		if _, claimed := m.logins[name]; !claimed || account == "" {
+			continue
+		}
+
+		if _, known := extended.accounts[account]; !known {
+			extended.accounts[account] = provenanceRecorded
+			extended.match.Accounts = append(extended.match.Accounts, account)
 		}
 	}
 
-	return newSubjectMatcher(login, accounts, m.filter)
+	slices.Sort(extended.match.Accounts)
+
+	return extended
 }

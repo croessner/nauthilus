@@ -26,8 +26,12 @@ import (
 // Operation names used in audit records and cursor digests.
 const (
 	operationAttemptSearch = "attempt_search"
-	operationAttemptDetail = "attempt_detail"
-	operationBanSearch     = "ban_search"
+
+	// operationAttemptSearchBans audits an attempt search that also read brute-force evidence; cursor digests keep
+	// operationAttemptSearch, because the ban context does not change the anchor set.
+	operationAttemptSearchBans = "attempt_search_ban_context"
+	operationAttemptDetail     = "attempt_detail"
+	operationBanSearch         = "ban_search"
 )
 
 // Options configures a Service. Attempts is required; Bans may be nil when the deployment records no ban evidence.

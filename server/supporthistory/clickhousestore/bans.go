@@ -34,7 +34,7 @@ const lifecycleColumns = "toUnixTimestamp64Milli(ts) AS ts_ms, event_id, kind, i
 
 // countedColumns are the selected contribution columns of bruteforce_attempts.
 const countedColumns = "toUnixTimestamp64Milli(ts) AS ts_ms, event_id, request_id, client_ip, window_index, " +
-	"window_current, crossed, count_source, claimed_username, account, account_known, protocol"
+	"window_current, crossed, count_source, claimed_username, account, account_known, ban_active, protocol"
 
 // maxRecordedPrefixes bounds the distinct prefixes read from evidence tables.
 const maxRecordedPrefixes = 256
@@ -187,6 +187,53 @@ func (s *Store) Contributions(ctx context.Context, query supporthistory.Contribu
 	return records, err
 }
 
+// hitColumns are the selected ban_hit columns of bruteforce_attempts; claimed names and addresses are not needed to
+// link a request to the ban that rejected it.
+const hitColumns = "toUnixTimestamp64Milli(ts) AS ts_ms, event_id, request_id, network, rule, bucket_id, hit_source"
+
+// RequestHits returns the ban_hit rows of known requests: network IN keeps the read on the primary key and the
+// request_id bloom index prunes granules; replays are removed with LIMIT 1 BY event_id.
+func (s *Store) RequestHits(ctx context.Context, query supporthistory.RequestHitQuery) ([]supporthistory.HitRecord, error) {
+	if len(query.Networks) == 0 || len(query.RequestIDs) == 0 {
+		return nil, nil
+	}
+
+	stmt := newStatement(s.deployment)
+	stmt.where("network IN " + stmt.texts(query.Networks))
+	stmt.where("kind = 'ban_hit'")
+	stmt.where("request_id IN " + stmt.texts(query.RequestIDs))
+	stmt.timeRange("ts", query.From, query.Until)
+
+	sql := "SELECT " + hitColumns + " FROM " + s.client.table("bruteforce_attempts") + stmt.whereClause() +
+		" ORDER BY ts, event_id LIMIT 1 BY event_id LIMIT " + strconv.Itoa(max(1, query.Limit))
+
+	var records []supporthistory.HitRecord
+
+	err := s.client.query(ctx, sql, stmt.params(), func(raw json.RawMessage) error {
+		var row struct {
+			TS        optInt `json:"ts_ms"`
+			EventID   string `json:"event_id"`
+			RequestID string `json:"request_id"`
+			Network   string `json:"network"`
+			Rule      string `json:"rule"`
+			BucketID  string `json:"bucket_id"`
+			HitSource string `json:"hit_source"`
+		}
+
+		if err := json.Unmarshal(raw, &row); err != nil {
+			return err
+		}
+
+		records = append(records, supporthistory.HitRecord{At: millis(row.TS), EventID: row.EventID,
+			RequestID: row.RequestID, Network: row.Network, Rule: row.Rule, BucketID: row.BucketID,
+			HitSource: row.HitSource})
+
+		return nil
+	})
+
+	return records, err
+}
+
 // WindowSummaries folds the hourly aggregates of bucket windows.
 func (s *Store) WindowSummaries(ctx context.Context, query supporthistory.SummaryQuery) ([]supporthistory.WindowSummary, error) {
 	stmt := newStatement(s.deployment)
@@ -269,6 +316,7 @@ type countedRow struct {
 	WindowCurrent   optInt  `json:"window_current"`
 	Crossed         optBool `json:"crossed"`
 	AccountKnown    optBool `json:"account_known"`
+	BanActive       optBool `json:"ban_active"`
 	EventID         string  `json:"event_id"`
 	RequestID       string  `json:"request_id"`
 	ClientIP        string  `json:"client_ip"`
@@ -282,7 +330,7 @@ type countedRow struct {
 func (r countedRow) record() supporthistory.CountedRecord {
 	return supporthistory.CountedRecord{At: millis(r.TS), WindowIndex: r.WindowIndex.value,
 		WindowCurrent: r.WindowCurrent.value, Crossed: r.Crossed.value, AccountKnown: r.AccountKnown.value,
-		EventID: r.EventID, RequestID: r.RequestID, ClientIP: r.ClientIP, CountSource: r.CountSource,
+		BanActive: r.BanActive.value, EventID: r.EventID, RequestID: r.RequestID, ClientIP: r.ClientIP, CountSource: r.CountSource,
 		ClaimedUsername: r.ClaimedUsername, Account: r.Account, Protocol: r.Protocol}
 }
 

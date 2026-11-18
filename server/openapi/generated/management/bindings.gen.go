@@ -835,6 +835,186 @@ func (e SupportHistoryAttemptStepsSecondFactor) Valid() bool {
 	}
 }
 
+// Defines values for SupportHistoryAttemptSummaryKind.
+const (
+	SupportHistorySummaryKindFlow    SupportHistoryAttemptSummaryKind = "flow"
+	SupportHistorySummaryKindRequest SupportHistoryAttemptSummaryKind = "request"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryAttemptSummaryKind enum.
+func (e SupportHistoryAttemptSummaryKind) Valid() bool {
+	switch e {
+	case SupportHistorySummaryKindFlow:
+		return true
+	case SupportHistorySummaryKindRequest:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanAttributionCode.
+const (
+	SupportHistoryAttributionMultipleAccounts            SupportHistoryBanAttributionCode = "MULTIPLE_ACCOUNTS"
+	SupportHistoryAttributionNotSufficientlyAttributable SupportHistoryBanAttributionCode = "NOT_SUFFICIENTLY_ATTRIBUTABLE"
+	SupportHistoryAttributionOtherAccountsOnly           SupportHistoryBanAttributionCode = "OTHER_ACCOUNTS_ONLY"
+	SupportHistoryAttributionSubjectAccount              SupportHistoryBanAttributionCode = "SUBJECT_ACCOUNT"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanAttributionCode enum.
+func (e SupportHistoryBanAttributionCode) Valid() bool {
+	switch e {
+	case SupportHistoryAttributionMultipleAccounts:
+		return true
+	case SupportHistoryAttributionNotSufficientlyAttributable:
+		return true
+	case SupportHistoryAttributionOtherAccountsOnly:
+		return true
+	case SupportHistoryAttributionSubjectAccount:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanAttributionOtherContributors.
+const (
+	SupportHistoryOtherContributorsNoneObserved SupportHistoryBanAttributionOtherContributors = "none_observed"
+	SupportHistoryOtherContributorsObserved     SupportHistoryBanAttributionOtherContributors = "observed"
+	SupportHistoryOtherContributorsUnknown      SupportHistoryBanAttributionOtherContributors = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanAttributionOtherContributors enum.
+func (e SupportHistoryBanAttributionOtherContributors) Valid() bool {
+	switch e {
+	case SupportHistoryOtherContributorsNoneObserved:
+		return true
+	case SupportHistoryOtherContributorsObserved:
+		return true
+	case SupportHistoryOtherContributorsUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanAttributionPersonAttribution.
+const (
+	NOTESTABLISHED SupportHistoryBanAttributionPersonAttribution = "NOT_ESTABLISHED"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanAttributionPersonAttribution enum.
+func (e SupportHistoryBanAttributionPersonAttribution) Valid() bool {
+	switch e {
+	case NOTESTABLISHED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanContextReason.
+const (
+	REJECTEDBYBRUTEFORCEPROTECTION SupportHistoryBanContextReason = "REJECTED_BY_BRUTE_FORCE_PROTECTION"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanContextReason enum.
+func (e SupportHistoryBanContextReason) Valid() bool {
+	switch e {
+	case REJECTEDBYBRUTEFORCEPROTECTION:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanContextStatus.
+const (
+	SupportHistoryBanContextMatched       SupportHistoryBanContextStatus = "matched"
+	SupportHistoryBanContextNoRecordedBan SupportHistoryBanContextStatus = "no_recorded_ban"
+	SupportHistoryBanContextNotEvaluated  SupportHistoryBanContextStatus = "not_evaluated"
+	SupportHistoryBanContextOverlapOnly   SupportHistoryBanContextStatus = "overlap_only"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanContextStatus enum.
+func (e SupportHistoryBanContextStatus) Valid() bool {
+	switch e {
+	case SupportHistoryBanContextMatched:
+		return true
+	case SupportHistoryBanContextNoRecordedBan:
+		return true
+	case SupportHistoryBanContextNotEvaluated:
+		return true
+	case SupportHistoryBanContextOverlapOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanContextBanActivationReason.
+const (
+	SupportHistoryActivationThresholdExceeded SupportHistoryBanContextBanActivationReason = "FAILURE_THRESHOLD_EXCEEDED"
+	SupportHistoryActivationUnconfirmed       SupportHistoryBanContextBanActivationReason = "ACTIVATION_UNCONFIRMED"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanContextBanActivationReason enum.
+func (e SupportHistoryBanContextBanActivationReason) Valid() bool {
+	switch e {
+	case SupportHistoryActivationThresholdExceeded:
+		return true
+	case SupportHistoryActivationUnconfirmed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanContextBanScope.
+const (
+	SupportHistoryBanScopeIP      SupportHistoryBanContextBanScope = "ip"
+	SupportHistoryBanScopeNetwork SupportHistoryBanContextBanScope = "network"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanContextBanScope enum.
+func (e SupportHistoryBanContextBanScope) Valid() bool {
+	switch e {
+	case SupportHistoryBanScopeIP:
+		return true
+	case SupportHistoryBanScopeNetwork:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanContextBanSubjectRelation.
+const (
+	SupportHistoryRelationActivatingRequest     SupportHistoryBanContextBanSubjectRelation = "ACTIVATING_REQUEST"
+	SupportHistoryRelationActivationRace        SupportHistoryBanContextBanSubjectRelation = "ACTIVATION_RACE"
+	SupportHistoryRelationActivationUnconfirmed SupportHistoryBanContextBanSubjectRelation = "ACTIVATION_UNCONFIRMED"
+	SupportHistoryRelationHitExistingBan        SupportHistoryBanContextBanSubjectRelation = "HIT_EXISTING_BAN"
+	SupportHistoryRelationIntervalOverlap       SupportHistoryBanContextBanSubjectRelation = "INTERVAL_OVERLAP"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanContextBanSubjectRelation enum.
+func (e SupportHistoryBanContextBanSubjectRelation) Valid() bool {
+	switch e {
+	case SupportHistoryRelationActivatingRequest:
+		return true
+	case SupportHistoryRelationActivationRace:
+		return true
+	case SupportHistoryRelationActivationUnconfirmed:
+		return true
+	case SupportHistoryRelationHitExistingBan:
+		return true
+	case SupportHistoryRelationIntervalOverlap:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SupportHistoryBanEndReason.
 const (
 	SupportHistoryBanEndReasonPlannedEndAfterWindow       SupportHistoryBanEndReason = "planned_end_after_window"
@@ -856,6 +1036,36 @@ func (e SupportHistoryBanEndReason) Valid() bool {
 	case SupportHistoryBanEndReasonSupersededByNewActivation:
 		return true
 	case SupportHistoryBanEndReasonUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistoryBanEvidenceCompleteness.
+const (
+	SupportHistoryBanEvidenceAggregateOnly SupportHistoryBanEvidenceCompleteness = "aggregate_only"
+	SupportHistoryBanEvidenceComplete      SupportHistoryBanEvidenceCompleteness = "complete"
+	SupportHistoryBanEvidenceExpired       SupportHistoryBanEvidenceCompleteness = "expired"
+	SupportHistoryBanEvidenceLossDetected  SupportHistoryBanEvidenceCompleteness = "loss_detected"
+	SupportHistoryBanEvidenceNotApplicable SupportHistoryBanEvidenceCompleteness = "not_applicable"
+	SupportHistoryBanEvidenceNotRead       SupportHistoryBanEvidenceCompleteness = "not_read"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanEvidenceCompleteness enum.
+func (e SupportHistoryBanEvidenceCompleteness) Valid() bool {
+	switch e {
+	case SupportHistoryBanEvidenceAggregateOnly:
+		return true
+	case SupportHistoryBanEvidenceComplete:
+		return true
+	case SupportHistoryBanEvidenceExpired:
+		return true
+	case SupportHistoryBanEvidenceLossDetected:
+		return true
+	case SupportHistoryBanEvidenceNotApplicable:
+		return true
+	case SupportHistoryBanEvidenceNotRead:
 		return true
 	default:
 		return false
@@ -1351,6 +1561,24 @@ func (e SupportHistoryReputationState) Valid() bool {
 	}
 }
 
+// Defines values for SupportHistoryResponseMode.
+const (
+	SupportHistoryResponseModeCompact  SupportHistoryResponseMode = "compact"
+	SupportHistoryResponseModeDetailed SupportHistoryResponseMode = "detailed"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryResponseMode enum.
+func (e SupportHistoryResponseMode) Valid() bool {
+	switch e {
+	case SupportHistoryResponseModeCompact:
+		return true
+	case SupportHistoryResponseModeDetailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SupportHistoryResultBasis.
 const (
 	SupportHistoryBasisEvidenceTruncated      SupportHistoryResultBasis = "evidence_truncated"
@@ -1384,6 +1612,24 @@ func (e SupportHistoryResultBasis) Valid() bool {
 	case SupportHistoryBasisWindowExpired:
 		return true
 	case SupportHistoryBasisWindowPartiallyExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SupportHistorySubjectContributionMatchedBy.
+const (
+	SupportHistoryMatchedByLoginClaim      SupportHistorySubjectContributionMatchedBy = "login_claim"
+	SupportHistoryMatchedByRecordedAccount SupportHistorySubjectContributionMatchedBy = "recorded_account"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistorySubjectContributionMatchedBy enum.
+func (e SupportHistorySubjectContributionMatchedBy) Valid() bool {
+	switch e {
+	case SupportHistoryMatchedByLoginClaim:
+		return true
+	case SupportHistoryMatchedByRecordedAccount:
 		return true
 	default:
 		return false
@@ -2190,8 +2436,14 @@ type SupportHistoryAttemptSearchRequest struct {
 		// Until Exclusive upper bound; at most 31 days after from.
 		Until time.Time `json:"until"`
 	} `json:"filter"`
-	Page          *SupportHistoryPageRequest `json:"page,omitempty"`
-	SchemaVersion string                     `json:"schema_version"`
+
+	// IncludeBanContext Adds ban_contexts and ban_history: every subject request of this page that brute-force protection rejected, linked server-side to the recorded ban instances effective at that time (also bans that began before the window). Absent or false keeps the answer unchanged. Independent of response_mode.
+	IncludeBanContext *bool                      `json:"include_ban_context,omitempty"`
+	Page              *SupportHistoryPageRequest `json:"page,omitempty"`
+
+	// ResponseMode Presentation only. detailed (the default) returns full attempts; compact returns attempt_summaries and an empty attempts list. Neither mode changes rights: the projection always follows the token scopes.
+	ResponseMode  *SupportHistoryResponseMode `json:"response_mode,omitempty"`
+	SchemaVersion string                      `json:"schema_version"`
 
 	// Subject Login is a claim as typed; account is a canonical account. At least one is required.
 	Subject SupportHistorySubject `json:"subject"`
@@ -2199,9 +2451,17 @@ type SupportHistoryAttemptSearchRequest struct {
 
 // SupportHistoryAttemptSearchResponse defines model for SupportHistoryAttemptSearchResponse.
 type SupportHistoryAttemptSearchResponse struct {
-	Attempts []SupportHistoryAttempt `json:"attempts"`
-	History  SupportHistoryCoverage  `json:"history"`
-	Page     struct {
+	// AttemptSummaries Present only in compact mode; one summary per found attempt, in the order of attempts.
+	AttemptSummaries *[]SupportHistoryAttemptSummary `json:"attempt_summaries,omitempty"`
+	Attempts         []SupportHistoryAttempt         `json:"attempts"`
+
+	// BanContexts Present only with include_ban_context; one entry per brute-force rejected subject request of the page.
+	BanContexts *[]SupportHistoryBanContext `json:"ban_contexts,omitempty"`
+
+	// BanHistory Present only with include_ban_context when brute-force evidence is configured; coverage of the brute-force sources.
+	BanHistory *SupportHistoryCoverage `json:"ban_history,omitempty"`
+	History    SupportHistoryCoverage  `json:"history"`
+	Page       struct {
 		Limit      int     `json:"limit"`
 		NextCursor *string `json:"next_cursor"`
 
@@ -2210,11 +2470,49 @@ type SupportHistoryAttemptSearchResponse struct {
 	} `json:"page"`
 	QueriedAt time.Time `json:"queried_at"`
 
+	// ResponseMode Present only when the request named response_mode; compact answers carry an empty attempts list.
+	ResponseMode *SupportHistoryResponseMode `json:"response_mode,omitempty"`
+
 	// ResultBasis Match state of an answer. matches_found wins over every condition; an answer without matches names the state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows, failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
 	ResultBasis       SupportHistoryResultBasis       `json:"result_basis"`
 	SchemaVersion     string                          `json:"schema_version"`
 	SubjectResolution SupportHistorySubjectResolution `json:"subject_resolution"`
 }
+
+// SupportHistoryAttemptSummary Compact form of one attempt, built from the same projection as the detailed attempt.
+type SupportHistoryAttemptSummary struct {
+	AttemptId string `json:"attempt_id"`
+
+	// ClientIps Client addresses of the subject's rows.
+	ClientIps []string `json:"client_ips"`
+
+	// Detail Arguments of authentication_attempt_detail for this attempt.
+	Detail struct {
+		Around    time.Time `json:"around"`
+		AttemptId string    `json:"attempt_id"`
+	} `json:"detail"`
+	EventsTruncated      bool                             `json:"events_truncated"`
+	EventsWithheld       bool                             `json:"events_withheld"`
+	FinalOutcomeObserved bool                             `json:"final_outcome_observed"`
+	FindingCodes         []string                         `json:"finding_codes"`
+	Kind                 SupportHistoryAttemptSummaryKind `json:"kind"`
+	KnownGaps            []string                         `json:"known_gaps"`
+	LastObservedAt       time.Time                        `json:"last_observed_at"`
+	Outcome              string                           `json:"outcome"`
+	OutcomeBasis         string                           `json:"outcome_basis"`
+	Progress             string                           `json:"progress"`
+	Protocols            []string                         `json:"protocols"`
+
+	// Reason Code of the last finding of an attempt that did not succeed, for example REJECTED_BY_BRUTE_FORCE_PROTECTION; null otherwise.
+	Reason *string `json:"reason"`
+
+	// RequestIds Request ids of the subject's login rows.
+	RequestIds []string  `json:"request_ids"`
+	StartedAt  time.Time `json:"started_at"`
+}
+
+// SupportHistoryAttemptSummaryKind defines model for SupportHistoryAttemptSummary.Kind.
+type SupportHistoryAttemptSummaryKind string
 
 // SupportHistoryAuditReference Unverified ticket-like annotation recorded in the audit log only.
 type SupportHistoryAuditReference = string
@@ -2224,18 +2522,133 @@ type SupportHistoryBan struct {
 	Activation    SupportHistoryActivation    `json:"activation"`
 	BanRef        string                      `json:"ban_ref"`
 	Contributions SupportHistoryContributions `json:"contributions"`
-	End           struct {
-		At            *time.Time                 `json:"at"`
-		Reason        SupportHistoryBanEndReason `json:"reason"`
-		ReleaseSource *string                    `json:"release_source"`
-	} `json:"end"`
+
+	// End How a ban instance ended as far as recorded. Only released is a recorded end; planned ends are relative to the window end, which is queried_at for ban contexts.
+	End      SupportHistoryBanEnd     `json:"end"`
 	Hits     SupportHistoryHitSummary `json:"hits"`
 	Network  string                   `json:"network"`
 	Unknowns []string                 `json:"unknowns"`
 }
 
-// SupportHistoryBanEndReason defines model for SupportHistoryBan.End.Reason.
+// SupportHistoryBanAttribution Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are computed on unredacted rows, so hidden identities never make an answer look exclusive.
+type SupportHistoryBanAttribution struct {
+	// Code SUBJECT_ACCOUNT: contributions recorded under the requested account (a recorded account, never only the same login name), exclusive only with other_contributors none_observed. MULTIPLE_ACCOUNTS: under the requested and another recorded account. OTHER_ACCOUNTS_ONLY: only other recorded accounts with complete evidence and no unresolved, account-less, or subject-name claim. Otherwise NOT_SUFFICIENTLY_ATTRIBUTABLE.
+	Code SupportHistoryBanAttributionCode `json:"code"`
+
+	// ContributingAccounts Distinct recorded accounts of the listed contributions; null unless the caller has history_detail.
+	ContributingAccounts *[]string `json:"contributing_accounts"`
+	Counts               struct {
+		CountedWhileBanned    int `json:"counted_while_banned"`
+		DistinctOtherAccounts int `json:"distinct_other_accounts"`
+		Listed                int `json:"listed"`
+
+		// NoAccount Claims that resolved to no account at capture time (often typos).
+		NoAccount           int `json:"no_account"`
+		OtherAccounts       int `json:"other_accounts"`
+		SubjectByAccount    int `json:"subject_by_account"`
+		SubjectByLoginClaim int `json:"subject_by_login_claim"`
+
+		// Unresolved Claims whose account was not recorded; aliases of the subject can hide here.
+		Unresolved int `json:"unresolved"`
+	} `json:"counts"`
+	IdentitiesRedacted            bool                                          `json:"identities_redacted"`
+	OtherContributors             SupportHistoryBanAttributionOtherContributors `json:"other_contributors"`
+	PersonAttribution             SupportHistoryBanAttributionPersonAttribution `json:"person_attribution"`
+	SubjectContributions          []SupportHistorySubjectContribution           `json:"subject_contributions"`
+	SubjectContributionsTruncated bool                                          `json:"subject_contributions_truncated"`
+}
+
+// SupportHistoryBanAttributionCode SUBJECT_ACCOUNT: contributions recorded under the requested account (a recorded account, never only the same login name), exclusive only with other_contributors none_observed. MULTIPLE_ACCOUNTS: under the requested and another recorded account. OTHER_ACCOUNTS_ONLY: only other recorded accounts with complete evidence and no unresolved, account-less, or subject-name claim. Otherwise NOT_SUFFICIENTLY_ATTRIBUTABLE.
+type SupportHistoryBanAttributionCode string
+
+// SupportHistoryBanAttributionOtherContributors defines model for SupportHistoryBanAttribution.OtherContributors.
+type SupportHistoryBanAttributionOtherContributors string
+
+// SupportHistoryBanAttributionPersonAttribution defines model for SupportHistoryBanAttribution.PersonAttribution.
+type SupportHistoryBanAttributionPersonAttribution string
+
+// SupportHistoryBanContext defines model for SupportHistoryBanContext.
+type SupportHistoryBanContext struct {
+	At          time.Time                      `json:"at"`
+	AttemptId   string                         `json:"attempt_id"`
+	Bans        []SupportHistoryBanContextBan  `json:"bans"`
+	ClientIp    *string                        `json:"client_ip"`
+	Limitations []string                       `json:"limitations"`
+	Reason      SupportHistoryBanContextReason `json:"reason"`
+	RequestId   string                         `json:"request_id"`
+
+	// Status matched: linked by a recorded hit or activation; overlap_only: only by the ban interval; several bans are all listed, never one picked.
+	Status SupportHistoryBanContextStatus `json:"status"`
+}
+
+// SupportHistoryBanContextReason defines model for SupportHistoryBanContext.Reason.
+type SupportHistoryBanContextReason string
+
+// SupportHistoryBanContextStatus matched: linked by a recorded hit or activation; overlap_only: only by the ban interval; several bans are all listed, never one picked.
+type SupportHistoryBanContextStatus string
+
+// SupportHistoryBanContextBan defines model for SupportHistoryBanContextBan.
+type SupportHistoryBanContextBan struct {
+	ActivatedAt      time.Time                                   `json:"activated_at"`
+	ActivationReason SupportHistoryBanContextBanActivationReason `json:"activation_reason"`
+
+	// Attribution Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are computed on unredacted rows, so hidden identities never make an answer look exclusive.
+	Attribution SupportHistoryBanAttribution `json:"attribution"`
+
+	// BanHistory Arguments of bruteforce_history that explain this ban instance.
+	BanHistory struct {
+		BanRef  string    `json:"ban_ref"`
+		From    time.Time `json:"from"`
+		Network string    `json:"network"`
+		Until   time.Time `json:"until"`
+	} `json:"ban_history"`
+	BanRef string `json:"ban_ref"`
+
+	// Detail The full ban explanation of bruteforce_history in detailed mode; null in compact mode.
+	Detail *SupportHistoryBan `json:"detail"`
+
+	// End How a ban instance ended as far as recorded. Only released is a recorded end; planned ends are relative to the window end, which is queried_at for ban contexts.
+	End        SupportHistoryBanEnd             `json:"end"`
+	Evidence   SupportHistoryBanEvidence        `json:"evidence"`
+	Network    string                           `json:"network"`
+	PlannedEnd *time.Time                       `json:"planned_end"`
+	Rule       string                           `json:"rule"`
+	Scope      SupportHistoryBanContextBanScope `json:"scope"`
+
+	// SubjectRelation How the request relates to the ban; the activating request is never a culprit.
+	SubjectRelation SupportHistoryBanContextBanSubjectRelation `json:"subject_relation"`
+}
+
+// SupportHistoryBanContextBanActivationReason defines model for SupportHistoryBanContextBan.ActivationReason.
+type SupportHistoryBanContextBanActivationReason string
+
+// SupportHistoryBanContextBanScope defines model for SupportHistoryBanContextBan.Scope.
+type SupportHistoryBanContextBanScope string
+
+// SupportHistoryBanContextBanSubjectRelation How the request relates to the ban; the activating request is never a culprit.
+type SupportHistoryBanContextBanSubjectRelation string
+
+// SupportHistoryBanEnd How a ban instance ended as far as recorded. Only released is a recorded end; planned ends are relative to the window end, which is queried_at for ban contexts.
+type SupportHistoryBanEnd struct {
+	At            *time.Time                 `json:"at"`
+	Reason        SupportHistoryBanEndReason `json:"reason"`
+	ReleaseSource *string                    `json:"release_source"`
+}
+
+// SupportHistoryBanEndReason defines model for SupportHistoryBanEnd.Reason.
 type SupportHistoryBanEndReason string
+
+// SupportHistoryBanEvidence defines model for SupportHistoryBanEvidence.
+type SupportHistoryBanEvidence struct {
+	// Completeness Coverage of the contributions only; never evidence of a responsible person, NAT, or VPN.
+	Completeness SupportHistoryBanEvidenceCompleteness `json:"completeness"`
+
+	// Limitations Stable codes: ban unknowns, caveats, and attribution limits.
+	Limitations []string `json:"limitations"`
+}
+
+// SupportHistoryBanEvidenceCompleteness Coverage of the contributions only; never evidence of a responsible person, NAT, or VPN.
+type SupportHistoryBanEvidenceCompleteness string
 
 // SupportHistoryBanSearchRequest defines model for SupportHistoryBanSearchRequest.
 type SupportHistoryBanSearchRequest struct {
@@ -2576,6 +2989,9 @@ type SupportHistoryReputationAssessment struct {
 	TrustScore      *float32 `json:"trust_score"`
 }
 
+// SupportHistoryResponseMode defines model for SupportHistoryResponseMode.
+type SupportHistoryResponseMode string
+
 // SupportHistoryResultBasis Match state of an answer. matches_found wins over every condition; an answer without matches names the state of its primary source (logins for attempts, bruteforce_lifecycle for bans: missing table, no rows, failed read, expired or partially expired window), then truncated evidence, then an unresolved identity, then no_matches. Secondary sources only appear in history.conditions. Never read as "nothing happened".
 type SupportHistoryResultBasis string
 
@@ -2584,6 +3000,29 @@ type SupportHistorySubject struct {
 	Account *string `json:"account,omitempty"`
 	Login   *string `json:"login,omitempty"`
 }
+
+// SupportHistorySubjectContribution One counted increment recorded under the subject's account or login claim (its own data).
+type SupportHistorySubjectContribution struct {
+	At time.Time `json:"at"`
+
+	// AttemptId The attempt of this page the request belongs to, if any.
+	AttemptId *string `json:"attempt_id"`
+
+	// BanActive The increment was counted while a ban was active.
+	BanActive   *bool  `json:"ban_active"`
+	CountSource string `json:"count_source"`
+	EventId     string `json:"event_id"`
+
+	// MatchedBy login_claim only means the same login name was typed; it cannot tell the customer from anybody else.
+	MatchedBy     SupportHistorySubjectContributionMatchedBy `json:"matched_by"`
+	Protocol      string                                     `json:"protocol"`
+	RequestId     string                                     `json:"request_id"`
+	WindowCurrent *int                                       `json:"window_current"`
+	WindowIndex   *int                                       `json:"window_index"`
+}
+
+// SupportHistorySubjectContributionMatchedBy login_claim only means the same login name was typed; it cannot tell the customer from anybody else.
+type SupportHistorySubjectContributionMatchedBy string
 
 // SupportHistorySubjectResolution defines model for SupportHistorySubjectResolution.
 type SupportHistorySubjectResolution struct {

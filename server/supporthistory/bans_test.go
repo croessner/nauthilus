@@ -243,3 +243,71 @@ func TestBanInstancesKeepUnknownsVisible(t *testing.T) {
 		t.Fatalf("unconfirmed ban = %+v, want unknown creator and end", ban)
 	}
 }
+
+// longRuleStore returns a 28-day rule activated two days ago: two increments of the activation window lie beyond the
+// 14-day raw retention, three inside it, followed by a later increment, a hit, and a counter reset after the ban.
+func longRuleStore() *historytest.BanStore {
+	at := banNow.Add(-48 * time.Hour)
+	long := activation("ban-long", at, 5, 2)
+	long.PeriodSeconds = int64((28 * 24 * time.Hour).Seconds())
+
+	store := sharedIPStore(at)
+	store.Store.Lifecycle = []supporthistory.LifecycleRecord{long,
+		{At: at.Add(time.Hour), EventID: "reset-long", Kind: "counters_reset", Network: banNetwork, BucketID: banBucket,
+			Rule: "nat-network"}}
+	store.Contribs[banBucket] = []supporthistory.CountedRecord{
+		counted("p1", at.Add(-40*24*time.Hour), banWindow-1, 1, "old-a@example.test", false),
+		counted("p2", at.Add(-35*24*time.Hour), banWindow-1, 2, "old-b@example.test", false),
+		counted("c1", at.Add(-20*24*time.Hour), banWindow, 1, "expired-a@example.test", false),
+		counted("c2", at.Add(-15*24*time.Hour), banWindow, 2, "expired-b@example.test", false),
+		counted("c3", at.Add(-10*24*time.Hour), banWindow, 3, "alice@example.test", false),
+		counted("c4", at.Add(-5*24*time.Hour), banWindow, 4, "bob@example.test", false),
+		counted("c5", at.Add(-time.Second), banWindow, 5, "bob@example.test", true),
+		counted("after", at.Add(30*time.Minute), banWindow, 6, "late@example.test", false),
+		counted("restart", at.Add(2*time.Hour), banWindow, 1, "restart@example.test", false),
+	}
+	store.Summaries = []supporthistory.WindowSummary{
+		{WindowIndex: banWindow, Events: 7, MinCurrent: int64p(1), MaxCurrent: int64p(6)},
+		{WindowIndex: banWindow - 1, Events: 2, MinCurrent: int64p(1), MaxCurrent: int64p(2)},
+	}
+
+	return store
+}
+
+// TestLongRuleListsRetainedContributions reproduces the long-rule gap: a rule whose windows reach beyond the raw
+// retention still lists the retained increments of the activation, assesses completeness from the summary only,
+// and never turns later increments, increments after a reset, or hits into contributions.
+func TestLongRuleListsRetainedContributions(t *testing.T) {
+	result, err := banService(t, longRuleStore()).SearchBans(context.Background(), caller(definitions.ScopeHistoryDetail),
+		supporthistory.BanSearchRequest{SchemaVersion: "1", Target: supporthistory.BanTarget{Network: banNetwork},
+			Filter: supporthistory.BanSearchFilter{From: banNow.Add(-3 * 24 * time.Hour), Until: banNow}})
+	if err != nil || len(result.Bans) != 1 {
+		t.Fatalf("SearchBans() = %+v, %v, want the long ban", result, err)
+	}
+
+	contributions := result.Bans[0].Contributions
+
+	var ids []string
+	for _, item := range contributions.Items {
+		ids = append(ids, item.EventID)
+	}
+
+	if !slices.Equal(ids, []string{"c3", "c4", "c5"}) {
+		t.Fatalf("items = %v, want only the retained increments c3, c4, c5 of the activation", ids)
+	}
+
+	if contributions.Status != "aggregate_only" || !slices.Contains(contributions.Caveats, "RAW_CONTRIBUTIONS_PARTIALLY_RETAINED") {
+		t.Fatalf("status = %s caveats = %v, want aggregate_only with the partial-retention caveat",
+			contributions.Status, contributions.Caveats)
+	}
+
+	for _, window := range contributions.Windows {
+		if window.Evidence == "raw" || window.Status == "complete" {
+			t.Fatalf("window = %+v, want a summary assessment for a window beyond raw retention", window)
+		}
+	}
+
+	if candidate := contributions.CrossingCandidate; candidate == nil || candidate.EventID != "c5" {
+		t.Fatalf("crossing candidate = %+v, want c5", candidate)
+	}
+}

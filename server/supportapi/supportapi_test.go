@@ -78,6 +78,33 @@ func TestOperationTableAndSchemas(t *testing.T) {
 	}
 }
 
+// TestAttemptSearchSchemaOffersTheOutputChoice pins that the MCP tool schema, derived from OpenAPI, offers the same
+// response_mode and include_ban_context arguments as HTTP and refuses unknown modes.
+func TestAttemptSearchSchemaOffersTheOutputChoice(t *testing.T) {
+	operation, _ := Lookup(OperationAttemptSearch)
+
+	schema, err := operation.InputSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var document struct {
+		Properties map[string]struct {
+			Type string   `json:"type"`
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+
+	if err = json.Unmarshal(schema, &document); err != nil {
+		t.Fatal(err)
+	}
+
+	mode, ban := document.Properties["response_mode"], document.Properties["include_ban_context"]
+	if mode.Type != "string" || strings.Join(mode.Enum, ",") != "detailed,compact" || ban.Type != "boolean" {
+		t.Fatalf("schema properties = %+v / %+v, want response_mode {detailed, compact} and boolean include_ban_context", mode, ban)
+	}
+}
+
 // assertSelfContainedObjectSchema checks that an operation's input schema is a closed object without references.
 func assertSelfContainedObjectSchema(t *testing.T, operation Operation) {
 	t.Helper()

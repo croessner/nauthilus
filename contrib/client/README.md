@@ -153,6 +153,9 @@ scopes explicitly, for example
 # One attempt; --around is any instant of it, for example started_at from the search
 ./nauthilus-admin.py support attempts detail --attempt-id fl1.0123456789abcdef0123456789abcdef \
   --around 2026-11-17T08:15:02Z --login alice@example.test
+# Telephone support: why was the attempt rejected, and which recorded attempts fed the ban
+./nauthilus-admin.py support attempts search --login kunde@example.test --since 30m \
+  --client-ip 203.0.113.42 --include-ban-context --response-mode compact
 # Bans of one client IP during the last week, all pages
 ./nauthilus-admin.py support bans search --ip 203.0.113.10 --since 7d --all
 ./nauthilus-admin.py support bans search --network 203.0.113.0/24 \
@@ -171,6 +174,16 @@ partial), plus `"pages": n`. If 20 pages are not enough, a stderr warning names
 the cursor to continue with. `--audit-reference` (`[A-Za-z0-9._:/-]{1,64}`)
 links the lookup to a ticket in the server audit log.
 
+`attempts search --include-ban-context` asks the server to link every
+brute-force rejected attempt to the recorded ban effective at that time
+(`ban_contexts`, with attribution codes and evidence limits); `--response-mode
+compact` asks the server for `attempt_summaries` instead of full attempts
+(`attempts` is then empty), `--response-mode detailed` for the full answer. Both
+are server-side API parameters sent in the body; they never change the token's
+rights. With `--all`, `attempt_summaries` are deduplicated by `attempt_id` and
+`ban_contexts` by `request_id`; a partial `ban_history` block prints a stderr
+warning but does not change the exit code.
+
 | Exit | Meaning                                                                   |
 |------|---------------------------------------------------------------------------|
 | 0    | processed and `history.availability` is `available`                       |
@@ -187,7 +200,8 @@ without an attempt) prints a stderr note with `result_basis` and
 `history.conditions`: it does not prove that no login or ban happened, because
 history delivery is not guaranteed to be complete.
 
-`attempts search` and `attempts detail` accept `--summary`: instead of JSON they
+`attempts search` and `attempts detail` accept `--summary`, a local text
+rendering of the JSON answer (it does not replace `--response-mode`): instead of JSON they
 print a header line (`result_basis`, `availability`, `completion_since`), one
 line per attempt with `outcome/outcome_basis`, `final`, `progress`, the four
 steps (`primary/second_factor/code_issuance/code_redemption`), the OIDC
@@ -201,7 +215,11 @@ webmail session is not observed), `redemption_pending` and
 `code_expired_redemption_not_observed` mean no redemption was observed (never
 proof of an abort), `not_recorded` means the flow predates completion
 recording. `answered=200 message="OK"` is the stored host decision status, not
-the HTTP status the browser received (`transport`, for example 302).
+the HTTP status the browser received (`transport`, for example 302). Compact
+answers print one line per `attempt_summaries` entry, and every ban context
+prints a `ban-context` line followed by one `ban` line with network, rule,
+activation, planned end, end reason, relation, attribution code, other
+contributors, subject and other-account counts, completeness, and limitations.
 
 The JSON output always carries the complete answer. A `jq` view of the same
 fields that also copes with older answers:

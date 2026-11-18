@@ -657,6 +657,73 @@ class SupportHistoryClientTest(unittest.TestCase):
         self.assertEqual(lines[3], "  #2 2026-11-17T18:35:07Z stage=second_factor code=SECOND_FACTOR_ACCEPTED "
                                    "answered=- message=- transport=-")
 
+    def test_ban_context_and_response_mode_travel_in_the_body(self):
+        code, _, stderr, send = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                 "--include-ban-context", "--response-mode", "compact",
+                                                 responses=[history_response(attempts=[], response_mode="compact",
+                                                                             attempt_summaries=[attempt(ATTEMPT_ID)],
+                                                                             ban_contexts=[])])
+        self.assertEqual(code, 0, stderr)
+        body = self.sent_bodies(send)[0]
+        self.assertEqual((body["include_ban_context"], body["response_mode"]), (True, "compact"))
+        self.assertNotIn("no attempt", stderr)
+
+        _, _, _, send = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                         responses=[history_response(attempts=[attempt(ATTEMPT_ID)])])
+        self.assertFalse({"include_ban_context", "response_mode"} & set(self.sent_bodies(send)[0]))
+
+    def test_all_merges_compact_summaries_and_ban_contexts_only_when_present(self):
+        first, second = ("fl1." + digit * 32 for digit in "12")
+        pages = [
+            history_response(attempts=[], response_mode="compact", attempt_summaries=[attempt(first)],
+                             ban_contexts=[{"request_id": "r1"}], ban_history={"availability": "available", "conditions": []},
+                             page={"limit": 1, "next_cursor": "c1"}),
+            history_response(attempts=[], response_mode="compact", attempt_summaries=[attempt(second)],
+                             ban_contexts=[{"request_id": "r1"}, {"request_id": "r2"}],
+                             ban_history={"availability": "partial", "conditions": ["CANDIDATE_NETWORKS_PARTIAL"]},
+                             page={"limit": 1, "next_cursor": None}),
+        ]
+        code, stdout, stderr, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                   "--response-mode", "compact", "--include-ban-context", "--all",
+                                                   responses=pages)
+        self.assertEqual(code, 0, stderr)
+        merged = json.loads(stdout)
+        self.assertEqual([item["attempt_id"] for item in merged["attempt_summaries"]], [first, second])
+        self.assertEqual([item["request_id"] for item in merged["ban_contexts"]], ["r1", "r2"])
+        self.assertEqual(merged["ban_history"]["availability"], "partial")
+        self.assertIn("brute-force history availability is partial", stderr)
+
+        _, stdout, _, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h", "--all",
+                                           responses=[history_response(attempts=[attempt(first)],
+                                                                       page={"limit": 1, "next_cursor": None})])
+        self.assertFalse({"attempt_summaries", "ban_contexts", "ban_history"} & set(json.loads(stdout)))
+
+    def test_summary_renders_compact_attempts_and_ban_contexts(self):
+        summary = {"attempt_id": "rq1.req-1", "kind": "request", "outcome": "rejected",
+                   "outcome_basis": "request_terminal_answer", "final_outcome_observed": True,
+                   "reason": "REJECTED_BY_BRUTE_FORCE_PROTECTION", "finding_codes": ["REJECTED_BY_BRUTE_FORCE_PROTECTION"],
+                   "client_ips": ["203.0.113.42"], "request_ids": ["req-1"], "known_gaps": []}
+        context = {"request_id": "req-1", "attempt_id": "rq1.req-1", "status": "matched", "limitations": [],
+                   "bans": [{"ban_ref": BAN_REF, "network": "203.0.113.42/32", "rule": "example_failed_logins",
+                             "activated_at": "2027-01-15T07:50:00Z", "planned_end": "2027-01-15T08:50:00Z",
+                             "end": {"reason": "planned_end_after_window"}, "subject_relation": "HIT_EXISTING_BAN",
+                             "attribution": {"code": "OTHER_ACCOUNTS_ONLY", "other_contributors": "observed",
+                                             "counts": {"subject_by_account": 0, "subject_by_login_claim": 0,
+                                                        "other_accounts": 2}},
+                             "evidence": {"completeness": "complete", "limitations": []}}]}
+        response = history_response(attempts=[], response_mode="compact", attempt_summaries=[summary],
+                                    ban_contexts=[context])
+        code, stdout, stderr, _ = self.run_support("attempts", "search", "--login", "alice", "--since", "1h",
+                                                   "--response-mode", "compact", "--include-ban-context", "--summary",
+                                                   responses=[response])
+        self.assertEqual(code, 0, stderr)
+        _, line, request, ban = stdout.strip().splitlines()
+        self.assertIn("rq1.req-1 request outcome=rejected/request_terminal_answer final=true "
+                      "reason=REJECTED_BY_BRUTE_FORCE_PROTECTION", line)
+        self.assertEqual(request, "  ban-context req-1 attempt=rq1.req-1 status=matched limitations=-")
+        self.assertIn("relation=HIT_EXISTING_BAN attribution=OTHER_ACCOUNTS_ONLY others=observed subject=0 "
+                      "other_accounts=2 completeness=complete limitations=-", ban)
+
     def test_help_documents_the_exit_codes(self):
         for argv in (["support", "--help"], ["support", "attempts", "search", "--help"]):
             with self.subTest(argv=argv):

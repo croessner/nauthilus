@@ -80,7 +80,9 @@ var operations = []Operation{
 		Scopes: []string{definitions.ScopeHistoryRead, definitions.ScopeHistoryDetail},
 		Description: "Search the recorded authentication attempts of one subject (login or account) in a window of at " +
 			"most 31 days, newest first. An empty list never proves that no login happened; read history and " +
-			"result_basis for completeness.",
+			"result_basis for completeness. response_mode compact returns attempt_summaries instead of full attempts; " +
+			"include_ban_context links every brute-force rejected subject request to the recorded ban effective at " +
+			"that time, with attribution codes that never name a person. Neither option changes rights.",
 		execute: historyCall(func(ctx context.Context, service *supporthistory.Service, caller supporthistory.Caller, request supporthistory.AttemptSearchRequest) (any, error) {
 			return service.SearchAttempts(ctx, caller, request)
 		}),

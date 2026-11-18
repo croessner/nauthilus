@@ -202,7 +202,7 @@ func (s *Service) searchBans(ctx context.Context, caller Caller, request BanSear
 	result.Page.NextCursor = next
 	result.OrphanHits = s.orphanHits(ctx, scope, instances)
 	result.ThresholdTolerated = s.toleratedCount(ctx, scope)
-	result.History = s.banCoverage(ctx, scope)
+	result.History = s.banCoverage(ctx, scope, nil)
 	result.ResultBasis = resultBasis(len(result.Bans) > 0, result.History, SourceBanLifecycle, false)
 
 	return result, nil

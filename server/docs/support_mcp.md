@@ -26,6 +26,11 @@ query (shell, SQL, Redis, log, or monitoring).
 | `bruteforce_history` | `POST /api/v1/support/bruteforce-bans/search` | `nauthilus:history_read`, `nauthilus:history_detail` |
 | `operational_diagnostics` | `POST /api/v1/support/operations/diagnostics` | `nauthilus:operations_read` |
 
+`authentication_attempts_search` takes the same optional `response_mode` (`detailed`, `compact`) and
+`include_ban_context` arguments as the HTTP route; the tool input schema is generated from the same OpenAPI component,
+and the answers are byte-identical. The mode only selects the presentation and never widens the projection
+([support_authentication_history.md](support_authentication_history.md), section 8.1).
+
 Every tool is listed to every authenticated caller. Each call is authorized by the service from the verified scopes;
 an MCP request for a tool whose scopes the token lacks is answered with `403` and an `insufficient_scope` challenge
 before it reaches the SDK.

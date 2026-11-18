@@ -60,6 +60,16 @@ type historyEnv struct {
 func startHistoryEnv(t *testing.T) historyEnv {
 	t.Helper()
 
+	env := newHistoryEnv(t)
+	env.writeScenario(t)
+
+	return env
+}
+
+// newHistoryEnv starts the plugin writer over a fresh schema without writing any scenario.
+func newHistoryEnv(t *testing.T) historyEnv {
+	t.Helper()
+
 	db := newClickHouseTestDB(t)
 	db.applyFile(schemaPath)
 
@@ -71,10 +81,7 @@ func startHistoryEnv(t *testing.T) historyEnv {
 	}), testRunnerOptions{roundTripper: http.DefaultTransport})
 	t.Cleanup(func() { harness.stop(t) })
 
-	env := historyEnv{db: db, harness: harness, now: time.Now().UTC()}
-	env.writeScenario(t)
-
-	return env
+	return historyEnv{db: db, harness: harness, now: time.Now().UTC()}
 }
 
 // historyRequest builds one sealed post-action request of the synthetic subject.
@@ -220,8 +227,15 @@ func (env historyEnv) factorEvents() []pluginapi.AuthEvent {
 func shiftedBruteForceFixture(t *testing.T, now time.Time) []pluginapi.BruteForceEvent {
 	t.Helper()
 
+	return bruteForceFixtureAt(t, 0, now.Add(-2*time.Hour))
+}
+
+// bruteForceFixtureAt moves the shared-IP fixture so its event at index happens at anchor, keeping the order.
+func bruteForceFixtureAt(t *testing.T, index int, anchor time.Time) []pluginapi.BruteForceEvent {
+	t.Helper()
+
 	events := loadBruteForceFixture(t)
-	shift := now.Add(-2 * time.Hour).Sub(events[0].ObservedAt)
+	shift := anchor.Sub(events[index].ObservedAt)
 
 	for index := range events {
 		events[index].ObservedAt = events[index].ObservedAt.Add(shift)
@@ -265,8 +279,15 @@ func provisionReader(t *testing.T, db *clickHouseTestDB, readonly string, mode c
 			MaxRowsToRead: 5_000_000, MaxBytesToRead: 2 << 30, MaxResponseBytes: 8 << 20}}
 }
 
-// historyService builds the service over a provisioned reader.
+// historyService builds the service over a provisioned reader, queried one minute after the scenario.
 func historyService(t *testing.T, env historyEnv, config clickhousestore.Config) *supporthistory.Service {
+	t.Helper()
+
+	return historyServiceAt(t, config, env.now.Add(time.Minute))
+}
+
+// historyServiceAt builds the service over a provisioned reader with a frozen query time.
+func historyServiceAt(t *testing.T, config clickhousestore.Config, now time.Time) *supporthistory.Service {
 	t.Helper()
 
 	store, err := clickhousestore.New(config)
@@ -275,7 +296,7 @@ func historyService(t *testing.T, env historyEnv, config clickhousestore.Config)
 	}
 
 	service, err := supporthistory.NewService(supporthistory.Options{Attempts: store, Bans: store,
-		Now:      func() time.Time { return env.now.Add(time.Minute) },
+		Now:      func() time.Time { return now },
 		Prefixes: func() []supporthistory.Prefix { return []supporthistory.Prefix{{Family: 4, Bits: 24}} }})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)

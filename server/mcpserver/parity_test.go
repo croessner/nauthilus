@@ -49,7 +49,7 @@ func parityServices(t *testing.T) supportapi.Services {
 		t.Fatal(err)
 	}
 
-	history, err := supporthistory.NewService(supporthistory.Options{Attempts: store, Bans: &historytest.BanStore{Store: store},
+	history, err := supporthistory.NewService(supporthistory.Options{Attempts: store, Bans: historytest.WithRecordedBan(store, "req-brute"),
 		Now: func() time.Time { return parityBase.Add(time.Hour) }})
 	if err != nil {
 		t.Fatal(err)
@@ -83,12 +83,36 @@ func httpBody(t *testing.T, services supportapi.Services, operation supportapi.O
 	return recorder.Code, recorder.Body.String()
 }
 
+// parityCase is one operation call of the parity matrix.
+type parityCase struct {
+	operation string
+	arguments string
+	token     string
+}
+
+// parityCases returns every operation call, result and error, that both transports must answer identically.
+func parityCases(window, around string) map[string]parityCase {
+	return map[string]parityCase{
+		"forbidden without detail": {supportapi.OperationAttemptDetail, `{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, "read-only"},
+		"attempt search":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":5}}`, "detail"},
+		"compact ban context":      {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":20},"include_ban_context":true,"response_mode":"compact"}`, "detail"},
+		"compact ban context read": {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":20},"include_ban_context":true,"response_mode":"compact"}`, "read-only"},
+		"detailed ban context":     {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":20},"include_ban_context":true,"response_mode":"detailed"}`, "read-only"},
+		"unknown response mode":    {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"response_mode":"verbose"}`, "read-only"},
+		"attempt detail":           {supportapi.OperationAttemptDetail, `{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, "detail"},
+		"ban history":              {supportapi.OperationBanHistory, `{"schema_version":"1","target":{"network":"198.51.100.0/24"},"filter":{` + window + `}}`, "detail"},
+		"diagnostics":              {supportapi.OperationDiagnostics, `{"schema_version":"1","components":["ldap"]}`, "detail"},
+		"invalid window":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"a"},"filter":{"from":"2020-01-01T00:00:00Z","until":"2021-01-01T00:00:00Z"}}`, "detail"},
+		"unknown field":            {supportapi.OperationDiagnostics, `{"schema_version":"1","shell":"id"}`, "detail"},
+	}
+}
+
 // TestHTTPAndMCPAnswerTheSameBytes pins byte-for-byte parity of every operation, for results and errors: the MCP
 // text content equals the HTTP body, the structured content is the same JSON, and isError mirrors a non-200 status.
 func TestHTTPAndMCPAnswerTheSameBytes(t *testing.T) {
 	services := parityServices(t)
 	authority := newAuthority()
-	authority.tokens["detail"] = userToken(staticClient, []any{staticClient, testResource}, definitions.ScopeHistoryDetail,
+	authority.Tokens["detail"] = userToken(staticClient, []any{staticClient, testResource}, definitions.ScopeHistoryDetail,
 		definitions.ScopeOperationsRead)
 
 	server, err := New(Deps{Settings: &config.RuntimeMCPServerSection{Enabled: true, HostedResource: "support-mcp",
@@ -97,7 +121,7 @@ func TestHTTPAndMCPAnswerTheSameBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	authority.tokens["read-only"] = userToken(staticClient, []any{staticClient, testResource}, definitions.ScopeHistoryRead)
+	authority.Tokens["read-only"] = userToken(staticClient, []any{staticClient, testResource}, definitions.ScopeHistoryRead)
 
 	sessions := map[string]*mcp.ClientSession{"detail": connect(t, server, "detail", "2025-06-18"),
 		"read-only": connect(t, server, "read-only", "2025-06-18")}
@@ -106,19 +130,7 @@ func TestHTTPAndMCPAnswerTheSameBytes(t *testing.T) {
 	window := fmt.Sprintf(`"from":%q,"until":%q`, parityBase.Add(-2*time.Hour).Format(time.RFC3339), parityBase.Add(time.Minute).Format(time.RFC3339))
 	around := parityBase.Add(-10 * time.Minute).Format(time.RFC3339)
 
-	for name, tc := range map[string]struct {
-		operation string
-		arguments string
-		token     string
-	}{
-		"forbidden without detail": {supportapi.OperationAttemptDetail, `{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, "read-only"},
-		"attempt search":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":5}}`, "detail"},
-		"attempt detail":           {supportapi.OperationAttemptDetail, `{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, "detail"},
-		"ban history":              {supportapi.OperationBanHistory, `{"schema_version":"1","target":{"network":"198.51.100.0/24"},"filter":{` + window + `}}`, "detail"},
-		"diagnostics":              {supportapi.OperationDiagnostics, `{"schema_version":"1","components":["ldap"]}`, "detail"},
-		"invalid window":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"a"},"filter":{"from":"2020-01-01T00:00:00Z","until":"2021-01-01T00:00:00Z"}}`, "detail"},
-		"unknown field":            {supportapi.OperationDiagnostics, `{"schema_version":"1","shell":"id"}`, "detail"},
-	} {
+	for name, tc := range parityCases(window, around) {
 		t.Run(name, func(t *testing.T) {
 			token := tc.token
 			if token == "" {
@@ -141,6 +153,10 @@ func TestHTTPAndMCPAnswerTheSameBytes(t *testing.T) {
 			structured, err := json.Marshal(result.StructuredContent)
 			if err != nil || !jsonEqual(t, structured, []byte(body)) {
 				t.Fatalf("structured content differs: %s", structured)
+			}
+
+			if strings.Contains(tc.arguments, `"include_ban_context":true`) && !strings.Contains(body, `"status":"matched"`) {
+				t.Fatal("ban context body links no recorded ban over both transports")
 			}
 		})
 	}

@@ -82,7 +82,7 @@ at most 31 days.
 
 | Path | Purpose |
 |---|---|
-| `/api/v1/support/authentication-attempts/search` | Attempts of one subject (`login` or `account`), optional `client_ip`, `protocol`, `oidc_client_id`, `saml_entity_id`. Page limit 1–50 (default 20). |
+| `/api/v1/support/authentication-attempts/search` | Attempts of one subject (`login` or `account`), optional `client_ip`, `protocol`, `oidc_client_id`, `saml_entity_id`. Page limit 1–50 (default 20). Optional `response_mode` (`detailed`, `compact`) and `include_ban_context` (section 8.1). |
 | `/api/v1/support/authentication-attempts/detail` | All events of one `attempt_id`; `around` is any instant of the attempt (use `started_at` from a search). |
 | `/api/v1/support/bruteforce-bans/search` | Bans of one `ip` or `network`, optional `ban_ref`; `subject` only for the detail role. Page limit 1–20 (default 10). |
 
@@ -309,8 +309,12 @@ and:
 - `contributions`: counted increments of the activating bucket between the counter resets before and after the
   activation; `windows[]` states the activation window and the previous window separately (`complete`,
   `loss_detected`, `aggregate_only`, `expired`, `not_applicable`), `status` is the worst. Beyond raw retention the hourly
-  summary is used (`counts_are_upper_bounds`, `summary_check_unreliable` after a reset). `crossing_candidate` is a
-  heuristic, never a cause. `complete` covers the contributions of this ban decision, not all login attempts.
+  summary is used (`counts_are_upper_bounds`, `summary_check_unreliable` after a reset). Rules whose windows reach
+  beyond the 14-day raw retention (for example a 28-day rule) still list the retained increments; the caveat
+  `RAW_CONTRIBUTIONS_PARTIALLY_RETAINED` marks the list as a subset, and the window status comes from the summary, so
+  such a ban is never `complete`. `crossing_candidate` is a heuristic, never a cause. `complete` covers the
+  contributions of this ban decision, not all login attempts. Missing or expired items never prove that a request did
+  not contribute.
 - `hits`: requests rejected by the existing ban inside the window (raw rows, or hour-aligned summary beyond 14 days).
 - `orphan_hits`: hits no recorded ban explains (bans written by scripts, evicted keys, lost lifecycle events).
 - `threshold_tolerated`, `releases`, `counter_resets`, `unconfirmed_activations` as separate lists.
@@ -318,6 +322,98 @@ and:
 Support sees counts and distinct-name counts only; claimed names, accounts, client IPs, claimant lists, and operator
 ids need the detail role, and a `subject` is accepted only there (no name-testing oracle). Claimed names are claims,
 never persons.
+
+### 8.1 Ban context of an attempt search
+
+`include_ban_context: true` on an attempt search answers the telephone-support question "why was this attempt
+rejected, and whose recorded attempts fed the ban" without internal ids. For every visible subject login row of the page
+with `REJECTED_BY_BRUTE_FORCE_PROTECTION`, `ban_contexts[]` holds one entry (`attempt_id`, `request_id`, `at`,
+`client_ip`, `status`, `bans[]`, `limitations[]`). The service links the request server-side with one lifecycle read
+over the candidate networks of the rows' client addresses (the same prefixes as the ban search, lifecycle retention, so
+a ban that began before the search window is found) and one read of the recorded `ban_hit` rows of the request ids:
+
+| `subject_relation` | Basis |
+|---|---|
+| `HIT_EXISTING_BAN` / `ACTIVATION_RACE` | A recorded hit of this request on the ban network inside the instance interval (1 s grace). Hits are matched by network and time only, never by their rule or bucket. |
+| `ACTIVATING_REQUEST` | The request wrote the activation; it is not a culprit. |
+| `ACTIVATION_UNCONFIRMED` | The request recorded an unconfirmed activation (the key already existed). |
+| `INTERVAL_OVERLAP` | No hit was recorded (or hits could not be read): only the interval of a ban of a candidate network contains the row. Instances without a recorded or planned end are bounded by their recorded ban time, otherwise never matched. |
+
+`status` is `matched` (recorded link), `overlap_only` (interval only, with `BAN_HIT_NOT_RECORDED` or
+`BAN_HITS_NOT_READ`), `no_recorded_ban` (with `BAN_LIFECYCLE_NOT_RECORDED` when a recorded hit has no instance:
+script, eviction, or lost event), or `not_evaluated` (bound, budget, or read failure – the search itself never fails
+for ban evidence). Several matching bans (for example a host ban and a network ban, or two instances of one network
+inside the 1 s grace of a supersession) are all listed with `MULTIPLE_BANS_MATCH`, newest activation first; none is
+picked. A row without a recorded request id (`REQUEST_ID_NOT_RECORDED`) is linked by interval only and never borrows
+the hits of other requests. `ban_history` is omitted when no rejected request could be evaluated. `end` and `planned_end` describe the instance as recorded up to `queried_at`,
+not today's Redis state.
+
+Every ban carries `attribution`, `evidence`, and `ban_history` (arguments of `bruteforce_history` for this instance).
+Attribution classifies the listed contributions on unredacted rows, de-duplicated by event id:
+
+- `subject_by_account`: the recorded account is the subject's (supplied, recorded at event time, or recorded on a
+  counted row that claims a subject login – so aliases of the same account are the same account);
+  `subject_by_login_claim`: only the same login name was typed, which cannot tell the customer from anybody else.
+- `other_accounts`: another recorded account, counted only when the subject has a supplied or recorded account to
+  compare against (otherwise `unresolved` and `NO_RECORDED_SUBJECT_ACCOUNT_TO_COMPARE`).
+- `no_account`: a claim that resolved to no account at capture time (often a typo); never "another account".
+- `unresolved`: no account was recorded; an alias of the subject can hide here. Today's mapping is never used to
+  resolve historical claims.
+
+| `code` | Meaning |
+|---|---|
+| `SUBJECT_ACCOUNT` | Contributions recorded under the requested account (`subject_by_account > 0`; the same login name alone never suffices); exclusive only with `other_contributors: none_observed`. |
+| `MULTIPLE_ACCOUNTS` | Contributions under the requested and at least one other recorded account. |
+| `OTHER_ACCOUNTS_ONLY` | Only other accounts, with `completeness: complete` and no unresolved, account-less, or subject-name claim, no truncation, partial retention, reset clock skew, counted-after-activation row, or late-export window. |
+| `NOT_SUFFICIENTLY_ATTRIBUTABLE` | Everything else, including bans without readable contributions. |
+
+`other_contributors` is `observed`, `none_observed` (only on sufficient evidence), or `unknown`;
+`person_attribution` is always `NOT_ESTABLISHED`. Present contributions and uncertainty appear together: a
+`SUBJECT_ACCOUNT` ban can still name `UNRESOLVED_CONTRIBUTOR_IDENTITIES` or `CONTRIBUTIONS_*` limitations.
+`evidence.completeness` is the contribution status (or `not_read`) and describes coverage only, never a responsible
+person, NAT, or VPN; `limitations[]` adds the ban unknowns and caveats. `subject_contributions[]` (at most 50) lists the
+subject's own increments with request id, attempt id when on the page, window counters, and `ban_active`; it is the
+subject's own data and visible to both roles. `contributing_accounts` (all recorded accounts) needs the detail role;
+support gets `null` and `identities_redacted: true`, so hidden identities never shrink to a misleading single account.
+
+`response_mode` only chooses the presentation: `detailed` (default) keeps full `attempts` and adds the full ban
+explanation as `bans[].detail`; `compact` returns `attempts: []`, `attempt_summaries[]` (outcome, decisive `reason`,
+finding codes, client addresses, protocols, request ids, gaps, and the `detail` arguments of the attempt lookup), and
+`bans[].detail: null`. Neither mode grants rights; the projection always follows the scopes. Without the two
+parameters the answer is unchanged; `ban_history` reports the coverage of the brute-force sources. Bounds per page: 20
+rejected requests, 8 client addresses, 32 candidate networks, 10 explained bans; beyond them entries say
+`BAN_CONTEXT_LIMIT_REACHED`, and a low time budget says `BAN_CONTEXT_BUDGET_EXHAUSTED`.
+
+```json
+{"schema_version": "1", "subject": {"login": "kunde@example.test"},
+ "filter": {"from": "2026-11-18T08:10:00Z", "until": "2026-11-18T08:20:00Z", "client_ip": "203.0.113.42"},
+ "page": {"limit": 5}, "include_ban_context": true, "response_mode": "compact"}
+```
+
+Abridged compact answer (support role; envelope, paging, and coverage as in every search):
+
+```json
+{"response_mode": "compact", "attempts": [],
+ "attempt_summaries": [{"attempt_id": "rq1.req-subject", "outcome": "rejected",
+   "reason": "REJECTED_BY_BRUTE_FORCE_PROTECTION", "client_ips": ["203.0.113.42"], "request_ids": ["req-subject"],
+   "detail": {"attempt_id": "rq1.req-subject", "around": "2026-11-18T08:15:00Z"}}],
+ "ban_contexts": [{"request_id": "req-subject", "at": "2026-11-18T08:15:00Z", "client_ip": "203.0.113.42",
+   "reason": "REJECTED_BY_BRUTE_FORCE_PROTECTION", "status": "matched", "limitations": [],
+   "bans": [{"ban_ref": "0123456789abcdef0123456789abcdef", "network": "203.0.113.42/32", "scope": "ip",
+     "rule": "example_failed_logins", "activation_reason": "FAILURE_THRESHOLD_EXCEEDED",
+     "activated_at": "2026-11-18T08:10:00Z", "planned_end": "2026-11-18T08:25:00Z",
+     "end": {"reason": "planned_end_passed_unconfirmed", "at": "2026-11-18T08:25:00Z", "release_source": null},
+     "subject_relation": "HIT_EXISTING_BAN",
+     "attribution": {"code": "OTHER_ACCOUNTS_ONLY", "other_contributors": "observed",
+       "person_attribution": "NOT_ESTABLISHED", "contributing_accounts": null, "identities_redacted": true,
+       "counts": {"listed": 2, "subject_by_account": 0, "subject_by_login_claim": 0, "other_accounts": 2,
+                  "distinct_other_accounts": 1, "no_account": 0, "unresolved": 0, "counted_while_banned": 0},
+       "subject_contributions": [], "subject_contributions_truncated": false},
+     "evidence": {"completeness": "complete", "limitations": ["END_NOT_RECORDED_EVICTION_OR_SCRIPT_POSSIBLE"]},
+     "ban_history": {"ban_ref": "0123456789abcdef0123456789abcdef", "network": "203.0.113.42/32",
+       "from": "2026-11-18T08:10:00Z", "until": "2026-11-18T08:25:02Z"},
+     "detail": null}]}]}
+```
 
 ## 9. Privacy and audit
 
@@ -329,7 +425,9 @@ Recorded free text in answers is cleaned (control, format, and bidirectional cha
 Filters travel only in bodies; responses are `no-store`. Each operation that reaches the service, allowed, denied, or
 invalid, writes one structured log
 record (`audit=support_history`): operation, caller client id, method, projection, result code, result count, duration,
-`audit_reference`, and a domain-separated digest of the subject (no clear-text subject, no evidence). Transport-shape
+`audit_reference`, and a domain-separated digest of the subject (no clear-text subject, no evidence). An attempt search
+with `include_ban_context` is audited as `attempt_search_ban_context`, so reads of brute-force evidence stay visible;
+compact answers count their summaries as results. Transport-shape
 rejections (query parameters, wrong media type, oversized or non-strict JSON) are answered by the adapter with 400
 before the service and are not audited; they reveal no data. Queries never
 change authentication state, never authenticate, and never trigger Policy, post-actions, or writes; the reader account
@@ -403,7 +501,10 @@ log in".
 - Python: `contrib/client/nauthilus-admin.py support …` (see its README for exit codes; a deployed mail-stack copy must
   be synced separately).
 - Tests: `server/supporthistory` (JSON scenario `testdata/attempt_scenarios.json`, completion matrix
-  `completion_test.go`, answered status `answered_status_test.go`), `server/supporthistory/clickhousestore`,
+  `completion_test.go`, answered status `answered_status_test.go`, ban context and attribution `ban_context_test.go`,
+  long rules `TestLongRuleListsRetainedContributions`), `server/supporthistory/clickhousestore`,
   `server/handler/support` (scope matrix, OpenAPI response validation), and the `clickhouse_integration` tests
   `TestClickHouseHistory*` that write through the real plugin into ClickHouse 25.8 and read through a provisioned
-  read-only account (`contrib/clickhouse-kubernetes/run-integration-tests.sh -run TestClickHouseHistory`).
+  read-only account (`contrib/clickhouse-kubernetes/run-integration-tests.sh -run TestClickHouseHistory`), and
+  `TestClickHouseBanContextEndToEnd`, which answers the ban context from the stored schema over HTTP, the Python client,
+  and MCP in both response modes.

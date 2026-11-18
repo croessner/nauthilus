@@ -53,13 +53,16 @@ type AttemptSearchFilter struct {
 	SAMLEntityID string    `json:"saml_entity_id,omitempty"`
 }
 
-// AttemptSearchRequest searches the recorded attempts of one subject.
+// AttemptSearchRequest searches the recorded attempts of one subject. ResponseMode selects the presentation and
+// IncludeBanContext adds the recorded brute-force bans behind rejected requests; neither changes the caller's rights.
 type AttemptSearchRequest struct {
-	Subject        Subject             `json:"subject"`
-	Filter         AttemptSearchFilter `json:"filter"`
-	Page           PageRequest         `json:"page"`
-	SchemaVersion  string              `json:"schema_version"`
-	AuditReference string              `json:"audit_reference,omitempty"`
+	Subject           Subject             `json:"subject"`
+	Filter            AttemptSearchFilter `json:"filter"`
+	Page              PageRequest         `json:"page"`
+	SchemaVersion     string              `json:"schema_version"`
+	AuditReference    string              `json:"audit_reference,omitempty"`
+	ResponseMode      string              `json:"response_mode,omitempty"`
+	IncludeBanContext bool                `json:"include_ban_context,omitempty"`
 }
 
 // AttemptDetailRequest returns one attempt; Around is any instant of the attempt, for example its started_at.
@@ -183,6 +186,12 @@ func (r *AttemptSearchRequest) validate() *Error {
 	}
 
 	r.Filter.ClientIP = ip
+
+	switch r.ResponseMode {
+	case "", ResponseModeDetailed, ResponseModeCompact:
+	default:
+		return invalid(CodeInvalidRequest)
+	}
 
 	for _, check := range []struct {
 		value   string

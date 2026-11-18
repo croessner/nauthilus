@@ -18,7 +18,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -29,95 +28,45 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	nautherrors "github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/idp"
+	"github.com/croessner/nauthilus/v4/server/mcpserver/mcptest"
 	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/supportops"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	testResource = "https://login.example.test/mcp"
-	testIssuer   = "https://login.example.test"
-	testHost     = "login.example.test"
+	testResource = mcptest.Resource
+	testIssuer   = mcptest.Issuer
+	testHost     = mcptest.Host
 	testProxy    = "192.0.2.10"
-	staticClient = "support-cli"
+	staticClient = mcptest.StaticClient
 )
 
-// fakeAuthority is a token authority with fixed tokens and clients.
-type fakeAuthority struct {
-	tokens      map[string]idp.UserAccessToken
-	clients     map[string]*config.OIDCClient
-	hosted      config.OIDCHostedResource
-	unavailable bool
-}
-
-// ValidateUserAccessToken answers the fixed token table.
-func (f *fakeAuthority) ValidateUserAccessToken(_ context.Context, token string) (idp.UserAccessToken, error) {
-	if f.unavailable {
-		return idp.UserAccessToken{}, nautherrors.NewTokenValidationUnavailable(errors.New("redis down"))
-	}
-
-	verified, ok := f.tokens[token]
-	if !ok {
-		return idp.UserAccessToken{}, idp.ErrNotUserAccessToken
-	}
-
-	return verified, nil
-}
-
-// ResolveClient answers the fixed client table.
-func (f *fakeAuthority) ResolveClient(_ context.Context, clientID string) (*config.OIDCClient, error) {
-	client, ok := f.clients[clientID]
-	if !ok {
-		return nil, errors.New("unknown client")
-	}
-
-	return client, nil
-}
-
-// HostedResource returns the one configured hosted resource.
-func (f *fakeAuthority) HostedResource(name string) (idp.HostedResource, bool) {
-	if name != f.hosted.Name {
-		return idp.HostedResource{}, false
-	}
-
-	return idp.NewHostedResource(&f.hosted)
-}
-
-// Issuer returns the fixed issuer.
-func (f *fakeAuthority) Issuer() string { return testIssuer }
+// fakeAuthority is the shared hermetic token authority.
+type fakeAuthority = mcptest.Authority
 
 // userToken returns a verified user token for the client with the given audience and scopes.
-func userToken(clientID string, audience []any, scopes ...string) idp.UserAccessToken {
-	return idp.UserAccessToken{Claims: jwt.MapClaims{"aud": audience}, ClientID: clientID, Subject: "anna-id",
-		Scopes: scopes, Issuer: testIssuer, ExpiresAt: time.Now().Add(10 * time.Minute)}
-}
+var userToken = mcptest.UserToken
 
 // newAuthority returns the authority with the standard token table.
 func newAuthority() *fakeAuthority {
 	pair := []any{staticClient, testResource}
-
-	return &fakeAuthority{
-		hosted: config.OIDCHostedResource{Name: "support-mcp", Resource: testResource, StaticClients: []string{staticClient},
-			Scopes: []string{definitions.ScopeHistoryRead, definitions.ScopeHistoryDetail, definitions.ScopeOperationsRead}},
-		clients: map[string]*config.OIDCClient{
-			staticClient:   {ClientID: staticClient},
-			"other-static": {ClientID: "other-static"},
-			"dcr_abc":      {ClientID: "dcr_abc", Dynamic: true},
-		},
-		tokens: map[string]idp.UserAccessToken{
-			"good":           userToken(staticClient, pair, definitions.ScopeHistoryRead, definitions.ScopeOperationsRead),
-			"history-only":   userToken(staticClient, pair, definitions.ScopeHistoryRead),
-			"no-scope":       userToken(staticClient, pair, "openid"),
-			"wrong-audience": userToken(staticClient, []any{staticClient, "https://mail.example.test/"}, definitions.ScopeHistoryRead),
-			"extra-audience": userToken(staticClient, []any{staticClient, testResource, "https://mail.example.test/"}, definitions.ScopeHistoryRead),
-			"client-only":    userToken(staticClient, []any{staticClient}, definitions.ScopeHistoryRead),
-			"unlisted":       userToken("other-static", []any{"other-static", testResource}, definitions.ScopeHistoryRead),
-			"dynamic":        userToken("dcr_abc", []any{"dcr_abc", testResource}, definitions.ScopeHistoryRead),
-		},
+	authority := mcptest.NewAuthority(definitions.ScopeHistoryRead, definitions.ScopeHistoryDetail, definitions.ScopeOperationsRead)
+	authority.Clients["other-static"] = &config.OIDCClient{ClientID: "other-static"}
+	authority.Clients["dcr_abc"] = &config.OIDCClient{ClientID: "dcr_abc", Dynamic: true}
+	authority.Tokens = map[string]idp.UserAccessToken{
+		"good":           userToken(staticClient, pair, definitions.ScopeHistoryRead, definitions.ScopeOperationsRead),
+		"history-only":   userToken(staticClient, pair, definitions.ScopeHistoryRead),
+		"no-scope":       userToken(staticClient, pair, "openid"),
+		"wrong-audience": userToken(staticClient, []any{staticClient, "https://mail.example.test/"}, definitions.ScopeHistoryRead),
+		"extra-audience": userToken(staticClient, []any{staticClient, testResource, "https://mail.example.test/"}, definitions.ScopeHistoryRead),
+		"client-only":    userToken(staticClient, []any{staticClient}, definitions.ScopeHistoryRead),
+		"unlisted":       userToken("other-static", []any{"other-static", testResource}, definitions.ScopeHistoryRead),
+		"dynamic":        userToken("dcr_abc", []any{"dcr_abc", testResource}, definitions.ScopeHistoryRead),
 	}
+
+	return authority
 }
 
 // fixedSource is an operations source with one fixed finding.
@@ -313,7 +262,7 @@ func TestBearerVerificationMatrix(t *testing.T) {
 		})
 	}
 
-	authority.unavailable = true
+	authority.Unavailable = true
 
 	if recorder := serve(server, proxied(http.MethodPost, "/mcp", initialize, "good")); recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unavailable authority = %d", recorder.Code)
@@ -457,40 +406,11 @@ func TestBodyInspection(t *testing.T) {
 	}
 }
 
-// proxyTransport adds the bearer token and the trusted proxy headers to every SDK client request.
-type proxyTransport struct {
-	token string
-}
-
-// RoundTrip forwards the request as the trusted proxy would.
-func (p proxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	clone := request.Clone(request.Context())
-	clone.Host = testHost
-	clone.Header.Set("Authorization", "Bearer "+p.token)
-	clone.Header.Set(headerForwardedProto, "https")
-	clone.Header.Set(headerForwardedFor, "203.0.113.50")
-
-	return http.DefaultTransport.RoundTrip(clone)
-}
-
 // connect runs an SDK client against the endpoint with the given protocol version.
 func connect(t *testing.T, server *Server, token string, version string) *mcp.ClientSession {
 	t.Helper()
 
-	listener := httptest.NewServer(server.Handler())
-	t.Cleanup(listener.Close)
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "nauthilus-test", Version: "1"}, nil)
-
-	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: listener.URL + "/mcp",
-		HTTPClient: &http.Client{Transport: proxyTransport{token: token}}}, &mcp.ClientSessionOptions{ProtocolVersion: version})
-	if err != nil {
-		t.Fatalf("Connect(%s) = %v", version, err)
-	}
-
-	t.Cleanup(func() { _ = session.Close() })
-
-	return session
+	return mcptest.Connect(t, server.Handler(), token, version)
 }
 
 // TestProtocolErasListAndCallTools pins that the stateless 2026-07-28 protocol and the handshake era both list every

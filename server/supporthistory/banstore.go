@@ -74,6 +74,7 @@ type CountedRecord struct {
 	WindowCurrent   *int64
 	Crossed         *bool
 	AccountKnown    *bool
+	BanActive       *bool
 	EventID         string
 	RequestID       string
 	ClientIP        string
@@ -150,6 +151,27 @@ type KindAggregate struct {
 	Total         int64
 }
 
+// RequestHitQuery selects the recorded ban hits of known requests on candidate networks. Networks keep the read on
+// the primary key; RequestIDs are the request ids (logins.session) of the requests to link.
+type RequestHitQuery struct {
+	From       time.Time
+	Until      time.Time
+	Networks   []string
+	RequestIDs []string
+	Limit      int
+}
+
+// HitRecord is one recorded ban_hit row of bruteforce_attempts: the ban key network a request was rejected by.
+type HitRecord struct {
+	At        time.Time
+	EventID   string
+	RequestID string
+	Network   string
+	Rule      string
+	BucketID  string
+	HitSource string
+}
+
 // ClaimantRecord is one claimed name and account with its hit count.
 type ClaimantRecord struct {
 	ClaimedUsername string
@@ -174,6 +196,9 @@ type BanStore interface {
 
 	// KindCounts aggregates one kind from raw rows or, with Summary, from the hourly aggregate.
 	KindCounts(ctx context.Context, query KindQuery) (KindAggregate, error)
+
+	// RequestHits returns the deduplicated ban_hit rows of the requests on the networks, oldest first.
+	RequestHits(ctx context.Context, query RequestHitQuery) ([]HitRecord, error)
 
 	// Presence reports whether a source holds rows of the deployment within its retention.
 	Presence(ctx context.Context, source Source) SourcePresence

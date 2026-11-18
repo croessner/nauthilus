@@ -35,6 +35,10 @@ const (
 	caveatResetSkew      = "RESET_BOUNDS_COMPARE_CLOCKS_OF_DIFFERENT_INSTANCES"
 	caveatSummaryCounts  = "SUMMARY_COUNTS_ARE_UPPER_BOUNDS"
 	caveatItemsTruncated = "CONTRIBUTION_ITEMS_TRUNCATED"
+
+	// caveatPartiallyRetained marks listed items of a rule whose windows reach beyond the raw retention: earlier
+	// increments expired, so the items are a retained subset and never prove which increments are absent.
+	caveatPartiallyRetained = "RAW_CONTRIBUTIONS_PARTIALLY_RETAINED"
 )
 
 // statusRank orders statuses so the overall status is the worst window.
@@ -49,15 +53,16 @@ type bucketWindow struct {
 }
 
 // contributionsOf attributes counted increments to one activation by bucket, window counters, and the counter
-// resets before and after the activation, then states completeness per window.
-func (s *Service) contributionsOf(ctx context.Context, scope banScope, instance banInstance) (Contributions, error) {
+// resets before and after the activation, then states completeness per window. It also returns the listed counted
+// rows before projection, so attribution reads them once and never from the redacted items.
+func (s *Service) contributionsOf(ctx context.Context, scope banScope, instance banInstance) (Contributions, []CountedRecord, error) {
 	row := instance.activation
 	result := Contributions{Status: statusNotApplicable, Windows: []WindowStatus{}, Items: []Contribution{},
 		Caveats: []string{}}
 
 	windows, ok := activationWindows(row)
 	if !ok {
-		return result, nil
+		return result, nil, nil
 	}
 
 	resetAfter, resetBefore := resetBounds(instance)
@@ -65,9 +70,16 @@ func (s *Service) contributionsOf(ctx context.Context, scope banScope, instance 
 		result.Caveats = append(result.Caveats, caveatResetSkew)
 	}
 
-	items, err := s.rawContributions(ctx, scope, row, windows, resetAfter, resetBefore)
+	items, partial, err := s.rawContributions(ctx, scope, row, windows, resetAfter, resetBefore)
 	if err != nil {
-		return result, err
+		return result, nil, err
+	}
+
+	// Replays share their event id and are no loss; the reader removes them, this keeps the rule in one place here.
+	items, _ = dedupeByID(items, countedEventID)
+
+	if partial {
+		result.Caveats = append(result.Caveats, caveatPartiallyRetained)
 	}
 
 	if len(items) > MaxContributions {
@@ -75,10 +87,15 @@ func (s *Service) contributionsOf(ctx context.Context, scope banScope, instance 
 		items = items[:MaxContributions]
 	}
 
+	if scope.matcher != nil {
+		extended := scope.matcher.withCountedAccounts(items)
+		scope.matcher = &extended
+	}
+
 	s.assessWindows(ctx, scope, instance, windows, items, &result)
 	result.Items, result.CrossingCandidate, result.DistinctClaimedNames = projectContributions(scope, row, items)
 
-	return result, nil
+	return result, items, nil
 }
 
 // activationWindows returns the activation and previous bucket windows, or false when the activation carries no
@@ -150,21 +167,29 @@ func windowBounds(row LifecycleRecord, label string) (time.Time, time.Time) {
 	return row.At.Add(-period - skewSlack), row.At.Add(skewSlack)
 }
 
-// rawContributions reads the counted rows of both windows when the raw rows of the activation window are retained.
-func (s *Service) rawContributions(ctx context.Context, scope banScope, row LifecycleRecord, windows []bucketWindow, resetAfter, resetBefore *time.Time) ([]CountedRecord, error) {
+// rawContributions reads the counted rows of both windows inside the intersection of their conservative bounds with
+// the raw retention. Rules whose windows reach beyond the retention keep their retained increments; partial reports
+// a read that covered only the retained part of the windows. Completeness stays with windowStatus.
+func (s *Service) rawContributions(ctx context.Context, scope banScope, row LifecycleRecord, windows []bucketWindow, resetAfter, resetBefore *time.Time) ([]CountedRecord, bool, error) {
 	horizon := rawHorizon(scope.queriedAt)
 	activationFrom, until := windowBounds(row, windowActivation)
-
-	if activationFrom.Before(horizon) {
-		return nil, nil
-	}
-
 	previousFrom, _ := windowBounds(row, windowPrevious)
 
-	return s.bans.Contributions(ctx, ContributionQuery{Network: row.Network, BucketID: row.BucketID,
+	relevantFrom := activationFrom
+	if windows[1].expected > 0 {
+		relevantFrom = previousFrom
+	}
+
+	if !until.After(horizon) {
+		return nil, false, nil
+	}
+
+	items, err := s.bans.Contributions(ctx, ContributionQuery{Network: row.Network, BucketID: row.BucketID,
 		WindowIndex: windows[0].index, Current: windows[0].expected, Previous: windows[1].expected,
 		ResetAfter: resetAfter, ResetBefore: resetBefore, From: maxTime(previousFrom, horizon), Until: until,
 		Limit: MaxContributions + 1})
+
+	return items, relevantFrom.Before(horizon), err
 }
 
 // windowStatus states the completeness of one window from raw rows, or from the summary beyond raw retention.

@@ -203,7 +203,9 @@ type AttemptPage struct {
 	Limit        int       `json:"limit"`
 }
 
-// AttemptSearchResult is the processed answer of an attempt search.
+// AttemptSearchResult is the processed answer of an attempt search. The members after ResultBasis appear only when
+// the request selected a response mode or the ban context, so answers to earlier requests stay unchanged. In compact
+// mode Attempts is empty and AttemptSummaries carries one summary per found attempt.
 type AttemptSearchResult struct {
 	QueriedAt         time.Time         `json:"queried_at"`
 	History           Coverage          `json:"history"`
@@ -212,6 +214,11 @@ type AttemptSearchResult struct {
 	Page              AttemptPage       `json:"page"`
 	SchemaVersion     string            `json:"schema_version"`
 	ResultBasis       string            `json:"result_basis"`
+	ResponseMode      *string           `json:"response_mode,omitempty"`
+	AttemptSummaries  *[]AttemptSummary `json:"attempt_summaries,omitempty"`
+	BanContexts       *[]BanContext     `json:"ban_contexts,omitempty"`
+	BanHistory        *Coverage         `json:"ban_history,omitempty"`
+	found             int
 }
 
 // AttemptDetailResult is the processed answer of an attempt detail lookup; Attempt is nil when nothing visible to

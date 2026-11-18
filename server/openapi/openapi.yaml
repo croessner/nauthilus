@@ -1908,6 +1908,17 @@ components:
             saml_entity_id: {type: string, maxLength: 1024}
         page: {$ref: "#/components/schemas/SupportHistoryPageRequest"}
         audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+        include_ban_context:
+          type: boolean
+          description: >-
+            Adds ban_contexts and ban_history: every subject request of this page that brute-force protection rejected,
+            linked server-side to the recorded ban instances effective at that time (also bans that began before the
+            window). Absent or false keeps the answer unchanged. Independent of response_mode.
+        response_mode:
+          $ref: "#/components/schemas/SupportHistoryResponseMode"
+          description: >-
+            Presentation only. detailed (the default) returns full attempts; compact returns attempt_summaries and an
+            empty attempts list. Neither mode changes rights: the projection always follows the token scopes.
     SupportHistoryAttemptDetailRequest:
       type: object
       additionalProperties: false
@@ -2370,6 +2381,20 @@ components:
             limit: {type: integer}
         schema_version: {type: string, pattern: "^1$"}
         result_basis: {$ref: "#/components/schemas/SupportHistoryResultBasis"}
+        response_mode:
+          $ref: "#/components/schemas/SupportHistoryResponseMode"
+          description: Present only when the request named response_mode; compact answers carry an empty attempts list.
+        attempt_summaries:
+          type: array
+          description: Present only in compact mode; one summary per found attempt, in the order of attempts.
+          items: {$ref: "#/components/schemas/SupportHistoryAttemptSummary"}
+        ban_contexts:
+          type: array
+          description: Present only with include_ban_context; one entry per brute-force rejected subject request of the page.
+          items: {$ref: "#/components/schemas/SupportHistoryBanContext"}
+        ban_history:
+          $ref: "#/components/schemas/SupportHistoryCoverage"
+          description: Present only with include_ban_context when brute-force evidence is configured; coverage of the brute-force sources.
     SupportHistoryAttemptDetailResponse:
       type: object
       additionalProperties: false
@@ -2496,21 +2521,28 @@ components:
       required: [activation, end, contributions, hits, unknowns, ban_ref, network]
       properties:
         activation: {$ref: "#/components/schemas/SupportHistoryActivation"}
-        end:
-          type: object
-          additionalProperties: false
-          required: [at, release_source, reason]
-          properties:
-            at: {type: [string, "null"], format: date-time}
-            release_source: {type: [string, "null"]}
-            reason:
-              type: string
-              enum: [released, superseded_by_new_activation, planned_end_passed_unconfirmed, planned_end_after_window, unknown]
+        end: {$ref: "#/components/schemas/SupportHistoryBanEnd"}
         contributions: {$ref: "#/components/schemas/SupportHistoryContributions"}
         hits: {$ref: "#/components/schemas/SupportHistoryHitSummary"}
         unknowns: {type: array, items: {type: string}}
         ban_ref: {type: string}
         network: {type: string}
+    SupportHistoryBanEnd:
+      type: object
+      additionalProperties: false
+      required: [at, release_source, reason]
+      description: >-
+        How a ban instance ended as far as recorded. Only released is a recorded end; planned ends are relative to the
+        window end, which is queried_at for ban contexts.
+      properties:
+        at: {type: [string, "null"], format: date-time}
+        release_source: {type: [string, "null"]}
+        reason:
+          type: string
+          enum: [released, superseded_by_new_activation, planned_end_passed_unconfirmed, planned_end_after_window, unknown]
+          x-enum-varnames: [SupportHistoryBanEndReasonReleased, SupportHistoryBanEndReasonSupersededByNewActivation,
+            SupportHistoryBanEndReasonPlannedEndPassedUnconfirmed, SupportHistoryBanEndReasonPlannedEndAfterWindow,
+            SupportHistoryBanEndReasonUnknown]
     SupportHistoryLifecycleEvent:
       type: object
       additionalProperties: false
@@ -2563,6 +2595,185 @@ components:
         projection: {type: string, enum: [support, detail]}
         schema_version: {type: string, pattern: "^1$"}
         result_basis: {$ref: "#/components/schemas/SupportHistoryResultBasis"}
+    SupportHistoryResponseMode:
+      type: string
+      enum: [detailed, compact]
+      x-enum-varnames: [SupportHistoryResponseModeDetailed, SupportHistoryResponseModeCompact]
+    SupportHistoryAttemptSummary:
+      type: object
+      additionalProperties: false
+      description: Compact form of one attempt, built from the same projection as the detailed attempt.
+      required: [started_at, last_observed_at, reason, detail, finding_codes, client_ips, protocols, request_ids,
+        known_gaps, attempt_id, kind, outcome, outcome_basis, progress, final_outcome_observed, events_truncated,
+        events_withheld]
+      properties:
+        started_at: {type: string, format: date-time}
+        last_observed_at: {type: string, format: date-time}
+        reason: {type: [string, "null"], description: "Code of the last finding of an attempt that did not succeed, for example REJECTED_BY_BRUTE_FORCE_PROTECTION; null otherwise."}
+        detail:
+          type: object
+          additionalProperties: false
+          required: [attempt_id, around]
+          description: Arguments of authentication_attempt_detail for this attempt.
+          properties:
+            attempt_id: {type: string}
+            around: {type: string, format: date-time}
+        finding_codes: {type: array, items: {type: string}}
+        client_ips: {type: array, items: {type: string}, description: Client addresses of the subject's rows.}
+        protocols: {type: array, items: {type: string}}
+        request_ids: {type: array, items: {type: string}, description: Request ids of the subject's login rows.}
+        known_gaps: {type: array, items: {type: string}}
+        attempt_id: {type: string}
+        kind: {type: string, enum: [flow, request], x-enum-varnames: [SupportHistorySummaryKindFlow, SupportHistorySummaryKindRequest]}
+        outcome: {type: string}
+        outcome_basis: {type: string}
+        progress: {type: string}
+        final_outcome_observed: {type: boolean}
+        events_truncated: {type: boolean}
+        events_withheld: {type: boolean}
+    SupportHistorySubjectContribution:
+      type: object
+      additionalProperties: false
+      description: One counted increment recorded under the subject's account or login claim (its own data).
+      required: [at, window_index, window_current, ban_active, attempt_id, event_id, request_id, count_source, protocol,
+        matched_by]
+      properties:
+        at: {type: string, format: date-time}
+        window_index: {type: [integer, "null"]}
+        window_current: {type: [integer, "null"]}
+        ban_active: {type: [boolean, "null"], description: The increment was counted while a ban was active.}
+        attempt_id: {type: [string, "null"], description: "The attempt of this page the request belongs to, if any."}
+        event_id: {type: string}
+        request_id: {type: string}
+        count_source: {type: string}
+        protocol: {type: string}
+        matched_by:
+          type: string
+          enum: [recorded_account, login_claim]
+          x-enum-varnames: [SupportHistoryMatchedByRecordedAccount, SupportHistoryMatchedByLoginClaim]
+          description: login_claim only means the same login name was typed; it cannot tell the customer from anybody else.
+    SupportHistoryBanAttribution:
+      type: object
+      additionalProperties: false
+      description: >-
+        Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are
+        computed on unredacted rows, so hidden identities never make an answer look exclusive.
+      required: [contributing_accounts, subject_contributions, counts, code, other_contributors, person_attribution,
+        identities_redacted, subject_contributions_truncated]
+      properties:
+        contributing_accounts:
+          type: [array, "null"]
+          items: {type: string}
+          description: Distinct recorded accounts of the listed contributions; null unless the caller has history_detail.
+        subject_contributions:
+          type: array
+          maxItems: 50
+          items: {$ref: "#/components/schemas/SupportHistorySubjectContribution"}
+        counts:
+          type: object
+          additionalProperties: false
+          required: [listed, subject_by_account, subject_by_login_claim, other_accounts, distinct_other_accounts, no_account,
+            unresolved, counted_while_banned]
+          properties:
+            listed: {type: integer}
+            subject_by_account: {type: integer}
+            subject_by_login_claim: {type: integer}
+            other_accounts: {type: integer}
+            distinct_other_accounts: {type: integer}
+            no_account: {type: integer, description: Claims that resolved to no account at capture time (often typos).}
+            unresolved: {type: integer, description: Claims whose account was not recorded; aliases of the subject can hide here.}
+            counted_while_banned: {type: integer}
+        code:
+          type: string
+          enum: [SUBJECT_ACCOUNT, MULTIPLE_ACCOUNTS, OTHER_ACCOUNTS_ONLY, NOT_SUFFICIENTLY_ATTRIBUTABLE]
+          x-enum-varnames: [SupportHistoryAttributionSubjectAccount, SupportHistoryAttributionMultipleAccounts,
+            SupportHistoryAttributionOtherAccountsOnly, SupportHistoryAttributionNotSufficientlyAttributable]
+          description: >-
+            SUBJECT_ACCOUNT: contributions recorded under the requested account (a recorded account, never only the
+            same login name), exclusive only with other_contributors none_observed. MULTIPLE_ACCOUNTS: under the
+            requested and another recorded account. OTHER_ACCOUNTS_ONLY: only other recorded accounts with complete
+            evidence and no unresolved, account-less, or subject-name claim. Otherwise NOT_SUFFICIENTLY_ATTRIBUTABLE.
+        other_contributors:
+          type: string
+          enum: [observed, none_observed, unknown]
+          x-enum-varnames: [SupportHistoryOtherContributorsObserved, SupportHistoryOtherContributorsNoneObserved,
+            SupportHistoryOtherContributorsUnknown]
+        person_attribution: {type: string, const: NOT_ESTABLISHED}
+        identities_redacted: {type: boolean}
+        subject_contributions_truncated: {type: boolean}
+    SupportHistoryBanEvidence:
+      type: object
+      additionalProperties: false
+      required: [completeness, limitations]
+      properties:
+        completeness:
+          type: string
+          enum: [complete, aggregate_only, loss_detected, expired, not_applicable, not_read]
+          x-enum-varnames: [SupportHistoryBanEvidenceComplete, SupportHistoryBanEvidenceAggregateOnly,
+            SupportHistoryBanEvidenceLossDetected, SupportHistoryBanEvidenceExpired, SupportHistoryBanEvidenceNotApplicable,
+            SupportHistoryBanEvidenceNotRead]
+          description: Coverage of the contributions only; never evidence of a responsible person, NAT, or VPN.
+        limitations: {type: array, items: {type: string}, description: "Stable codes: ban unknowns, caveats, and attribution limits."}
+    SupportHistoryBanContextBan:
+      type: object
+      additionalProperties: false
+      required: [activated_at, planned_end, detail, attribution, evidence, end, ban_history, ban_ref, network, scope, rule,
+        activation_reason, subject_relation]
+      properties:
+        activated_at: {type: string, format: date-time}
+        planned_end: {type: [string, "null"], format: date-time}
+        detail:
+          description: The full ban explanation of bruteforce_history in detailed mode; null in compact mode.
+          oneOf:
+            - $ref: "#/components/schemas/SupportHistoryBan"
+            - type: "null"
+        attribution: {$ref: "#/components/schemas/SupportHistoryBanAttribution"}
+        evidence: {$ref: "#/components/schemas/SupportHistoryBanEvidence"}
+        end: {$ref: "#/components/schemas/SupportHistoryBanEnd"}
+        ban_history:
+          type: object
+          additionalProperties: false
+          required: [from, until, ban_ref, network]
+          description: Arguments of bruteforce_history that explain this ban instance.
+          properties:
+            from: {type: string, format: date-time}
+            until: {type: string, format: date-time}
+            ban_ref: {type: string}
+            network: {type: string}
+        ban_ref: {type: string}
+        network: {type: string}
+        scope: {type: string, enum: [ip, network], x-enum-varnames: [SupportHistoryBanScopeIP, SupportHistoryBanScopeNetwork]}
+        rule: {type: string}
+        activation_reason:
+          type: string
+          enum: [FAILURE_THRESHOLD_EXCEEDED, ACTIVATION_UNCONFIRMED]
+          x-enum-varnames: [SupportHistoryActivationThresholdExceeded, SupportHistoryActivationUnconfirmed]
+        subject_relation:
+          type: string
+          enum: [ACTIVATING_REQUEST, ACTIVATION_UNCONFIRMED, HIT_EXISTING_BAN, ACTIVATION_RACE, INTERVAL_OVERLAP]
+          x-enum-varnames: [SupportHistoryRelationActivatingRequest, SupportHistoryRelationActivationUnconfirmed,
+            SupportHistoryRelationHitExistingBan, SupportHistoryRelationActivationRace, SupportHistoryRelationIntervalOverlap]
+          description: How the request relates to the ban; the activating request is never a culprit.
+    SupportHistoryBanContext:
+      type: object
+      additionalProperties: false
+      required: [at, client_ip, bans, limitations, attempt_id, request_id, reason, status]
+      properties:
+        at: {type: string, format: date-time}
+        client_ip: {type: [string, "null"]}
+        bans: {type: array, items: {$ref: "#/components/schemas/SupportHistoryBanContextBan"}}
+        limitations: {type: array, items: {type: string}}
+        attempt_id: {type: string}
+        request_id: {type: string}
+        reason: {type: string, const: REJECTED_BY_BRUTE_FORCE_PROTECTION}
+        status:
+          type: string
+          enum: [matched, overlap_only, no_recorded_ban, not_evaluated]
+          x-enum-varnames: [SupportHistoryBanContextMatched, SupportHistoryBanContextOverlapOnly,
+            SupportHistoryBanContextNoRecordedBan, SupportHistoryBanContextNotEvaluated]
+          description: >-
+            matched: linked by a recorded hit or activation; overlap_only: only by the ban interval; several bans are
+            all listed, never one picked.
     ReputationAllocationRequest:
       oneOf:
         - type: "object"

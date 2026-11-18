@@ -72,7 +72,7 @@ func fixtureService(t *testing.T) *supporthistory.Service {
 		t.Fatalf("LoadFixture() error = %v", err)
 	}
 
-	service, err := supporthistory.NewService(supporthistory.Options{Attempts: store, Bans: &historytest.BanStore{Store: store},
+	service, err := supporthistory.NewService(supporthistory.Options{Attempts: store, Bans: historytest.WithRecordedBan(store, "req-brute"),
 		Now: func() time.Time { return fixtureBase.Add(time.Hour) }})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -89,9 +89,14 @@ func bearer(scopes ...string) jwt.MapClaims {
 
 // searchBody returns a valid search body over the fixture window.
 func searchBody() string {
+	return searchBodyWith("", 5)
+}
+
+// searchBodyWith returns a search body over the fixture window with extra members and a page size.
+func searchBodyWith(extra string, limit int) string {
 	return fmt.Sprintf(`{"schema_version":"1","subject":{"login":"anna@example.test"},`+
-		`"filter":{"from":%q,"until":%q},"page":{"limit":5}}`,
-		fixtureBase.Add(-2*time.Hour).Format(time.RFC3339), fixtureBase.Add(time.Minute).Format(time.RFC3339))
+		`"filter":{"from":%q,"until":%q},"page":{"limit":%d}%s}`,
+		fixtureBase.Add(-2*time.Hour).Format(time.RFC3339), fixtureBase.Add(time.Minute).Format(time.RFC3339), limit, extra)
 }
 
 // serve performs one request.
@@ -165,8 +170,12 @@ func TestSupportHistoryResponsesMatchTheOpenAPIContract(t *testing.T) {
 		status       int
 	}{
 		"search": {"/api/v1/support/authentication-attempts/search", searchBody(), http.StatusOK},
-		"detail": {"/api/v1/support/authentication-attempts/detail",
-			`{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, http.StatusOK},
+		"compact search with ban context": {"/api/v1/support/authentication-attempts/search",
+			searchBodyWith(`,"include_ban_context":true,"response_mode":"compact"`, 20), http.StatusOK},
+		"detailed search with ban context": {"/api/v1/support/authentication-attempts/search",
+			searchBodyWith(`,"include_ban_context":true,"response_mode":"detailed"`, 20), http.StatusOK},
+		"unknown response mode": {"/api/v1/support/authentication-attempts/search",
+			searchBodyWith(`,"response_mode":"verbose"`, 5), http.StatusBadRequest},
 		"ban search": {"/api/v1/support/bruteforce-bans/search", fmt.Sprintf(
 			`{"schema_version":"1","target":{"network":"198.51.100.0/24"},"filter":{"from":%q,"until":%q}}`,
 			fixtureBase.Add(-time.Hour).Format(time.RFC3339), fixtureBase.Format(time.RFC3339)), http.StatusOK},

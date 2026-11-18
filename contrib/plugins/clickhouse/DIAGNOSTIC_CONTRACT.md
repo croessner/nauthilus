@@ -625,7 +625,8 @@ not names, but a reader can test a guessed name against a small set, so the summ
 rows.
 
 Raw attempts cover two periods only for rules up to seven days; longer windows are explained by the summary, marked as
-aggregate. Replays inside the 14-day raw window are removed with `LIMIT 1 BY event_id`; summary counts are upper bounds
+aggregate, while the history still lists the increments inside the intersection of the windows with the raw
+retention (caveat `RAW_CONTRIBUTIONS_PARTIALLY_RETAINED`); a partial list never proves that an increment is absent. Replays inside the 14-day raw window are removed with `LIMIT 1 BY event_id`; summary counts are upper bounds
 under replay, while min/max `window_current` stay exact. Hits and tolerated rows carry no window counts when the
 pre-check did not read the counters (an existing ban skips that read).
 
@@ -660,7 +661,10 @@ and time, planned end or release, contributions with status `complete`, `loss_de
 `expired`, the crossing candidate, hits, orphan hits, and unknown parts. Support roles see counts and distinct-name
 counts; claimed names and accounts of other customers behind the same IP need a released detail role. The schema
 defines no views, grants, or row policies for these roles; the history service must enforce them, and direct
-ClickHouse access to the brute-force tables stays limited to operators.
+ClickHouse access to the brute-force tables stays limited to operators. An attempt search can link the subject's own brute-force rejected
+requests to their recorded bans (`ban_hit` rows by `request_id`, or the activation's `request_id`) and classify the
+contributions by recorded account; the support role then sees codes, counts, and its own increments, never other
+identities.
 
 ### 13.6 Configuration and verification
 

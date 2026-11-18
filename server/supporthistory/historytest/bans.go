@@ -18,8 +18,16 @@ package historytest
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
+)
+
+// Fixed values of the recorded-ban fixture.
+const (
+	kindBanHit    = "ban_hit"
+	fixtureRule   = "example_failed_logins"
+	fixtureBucket = "bucket-fixture"
 )
 
 // VolumeRow is one hit or tolerated row of the fake volume lane.
@@ -29,6 +37,8 @@ type VolumeRow struct {
 	Network   string
 	Kind      string
 	HitSource string
+	Rule      string
+	BucketID  string
 }
 
 // BanStore extends Store with brute-force evidence.
@@ -71,7 +81,8 @@ func (b *BanStore) Lifecycle(_ context.Context, query supporthistory.LifecycleQu
 	}), nil
 }
 
-// Contributions mirrors the §13.4 reference predicate over the configured counted rows of a bucket.
+// Contributions mirrors the §13.4 reference predicate over the configured counted rows of a bucket, including the
+// replay removal by event id (LIMIT 1 BY event_id).
 func (b *BanStore) Contributions(_ context.Context, query supporthistory.ContributionQuery) ([]supporthistory.CountedRecord, error) {
 	if err := b.record("Contributions"); err != nil {
 		return nil, err
@@ -79,8 +90,15 @@ func (b *BanStore) Contributions(_ context.Context, query supporthistory.Contrib
 
 	var rows []supporthistory.CountedRecord
 
+	seen := map[string]struct{}{}
+
 	for _, row := range b.Contribs[query.BucketID] {
+		if _, replay := seen[row.EventID]; replay && row.EventID != "" {
+			continue
+		}
+
 		if contributionMatch(query, row) {
+			seen[row.EventID] = struct{}{}
 			rows = append(rows, row)
 		}
 	}
@@ -148,9 +166,81 @@ func (b *BanStore) KindCounts(_ context.Context, query supporthistory.KindQuery)
 	return aggregate, nil
 }
 
+// RequestHits mirrors the request-hit read: ban_hit rows of the requests on the networks, replays removed by event
+// id, oldest first, at most Limit rows.
+func (b *BanStore) RequestHits(_ context.Context, query supporthistory.RequestHitQuery) ([]supporthistory.HitRecord, error) {
+	if err := b.record("RequestHits"); err != nil {
+		return nil, err
+	}
+
+	seen := map[string]struct{}{}
+
+	var hits []supporthistory.HitRecord
+
+	for _, row := range b.Volume {
+		if row.Kind != kindBanHit || !slices.Contains(query.Networks, row.Network) ||
+			!slices.Contains(query.RequestIDs, row.RequestID) || !inRange(row.At, query.From, query.Until) {
+			continue
+		}
+
+		if _, replay := seen[row.EventID]; replay && row.EventID != "" {
+			continue
+		}
+
+		seen[row.EventID] = struct{}{}
+		hits = append(hits, supporthistory.HitRecord{At: row.At, EventID: row.EventID, RequestID: row.RequestID,
+			Network: row.Network, Rule: row.Rule, BucketID: row.BucketID, HitSource: row.HitSource})
+	}
+
+	slices.SortStableFunc(hits, func(a, b supporthistory.HitRecord) int { return a.At.Compare(b.At) })
+
+	if query.Limit > 0 && len(hits) > query.Limit {
+		hits = hits[:query.Limit]
+	}
+
+	return hits, nil
+}
+
 // excluded reports whether a row lies in one of the excluded instance intervals.
 func excluded(row VolumeRow, intervals []supporthistory.NetworkInterval) bool {
 	return slices.ContainsFunc(intervals, func(interval supporthistory.NetworkInterval) bool {
 		return interval.Network == row.Network && inRange(row.At, interval.From, interval.Until)
 	})
+}
+
+// WithRecordedBan returns a ban store over store in which the login row of requestID was rejected by a recorded
+// host ban: a different request activated it ten minutes earlier after one increment of another account and one
+// of the row's own account, and the row's request hit it. Transport tests use it to exercise the ban context.
+func WithRecordedBan(store *Store, requestID string) *BanStore {
+	index := slices.IndexFunc(store.Logins, func(row supporthistory.LoginRecord) bool { return row.Session == requestID })
+	if index < 0 {
+		return &BanStore{Store: store, Contribs: map[string][]supporthistory.CountedRecord{}}
+	}
+
+	row := store.Logins[index]
+	activatedAt := row.At.Add(-10 * time.Minute)
+	expires := activatedAt.Add(time.Hour)
+	network := row.ClientIP + "/32"
+	window, current, previous, known := int64(7), int64(2), int64(0), true
+	first, second := int64(1), int64(2)
+
+	store.Lifecycle = append(store.Lifecycle, supporthistory.LifecycleRecord{At: activatedAt, ExpiresAt: &expires,
+		EventID: "0123456789abcdef0123456789abcdef", Kind: "ban_activated", Network: network, Rule: fixtureRule,
+		StoredRule: fixtureRule, BucketID: fixtureBucket, RequestID: "req-activator", PeriodSeconds: 3600,
+		BanTimeSeconds: 3600, FailedRequests: 3, WindowIndex: &window, WindowCurrent: &current, WindowPrevious: &previous})
+
+	counted := func(id string, offset time.Duration, current *int64, name, account string) supporthistory.CountedRecord {
+		return supporthistory.CountedRecord{At: activatedAt.Add(-offset), EventID: id, RequestID: "req-" + id,
+			WindowIndex: &window, WindowCurrent: current, ClaimedUsername: name, Account: account, AccountKnown: &known,
+			ClientIP: row.ClientIP, CountSource: "backend_failure", Protocol: row.Protocol}
+	}
+
+	return &BanStore{Store: store, Recorded: []supporthistory.Prefix{{Family: 4, Bits: 32}},
+		Contribs: map[string][]supporthistory.CountedRecord{fixtureBucket: {
+			counted("fixture-other", 2*time.Second, &first, "other@example.test", "other-account"),
+			counted("fixture-own", time.Second, &second, row.Username, row.Account),
+		}},
+		Volume: []VolumeRow{{CountedRecord: supporthistory.CountedRecord{At: row.At, EventID: "fixture-hit",
+			RequestID: requestID, ClaimedUsername: row.Username}, Network: network, Kind: kindBanHit, HitSource: "redis",
+			Rule: fixtureRule}}}
 }

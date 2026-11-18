@@ -37,6 +37,14 @@ func rawHorizon(queriedAt time.Time) time.Time {
 
 // explainBan attributes contributions and hits to one ban instance.
 func (s *Service) explainBan(ctx context.Context, scope banScope, instance banInstance) Ban {
+	ban, _ := s.explainInstance(ctx, scope, instance, true)
+
+	return ban
+}
+
+// explainInstance builds the explanation of one ban instance and returns the listed counted rows before projection;
+// withHits adds the hit aggregate, which compact answers do not need.
+func (s *Service) explainInstance(ctx context.Context, scope banScope, instance banInstance, withHits bool) (Ban, []CountedRecord) {
 	row := instance.activation
 	ban := Ban{BanRef: row.EventID, Network: row.Network, End: instance.end, Unknowns: []string{},
 		Activation: Activation{At: row.At.UTC(), Kind: row.Kind, Rule: row.Rule, StoredRule: row.StoredRule,
@@ -63,11 +71,16 @@ func (s *Service) explainBan(ctx context.Context, scope banScope, instance banIn
 		ban.Unknowns = append(ban.Unknowns, unknownLifecycleTrimmed)
 	}
 
-	contributions, contributionErr := s.contributionsOf(ctx, scope, instance)
+	contributions, items, contributionErr := s.contributionsOf(ctx, scope, instance)
 	ban.Contributions = contributions
 
 	if contributionErr != nil {
 		ban.Unknowns = append(ban.Unknowns, unknownContributions)
+	}
+
+	ban.Hits = HitSummary{BySource: map[string]int64{}, Claimants: []Claimant{}, Evidence: evidenceNotAssessed}
+	if !withHits {
+		return ban, items
 	}
 
 	from := maxTime(row.At.Add(-hitAttributionGrace), scope.window.From)
@@ -78,7 +91,7 @@ func (s *Service) explainBan(ctx context.Context, scope banScope, instance banIn
 		ban.Unknowns = append(ban.Unknowns, unknownHitsNotRead)
 	}
 
-	return ban
+	return ban, items
 }
 
 // hitSummary aggregates one volume kind from raw rows inside raw retention or from the hourly summary beyond it.
@@ -155,12 +168,12 @@ func (s *Service) toleratedCount(ctx context.Context, scope banScope) ToleratedS
 	return ToleratedSummary{Count: summary.Count, CountIsUpperBound: summary.CountIsUpperBound, Evidence: summary.Evidence}
 }
 
-// banCoverage reports the three brute-force sources for the window.
-func (s *Service) banCoverage(ctx context.Context, scope banScope) Coverage {
+// banCoverage reports the three brute-force sources for the window; failures names sources whose read failed.
+func (s *Service) banCoverage(ctx context.Context, scope banScope, failures map[Source]error) Coverage {
 	reads := []sourceRead{
-		{source: SourceBanLifecycle, retention: lifecycleRetention, queried: true,
+		{source: SourceBanLifecycle, retention: lifecycleRetention, queried: true, failed: failures[SourceBanLifecycle],
 			presence: s.bans.Presence(ctx, SourceBanLifecycle)},
-		{source: SourceBanAttempts, retention: rawBanRetention, queried: true,
+		{source: SourceBanAttempts, retention: rawBanRetention, queried: true, failed: failures[SourceBanAttempts],
 			presence: s.bans.Presence(ctx, SourceBanAttempts)},
 		{source: SourceBanSummary, retention: lifecycleRetention, queried: true,
 			presence: s.bans.Presence(ctx, SourceBanSummary)},

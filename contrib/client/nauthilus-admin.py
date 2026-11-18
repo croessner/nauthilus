@@ -1552,8 +1552,10 @@ def attempts_search_body(args: argparse.Namespace) -> dict[str, Any]:
 
     filters = {**history_window(args), "client_ip": args.client_ip, "protocol": args.protocol,
                "oidc_client_id": args.oidc_client_id, "saml_entity_id": args.saml_entity_id}
+    output = {"include_ban_context": True if args.include_ban_context else None, "response_mode": args.response_mode}
 
-    return history_body(args, {"subject": history_subject(args), "filter": compact(filters), "page": history_page(args)})
+    return history_body(args, {"subject": history_subject(args), "filter": compact(filters), "page": history_page(args),
+                               **compact(output)})
 
 
 def attempt_detail_body(args: argparse.Namespace) -> dict[str, Any]:
@@ -1582,10 +1584,24 @@ class HistoryQuery:
     path: str
     result_field: str
     empty_subject: str
+    compact_field: str | None = None
+
+    def results_field(self, payload: Any) -> str:
+        """Name the list that carries the results of an answer: compact answers carry summaries, not attempts."""
+
+        if self.compact_field and json_path(payload, "response_mode") == "compact":
+            return self.compact_field
+
+        return self.result_field
 
 
-ATTEMPTS_SEARCH = HistoryQuery(attempts_search_body, (("attempts", "attempt_id"),),
-                               "authentication-attempts/search", "attempts", "login")
+# HISTORY_COVERAGE_FIELDS are the coverage blocks a followed answer merges; ban_history exists only with the ban
+# context.
+HISTORY_COVERAGE_FIELDS = ("history", "ban_history")
+
+ATTEMPTS_SEARCH = HistoryQuery(attempts_search_body, (("attempts", "attempt_id"), ("attempt_summaries", "attempt_id"),
+                                                      ("ban_contexts", "request_id")),
+                               "authentication-attempts/search", "attempts", "login", "attempt_summaries")
 ATTEMPT_DETAIL = HistoryQuery(attempt_detail_body, (), "authentication-attempts/detail", "attempt", "login")
 BANS_SEARCH = HistoryQuery(bans_search_body, (("bans", "ban_ref"), ("releases", None), ("counter_resets", None),
                                               ("unconfirmed_activations", None)),
@@ -1688,9 +1704,12 @@ def merge_history_pages(query: HistoryQuery, pages: list[Response]) -> Response:
     payloads = [page.parsed for page in pages]
     merged = dict(payloads[-1])
     for field, key in query.merge_fields:
-        merged[field] = unique_items((item for payload in payloads for item in list_field(payload, field)), key)
+        if any(field in payload for payload in payloads):
+            merged[field] = unique_items((item for payload in payloads for item in list_field(payload, field)), key)
 
-    merged["history"] = merge_history_blocks([payload.get("history") for payload in payloads])
+    for field in HISTORY_COVERAGE_FIELDS:
+        if any(field in payload for payload in payloads):
+            merged[field] = merge_history_blocks([payload.get(field) for payload in payloads])
     if any(payload.get("result_basis") == "matches_found" for payload in payloads):
         merged["result_basis"] = "matches_found"
 
@@ -1714,8 +1733,13 @@ def history_outcome(query: HistoryQuery, response: Response, follow: bool) -> Co
         notes.append(f"warning: history availability is {availability or 'unknown'} (conditions: {conditions}); "
                      "the result may be incomplete")
 
-    if not payload.get(query.result_field):
-        notes.append(f"note: no {query.result_field} returned (result_basis={payload.get('result_basis')}, "
+    ban_availability = json_path(payload, "ban_history", "availability")
+    if ban_availability not in (None, "available"):
+        notes.append(f"warning: brute-force history availability is {ban_availability}; ban contexts may be incomplete")
+
+    result_field = query.results_field(payload)
+    if not payload.get(result_field):
+        notes.append(f"note: no {result_field} returned (result_basis={payload.get('result_basis')}, "
                      f"conditions: {conditions}); an empty result does not prove that no {query.empty_subject} "
                      "happened")
 
@@ -1783,6 +1807,54 @@ def summarize_attempt(item: Any) -> str:
         " ".join(f"{name}={value}" for name, value in fields)
 
 
+def summarize_attempt_summary(item: Any) -> str:
+    """Render one compact attempt summary of a compact answer as a single line."""
+
+    fields = [
+        ("outcome", f"{summary_value(json_path(item, 'outcome'))}/{summary_value(json_path(item, 'outcome_basis'))}"),
+        ("final", summary_value(json_path(item, "final_outcome_observed"))),
+        ("reason", summary_value(json_path(item, "reason"))),
+        ("findings", summary_value(list_field(item, "finding_codes"))),
+        ("ips", summary_value(list_field(item, "client_ips"))),
+        ("requests", summary_value(list_field(item, "request_ids"))),
+        ("gaps", summary_value(list_field(item, "known_gaps"))),
+    ]
+
+    return f"{summary_value(json_path(item, 'attempt_id'))} {summary_value(json_path(item, 'kind'))} " + \
+        " ".join(f"{name}={value}" for name, value in fields)
+
+
+def summarize_ban_context(context: Any) -> list[str]:
+    """Render one ban context: a line for the rejected request, then one line per linked ban with its codes."""
+
+    lines = [f"  ban-context {summary_value(json_path(context, 'request_id'))} "
+             f"attempt={summary_value(json_path(context, 'attempt_id'))} "
+             f"status={summary_value(json_path(context, 'status'))} "
+             f"limitations={summary_value(list_field(context, 'limitations'))}"]
+    for ban in list_field(context, "bans"):
+        counts = json_path(ban, "attribution", "counts")
+        subject = sum(value for value in (json_path(counts, "subject_by_account"), json_path(counts, "subject_by_login_claim"))
+                      if isinstance(value, int))
+        fields = [
+            ("network", summary_value(json_path(ban, "network"))),
+            ("rule", summary_value(json_path(ban, "rule"))),
+            ("activated", summary_value(json_path(ban, "activated_at"))),
+            ("planned_end", summary_value(json_path(ban, "planned_end"))),
+            ("end", summary_value(json_path(ban, "end", "reason"))),
+            ("relation", summary_value(json_path(ban, "subject_relation"))),
+            ("attribution", summary_value(json_path(ban, "attribution", "code"))),
+            ("others", summary_value(json_path(ban, "attribution", "other_contributors"))),
+            ("subject", str(subject) if isinstance(counts, dict) else SUMMARY_MISSING),
+            ("other_accounts", summary_value(json_path(counts, "other_accounts"))),
+            ("completeness", summary_value(json_path(ban, "evidence", "completeness"))),
+            ("limitations", summary_value(list_field(json_path(ban, "evidence"), "limitations"))),
+        ]
+        lines.append(f"    ban {summary_value(json_path(ban, 'ban_ref'))} " +
+                     " ".join(f"{name}={value}" for name, value in fields))
+
+    return lines
+
+
 def summarize_event(event: Any) -> str:
     """Render one event of a detail answer, including the stored answered status of its decision."""
 
@@ -1800,8 +1872,9 @@ def summarize_event(event: Any) -> str:
 
 
 def summarize_history(payload: Any) -> str:
-    """Render an attempt search or detail answer compactly: a header line, one line per attempt, event lines for a
-    detail answer. The JSON output stays the complete answer."""
+    """Render an attempt search or detail answer compactly: a header line, one line per attempt or server-side
+    attempt summary, event lines for a detail answer, and ban-context lines. The JSON output stays the complete
+    answer; this local rendering never replaces the server's response_mode."""
 
     attempts = list_field(payload, "attempts")
     detail = json_path(payload, "attempt")
@@ -1815,6 +1888,10 @@ def summarize_history(payload: Any) -> str:
         lines.append(summarize_attempt(item))
         if isinstance(detail, dict):
             lines.extend(summarize_event(event) for event in list_field(item, "events"))
+
+    lines.extend(summarize_attempt_summary(item) for item in list_field(payload, "attempt_summaries"))
+    for context in list_field(payload, "ban_contexts"):
+        lines.extend(summarize_ban_context(context))
 
     return "\n".join(lines)
 
@@ -1869,6 +1946,12 @@ def add_support_commands(subcommands: Any) -> None:
     search.add_argument("--protocol", help="protocol filter, for example imap")
     search.add_argument("--oidc-client-id", help="OIDC client_id filter")
     search.add_argument("--saml-entity-id", help="SAML service provider entity ID filter")
+    search.add_argument("--include-ban-context", action="store_true",
+                        help="ask the server to link brute-force rejected attempts to the recorded ban effective at "
+                             "that time (ban_contexts)")
+    search.add_argument("--response-mode", choices=("detailed", "compact"),
+                        help="server-side presentation: detailed (default) attempts or compact attempt_summaries; "
+                             "it never changes rights")
     add_history_page_arguments(search, SUPPORT_ATTEMPT_LIMIT)
 
     detail = add_support_parser(attempts, "detail", "show one attempt by attempt_id")

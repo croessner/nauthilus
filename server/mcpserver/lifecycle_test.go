@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/config"
+	"github.com/croessner/nauthilus/v4/server/mcpserver/mcptest"
 	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/supportops"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -155,7 +156,7 @@ func TestShutdownDrainsInFlightCalls(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "drain-test", Version: "1"}, nil)
 
 	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: "http://" + address + "/mcp",
-		HTTPClient: &http.Client{Transport: proxyTransport{token: "good"}}}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
+		HTTPClient: &http.Client{Transport: mcptest.Transport("good")}}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
 	if err != nil {
 		t.Fatal(err)
 	}

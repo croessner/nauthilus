@@ -29,8 +29,17 @@ const minRemainingBudget = 0.4
 // Attempts are ordered by their latest subject-matching activity. The window is scanned in slices; each page reports
 // the fully scanned range. Paging has no snapshot isolation: a late-delivered row can repeat an attempt on a later
 // page, so clients deduplicate by attempt_id.
+//
+// ResponseMode and IncludeBanContext are independent: the mode only selects detailed attempts or compact summaries,
+// and the ban context adds the recorded bans behind brute-force rejected subject requests in either mode. Without
+// them the answer is the same as before both existed.
 func (s *Service) SearchAttempts(ctx context.Context, caller Caller, request AttemptSearchRequest) (*AttemptSearchResult, error) {
-	ctx, call, err := s.begin(ctx, caller, operationAttemptSearch, permissionAttemptsRead,
+	operation := operationAttemptSearch
+	if request.IncludeBanContext {
+		operation = operationAttemptSearchBans
+	}
+
+	ctx, call, err := s.begin(ctx, caller, operation, permissionAttemptsRead,
 		[]string{request.Subject.Login, request.Subject.Account}, request.AuditReference, request.validate)
 	if err != nil {
 		return nil, err
@@ -43,7 +52,7 @@ func (s *Service) SearchAttempts(ctx context.Context, caller Caller, request Att
 		return nil, searchErr
 	}
 
-	call.finish(ctx, len(result.Attempts), nil)
+	call.finish(ctx, result.found, nil)
 
 	return result, nil
 }
@@ -79,6 +88,7 @@ func (s *Service) searchAttempts(ctx context.Context, caller Caller, request Att
 	}
 
 	scope.completion = s.completionCutoverAt(ctx, minTime(scope.window.Until, scope.queriedAt))
+
 	attempts, eventsRead, err := s.collectAttempts(ctx, scope, page)
 	if err != nil {
 		return nil, mapStoreError(ctx, err)
@@ -91,8 +101,30 @@ func (s *Service) searchAttempts(ctx context.Context, caller Caller, request Att
 	result.ResultBasis = resultBasis(len(attempts) > 0, result.History, SourceLogins,
 		request.Subject.Account == "" && len(resolution.Accounts) == 0)
 	result.Page.NextCursor = nextCursor(scope, scan, page)
+	result.found = len(attempts)
+	s.presentAttempts(ctx, scope, request, result)
 
 	return result, nil
+}
+
+// presentAttempts adds the requested ban context and applies the requested response mode to a built search page.
+func (s *Service) presentAttempts(ctx context.Context, scope searchScope, request AttemptSearchRequest, result *AttemptSearchResult) {
+	compact := request.ResponseMode == ResponseModeCompact
+
+	if request.IncludeBanContext {
+		contexts, coverage := s.banContexts(ctx, scope, result.Attempts, compact)
+		result.BanContexts, result.BanHistory = &contexts, coverage
+	}
+
+	if request.ResponseMode != "" {
+		mode := request.ResponseMode
+		result.ResponseMode = &mode
+	}
+
+	if compact {
+		summaries := summarizeAttempts(result.Attempts)
+		result.AttemptSummaries, result.Attempts = &summaries, []Attempt{}
+	}
 }
 
 // searchScope validates paging, freezes the query time, and resolves the subject.
@@ -196,12 +228,17 @@ func (s *Service) scanAnchors(ctx context.Context, scope searchScope) (anchorSca
 
 // budgetLow reports whether less than the reserved share of the time budget remains.
 func (s *Service) budgetLow(ctx context.Context) bool {
+	return s.budgetBelow(ctx, minRemainingBudget)
+}
+
+// budgetBelow reports whether less than the given share of the time budget remains.
+func (s *Service) budgetBelow(ctx context.Context, share float64) bool {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return false
 	}
 
-	return time.Until(deadline) < time.Duration(float64(s.timeout)*minRemainingBudget)
+	return time.Until(deadline) < time.Duration(float64(s.timeout)*share)
 }
 
 // nextCursor continues after the last returned anchor, or after the scanned range when scanning stopped early.
