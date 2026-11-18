@@ -474,13 +474,8 @@ func (m *Manager) GenerateNewEdKey(ctx context.Context) (string, error) {
 
 // storeKeyInRedis stores a key in Redis and sets it as active.
 func (m *Manager) storeKeyInRedis(ctx context.Context, kid, pemData, algorithm, hashKey, activeKey string) (string, error) {
-	oidcCfg := m.deps.Cfg.GetIDP().OIDC
 	now := time.Now()
-
-	expiresAt := now.Add(oidcCfg.KeyMaxAge)
-	if oidcCfg.KeyMaxAge == 0 {
-		expiresAt = now.Add(365 * 24 * time.Hour)
-	}
+	expiresAt := now.Add(m.keyMaxAge())
 
 	metadata := KeyMetadata{
 		ID:        kid,
@@ -609,6 +604,30 @@ func isExpired(meta *KeyMetadata, now time.Time) bool {
 	return !meta.ExpiresAt.IsZero() && now.After(meta.ExpiresAt)
 }
 
+// isRetired reports whether a non-active key has passed its stored expiry or the current key_max_age. The age
+// check also retires keys an earlier release stored with a longer lifetime than the configured maximum.
+func isRetired(meta *KeyMetadata, now time.Time, maxAge time.Duration) bool {
+	return isExpired(meta, now) || (!meta.CreatedAt.IsZero() && now.After(meta.CreatedAt.Add(maxAge)))
+}
+
+// keyMaxAge returns the effective maximum age of generated signing keys, including the config default.
+func (m *Manager) keyMaxAge() time.Duration {
+	return m.deps.Cfg.GetIDP().OIDC.GetKeyMaxAge()
+}
+
+// rotationInterval returns how often the active key is replaced. A configured interval that is not shorter than
+// key_max_age would let the active key expire before its replacement, so rotation then happens at half the
+// maximum age: the active key never expires, and retired keys stay verifiable for the other half.
+func (m *Manager) rotationInterval() time.Duration {
+	interval := m.deps.Cfg.GetIDP().OIDC.GetKeyRotationInterval()
+
+	if maxAge := m.keyMaxAge(); interval >= maxAge {
+		return maxAge / 2
+	}
+
+	return interval
+}
+
 // redisPrefix returns the Redis key prefix.
 func (m *Manager) redisPrefix() string {
 	return m.deps.Cfg.GetServer().GetRedis().GetPrefix()
@@ -622,7 +641,15 @@ func (m *Manager) StartRotationJob(ctx context.Context) {
 
 	level.Info(m.deps.Logger).Log("msg", "starting OIDC key rotation background job")
 
-	ticker := time.NewTicker(m.deps.Cfg.GetIDP().OIDC.GetKeyRotationInterval())
+	interval := m.rotationInterval()
+	if configured := m.deps.Cfg.GetIDP().OIDC.GetKeyRotationInterval(); interval != configured {
+		level.Warn(m.deps.Logger).Log(
+			"msg", "OIDC key rotation interval is not shorter than key_max_age; rotating at half the maximum age",
+			"key_rotation_interval", configured, "key_max_age", m.keyMaxAge(), "effective_interval", interval,
+		)
+	}
+
+	ticker := time.NewTicker(interval)
 
 	go func() {
 		defer ticker.Stop()
@@ -679,7 +706,7 @@ func (m *Manager) rotateKeyType(ctx context.Context, activeRedisKey, hashRedisKe
 
 		meta, err := m.decryptMetadata(sm, encryptedData)
 		if err == nil {
-			if time.Since(meta.CreatedAt) < m.deps.Cfg.GetIDP().OIDC.GetKeyRotationInterval() {
+			if time.Since(meta.CreatedAt) < m.rotationInterval() {
 				return
 			}
 		}
@@ -720,6 +747,7 @@ func (m *Manager) cleanupKeysInHash(ctx context.Context, hashKey, activeKey stri
 
 	sm := m.deps.Redis.GetSecurityManager()
 	now := time.Now()
+	maxAge := m.keyMaxAge()
 
 	for kid, encryptedData := range redisKeys {
 		if kid == activeKID {
@@ -731,7 +759,7 @@ func (m *Manager) cleanupKeysInHash(ctx context.Context, hashKey, activeKey stri
 			continue
 		}
 
-		if isExpired(meta, now) {
+		if isRetired(meta, now, maxAge) {
 			writeCtx, cancel := m.redisWriteContext(ctx)
 			m.deps.Redis.GetWriteHandle().HDel(writeCtx, prefix+hashKey, kid)
 			cancel()
