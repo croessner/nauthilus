@@ -40,6 +40,26 @@ services:
     networks:
       - edge-data
 
+  # Disposable metrics store for the Prometheus diagnostics source. It joins the networks of the edges, so it reaches
+  # the authority and both edges but neither Redis of the other side.
+  prometheus:
+    image: ${NAUTHILUS_E2E_PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    restart: "no"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=1h
+      - --web.listen-address=:9090
+    tmpfs:
+      - /prometheus:uid=65534,gid=65534
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - edge-data
+      - authority-grpc
+    ports:
+      - "127.0.0.1:39090:9090"
+
   authority:
     <<: *nauthilus-service
     depends_on:

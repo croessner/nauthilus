@@ -32,6 +32,9 @@ const (
 	authorityConfig           = "authority.yml"
 	edgeAConfig               = "edge-a.yml"
 	edgeBConfig               = "edge-b.yml"
+	prometheusConfig          = "prometheus.yml"
+	prometheusService         = "prometheus"
+	prometheusJob             = "nauthilus"
 	composeFile               = "docker-compose.yml"
 	browserScript             = "scripts/browser-e2e.js"
 	runScript                 = "scripts/run.sh"
@@ -141,6 +144,69 @@ func TestComposeNetworksPreventDirectCrossRedisAccess(t *testing.T) {
 	assertServiceNetworks(t, compose, "plugin-reload-redis", []string{"plugin-reload-data"})
 	assertServiceNetworks(t, compose, "plugin-reload", []string{"plugin-reload-data", "plugin-reload-public"})
 	assertServicePorts(t, compose, "plugin-reload", []string{"127.0.0.1:38083:38083"})
+	assertServiceNetworks(t, compose, prometheusService, []string{edgeData, authorityGRPC})
+	assertServicePorts(t, compose, prometheusService, []string{"127.0.0.1:39090:9090"})
+}
+
+// TestPrometheusDiagnosticsSourceIsWired pins the metrics half of the operational diagnostics check: Prometheus scrapes
+// the authority and both edges under the one job the edge-a diagnostics selector names, and the synthetic support
+// console may read the diagnostics.
+func TestPrometheusDiagnosticsSourceIsWired(t *testing.T) {
+	root := fixtureRoot(t)
+	edgeA := loadYAML(t, filepath.Join(root, configDir, edgeAConfig))
+	scrape := loadYAML(t, filepath.Join(root, configDir, prometheusConfig))
+
+	source := mapping(edgeA, "observability", "diagnostics", "operations", "sources", "prometheus")
+	operations := mapping(edgeA, "observability", "diagnostics", "operations")
+
+	if !boolValue(operations, "enabled") || !boolValue(source, "enabled") || scalar(source, "url") != "http://prometheus:9090" ||
+		scalar(source, "instance_label") != "instance" || scalar(mapping(source, "selector"), "job") != prometheusJob {
+		t.Fatalf("edge-a diagnostics prometheus source = %v", source)
+	}
+
+	targets := map[string]bool{}
+
+	jobs, _ := scrape["scrape_configs"].([]any)
+	for _, raw := range jobs {
+		job, _ := raw.(map[string]any)
+		if job["job_name"] != prometheusJob {
+			t.Fatalf("scrape job = %v, want only %s", job["job_name"], prometheusJob)
+		}
+
+		groups, _ := job["static_configs"].([]any)
+		for _, rawGroup := range groups {
+			group, _ := rawGroup.(map[string]any)
+			labels, _ := group["labels"].(map[string]any)
+			targets[scalar(labels, "instance")] = true
+		}
+	}
+
+	for _, instance := range []string{authorityName, "edge-a", "edge-b"} {
+		if !targets[instance] {
+			t.Errorf("prometheus does not scrape %s: %v", instance, targets)
+		}
+	}
+
+	if !slices.Contains(clientScopes(t, edgeA, "split-e2e-support"), "nauthilus:operations_read") {
+		t.Error("the synthetic support console must carry nauthilus:operations_read")
+	}
+}
+
+// clientScopes returns the scopes of one configured OIDC client.
+func clientScopes(t *testing.T, cfg map[string]any, clientID string) []string {
+	t.Helper()
+
+	clients, _ := mapping(cfg, identitySection, "oidc")["clients"].([]any)
+	for _, raw := range clients {
+		client, _ := raw.(map[string]any)
+		if client["client_id"] == clientID {
+			return sequence(client, "scopes")
+		}
+	}
+
+	t.Fatalf("no OIDC client %q", clientID)
+
+	return nil
 }
 
 func TestSmokePlanCoversPositiveNegativeAndContinuityChecks(t *testing.T) {
@@ -512,6 +578,9 @@ func TestRunScriptIncludesExecutablePositiveNegativeAndTopologyChecks(t *testing
 		"NAUTHILUS_E2E_SAML_URL",
 		"kill -s HUP plugin-reload",
 		"plugin_reload || status=$?",
+		`up -d prometheus`,
+		"diagnostics_check || status=$?",
+		"/api/v1/support/operations/diagnostics",
 	} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("run script missing %q marker", marker)

@@ -1,0 +1,27 @@
+# Disposable Prometheus of the identity-proxy E2E stack. It scrapes the authority and both edges once per second under
+# the single job the edge-a diagnostics selector names, so the Prometheus diagnostics source sees every instance.
+# The instance label carries the plain Compose service name.
+
+global:
+  scrape_interval: 1s
+  scrape_timeout: 1s
+
+scrape_configs:
+  - job_name: nauthilus
+    metrics_path: /metrics
+    # The E2E certificates are self-signed for the stack hostnames; the authority serves plain HTTP.
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ["authority:38081"]
+        labels:
+          instance: authority
+          __scheme__: http
+      - targets: ["edge-a:38080"]
+        labels:
+          instance: edge-a
+          __scheme__: https
+      - targets: ["edge-b:38082"]
+        labels:
+          instance: edge-b
+          __scheme__: https

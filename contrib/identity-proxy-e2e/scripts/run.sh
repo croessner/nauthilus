@@ -47,6 +47,8 @@ Commands:
   plugin-reload  Prove that SIGHUP applies native plugin config and refuses artifact changes.
   clickhouse-events  Prove that browser MFA flows produced the expected auth_events rows in ClickHouse.
   clickhouse-history Prove browser OIDC completion events reach the history API and the owner Python client.
+  diagnostics    Prove the operational diagnostics: the runtime view of edge-a and the cluster-wide Prometheus view of
+                 the authority and both edges arrive through the support API.
   smoke          Reset the stack, then run profile-check, gRPC, Redis, browser, and post-browser checks
                  (with NAUTHILUS_E2E_PGO=1 followed by the PGO authentication workload).
   down           Stop and remove the E2E stack.
@@ -305,6 +307,8 @@ up() {
   wait_for_http "https://127.0.0.1:38080/ping" "edge-a"
   wait_for_http "https://127.0.0.1:38082/ping" "edge-b"
   wait_for_http "http://127.0.0.1:38081/ping" "authority"
+  "${COMPOSE[@]}" up -d prometheus
+  wait_for_http "http://127.0.0.1:39090/-/ready" "prometheus"
   "${COMPOSE[@]}" up -d saml-sp
   wait_for_http "https://127.0.0.1:39095/" "saml-sp"
 }
@@ -550,6 +554,56 @@ PY
   echo "ok clickhouse-history"
 }
 
+# Print a client-credentials access token of the synthetic support console for the given scopes.
+support_token() {
+  curl -ksSf -u "${HISTORY_CLIENT_ID}:${HISTORY_CLIENT_SECRET}" --data-urlencode "grant_type=client_credentials" \
+    --data-urlencode "scope=$1" "https://127.0.0.1:38080/oidc/token" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+}
+
+# Ask the edge-a support API for the operational diagnostics and store the answer.
+fetch_diagnostics() {
+  local token="$1"
+  local evidence="$2"
+
+  curl -ksSf -X POST -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+    --data '{"schema_version":"1","audit_reference":"e2e-diagnostics"}' \
+    "https://127.0.0.1:38080/api/v1/support/operations/diagnostics" >"${evidence}"
+}
+
+# Prove the operational diagnostics end to end: Prometheus scrapes the authority and both edges, the edge-a runtime
+# source reads its own registry, and the Prometheus source asks the disposable Prometheus over HTTP. The answer must
+# carry the local runtime view and the cluster-wide metric view as separate sources, with a finding per covered
+# instance. Counters need two scrape samples, so the call repeats until Prometheus has seen every instance.
+diagnostics_check() {
+  local evidence="${ROOT_DIR}/.work/diagnostics.json"
+  local token="" reason="" status=1
+
+  token="$(support_token "nauthilus:authenticate nauthilus:operations_read")" || {
+    echo "The synthetic support console received no operations token." >&2
+    return 1
+  }
+
+  mkdir -p "${ROOT_DIR}/.work"
+
+  for _ in $(seq 1 60); do
+    if fetch_diagnostics "${token}" "${evidence}" && reason="$(python3 "${ROOT_DIR}/scripts/check-diagnostics.py" "${evidence}" 2>&1)"; then
+      status=0
+      break
+    fi
+
+    sleep 2
+  done
+
+  if [[ "${status}" -ne 0 ]]; then
+    echo "The operational diagnostics never reached the expected shape: ${reason:-no answer}" >&2
+    return 1
+  fi
+
+  echo "${reason}"
+  echo "ok diagnostics"
+}
+
 reset_stack() {
   "${COMPOSE[@]}" down -v --remove-orphans
 }
@@ -575,6 +629,9 @@ smoke() {
   fi
   if [[ "${status}" -eq 0 ]]; then
     clickhouse_history_check || status=$?
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    diagnostics_check || status=$?
   fi
   if [[ "${status}" -eq 0 ]]; then
     rpc_post_browser || status=$?
@@ -627,6 +684,9 @@ case "${command}" in
     ;;
   clickhouse-history)
     clickhouse_history_check
+    ;;
+  diagnostics)
+    diagnostics_check
     ;;
   smoke)
     smoke

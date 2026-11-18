@@ -23,6 +23,9 @@ The profile is intentionally local and repeatable. It uses Docker Compose, gener
   outcomes per method, unique event IDs, and a `flow_ref` for every protocol flow.
 - WebAuthn sign-count updates are visible through authority-side state.
 - A flow can start on `edge-a` and complete on `edge-b` through shared edge Redis.
+- The read-only operational diagnostics answer through the support API (`diagnostics` check): edge-a reports its
+  instance-local runtime view, and its Prometheus source asks a disposable Prometheus that scrapes the authority and
+  both edges, so the cluster-wide, window-bound view covers every instance as a separate source.
 - SAML SSO and SP-initiated SLO work through a local test SP by default.
 - SAML live negative checks reject malformed SSO input and bad SLO payload shape.
 
@@ -177,6 +180,7 @@ sequenceDiagram
 | `edge-a`          | public edge IdP instance                                 | `127.0.0.1:38080`                    | `edge-data`, `authority-grpc`      |
 | `edge-b`          | second edge for continuity checks                        | `127.0.0.1:38082`                    | `edge-data`, `authority-grpc`      |
 | `edge-redis`      | edge-owned flow/session/token-cache state                | none                                 | `edge-data`                        |
+| `prometheus`      | disposable metrics store scraping all three instances    | `127.0.0.1:39090`                    | `edge-data`, `authority-grpc`      |
 
 The browser smoke maps `split.example.test` and `authority.example.test` to `127.0.0.1` with Chromium host resolver rules. The WebAuthn RP ID is `split.example.test`, and the checked origins are `https://split.example.test:38080` and `https://split.example.test:38082`.
 
@@ -190,6 +194,8 @@ The stack uses the 38080-38083 and 39094-39444 block so it does not collide with
 | `config/authority.yml`         | Authority profile with local `test` backend, gRPC authority listener, OIDC caller-token client, authority Redis.     |
 | `config/edge-a.yml`            | First edge profile with remote-only backend, shared edge Redis, HTTPS IdP.                                           |
 | `config/edge-b.yml`            | Second edge profile for continuity checks.                                                                           |
+| `config/prometheus.yml`        | Disposable Prometheus scrape profile: one job `nauthilus` over the authority and both edges, one-second interval.    |
+| `scripts/check-diagnostics.py` | Asserts the shape of the operational diagnostics answer: separate runtime and Prometheus sources, per-instance findings. |
 | `cmd/smoke/main.go`            | Go smoke client for direct gRPC checks, negative checks, idempotency, and post-browser WebAuthn sign-count readback. |
 | `scripts/browser-e2e.js`       | Playwright browser smoke for OIDC, device code, TOTP, recovery codes, WebAuthn, and multi-edge continuity.           |
 | `scripts/prepare-materials.sh` | Generates local CA, certificates, and signing keys into `.work/`.                                                    |
@@ -251,6 +257,7 @@ NAUTHILUS_E2E_SKIP_BUILD=1 contrib/identity-proxy-e2e/scripts/run.sh smoke
 | `contrib/identity-proxy-e2e/scripts/run.sh rpc`           | Run pre-browser gRPC and generated OpenAPI management checks.                              |
 | `contrib/identity-proxy-e2e/scripts/run.sh redis-check`   | Prove Redis network separation with cross-network `redis-cli` probes.                      |
 | `contrib/identity-proxy-e2e/scripts/run.sh browser`       | Run the Playwright IdP/MFA/WebAuthn smoke against an already running stack.                |
+| `contrib/identity-proxy-e2e/scripts/run.sh diagnostics`   | Read the operational diagnostics of edge-a through the support API and assert its shape.   |
 | `contrib/identity-proxy-e2e/scripts/run.sh smoke`         | Reset the stack, then run profile, startup, gRPC, Redis, browser, and post-browser checks. |
 | `contrib/identity-proxy-e2e/scripts/run.sh down`          | Stop and remove containers, networks, and volumes.                                         |
 
@@ -260,11 +267,15 @@ NAUTHILUS_E2E_SKIP_BUILD=1 contrib/identity-proxy-e2e/scripts/run.sh smoke
 
 1. `profile-check`: verifies the static split-profile invariants.
 2. `down -v`: removes any previous stack state for a clean run.
-3. `up`: starts the authority, edges, local SAML SP, and Redis services.
+3. `up`: starts the authority, edges, Prometheus, local SAML SP, and Redis services.
 4. `rpc --mode pre-browser`: checks gRPC auth, generated OpenAPI management usage, and negative cases before browser state exists.
 5. `redis-check`: checks that authority Redis and edge Redis cannot reach each other.
 6. `browser`: drives positive and negative OIDC, device-code, TOTP, recovery-code, WebAuthn, SAML, and multi-edge flows.
-7. `rpc --mode post-browser`: reads authority-side WebAuthn state and confirms sign-count advancement.
+7. `rpc --mode post-browser`: reads authority-side WebAuthn state and confirms sign-count advancement. Between the
+   browser and this step, `clickhouse-events`, `clickhouse-history`, and `diagnostics` read what the browser flows left:
+   `diagnostics` fetches `POST /api/v1/support/operations/diagnostics` from edge-a with the synthetic support console
+   (scope `nauthilus:operations_read`) and requires both sources: the runtime source for `edge-a` and the Prometheus
+   source covering `authority`, `edge-a`, and `edge-b` with a finding per component and instance, never `unknown`.
 8. With `NAUTHILUS_E2E_PGO=1` (release gate): after the ClickHouse and plugin-reload checks, `cmd/smoke --mode pgo-load`
    drives edge HTTP and authority gRPC authentication while the CPU profiles run; see [PGO.md](PGO.md).
 
@@ -573,6 +584,7 @@ The browser smoke covers live malformed SSO and SLO payload-shape attacks. The G
 |--------------------------------------|------------------------------------|--------------------------------------------------------------------------------|
 | `NAUTHILUS_E2E_IMAGE`                | `nauthilus:identity-proxy-e2e`     | Image used by Docker Compose.                                                  |
 | `NAUTHILUS_E2E_REDIS_IMAGE`          | `redis:7-alpine`                   | Redis image used by Docker Compose.                                            |
+| `NAUTHILUS_E2E_PROMETHEUS_IMAGE`     | `prom/prometheus:v3.5.0`           | Prometheus image used by Docker Compose.                                       |
 | `NAUTHILUS_E2E_SKIP_BUILD`           | unset                              | Set to `1` to reuse the configured Nauthilus image.                            |
 | `NAUTHILUS_E2E_FORCE`                | unset                              | Set to `1` to regenerate `.work/` certificates and keys.                       |
 | `NAUTHILUS_E2E_EDGE_A`               | `https://split.example.test:38080` | Public browser URL for `edge-a`.                                               |
