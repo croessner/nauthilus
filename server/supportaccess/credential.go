@@ -34,6 +34,10 @@ const (
 	// CredentialOIDCBearer is a backchannel OAuth service access token (client credentials) validated by the host.
 	CredentialOIDCBearer CredentialMethod = "oidc_bearer"
 
+	// CredentialBasic is a scoped HTTP Basic credential of the backchannel API validated by the host. It names
+	// the configured username and holds exactly the scopes configured for it.
+	CredentialBasic CredentialMethod = "basic_auth"
+
 	// CredentialOAuthUser is a user access token issued by the own issuer for a hosted resource and validated by the
 	// resource server of that resource (the MCP endpoint). It names a person acting through a client.
 	CredentialOAuthUser CredentialMethod = "oauth_user"
@@ -58,14 +62,15 @@ func (c VerifiedCredential) Verified() bool {
 
 // Identity returns the stable principal identity used for audit records and per-principal limits.
 //
-// A service token is identified by its client (falling back to its subject). A user token is identified by client
+// A service token is identified by its client (falling back to its subject) and a Basic credential by its
+// username, which the adapter passes as the client. A user token is identified by client
 // and subject together, so people sharing one client never share an audit identity or a concurrency share. Unknown
 // methods and user tokens without both values have no identity and therefore no permission.
 func (c VerifiedCredential) Identity() string {
 	clientID, subject := strings.TrimSpace(c.ClientID), strings.TrimSpace(c.Subject)
 
 	switch c.Method {
-	case CredentialOIDCBearer:
+	case CredentialOIDCBearer, CredentialBasic:
 		if clientID != "" {
 			return clientID
 		}

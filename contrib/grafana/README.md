@@ -56,20 +56,20 @@ For the REST admin dashboard, select the configured Infinity data source when Gr
 The REST admin dashboard is intentionally auth-mode neutral. Configure exactly one Infinity data source for the Nauthilus backchannel API, matching the global Nauthilus backchannel authentication mode:
 
 - Basic Auth: configure the Infinity data source with the same backchannel Basic Auth credentials Nauthilus accepts.
-- Bearer tokens: configure the Infinity data source with OAuth2 client credentials. The token must carry the base backchannel scope `nauthilus:authenticate`, and brute-force visibility requires `nauthilus:security` or `nauthilus:admin` as an additional scope.
+- Bearer tokens: configure the Infinity data source with OAuth2 client credentials. Brute-force visibility requires `nauthilus:security_read`; no other scope is needed. The wider `nauthilus:security` and `nauthilus:admin` scopes include it, but a dashboard should not hold them. A scoped Basic credential (`auth.backchannel.basic_auth.users`) holding the scope works the same way.
 
 Recommended data source setup:
 
 1. Leave the Infinity data source Base URL empty.
 2. Add the Nauthilus origin to the Infinity data source Allowed hosts list, for example `https://nauthilus.example.com`. Do not include `/api/v1` in the allowed host.
-3. If OAuth2 client credentials are used, enter scopes in the format expected by the Infinity UI, for example `openid,nauthilus:authenticate,nauthilus:admin,nauthilus:security`. The resulting token must contain `nauthilus:authenticate` plus either `nauthilus:admin` or `nauthilus:security` in its `scope` claim.
+3. If OAuth2 client credentials are used, enter scopes in the format expected by the Infinity UI, for example `openid,nauthilus:security_read`. The resulting token must contain `nauthilus:security_read` in its `scope` claim.
 4. Keep the imported Infinity queries on the UQL parser.
 
 The dashboard uses absolute query URLs such as `https://nauthilus.example.com/api/v1/bruteforce/list`. It sends `GET` requests for read-only brute-force visibility and avoids stale Grafana dashboard-variable values and relative URLs being checked against the Infinity Allowed hosts list.
 
 If Grafana shows `requested URL not allowed`, open the Infinity data source settings and add the Nauthilus origin to Allowed hosts. Infinity requires this when authentication, custom headers, or TLS options are configured.
 
-If the REST panels fail with `missing required scope: nauthilus:authenticate`, the OAuth2 client credentials setup is missing the base backchannel scope. When testing the token endpoint manually with `curl`, send OAuth scopes as a space-separated form value, for example `scope=openid nauthilus:authenticate nauthilus:admin nauthilus:security`.
+If the REST panels fail with `missing required scope: nauthilus:security_read or nauthilus:security or nauthilus:admin`, the OAuth2 client credentials setup is missing that scope. When testing the token endpoint manually with `curl`, send OAuth scopes as a space-separated form value, for example `scope=openid nauthilus:security_read`.
 
 Mutating operations are intentionally not implemented as Infinity panels. Grafana queries panels on load, refresh, and inspection; a `DELETE` panel would therefore execute automatically instead of behaving like a guarded button. Use explicit operator commands for the flush endpoints.
 

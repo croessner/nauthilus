@@ -407,7 +407,7 @@ func policyTLSContext(authorization string, verified bool) context.Context {
 }
 
 func TestPolicyAuthorityUnknownMethodDoesNotInheritAuthenticateScope(t *testing.T) {
-	interceptor := backchannelAuthInterceptor(ServerDeps{Cfg: grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{})})
+	interceptor := backchannelAuthInterceptor(ServerDeps{Cfg: grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{})})
 	handlerCalled := false
 
 	_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/nauthilus.policy.v1.PolicyDecisionService/Unknown"}, func(context.Context, any) (any, error) {
@@ -430,7 +430,7 @@ func newBufconnPolicyClient(t *testing.T, service decisionservice.PreparedServic
 	listener := bufconn.Listen(1024 * 1024)
 
 	server, err := NewServer(ServerDeps{
-		Cfg: grpcAuthTestConfig(config.BasicAuth{
+		Cfg: grpcAuthTestConfig(config.BackchannelBasicAuth{
 			Enabled:  true,
 			Username: "management-client",
 			Password: secret.New("management-secret"),

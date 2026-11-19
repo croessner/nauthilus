@@ -43,7 +43,7 @@ func basicAuthTestConfig() *config.FileSettings {
 	return &config.FileSettings{
 		Server: &config.ServerSection{
 			RuntimeModules: []*config.RuntimeModule{f},
-			BasicAuth: config.BasicAuth{
+			BasicAuth: config.BackchannelBasicAuth{
 				Enabled:  true,
 				Username: "admin",
 				Password: secret.New("password"),

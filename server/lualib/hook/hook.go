@@ -50,6 +50,9 @@ import (
 
 const luaHookResponseKeyError = "error"
 
+// hookInsufficientPermissions answers an authenticated caller that holds none of the scopes of a hook.
+const hookInsufficientPermissions = "insufficient permissions"
+
 var (
 	// hookScopes is a map that associates each Location and HTTP method with its corresponding scopes.
 	hookScopes = make(map[string][]string)
@@ -349,6 +352,15 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 		return denyUnmarkedHook(ctx, cfg, logger, guid)
 	}
 
+	// A scoped Basic credential is authorized like a Bearer token carrying the same scopes.
+	if presented, authorized := mdauth.AuthorizeScopedBasicCaller(ctx, cfg, requiredScopes, hookInsufficientPermissions); presented {
+		if !authorized {
+			return handleHookBearerAuthFailure(ctx)
+		}
+
+		return allowScopedHook(ctx, cfg, logger, guid, requiredScopes)
+	}
+
 	// Scopes required but OIDC auth not configured — deny access.
 	if validator == nil {
 		return denyHookWithoutValidator(ctx, cfg, logger, guid, requiredScopes)
@@ -356,7 +368,7 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 
 	_, ok = oidcbearer.EnforceBearerScopeAuth(ctx, validator, cfg, oidcbearer.EnforceBearerScopeAuthOptions{
 		RequiredScopes:      requiredScopes,
-		MissingScopeMessage: "insufficient permissions",
+		MissingScopeMessage: hookInsufficientPermissions,
 		DelayOnMissingToken: false,
 	})
 	if !ok {
@@ -366,7 +378,8 @@ func HasRequiredScopes(ctx *gin.Context, cfg config.File, logger *slog.Logger, v
 	return allowScopedHook(ctx, cfg, logger, guid, requiredScopes)
 }
 
-// allowBackchannelBasicAuthHook authenticates unscoped non-public Lua hooks with configured Backchannel Basic Auth.
+// allowBackchannelBasicAuthHook authenticates unscoped non-public Lua hooks with the unrestricted Backchannel
+// Basic credential.
 func allowBackchannelBasicAuthHook(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string) bool {
 	if ctx == nil || ctx.Request == nil {
 		return false
@@ -377,15 +390,22 @@ func allowBackchannelBasicAuthHook(ctx *gin.Context, cfg config.File, logger *sl
 		return false
 	}
 
-	if !mdauth.ValidateBasicCredentials(cfg, username, password) {
+	caller := mdauth.AuthenticateBasicCaller(cfg, username, password)
+	if caller == nil {
 		// Presented but wrong Basic credentials are a genuine caller rejection: delayed and logged, never blocked.
 		mdauth.NewHTTPCallerAccounting(ctx, cfg, logger).Reject("invalid basic credentials")
 
 		return false
 	}
 
-	ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
-	ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
+	// A hook without scopes is an administrative route: a scoped credential holds no scope that could open it.
+	if !caller.Unrestricted() {
+		mdauth.NewHTTPCallerAccounting(ctx, cfg, logger).Deny()
+
+		return false
+	}
+
+	mdauth.StoreCaller(ctx, caller)
 
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),

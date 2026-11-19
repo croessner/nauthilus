@@ -52,8 +52,6 @@ SUPPORT_PATH = "/api/v1/support/"
 SUPPORT_SCHEMA_VERSION = "1"
 SUPPORT_READ_SCOPE = "nauthilus:history_read"
 SUPPORT_DETAIL_SCOPE = "nauthilus:history_detail"
-SUPPORT_BEARER_REQUIRED = (f"support history requires a backchannel bearer token with {SUPPORT_READ_SCOPE}; "
-                           "Basic credentials are rejected")
 SUPPORT_MAX_WINDOW = timedelta(days=31)
 SUPPORT_MAX_PAGES = 20
 SUPPORT_ATTEMPT_LIMIT = 50
@@ -1143,10 +1141,16 @@ def add_wait_args(parser: argparse.ArgumentParser, *, include_switch: bool = Tru
     parser.add_argument("--wait-interval", type=float, default=1.0, help="seconds between status polls")
 
 
+def uses_basic_credentials(client: NauthilusClient) -> bool:
+    """Report whether the client authenticates with backchannel Basic credentials only."""
+
+    return bool(not client.config.bearer_token and client.config.basic_user and client.config.basic_password)
+
+
 def require_bearer(client: NauthilusClient, requirement: str) -> None:
     """Reject Basic-only backchannel credentials for operations that accept bearer tokens only."""
 
-    if not client.config.bearer_token and client.config.basic_user and client.config.basic_password:
+    if uses_basic_credentials(client):
         raise ClientError(requirement)
 
 
@@ -1609,9 +1613,13 @@ BANS_SEARCH = HistoryQuery(bans_search_body, (("bans", "ban_ref"), ("releases", 
 
 
 def require_history_credentials(client: NauthilusClient) -> None:
-    """Reject credentials that can never authorize the read-only support history API."""
+    """Reject requested token scopes that can never authorize the read-only support history API.
 
-    require_bearer(client, SUPPORT_BEARER_REQUIRED)
+    The server decides for Basic credentials: a scoped credential holds the scopes configured for it.
+    """
+
+    if uses_basic_credentials(client):
+        return
     if not client.config.bearer_token and SUPPORT_READ_SCOPE not in client.config.scopes.split():
         raise ClientError(f"support history needs the {SUPPORT_READ_SCOPE} scope; request it with --scopes or "
                           "NAUTHILUS_SCOPES")

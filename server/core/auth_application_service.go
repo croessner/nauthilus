@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/core/localization"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
@@ -299,6 +300,9 @@ type authApplicationContextKey string
 
 const authApplicationOIDCClaimsKey authApplicationContextKey = "oidc_claims"
 
+// authApplicationCallerKey carries the authenticated backchannel caller of the transport.
+const authApplicationCallerKey authApplicationContextKey = "backchannel_caller"
+
 func (e *AuthInputError) Error() string {
 	if e == nil {
 		return ""
@@ -366,6 +370,20 @@ func ContextWithOIDCClaims(ctx context.Context, claims any) context.Context {
 	}
 
 	return context.WithValue(ctx, authApplicationOIDCClaimsKey, claims)
+}
+
+// ContextWithBackchannelCaller stores the authenticated backchannel caller for auth application execution, so
+// scope checks of the pipeline apply to Basic and Bearer callers alike.
+func ContextWithBackchannelCaller(ctx context.Context, caller *mdauth.Caller) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if caller == nil {
+		return ctx
+	}
+
+	return context.WithValue(ctx, authApplicationCallerKey, caller)
 }
 
 // NewAuthInputFromStructuredRequest maps the shared structured auth DTO into

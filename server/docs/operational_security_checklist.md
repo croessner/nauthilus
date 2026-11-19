@@ -17,6 +17,17 @@ This checklist is intended for release readiness and recurring security operatio
 - [ ] Backchannel listeners (`/api/v1/*` including the Policy API, and the gRPC authority listener) are not
       reachable from untrusted networks. A rejected caller is delayed and logged; with the HTTP rate
       middleware enabled, an address that exhausts its failure budget is refused on `/api/v1` until it refills.
+- [ ] Every backchannel caller holds only the scopes of the routes it uses. Each route family answers to its own
+      scopes (`nauthilus:authenticate` for `/api/v1/auth/*` and the management OpenAPI documents,
+      `nauthilus:security_read` for brute-force and OIDC-session listings, `nauthilus:security_write` for cache
+      and brute-force flushes and OIDC-session deletion, either of them for the status of an asynchronous job, the
+      MFA and WebAuthn scopes for `/api/v1/mfa-backchannel/*`, the support scopes for `/api/v1/support/*`); no route
+      asks for a scope of another family. `nauthilus:security` includes both security scopes, and
+      `nauthilus:admin` is accepted on the security and MFA routes as well; neither opens the authentication
+      endpoints or the support routes. Grant these two only where the narrower scope does not suffice.
+- [ ] Basic callers use scoped credentials under `auth.backchannel.basic_auth.users`, one per person or tool. The
+      unrestricted credential (`auth.backchannel.basic_auth.username` and `password`) grants full management access
+      and is announced with a warning at startup; remove it where scoped credentials or Bearer tokens suffice.
 - [ ] Backchannel credentials (Basic passwords, Policy-Basic passwords, and OIDC `client_credentials` client
       secrets or keys) are high-entropy.
 - [ ] Alerts watch `backchannel_caller_auth_total{outcome=~"rejected|unavailable"}`.
@@ -27,8 +38,8 @@ This checklist is intended for release readiness and recurring security operatio
       failure budget: requests whose Basic or Bearer caller authentication succeeds never consume it, because a
       few proxy or load balancer addresses carry all backchannel traffic. The shared HTTP/gRPC request budget is
       the process-wide bound for these callers.
-- [ ] Every failed caller authentication on these routes (missing or wrong credentials, a token without the
-      required scope, missing `auth.backchannel` configuration) and every request to the `auth.basic` endpoint
+- [ ] Every failed caller authentication on these routes (missing or wrong credentials, a caller without
+      `nauthilus:authenticate` on the routes that require it, missing `auth.backchannel` configuration) and every request to the `auth.basic` endpoint
       consumes one token of the client address. An undecided token validation (`503`) does not. Within the budget
       a failure is answered with `401` or `403` after the rejection delay. Once the address has no token left,
       every request from it, including requests with valid credentials, is answered with `429` (`scope: rate`)

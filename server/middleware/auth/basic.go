@@ -27,6 +27,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log/level"
+	"github.com/croessner/nauthilus/v4/server/secret"
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"github.com/gin-gonic/gin"
@@ -47,16 +48,6 @@ func secureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
 }
 
-// ValidateBasicCredentials compares submitted Basic credentials with the
-// configured backchannel Basic Auth credentials.
-func ValidateBasicCredentials(cfg config.File, username, password string) bool {
-	if cfg == nil || cfg.GetServer() == nil {
-		return false
-	}
-
-	return ValidateBasicAuthCredentials(cfg.GetServer().GetBasicAuth(), username, password)
-}
-
 // ValidateBasicAuthCredentials compares submitted Basic credentials with the
 // provided BasicAuth settings.
 func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, password string) bool {
@@ -64,17 +55,23 @@ func ValidateBasicAuthCredentials(basicAuth *config.BasicAuth, username, passwor
 		return false
 	}
 
-	if basicAuth.GetUsername() == "" || basicAuth.GetPassword().IsZero() {
+	return matchesBasicCredential(basicAuth.GetUsername(), basicAuth.GetPassword(), username, password)
+}
+
+// matchesBasicCredential compares submitted Basic credentials with one configured pair in constant time. An
+// incompletely configured pair matches nothing.
+func matchesBasicCredential(expectedUsername string, expectedPassword secret.Value, username, password string) bool {
+	if expectedUsername == "" || expectedPassword.IsZero() {
 		return false
 	}
 
-	expectedPassword := ""
+	matched := false
 
-	basicAuth.GetPassword().WithString(func(value string) {
-		expectedPassword = value
+	expectedPassword.WithString(func(value string) {
+		matched = secureCompare(username, expectedUsername) && secureCompare(password, value)
 	})
 
-	return secureCompare(username, basicAuth.GetUsername()) && secureCompare(password, expectedPassword)
+	return matched
 }
 
 // NewHTTPCallerAccounting records the outcome of an HTTP backchannel caller. The client IP is resolved
@@ -125,9 +122,8 @@ func CheckAndRequireBasicAuthWithCfg(ctx *gin.Context, cfg config.File) bool {
 	bypass := isAuthBypassPath(ctx)
 
 	username, password, ok := ctx.Request.BasicAuth()
-	if ok && ValidateBasicCredentials(cfg, username, password) {
-		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
-		ctx.Set(definitions.CtxAuthMethodKey, "basic_auth")
+	if caller := AuthenticateBasicCaller(cfg, username, password); ok && caller != nil {
+		StoreCaller(ctx, caller)
 
 		if !bypass {
 			NewHTTPCallerAccounting(ctx, cfg, nil).Accept()

@@ -115,13 +115,14 @@ func backchannelAuthMiddleware(
 	validator oidcbearer.TokenValidator,
 	logger *slog.Logger,
 	limiter mdauth.CallerRateLimiter,
+	baseScopes []string,
 ) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if limiter != nil && limiter.AbortIfExhausted(ctx) {
 			return
 		}
 
-		authorized := authorizeBackchannelRequest(ctx, cfg, validator, logger)
+		authorized := authorizeBackchannelRequest(ctx, cfg, validator, logger) && authorizeBaseScopes(ctx, baseScopes)
 
 		if limiter != nil && chargesFailureBudget(ctx, authorized) {
 			limiter.ChargeFailure(ctx)
@@ -133,6 +134,22 @@ func backchannelAuthMiddleware(
 
 		ctx.Next()
 	}
+}
+
+// authorizeBaseScopes requires one of baseScopes of the authenticated caller of a route group. A group without
+// base scopes leaves authorization to the scopes its routes name. Only the auth.basic route passes without a
+// caller: that endpoint authenticates the credentials of the request itself.
+func authorizeBaseScopes(ctx *gin.Context, baseScopes []string) bool {
+	caller := mdauth.CallerFromContext(ctx)
+	if len(baseScopes) == 0 || caller == nil || caller.Grants(baseScopes...) {
+		return true
+	}
+
+	ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+		backchannelResponseKeyError: oidcbearer.MissingScopeMessage(baseScopes...),
+	})
+
+	return false
 }
 
 // chargesFailureBudget reports whether the request consumes the per-IP failure budget: its caller authentication
@@ -150,7 +167,7 @@ func chargesFailureBudget(ctx *gin.Context, authorized bool) bool {
 
 // isAuthenticatedCaller reports whether Basic or Bearer caller authentication succeeded for the request.
 func isAuthenticatedCaller(ctx *gin.Context) bool {
-	return ctx.GetBool(definitions.CtxBasicAuthValidatedKey) || oidcbearer.GetClaimsFromContext(ctx) != nil
+	return mdauth.CallerFromContext(ctx) != nil
 }
 
 func openAPIContextMiddleware() gin.HandlerFunc {
@@ -215,7 +232,7 @@ func authorizeBackchannelScheme(
 		}
 	case "bearer":
 		if authState.oidcEnabled {
-			return oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, logger)
+			return oidcbearer.AuthorizeBackchannelToken(ctx, validator, cfg, logger)
 		}
 	case "":
 		if authState.basicEnabled && !authState.oidcEnabled {
@@ -224,7 +241,7 @@ func authorizeBackchannelScheme(
 	}
 
 	if authState.oidcEnabled {
-		return oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, logger)
+		return oidcbearer.AuthorizeBackchannelToken(ctx, validator, cfg, logger)
 	}
 
 	return mdauth.AuthorizeBasicAuthWithDeps(ctx, cfg, logger)
@@ -288,6 +305,58 @@ func registerPolicyRoutes(router *gin.Engine, deps *handlerdeps.Deps) {
 	policyhttp.New(deps.PolicyDecision, deps.PolicyTransport).Register(router.Group("/api/v1"))
 }
 
+// backchannelGroups are the two /api/v1 route groups behind backchannel caller authentication.
+type backchannelGroups struct {
+	// base requires the nauthilus:authenticate scope of every caller. Routes registered here need no scope of
+	// their own, so a route added without one stays closed to callers of the other groups of scopes.
+	base *gin.RouterGroup
+
+	// scoped authenticates only. Every route registered here names the scopes it requires.
+	scoped *gin.RouterGroup
+}
+
+// newBackchannelGroups builds both route groups with the same middleware chain; they differ only in the base
+// scope the caller authentication requires.
+func newBackchannelGroups(
+	router *gin.Engine,
+	deps *handlerdeps.Deps,
+	cfg config.File,
+	validator oidcbearer.TokenValidator,
+) backchannelGroups {
+	newGroup := func(baseScopes ...string) *gin.RouterGroup {
+		group := router.Group("/api/v1")
+		group.Use(openAPIContextMiddleware())
+
+		if hasConfiguredBackchannelAuth(cfg) {
+			group.Use(backchannelAuthMiddleware(cfg, validator, deps.Logger, deps.CallerRateLimiter, baseScopes))
+		}
+
+		group.Use(mdlua.ContextMiddleware())
+
+		return group
+	}
+
+	return backchannelGroups{base: newGroup(definitions.ScopeAuthenticate), scoped: newGroup()}
+}
+
+// useOpenAPIValidation wires the OpenAPI validation middleware into both groups when configured.
+func (g backchannelGroups) useOpenAPIValidation(deps *handlerdeps.Deps, cfg config.File) error {
+	openAPIValidationMiddleware, err := mdopenapivalidation.NewManagementMiddleware(
+		cfg.GetServer().GetOpenAPIValidation(),
+		deps.Logger,
+	)
+	if err != nil {
+		return err
+	}
+
+	if openAPIValidationMiddleware != nil {
+		g.base.Use(openAPIValidationMiddleware)
+		g.scoped.Use(openAPIValidationMiddleware)
+	}
+
+	return nil
+}
+
 // registerAuthenticatedBackchannelRoutes registers protected management API routes.
 func registerAuthenticatedBackchannelRoutes(
 	router *gin.Engine,
@@ -304,32 +373,26 @@ func registerAuthenticatedBackchannelRoutes(
 		return nil, nil, nil
 	}
 
-	authenticatedGroup := router.Group("/api/v1")
-	authenticatedGroup.Use(openAPIContextMiddleware())
-
 	nauthilusIDP := backchannelTokenValidator(deps, cfg)
-	if hasConfiguredBackchannelAuth(cfg) {
-		authenticatedGroup.Use(backchannelAuthMiddleware(cfg, nauthilusIDP, deps.Logger, deps.CallerRateLimiter))
-	}
-
-	authenticatedGroup.Use(mdlua.ContextMiddleware())
+	groups := newBackchannelGroups(router, deps, cfg, nauthilusIDP)
 
 	var err error
 
 	exemption.register(func() {
-		if err = useManagementOpenAPIValidation(authenticatedGroup, deps, cfg); err != nil {
+		if err = groups.useOpenAPIValidation(deps, cfg); err != nil {
 			return
 		}
 
-		registerManagementModules(authenticatedGroup, deps)
-		registerOIDCSessionManagement(authenticatedGroup, deps)
+		approuter.RegisterManagementOpenAPI(groups.base)
+		registerManagementModules(groups, deps)
+		registerOIDCSessionManagement(groups.scoped, deps)
 	})
 
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return nauthilusIDP, authenticatedGroup, nil
+	return nauthilusIDP, groups.base, nil
 }
 
 // backchannelTokenValidator returns the OIDC token validator when Bearer auth is enabled.
@@ -341,33 +404,15 @@ func backchannelTokenValidator(deps *handlerdeps.Deps, cfg config.File) oidcbear
 	return nil
 }
 
-// useManagementOpenAPIValidation wires OpenAPI validation middleware when configured.
-func useManagementOpenAPIValidation(authenticatedGroup *gin.RouterGroup, deps *handlerdeps.Deps, cfg config.File) error {
-	openAPIValidationMiddleware, err := mdopenapivalidation.NewManagementMiddleware(
-		cfg.GetServer().GetOpenAPIValidation(),
-		deps.Logger,
-	)
-	if err != nil {
-		return err
-	}
-
-	if openAPIValidationMiddleware != nil {
-		authenticatedGroup.Use(openAPIValidationMiddleware)
-	}
-
-	approuter.RegisterManagementOpenAPI(authenticatedGroup)
-
-	return nil
-}
-
-// registerManagementModules registers management modules on the authenticated group.
-func registerManagementModules(authenticatedGroup *gin.RouterGroup, deps *handlerdeps.Deps) {
-	auth.New(deps).Register(authenticatedGroup)
-	bruteforce.New(deps).Register(authenticatedGroup)
-	cache.New(deps).Register(authenticatedGroup)
-	asyncjobs.New(deps).Register(authenticatedGroup)
-	mfa_backchannel.New(deps).Register(authenticatedGroup)
-	support.New(deps).Register(authenticatedGroup)
+// registerManagementModules registers the management modules. Authentication answers to the base scope of its
+// group; every other module names the scopes of its routes itself.
+func registerManagementModules(groups backchannelGroups, deps *handlerdeps.Deps) {
+	auth.New(deps).Register(groups.base)
+	bruteforce.New(deps).Register(groups.scoped)
+	cache.New(deps).Register(groups.scoped)
+	asyncjobs.New(deps).Register(groups.scoped)
+	mfa_backchannel.New(deps).Register(groups.scoped)
+	support.New(deps).Register(groups.scoped)
 }
 
 // registerOIDCSessionManagement registers OIDC session administration when OIDC is enabled.

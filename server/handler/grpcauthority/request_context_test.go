@@ -37,7 +37,7 @@ import (
 // TestUnaryServerInterceptorAnchorsRequestContext pins that the authority chain anchors the call context, so
 // failure logs below the transport can classify a cancellation against the own call.
 func TestUnaryServerInterceptorAnchorsRequestContext(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),

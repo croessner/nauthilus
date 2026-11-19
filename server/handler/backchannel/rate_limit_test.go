@@ -105,7 +105,7 @@ func limitedAfterBurst(status int, count int) []int {
 
 // rateTestBasicConfig enables backchannel Basic Auth with the fixed test credentials.
 func rateTestBasicConfig() config.File {
-	return &config.FileSettings{Server: &config.ServerSection{BasicAuth: config.BasicAuth{
+	return &config.FileSettings{Server: &config.ServerSection{BasicAuth: config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: rateTestUsername,
 		Password: secret.New(rateTestPassword),
@@ -229,7 +229,7 @@ func newRateLimitedMiddlewareRouterWithRate(cfg config.File, scope string, refil
 	router.Use(limiter.Middleware())
 
 	group := router.Group("/api/v1")
-	group.Use(backchannelAuthMiddleware(cfg, validator, slog.Default(), limiter))
+	group.Use(backchannelAuthMiddleware(cfg, validator, slog.Default(), limiter, []string{definitions.ScopeAuthenticate}))
 
 	callerAuthRouteExemption{router: router, limiter: limiter}.register(func() {
 		for _, path := range []string{"/auth/probe", "/" + definitions.CatAuth + "/" + definitions.ServBasic} {

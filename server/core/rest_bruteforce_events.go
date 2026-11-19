@@ -23,9 +23,9 @@ import (
 	"github.com/croessner/nauthilus/v4/server/bruteforce"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 // bruteForceFlushAudit carries the bounded operator reference of one administrative flush.
@@ -59,13 +59,11 @@ func newBruteForceFlushAudit(ctx *gin.Context, source string) bruteForceFlushAud
 	audit.requestID = ctx.GetString(definitions.CtxGUIDKey)
 	audit.authMethod = ctx.GetString(definitions.CtxAuthMethodKey)
 
-	if value, exists := ctx.Get(definitions.CtxOIDCClaimsKey); exists {
-		if claims, ok := value.(jwt.MapClaims); ok {
-			audit.clientID, _ = claims[definitions.ClaimClientID].(string)
+	if caller := mdauth.CallerFromContext(ctx); caller != nil {
+		audit.clientID = caller.Identity()
 
-			if audit.authMethod == "" {
-				audit.authMethod = "oidc_bearer"
-			}
+		if audit.authMethod == "" {
+			audit.authMethod = string(caller.Method())
 		}
 	}
 

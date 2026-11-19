@@ -662,8 +662,8 @@ type AuthRequestSection struct {
 
 // AuthBackchannelSection configures API/backchannel authentication.
 type AuthBackchannelSection struct {
-	BasicAuth  BasicAuth `mapstructure:"basic_auth" validate:"omitempty"`
-	OIDCBearer OIDCAuth  `mapstructure:"oidc_bearer" validate:"omitempty"`
+	BasicAuth  BackchannelBasicAuth `mapstructure:"basic_auth" validate:"omitempty"`
+	OIDCBearer OIDCAuth             `mapstructure:"oidc_bearer" validate:"omitempty"`
 }
 
 // AuthPipelineSection configures authentication pipeline limits and shared behavior.

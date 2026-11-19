@@ -32,6 +32,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib/cacheflush"
+	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	bf "github.com/croessner/nauthilus/v4/server/model/bruteforce"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/gin-gonic/gin"
@@ -137,7 +138,7 @@ func (f *accountHistoryFixture) postList(t *testing.T, body string, query string
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
 	if claims != nil {
-		ctx.Set(definitions.CtxOIDCClaimsKey, claims)
+		oidcbearer.BindClaims(ctx, claims)
 	}
 
 	handleBruteForceList(ctx, f.deps)

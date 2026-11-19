@@ -18,7 +18,7 @@ machine contract is the `SupportHistory` tag of [`server/openapi/openapi.yaml`](
 |---|---|---|
 | Application service | `server/supporthistory` | Authorization, shared limits, concurrency gate, correlation, interpretation, projection, coverage, audit. Transport-independent. |
 | ClickHouse reader | `server/supporthistory/clickhousestore` | Bounded read-only queries over the HTTP interface with typed parameters, per-query budgets, self-terminating `FORMAT JSON`, reader self-check. |
-| HTTP adapter | `server/handler/support` | Bearer facts → verified credential, strict JSON bodies, `Cache-Control: no-store`, fixed error codes. No diagnosis logic. |
+| HTTP adapter | `server/handler/support` | Authenticated caller (Bearer token or scoped Basic credential) → verified credential, strict JSON bodies, `Cache-Control: no-store`, fixed error codes. No diagnosis logic. |
 
 The process owns one `Service`. A later MCP adapter authenticates its own transport, builds a
 `supporthistory.VerifiedCredential` from verified facts (client id, subject, scopes), and calls the same methods; it
@@ -28,17 +28,38 @@ client-supplied headers. The zero `Caller` has no permission, so an internal cal
 
 ## 2. Permissions
 
-| Bearer scope | Projection | Grants |
+| Scope | Projection | Grants |
 |---|---|---|
 | `nauthilus:history_read` | `support` | Attempt search and detail of a **named** subject, ban search with counts and distinct-name counts. |
 | `nauthilus:history_detail` | `detail` | Everything above, plus other people's claimed names, accounts, and client IPs behind shared addresses, operator ids of ban releases, the individual factor events of fail-latched flows, and detail lookups without a subject. Implies `history_read`. |
 
-`nauthilus:admin`, `nauthilus:security`, and Basic credentials grant **no** history access (403 `FORBIDDEN`). The
-base `nauthilus:authenticate` scope of the backchannel API is still required, because the whole `/api/v1` group demands
-it. A console token therefore can also call the authentication endpoints; whether `/api/v1/support` should be exempt
-from that base scope is an open maintainer decision (least privilege) and is not changed here. Register the console as an OIDC
-client with `client_credentials` and the history scopes in `identity.oidc.clients[].scopes`; tokens must target the
-backchannel audience.
+`nauthilus:admin`, `nauthilus:security`, and the unrestricted Basic credential grant **no** history access (403
+`FORBIDDEN`). The support routes ask for no other scope: a caller needs neither `nauthilus:authenticate` nor any
+management scope, so a support credential cannot call the authentication endpoints.
+
+A caller proves the scopes in one of two equivalent ways:
+
+- **Bearer token.** Register the console as an OIDC client with `client_credentials` and the history scopes in
+  `identity.oidc.clients[].scopes`; tokens must target the backchannel audience.
+- **Scoped Basic credential.** Add one entry per person or tool to `auth.backchannel.basic_auth.users` and list the
+  history scopes there. The username is the audit identity, recorded with the method `basic_auth`.
+
+```yaml
+auth:
+  backchannel:
+    basic_auth:
+      enabled: true
+      users:
+        - username: support-console
+          password: "${NAUTHILUS_SUPPORT_CONSOLE_PASSWORD}"   # at least 16 characters
+          scopes:
+            - nauthilus:history_read
+            - nauthilus:operations_read
+```
+
+A Basic password is a static secret: it has no lifetime, and it is not bound to a fresh login or a second factor the
+way a user token of the MCP endpoint is. Grant `nauthilus:history_detail` to a Basic credential only where that is
+acceptable, and prefer one credential per person so the audit record names who asked.
 
 Authorization is checked before any data access (including Redis identity mappings and the reader self-check) and
 for every page and every attempt id. A guessed or foreign attempt id answers exactly like an unknown one
@@ -102,7 +123,7 @@ Optional `audit_reference` (`^[A-Za-z0-9._:/-]{1,64}$`) is an unverified ticket 
 | 200 | – | Processed. Read `history` and `result_basis`; evidence may be partial or empty. A failed login in the data is **not** an error. |
 | 400 | `INVALID_REQUEST`, `WINDOW_TOO_LARGE`, `INVALID_CURSOR`, `INVALID_ATTEMPT_ID` | Fix the request. A cursor is bound to the same query and projection. |
 | 401 | – | Missing or invalid backchannel token (middleware body `{"error": …}`). |
-| 403 | `FORBIDDEN` | Missing history scope, Basic or admin-only credential, or a ban-search subject without the detail role. |
+| 403 | `FORBIDDEN` | Missing history scope, unrestricted Basic or admin-only credential, or a ban-search subject without the detail role. |
 | 422 | `QUERY_TOO_BROAD` | Read or response-size budget exceeded even with the smallest scan slice; narrow the window, add filters, or lower `page.limit`. |
 | 429 | `HISTORY_BUSY` | Shared concurrency gate full (4 per process, 2 per client); retry later. |
 | 503 | `HISTORY_NOT_CONFIGURED`, `HISTORY_SOURCE_UNAVAILABLE`, `HISTORY_READER_UNSAFE`, `HISTORY_TIMEOUT` | History unavailable. Never shown as "no attempts". A failed or truncated `logins` read is always 503. |

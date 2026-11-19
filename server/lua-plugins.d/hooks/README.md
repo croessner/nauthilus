@@ -185,15 +185,17 @@ Alias locations under `/api/v1/custom/` are rejected because that prefix is rese
 
 ### Access Control with OIDC Bearer and Backchannel Basic Authentication
 
-When OIDC bearer authentication is enabled in Nauthilus, you can restrict access to hooks based on token scopes.
-Backchannel Basic Auth can authenticate scope-less hooks, but it does not satisfy configured hook scopes:
+You can restrict access to hooks through scopes. A caller holds scopes either in its OIDC bearer token or as a scoped
+Backchannel Basic credential (`auth.backchannel.basic_auth.users`); both are authorized alike. The unrestricted
+Backchannel Basic credential (`auth.backchannel.basic_auth.username`) holds no scope and only authenticates
+scope-less hooks:
 
 1. Define the required scopes in the `scopes` array for each hook
-2. Users must have at least one of the specified scopes in their bearer token to access the hook
-3. If scopes are specified, valid Backchannel Basic Auth alone does not authorize the hook
-4. If no scopes are specified and `public: true` is not set, valid configured `auth.backchannel.basic_auth` credentials can authenticate the request
+2. Callers must hold at least one of the specified scopes, in their bearer token or in their scoped Basic credential
+3. If scopes are specified, the unrestricted Backchannel Basic credential alone does not authorize the hook (`403`)
+4. If no scopes are specified and `public: true` is not set, only the unrestricted `auth.backchannel.basic_auth` credential can authenticate the request; a scoped credential cannot
 5. If no scopes are specified and Backchannel Basic Auth is missing, invalid, or disabled, the hook is denied unless `public: true` is set explicitly
-6. If OIDC bearer authentication is not enabled, hooks with scopes deny access
+6. If OIDC bearer authentication is not enabled, hooks with scopes are open to scoped Basic credentials only
 7. Use `public: true` only for hooks that are deliberately unauthenticated; aliases inherit the canonical hook's `scopes` and `public` setting
 
 ### Enabling/Disabling All Custom Hooks

@@ -94,7 +94,7 @@ func newLuaHookAuthTestRouter(t *testing.T, testCfg luaHookAuthTestConfig) *gin.
 				Prefix:      "t:",
 				NegCacheTTL: time.Hour,
 			},
-			BasicAuth: config.BasicAuth{
+			BasicAuth: config.BackchannelBasicAuth{
 				Enabled:  true,
 				Username: luaHookAuthTestClient,
 				Password: secret.New(luaHookAuthTestSecret),

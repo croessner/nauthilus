@@ -139,13 +139,15 @@ history and brute-force ban history. Each command sends one `POST` with a JSON
 body to `/api/v1/support/...`; logins, accounts, addresses and filters never
 appear in the URL.
 
-They require a backchannel bearer token with `nauthilus:history_read`.
-`nauthilus:history_detail` widens the projection and allows `attempts detail`
-without `--login`/`--account`. The server rejects Basic backchannel credentials
-and tokens that only carry `nauthilus:admin`; the client refuses Basic-only
-credentials before sending anything. With OIDC client credentials, request the
-scopes explicitly, for example
-`NAUTHILUS_SCOPES="nauthilus:history_read nauthilus:history_detail"`.
+They require the `nauthilus:history_read` scope. `nauthilus:history_detail`
+widens the projection and allows `attempts detail` without
+`--login`/`--account`. Both a backchannel bearer token and a scoped Basic
+credential (`auth.backchannel.basic_auth.users`) may hold these scopes; the
+server rejects the unrestricted Basic credential and callers that only hold
+`nauthilus:admin`. With OIDC client credentials, request the scopes explicitly,
+for example `NAUTHILUS_SCOPES="nauthilus:history_read nauthilus:history_detail"`.
+With `--basic-user`, the scopes are the ones configured for that user on the
+server.
 
 ```sh
 # Attempts of one login during the last two hours

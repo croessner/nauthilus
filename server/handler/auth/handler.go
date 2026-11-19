@@ -24,6 +24,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/core"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/monitoring/authmetrics"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -177,9 +178,9 @@ func (h *Handler) process(ctx *gin.Context) {
 	h.renderAuthOutcome(ctx, renderer, input, outcome)
 }
 
-// applicationContext carries validated bearer claims into the transport-neutral scope check.
+// applicationContext carries the authenticated caller and its bearer claims into the transport-neutral scope check.
 func (h *Handler) applicationContext(ctx *gin.Context) context.Context {
-	applicationContext := ctx.Request.Context()
+	applicationContext := core.ContextWithBackchannelCaller(ctx.Request.Context(), mdauth.CallerFromContext(ctx))
 	if claims, exists := ctx.Get(definitions.CtxOIDCClaimsKey); exists {
 		applicationContext = core.ContextWithOIDCClaims(applicationContext, claims)
 	}

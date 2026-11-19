@@ -26,6 +26,8 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
+	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
 	"github.com/croessner/nauthilus/v4/server/supporthistory/historytest"
@@ -43,18 +45,29 @@ func testRouter(t *testing.T, service *supporthistory.Service, claims jwt.MapCla
 	return testRouterWithDeps(t, &handlerdeps.Deps{SupportHistory: service}, claims, basic)
 }
 
-// testRouterWithDeps mounts the handler over the given support services.
+// testRouterWithDeps mounts the handler over the given support services for a Bearer or unrestricted Basic caller.
 func testRouterWithDeps(t *testing.T, deps *handlerdeps.Deps, claims jwt.MapClaims, basic bool) *gin.Engine {
+	t.Helper()
+
+	return testRouterWithCaller(t, deps, func(ctx *gin.Context) {
+		if claims != nil {
+			oidcbearer.BindClaims(ctx, claims)
+		}
+
+		if basic {
+			mdauth.StoreCaller(ctx, mdauth.NewUnrestrictedBasicCaller("management"))
+		}
+	})
+}
+
+// testRouterWithCaller mounts the handler behind a stand-in for the backchannel caller authentication.
+func testRouterWithCaller(t *testing.T, deps *handlerdeps.Deps, bindCaller func(ctx *gin.Context)) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
 	group := engine.Group("/api/v1", func(ctx *gin.Context) {
-		if claims != nil {
-			ctx.Set(definitions.CtxOIDCClaimsKey, claims)
-		}
-
-		ctx.Set(definitions.CtxBasicAuthValidatedKey, basic)
+		bindCaller(ctx)
 		ctx.Next()
 	})
 
@@ -154,6 +167,34 @@ func TestSupportHistoryScopeMatrix(t *testing.T) {
 
 			if tc.status == http.StatusForbidden && errorCode(t, recorder) != string(supporthistory.CodeForbidden) {
 				t.Fatalf("body = %s, want FORBIDDEN", recorder.Body.String())
+			}
+		})
+	}
+}
+
+// TestSupportHistoryAuthorizesScopedBasicCredentials verifies that a scoped Basic credential is authorized through
+// the support scopes it holds, exactly like a Bearer token carrying them.
+func TestSupportHistoryAuthorizesScopedBasicCredentials(t *testing.T) {
+	deps := &handlerdeps.Deps{SupportHistory: fixtureService(t)}
+	target := "/api/v1/support/authentication-attempts/search"
+
+	for name, tc := range map[string]struct {
+		scopes []string
+		status int
+	}{
+		"history read scope":   {[]string{definitions.ScopeHistoryRead}, http.StatusOK},
+		"history detail scope": {[]string{definitions.ScopeHistoryDetail}, http.StatusOK},
+		"operations scope":     {[]string{definitions.ScopeOperationsRead}, http.StatusForbidden},
+		"management scopes":    {[]string{definitions.ScopeAdmin, definitions.ScopeAuthenticate}, http.StatusForbidden},
+	} {
+		t.Run(name, func(t *testing.T) {
+			engine := testRouterWithCaller(t, deps, func(ctx *gin.Context) {
+				mdauth.StoreCaller(ctx, mdauth.NewScopedCaller(mdauth.CallerMethodBasic, "support-console", tc.scopes))
+			})
+
+			_, recorder := serve(engine, target, searchBody())
+			if recorder.Code != tc.status {
+				t.Fatalf("status = %d body = %s, want %d", recorder.Code, recorder.Body.String(), tc.status)
 			}
 		})
 	}

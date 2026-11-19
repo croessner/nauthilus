@@ -285,7 +285,7 @@ func newMFABackchannelScopeRouter(scope string) *gin.Engine {
 
 	group := router.Group("/api/v1")
 	group.Use(func(ctx *gin.Context) {
-		if !oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, slog.Default()) {
+		if !oidcbearer.AuthorizeBackchannelToken(ctx, validator, cfg, slog.Default()) {
 			return
 		}
 

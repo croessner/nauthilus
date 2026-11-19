@@ -379,8 +379,17 @@ const (
 	// ScopePolicyDiagnostics grants access to Policy diagnostic operations.
 	ScopePolicyDiagnostics = "nauthilus:policy_diagnostics"
 
-	// ScopeSecurity grants access to security-related controls such as metrics and brute-force listings.
+	// ScopeSecurity grants read and write access to the security controls: brute-force listings and flushes,
+	// cache flushes, and OIDC session administration. It includes ScopeSecurityRead and ScopeSecurityWrite.
 	ScopeSecurity = "nauthilus:security"
+
+	// ScopeSecurityRead grants read-only access to security state: brute-force listings, OIDC session listings,
+	// and the status of asynchronous security jobs.
+	ScopeSecurityRead = "nauthilus:security_read"
+
+	// ScopeSecurityWrite grants mutations of security state: cache and brute-force flushes, OIDC session
+	// deletion, and the status of the asynchronous jobs these start.
+	ScopeSecurityWrite = "nauthilus:security_write"
 
 	// ScopeAuthenticate is the base scope required for all backchannel API access.
 	ScopeAuthenticate = "nauthilus:authenticate"
@@ -1234,8 +1243,11 @@ const (
 	// CtxMFAMethodKey stores a request-scoped MFA-method override for detached post-actions.
 	CtxMFAMethodKey = "mfa_method"
 
-	// CtxBasicAuthValidatedKey marks that HTTP Basic authentication succeeded for this request.
+	// CtxBasicAuthValidatedKey marks that the unrestricted HTTP Basic credential authenticated this request.
 	CtxBasicAuthValidatedKey = "basic_auth_validated"
+
+	// CtxBackchannelCallerKey stores the authenticated backchannel caller (Basic or Bearer) of this request.
+	CtxBackchannelCallerKey = "backchannel_caller"
 
 	// CtxCSPNonceKey stores the per-request CSP nonce for template rendering and header generation.
 	CtxCSPNonceKey = "csp_nonce"

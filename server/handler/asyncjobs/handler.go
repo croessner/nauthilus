@@ -37,7 +37,7 @@ func New(deps *handlerdeps.Deps) *Handler { return &Handler{deps: deps} }
 func (h *Handler) Register(router gin.IRouter) {
 	ag := router.Group(
 		"/async",
-		oidcbearer.RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin),
+		oidcbearer.RequireAnyScope(definitions.SecurityJobScopes()...),
 	)
 
 	ag.GET("/jobs/:jobId", core.NewAsyncJobStatusHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))

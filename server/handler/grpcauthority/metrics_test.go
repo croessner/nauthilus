@@ -194,7 +194,7 @@ func TestGRPCRequestMetricsScopesAuthenticationHistogram(t *testing.T) {
 func TestGRPCRequestMetricsInterceptorRecordsBoundedMethodAndCode(t *testing.T) {
 	for _, testCase := range grpcRequestMetricsCases() {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{})
+			cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{})
 			cfg.Server.PrometheusTimer.Enabled = true
 			metrics := newIsolatedGRPCRequestMetrics()
 			interceptor := newGRPCRequestMetrics(cfg, metrics).UnaryServerInterceptor()
@@ -343,7 +343,7 @@ func TestGRPCRequestMetricFamilies(t *testing.T) {
 
 // TestGRPCRequestMetricsInterceptorHonorsDisabledTimer verifies HTTP-compatible timer gating.
 func TestGRPCRequestMetricsInterceptorHonorsDisabledTimer(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{})
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{})
 	metrics := newIsolatedGRPCRequestMetrics()
 	interceptor := newGRPCRequestMetrics(cfg, metrics).UnaryServerInterceptor()
 

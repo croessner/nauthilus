@@ -950,8 +950,8 @@ func authenticateCallerCredentials(
 		return callerAuthFailure("missing authorization metadata")
 	}
 
-	if result, ok := authenticateBasicCaller(ctx, deps.Cfg, values, basicEnabled); ok {
-		return result, nil
+	if result, ok, err := authenticateBasicCaller(ctx, deps.Cfg, fullMethod, values, basicEnabled); ok {
+		return result, err
 	}
 
 	if !oidcEnabled {
@@ -981,10 +981,17 @@ func recordCallerAuthOutcome(accounting *mdauth.CallerAccounting, err error) {
 	}
 }
 
-// authenticateBasicCaller authenticates the first valid Basic authorization value.
-func authenticateBasicCaller(ctx context.Context, cfg config.File, values []string, basicEnabled bool) (callerAuthResult, bool) {
+// authenticateBasicCaller authenticates the first valid Basic authorization value. A scoped credential needs
+// the scopes of the RPC like a Bearer token; a missing scope ends the check with that status.
+func authenticateBasicCaller(
+	ctx context.Context,
+	cfg config.File,
+	fullMethod string,
+	values []string,
+	basicEnabled bool,
+) (callerAuthResult, bool, error) {
 	if !basicEnabled {
-		return callerAuthResult{}, false
+		return callerAuthResult{}, false, nil
 	}
 
 	for _, value := range values {
@@ -993,15 +1000,37 @@ func authenticateBasicCaller(ctx context.Context, cfg config.File, values []stri
 			continue
 		}
 
-		username, valid := validateBasicAuthorization(cfg, payload)
-		if valid {
-			return callerAuthResult{
-				caller: authorityCallerFromContextValues(ctx, username, true),
-			}, true
+		caller := basicAuthorizationCaller(cfg, payload)
+		if caller == nil {
+			continue
+		}
+
+		if err := requireRPCScopes(ctx, fullMethod, caller); err != nil {
+			return callerAuthResult{}, true, err
+		}
+
+		return callerAuthResult{
+			caller: authorityCallerFromContextValues(ctx, caller.Identity(), caller.Unrestricted()),
+		}, true, nil
+	}
+
+	return callerAuthResult{}, false, nil
+}
+
+// requireRPCScopes requires every scope of the RPC of an authenticated caller. The unrestricted Basic
+// credential holds all of them.
+func requireRPCScopes(ctx context.Context, fullMethod string, caller *mdauth.Caller) error {
+	if caller.Unrestricted() {
+		return nil
+	}
+
+	for _, requiredScope := range requiredScopesForRPC(fullMethod, requestFromContext(ctx)) {
+		if !caller.HasScope(requiredScope) {
+			return status.Error(codes.PermissionDenied, "missing required scope: "+requiredScope)
 		}
 	}
 
-	return callerAuthResult{}, false
+	return nil
 }
 
 // authenticateBearerCaller authenticates Bearer authorization values. A missing scope or a validation
@@ -1085,19 +1114,20 @@ func splitAuthorization(value string) (string, string, bool) {
 	return strings.ToLower(scheme), strings.TrimSpace(payload), true
 }
 
-func validateBasicAuthorization(cfg config.File, payload string) (string, bool) {
+// basicAuthorizationCaller resolves a Basic authorization payload to the configured backchannel caller.
+func basicAuthorizationCaller(cfg config.File, payload string) *mdauth.Caller {
 	decoded, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
-		return "", false
+		return nil
 	}
 	defer zeroBytes(decoded)
 
 	username, password, ok := strings.Cut(string(decoded), ":")
 	if !ok {
-		return "", false
+		return nil
 	}
 
-	return username, mdauth.ValidateBasicCredentials(cfg, username, password)
+	return mdauth.AuthenticateBasicCaller(cfg, username, password)
 }
 
 func zeroBytes(value []byte) {
@@ -1131,10 +1161,8 @@ func validateBearerAuthorization(
 		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
 
-	for _, requiredScope := range requiredScopesForRPC(fullMethod, requestFromContext(ctx)) {
-		if !oidcbearer.HasScope(claims, requiredScope) {
-			return nil, status.Error(codes.PermissionDenied, "missing required scope: "+requiredScope)
-		}
+	if err := requireRPCScopes(ctx, fullMethod, oidcbearer.CallerFromClaims(claims)); err != nil {
+		return nil, err
 	}
 
 	return claims, nil

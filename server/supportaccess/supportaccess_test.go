@@ -34,6 +34,8 @@ func TestVerifiedCredentialIdentity(t *testing.T) {
 		"user token":               {VerifiedCredential{Method: CredentialOAuthUser, ClientID: "cli", Subject: "anna"}, "cli#anna"},
 		"user token without sub":   {VerifiedCredential{Method: CredentialOAuthUser, ClientID: "cli"}, ""},
 		"user token without azp":   {VerifiedCredential{Method: CredentialOAuthUser, Subject: "anna"}, ""},
+		"basic credential":         {VerifiedCredential{Method: CredentialBasic, ClientID: "support-console"}, "support-console"},
+		"basic without username":   {VerifiedCredential{Method: CredentialBasic}, ""},
 		"unknown method":           {VerifiedCredential{Method: "basic", ClientID: "cli", Subject: "anna"}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {

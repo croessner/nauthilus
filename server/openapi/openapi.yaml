@@ -47,14 +47,14 @@ tags:
   - name: SupportHistory
     x-displayName: /api/v1/support
     description: >-
-      Read-only historical authentication diagnosis from recorded ClickHouse evidence. Requires a backchannel bearer
-      token with nauthilus:history_read; nauthilus:history_detail widens the projection. Basic credentials and
-      nauthilus:admin alone grant no access.
+      Read-only historical authentication diagnosis from recorded ClickHouse evidence. Requires a backchannel caller
+      (bearer token or scoped Basic credential) holding nauthilus:history_read; nauthilus:history_detail widens the
+      projection. The unrestricted Basic credential and nauthilus:admin alone grant no access.
   - name: SupportOperations
     x-displayName: /api/v1/support/operations
     description: >-
       Read-only operational diagnostics of this instance (current runtime state) and, when configured, of recorded Loki
-      log evidence and Prometheus metric counts through fixed query profiles. Requires a backchannel bearer token with nauthilus:operations_read.
+      log evidence and Prometheus metric counts through fixed query profiles. Requires a backchannel caller (bearer token or scoped Basic credential) holding nauthilus:operations_read.
       Findings, hypotheses, and completeness are separate; missing data is unknown, and a local view is never a
       cluster statement.
 paths:
@@ -1118,6 +1118,7 @@ paths:
         deduplicate by attempt_id.
       security:
         - backchannelBearer: []
+        - backchannelBasic: []
       requestBody:
         required: true
         content:
@@ -1160,6 +1161,7 @@ paths:
         same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
       security:
         - backchannelBearer: []
+        - backchannelBasic: []
       requestBody:
         required: true
         content:
@@ -1202,6 +1204,7 @@ paths:
         included. The activating request is never a culprit and `crossed` is a heuristic.
       security:
         - backchannelBearer: []
+        - backchannelBasic: []
       requestBody:
         required: true
         content:
@@ -1245,6 +1248,7 @@ paths:
         coverage. Nothing is changed.
       security:
         - backchannelBearer: []
+        - backchannelBasic: []
       requestBody:
         required: true
         content:
@@ -1293,12 +1297,22 @@ components:
     backchannelBasic:
       type: http
       scheme: basic
-      description: Backchannel Basic authentication.
+      description: >-
+        Backchannel Basic authentication. The unrestricted credential (auth.backchannel.basic_auth.username) passes
+        every management scope check and holds no support scope. A scoped credential
+        (auth.backchannel.basic_auth.users) is authorized like a bearer token carrying the scopes configured for it.
     backchannelBearer:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Backchannel OIDC bearer token. Some admin endpoints require security or admin scope.
+      description: >-
+        Backchannel OIDC bearer token. Every route family asks for its own scopes: nauthilus:authenticate for the
+        authentication endpoints and these OpenAPI documents, nauthilus:security_read for brute-force and OIDC
+        session listings, nauthilus:security_write for cache and brute-force flushes and OIDC session deletion
+        (either of them for the status of an asynchronous job), the MFA and WebAuthn scopes for the MFA backchannel,
+        and the support scopes for /api/v1/support. nauthilus:security includes both security scopes, and
+        nauthilus:admin is accepted on the security and MFA routes as well; neither opens the authentication
+        endpoints or the support routes.
   parameters:
     AuthMode:
       name: mode

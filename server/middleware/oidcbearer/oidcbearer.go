@@ -60,13 +60,12 @@ type EnforceBearerScopeAuthOptions struct {
 
 // Middleware returns a Gin middleware that extracts a Bearer token from the
 // Authorization header, validates it via the IDP, and stores the resulting
-// claims in the Gin context under definitions.CtxOIDCClaimsKey.
+// claims and caller in the Gin context.
 //
-// The middleware also verifies that the token contains the "nauthilus:authenticate"
-// scope, which is required for all backchannel API access.
+// It authenticates only. Every route names the scopes it requires through RequireAnyScope.
 func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if !AuthorizeAuthenticateScope(ctx, validator, cfg, logger) {
+		if !AuthorizeBackchannelToken(ctx, validator, cfg, logger) {
 			return
 		}
 
@@ -74,28 +73,28 @@ func Middleware(validator TokenValidator, cfg config.File, logger *slog.Logger) 
 	}
 }
 
-// RequireAnyScope enforces route-specific Bearer scopes after backchannel
-// authentication. Requests authenticated with configured Basic auth are allowed
-// because Basic remains the administrative management credential.
+// RequireAnyScope enforces the route-specific scopes of an authenticated backchannel caller. Basic and Bearer
+// callers are authorized alike through the scopes they hold; only the unrestricted Basic credential passes
+// without one, because it remains the administrative management credential.
 func RequireAnyScope(requiredScopes ...string) gin.HandlerFunc {
 	scopes := append([]string(nil), requiredScopes...)
 
 	return func(ctx *gin.Context) {
-		if len(scopes) == 0 || ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+		if len(scopes) == 0 {
 			ctx.Next()
 
 			return
 		}
 
-		claims := GetClaimsFromContext(ctx)
-		if claims == nil {
+		caller := mdauth.CallerFromContext(ctx)
+		if caller == nil {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{oidcBearerResponseKeyError: oidcBearerUnauthorizedMessage})
 
 			return
 		}
 
-		if !HasAnyScope(claims, scopes...) {
-			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{oidcBearerResponseKeyError: missingScopeMessage(scopes)})
+		if !caller.Grants(scopes...) {
+			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{oidcBearerResponseKeyError: MissingScopeMessage(scopes...)})
 
 			return
 		}
@@ -104,19 +103,15 @@ func RequireAnyScope(requiredScopes ...string) gin.HandlerFunc {
 	}
 }
 
-// AuthorizeAuthenticateScope validates a Bearer token for the base backchannel
-// authentication scope and stores validated claims in the Gin context.
-func AuthorizeAuthenticateScope(
+// AuthorizeBackchannelToken authenticates the Bearer token of a backchannel request and stores its claims and
+// caller in the Gin context. It requires no scope: the route decides which scopes it needs.
+func AuthorizeBackchannelToken(
 	ctx *gin.Context,
 	validator TokenValidator,
 	cfg config.File,
 	logger *slog.Logger,
 ) bool {
-	_, ok := EnforceBearerScopeAuth(ctx, validator, cfg, EnforceBearerScopeAuthOptions{
-		RequiredScopes:      []string{definitions.ScopeAuthenticate},
-		MissingScopeMessage: "missing required scope: " + definitions.ScopeAuthenticate,
-		DelayOnMissingToken: true,
-	})
+	_, ok := EnforceBearerScopeAuth(ctx, validator, cfg, EnforceBearerScopeAuthOptions{DelayOnMissingToken: true})
 	if !ok {
 		util.DebugModuleWithCfg(
 			ctx.Request.Context(),
@@ -124,13 +119,24 @@ func AuthorizeAuthenticateScope(
 			logger,
 			definitions.DbgIdp,
 			definitions.LogKeyGUID, ctx.GetString(definitions.CtxGUIDKey),
-			definitions.LogKeyMsg, "OIDC token missing required scope: "+definitions.ScopeAuthenticate,
+			definitions.LogKeyMsg, "Backchannel Bearer token was not accepted",
 		)
 
 		return false
 	}
 
 	return true
+}
+
+// CallerFromClaims maps validated backchannel token claims to the caller they authenticate.
+func CallerFromClaims(claims jwt.MapClaims) *mdauth.Caller {
+	if claims == nil {
+		return nil
+	}
+
+	clientID, _ := claims[definitions.ClaimClientID].(string)
+
+	return mdauth.NewScopedCaller(mdauth.CallerMethodBearer, clientID, tokenclaims.Scopes(claims))
 }
 
 // EnforceBearerScopeAuth validates the Bearer token of the request, enforces the required scopes, and
@@ -230,10 +236,16 @@ func validateAndStoreClaims(ctx *gin.Context, validator TokenValidator, accounti
 		return nil
 	}
 
-	// Store claims in context for downstream handlers
-	ctx.Set(definitions.CtxOIDCClaimsKey, claims)
+	BindClaims(ctx, claims)
 
 	return claims
+}
+
+// BindClaims stores validated backchannel token claims and the caller they authenticate in the Gin context for
+// downstream handlers. Only code that validated the token itself may call it.
+func BindClaims(ctx *gin.Context, claims jwt.MapClaims) {
+	ctx.Set(definitions.CtxOIDCClaimsKey, claims)
+	mdauth.StoreCaller(ctx, CallerFromClaims(claims))
 }
 
 // IsBackchannelAccessToken reports whether claims target the protected backchannel API.
@@ -320,8 +332,8 @@ func HasScopeFromContext(ctx *gin.Context, scope string) bool {
 	return HasScope(claims, scope)
 }
 
-// missingScopeMessage renders a compact scope error without exposing token data.
-func missingScopeMessage(scopes []string) string {
+// MissingScopeMessage renders a compact scope error without exposing token data.
+func MissingScopeMessage(scopes ...string) string {
 	if len(scopes) == 0 {
 		return "insufficient permissions"
 	}

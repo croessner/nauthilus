@@ -52,17 +52,16 @@ func NewOIDCSessionsAPI(d *deps.Deps, storage OIDCSessionStore) *OIDCSessionsAPI
 	}
 }
 
-// Register registers the API routes.
+// Register registers the API routes. Listing sessions needs a security read scope, deleting them a security
+// write scope.
 func (a *OIDCSessionsAPI) Register(router gin.IRouter) {
-	v1 := router.Group(
-		"/oidc",
-		oidcbearer.RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin),
-	)
-	{
-		v1.GET("/sessions/:user_id", a.ListSessions)
-		v1.DELETE("/sessions/:user_id", a.DeleteAllSessions)
-		v1.DELETE("/sessions/:user_id/:token", a.DeleteSession)
-	}
+	v1 := router.Group("/oidc")
+	read := oidcbearer.RequireAnyScope(definitions.SecurityReadScopes()...)
+	write := oidcbearer.RequireAnyScope(definitions.SecurityWriteScopes()...)
+
+	v1.GET("/sessions/:user_id", read, a.ListSessions)
+	v1.DELETE("/sessions/:user_id", write, a.DeleteAllSessions)
+	v1.DELETE("/sessions/:user_id/:token", write, a.DeleteSession)
 }
 
 // ListSessions returns all active OIDC sessions for a user.

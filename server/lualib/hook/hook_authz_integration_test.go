@@ -74,6 +74,12 @@ func setupHookTestConfig(t *testing.T) config.File {
 	return config.GetFile()
 }
 
+const (
+	hookScopedBasicUser   = "hook-reader"
+	hookScopedBasicSecret = "hook-reader-secret"
+	hookScopedBasicScope  = "scope:a"
+)
+
 func setupHookBasicAuthConfig(t *testing.T, enabled bool) config.File {
 	t.Helper()
 
@@ -85,10 +91,15 @@ func setupHookBasicAuthConfig(t *testing.T, enabled bool) config.File {
 				Prefix:      "t:",
 				NegCacheTTL: time.Hour,
 			},
-			BasicAuth: config.BasicAuth{
+			BasicAuth: config.BackchannelBasicAuth{
 				Enabled:  enabled,
 				Username: "hook-client",
 				Password: secret.New("hook-secret"),
+				Users: []config.BackchannelBasicAuthUser{{
+					Username: hookScopedBasicUser,
+					Password: secret.New(hookScopedBasicSecret),
+					Scopes:   []string{hookScopedBasicScope},
+				}},
 			},
 		},
 	}
@@ -313,12 +324,56 @@ func TestHasRequiredScopes_ScopedHookDoesNotBypassScopesWithBasicAuth(t *testing
 		t.Fatal("expected aborted context")
 	}
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401, got %d body=%s", rec.Code, rec.Body.String())
+	// The unrestricted credential is authenticated but holds no scope of the hook.
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	if ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
 		t.Fatal("did not expect Basic Auth validated marker for scoped hook")
+	}
+}
+
+// TestHasRequiredScopes_ScopedBasicCredential verifies that a scoped Basic credential opens exactly the hooks
+// whose scopes it holds, with or without an OIDC validator, and never an administrative hook without scopes.
+func TestHasRequiredScopes_ScopedBasicCredential(t *testing.T) {
+	tests := []struct {
+		name       string
+		hookScopes []string
+		password   string
+		wantOK     bool
+		wantStatus int
+	}{
+		{name: "holds the hook scope", hookScopes: []string{"scope:x", hookScopedBasicScope}, password: hookScopedBasicSecret, wantOK: true, wantStatus: http.StatusOK},
+		{name: "holds another scope", hookScopes: []string{"scope:x"}, password: hookScopedBasicSecret, wantStatus: http.StatusForbidden},
+		{name: "wrong password", hookScopes: []string{hookScopedBasicScope}, password: "wrong-secret", wantStatus: http.StatusUnauthorized},
+		{name: "hook without scopes stays administrative", password: hookScopedBasicSecret, wantStatus: http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withIsolatedHookRoles(t)
+			t.Cleanup(mdauth.SetCallerRejectionDelayForTest(time.Millisecond))
+
+			cfg := setupHookBasicAuthConfig(t, true)
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			ctx, rec := newHookTestContext(http.MethodGet, "/custom/report")
+			ctx.Request.SetBasicAuth(hookScopedBasicUser, tt.password)
+
+			if tt.hookScopes != nil {
+				setHookScopes("/custom/report", http.MethodGet, tt.hookScopes)
+			}
+
+			ok := HasRequiredScopes(ctx, cfg, logger, nil, "/custom/report", http.MethodGet)
+			if ok != tt.wantOK || rec.Code != tt.wantStatus {
+				t.Fatalf("ok = %t status = %d body = %s, want ok = %t status = %d",
+					ok, rec.Code, rec.Body.String(), tt.wantOK, tt.wantStatus)
+			}
+
+			if ctx.GetBool(definitions.CtxBasicAuthValidatedKey) {
+				t.Fatal("a scoped credential must never set the unrestricted Basic marker")
+			}
+		})
 	}
 }
 

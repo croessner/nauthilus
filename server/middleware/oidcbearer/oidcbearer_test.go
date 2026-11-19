@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
@@ -214,7 +215,7 @@ func assertBearerMiddlewareStatus(t *testing.T, scope string, target string, exp
 	w := httptest.NewRecorder()
 	router := gin.New()
 
-	router.Use(Middleware(validator, nil, nil))
+	router.Use(Middleware(validator, nil, nil), RequireAnyScope(definitions.ScopeAuthenticate))
 	router.GET("/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -463,13 +464,18 @@ func TestEnforceBearerScopeAuth(t *testing.T) {
 	})
 }
 
-func TestScopeMiddlewareRequiresOperationScopeForBearer(t *testing.T) {
-	tests := []struct {
-		name       string
-		claims     jwt.MapClaims
-		basicAuth  bool
-		wantStatus int
-	}{
+// scopeMiddlewareCase is one caller of the route-scope middleware and the status it must get.
+type scopeMiddlewareCase struct {
+	name        string
+	claims      jwt.MapClaims
+	basicScopes []string
+	basicAuth   bool
+	wantStatus  int
+}
+
+// scopeMiddlewareCases lists Bearer and Basic callers of a route that requires a security or admin scope.
+func scopeMiddlewareCases() []scopeMiddlewareCase {
+	return []scopeMiddlewareCase{
 		{
 			name:       "base scope bearer is forbidden",
 			claims:     backchannelAccessClaims(definitions.ScopeAuthenticate),
@@ -486,15 +492,29 @@ func TestScopeMiddlewareRequiresOperationScopeForBearer(t *testing.T) {
 			wantStatus: http.StatusNoContent,
 		},
 		{
-			name:       "basic authenticated request is allowed",
+			name:       "unrestricted basic credential is allowed",
 			basicAuth:  true,
 			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:        "scoped basic credential with the operation scope is allowed",
+			basicScopes: []string{definitions.ScopeSecurity},
+			wantStatus:  http.StatusNoContent,
+		},
+		{
+			name:        "scoped basic credential without the operation scope is forbidden",
+			basicScopes: []string{definitions.ScopeHistoryRead},
+			wantStatus:  http.StatusForbidden,
 		},
 		{
 			name:       "missing authentication context is unauthorized",
 			wantStatus: http.StatusUnauthorized,
 		},
 	}
+}
+
+func TestScopeMiddlewareRequiresOperationScopeOfCaller(t *testing.T) {
+	tests := scopeMiddlewareCases()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -504,11 +524,15 @@ func TestScopeMiddlewareRequiresOperationScopeForBearer(t *testing.T) {
 
 			router.Use(func(ctx *gin.Context) {
 				if tt.claims != nil {
-					ctx.Set(definitions.CtxOIDCClaimsKey, tt.claims)
+					BindClaims(ctx, tt.claims)
 				}
 
 				if tt.basicAuth {
-					ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+					mdauth.StoreCaller(ctx, mdauth.NewUnrestrictedBasicCaller("management"))
+				}
+
+				if tt.basicScopes != nil {
+					mdauth.StoreCaller(ctx, mdauth.NewScopedCaller(mdauth.CallerMethodBasic, "support", tt.basicScopes))
 				}
 
 				ctx.Next()

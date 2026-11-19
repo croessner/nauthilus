@@ -494,13 +494,13 @@ class SupportHistoryClientTest(unittest.TestCase):
         self.assertIn(f"stopped after {ADMIN.SUPPORT_MAX_PAGES} pages", stderr)
         self.assertIn(f"--cursor c{ADMIN.SUPPORT_MAX_PAGES - 1}", stderr)
 
-    def test_basic_credentials_are_rejected_before_any_request(self):
-        code, stdout, stderr, send = self.run_support(
+    def test_basic_credentials_are_sent_and_authorized_by_the_server(self):
+        code, _, stderr, send = self.run_support(
             "attempts", "search", "--login", "alice", "--since", "1h",
-            base=("--basic-user", "operator", "--basic-password", "synthetic"))
-        self.assertEqual((code, stdout), (1, ""))
-        send.assert_not_called()
-        self.assertIn("bearer token with nauthilus:history_read", stderr)
+            base=("--basic-user", "operator", "--basic-password", "synthetic"),
+            responses=[history_response(attempts=[attempt("rq1.r1")])])
+        self.assertEqual(code, 0, stderr)
+        self.assertTrue(send.call_args.kwargs["headers"]["Authorization"].startswith("Basic "))
 
     def test_client_credentials_must_request_the_history_scope(self):
         base = ("--client-id", "support", "--client-secret", "synthetic")

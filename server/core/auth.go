@@ -43,7 +43,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/errors"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib"
-	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/model/authdto"
 	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
@@ -3686,10 +3686,12 @@ func (a *AuthState) Ctx() context.Context {
 	return svcctx.Get()
 }
 
-// HasOIDCScope checks if the current request's OIDC Bearer token contains the specified scope.
-// Returns false if no OIDC claims are present in the context.
-func (a *AuthState) HasOIDCScope(ctx *gin.Context, scope string) bool {
-	return oidcbearer.HasScopeFromContext(ctx, scope)
+// backchannelCallerGrants reports whether the backchannel caller of the request may use an operation that
+// requires scope. A request without caller authentication, such as an internal one, is not restricted here.
+func backchannelCallerGrants(ctx *gin.Context, scope string) bool {
+	caller := mdauth.CallerFromContext(ctx)
+
+	return caller == nil || caller.Grants(scope)
 }
 
 // SetOperationMode sets the operation mode of the AuthState object based on the "mode" query parameter from the provided gin context.
@@ -3722,20 +3724,14 @@ func (a *AuthState) SetOperationMode(ctx *gin.Context) {
 
 		a.Request.Protocol.Set(definitions.ProtoAccountProvider)
 
-		// Check if OIDC Bearer token has the required scope
-		claims := oidcbearer.GetClaimsFromContext(ctx)
-
-		if claims != nil {
-			if a.HasOIDCScope(ctx, definitions.ScopeListAccounts) {
-				a.Request.ListAccounts = true
-			} else {
-				level.Warn(logger).Log(
-					definitions.LogKeyGUID, guid,
-					definitions.LogKeyMsg, "OIDC token missing scope '"+definitions.ScopeListAccounts+"' required for list-accounts mode",
-				)
-			}
-		} else {
+		// A Bearer token and a scoped Basic credential both need the list-accounts scope.
+		if backchannelCallerGrants(ctx, definitions.ScopeListAccounts) {
 			a.Request.ListAccounts = true
+		} else {
+			level.Warn(logger).Log(
+				definitions.LogKeyGUID, guid,
+				definitions.LogKeyMsg, "Backchannel caller is missing scope '"+definitions.ScopeListAccounts+"' required for list-accounts mode",
+			)
 		}
 	}
 

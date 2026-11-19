@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Package support is the management HTTP adapter of the read-only support operations (historical authentication
-// diagnosis and operational diagnostics). It only translates the transport: bearer facts become a verified
+// diagnosis and operational diagnostics). It only translates the transport: caller facts become a verified
 // credential and JSON bodies become operation arguments. The operations, their decoding, authorization, limits, and
 // rendered bytes come from server/supportapi, which the MCP endpoint uses as well.
 package support
@@ -27,6 +27,7 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v4/server/supportaccess"
 	"github.com/croessner/nauthilus/v4/server/supportapi"
@@ -79,25 +80,34 @@ func (h *Handler) handle(operation supportapi.Operation) gin.HandlerFunc {
 	}
 }
 
-// verifiedCredential turns the bearer claims the backchannel middleware validated into a verified service
-// credential carrying only support scopes. Basic credentials and unauthenticated requests yield no credential.
+// verifiedCredential turns the caller the backchannel middleware authenticated into a verified service
+// credential carrying only the support scopes it really holds. A Bearer token and a scoped Basic credential map
+// alike; the unrestricted Basic credential and unauthenticated requests yield no credential.
 func verifiedCredential(ctx *gin.Context) supportaccess.VerifiedCredential {
-	claims := oidcbearer.GetClaimsFromContext(ctx)
-	if claims == nil {
+	caller := mdauth.CallerFromContext(ctx)
+	if caller == nil || caller.Unrestricted() {
 		return supportaccess.VerifiedCredential{}
 	}
 
-	credential := supportaccess.VerifiedCredential{Method: supportaccess.CredentialOIDCBearer}
-	credential.ClientID, _ = claims[definitions.ClaimClientID].(string)
-	credential.Subject, _ = claims["sub"].(string)
+	credential := supportaccess.VerifiedCredential{Method: credentialMethod(caller), ClientID: caller.Identity()}
+	credential.Subject, _ = oidcbearer.GetClaimsFromContext(ctx)["sub"].(string)
 
 	for _, scope := range supportapi.SupportScopes() {
-		if oidcbearer.HasScope(claims, scope) {
+		if caller.HasScope(scope) {
 			credential.Scopes = append(credential.Scopes, scope)
 		}
 	}
 
 	return credential
+}
+
+// credentialMethod names the support credential method of an authenticated backchannel caller.
+func credentialMethod(caller *mdauth.Caller) supportaccess.CredentialMethod {
+	if caller.Method() == mdauth.CallerMethodBasic {
+		return supportaccess.CredentialBasic
+	}
+
+	return supportaccess.CredentialOIDCBearer
 }
 
 // readBody reads one bounded JSON body; query parameters are refused so filters never reach access logs.

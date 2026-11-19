@@ -14,6 +14,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/log/level"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -316,7 +317,7 @@ func authorizeNativeHook(
 			return false
 		}
 
-		if len(descriptor.RequiredScopes) > 0 && !oidcbearer.HasAnyScope(oidcbearer.GetClaimsFromContext(ctx), descriptor.RequiredScopes...) {
+		if len(descriptor.RequiredScopes) > 0 && !mdauth.CallerFromContext(ctx).HasAnyScope(descriptor.RequiredScopes...) {
 			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{nativeHookErrorField: nativeHookInsufficientPermissions})
 			return false
 		}
@@ -365,6 +366,11 @@ func enforceNativeHookToken(
 	validator oidcbearer.TokenValidator,
 	requiredScopes []string,
 ) bool {
+	// A scoped Basic credential is authorized like a Bearer token carrying the same scopes.
+	if presented, authorized := mdauth.AuthorizeScopedBasicCaller(ctx, cfg, requiredScopes, nativeHookInsufficientPermissions); presented {
+		return authorized
+	}
+
 	if validator == nil {
 		ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{nativeHookErrorField: "authentication required but not configured"})
 
@@ -630,7 +636,7 @@ func nativeHookCaller(ctx *gin.Context) NativeHookCaller {
 	return NativeHookCaller{
 		Subject:       subject,
 		ClientID:      clientID,
-		Authenticated: len(claims) > 0 || ctx.GetBool(definitions.CtxBasicAuthValidatedKey),
+		Authenticated: mdauth.CallerFromContext(ctx) != nil,
 	}
 }
 

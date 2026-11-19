@@ -29,7 +29,7 @@ type metricsRequestCase struct {
 func TestMetricsEndpointAllowsOpenAccessWhenBasicAuthIsDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	recorder := serveMetricsRequest(t, newMetricsHandlerConfig(config.BasicAuth{}, config.BasicAuth{}), nil)
+	recorder := serveMetricsRequest(t, newMetricsHandlerConfig(config.BasicAuth{}, config.BackchannelBasicAuth{}), nil)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
@@ -42,18 +42,18 @@ func TestMetricsEndpointRequiresDedicatedBasicAuthOnly(t *testing.T) {
 	tests := []metricsRequestCase{
 		{
 			name:       "open when metrics basic auth is disabled",
-			cfg:        newMetricsHandlerConfig(config.BasicAuth{}, config.BasicAuth{}),
+			cfg:        newMetricsHandlerConfig(config.BasicAuth{}, config.BackchannelBasicAuth{}),
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:                  "rejects missing basic auth when metrics auth is enabled",
-			cfg:                   newMetricsHandlerConfig(metricsBasic, config.BasicAuth{}),
+			cfg:                   newMetricsHandlerConfig(metricsBasic, config.BackchannelBasicAuth{}),
 			wantStatus:            http.StatusUnauthorized,
 			wantAuthenticateBasic: true,
 		},
 		{
 			name: "accepts dedicated metrics basic auth",
-			cfg:  newMetricsHandlerConfig(metricsBasic, config.BasicAuth{}),
+			cfg:  newMetricsHandlerConfig(metricsBasic, config.BackchannelBasicAuth{}),
 			prepare: func(req *http.Request) {
 				req.SetBasicAuth(testMetricsUsername, testMetricsPassword)
 			},
@@ -70,7 +70,7 @@ func TestMetricsEndpointRequiresDedicatedBasicAuthOnly(t *testing.T) {
 		},
 		{
 			name: "rejects bearer auth even when metrics basic auth is enabled",
-			cfg:  newMetricsHandlerConfig(metricsBasic, config.BasicAuth{}),
+			cfg:  newMetricsHandlerConfig(metricsBasic, config.BackchannelBasicAuth{}),
 			prepare: func(req *http.Request) {
 				req.Header.Set("Authorization", "Bearer token")
 			},
@@ -127,15 +127,15 @@ func metricsBasicAuth() config.BasicAuth {
 	}
 }
 
-func backchannelBasicAuth() config.BasicAuth {
-	return config.BasicAuth{
+func backchannelBasicAuth() config.BackchannelBasicAuth {
+	return config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: testBackchannelUsername,
 		Password: secret.New(testBackchannelPassword),
 	}
 }
 
-func newMetricsHandlerConfig(metricsBasic config.BasicAuth, backchannelBasic config.BasicAuth) *config.FileSettings {
+func newMetricsHandlerConfig(metricsBasic config.BasicAuth, backchannelBasic config.BackchannelBasicAuth) *config.FileSettings {
 	return &config.FileSettings{
 		Server: &config.ServerSection{
 			MetricsEndpointAuth: config.MetricsEndpointAuth{

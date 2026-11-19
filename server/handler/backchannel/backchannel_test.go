@@ -75,7 +75,7 @@ func backchannelAuthConfigCases() []backchannelAuthConfigCase {
 func backchannelAuthConfig(basicEnabled bool, oidcEnabled bool, withHook bool) config.File {
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{Enabled: basicEnabled},
+			BasicAuth: config.BackchannelBasicAuth{Enabled: basicEnabled},
 			OIDCAuth:  config.OIDCAuth{Enabled: oidcEnabled},
 		},
 	}
@@ -117,7 +117,7 @@ func TestBackchannelAuthMiddlewareAllowsEitherBasicOrBearer(t *testing.T) {
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{
+			BasicAuth: config.BackchannelBasicAuth{
 				Enabled:  true,
 				Username: "api-client",
 				Password: secret.New("api-secret-1234"),
@@ -190,7 +190,7 @@ func TestSetupRegistersProtectedManagementOpenAPI(t *testing.T) {
 
 	cfg := &config.FileSettings{
 		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{
+			BasicAuth: config.BackchannelBasicAuth{
 				Enabled:  true,
 				Username: "api-client",
 				Password: secret.New("api-secret-1234"),
@@ -315,7 +315,7 @@ func TestBackchannelAsyncJobStatusAllowsSecurityScopeBearer(t *testing.T) {
 
 func newBackchannelAuthTestRouter(cfg config.File, validator *recordingTokenValidator) *gin.Engine {
 	router := gin.New()
-	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default(), nil))
+	router.Use(backchannelAuthMiddleware(cfg, validator, slog.Default(), nil, []string{definitions.ScopeAuthenticate}))
 	router.GET("/api/v1/auth/probe", func(ctx *gin.Context) {
 		ctx.Status(http.StatusNoContent)
 	})
@@ -379,7 +379,7 @@ func newBackchannelMutationScopeRouter(scope string) *gin.Engine {
 // oidcBackchannelTestMiddleware simulates the shared Bearer backchannel boundary.
 func oidcBackchannelTestMiddleware(cfg config.File, validator *recordingTokenValidator) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if !oidcbearer.AuthorizeAuthenticateScope(ctx, validator, cfg, slog.Default()) {
+		if !oidcbearer.AuthorizeBackchannelToken(ctx, validator, cfg, slog.Default()) {
 			return
 		}
 

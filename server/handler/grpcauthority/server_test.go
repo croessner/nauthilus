@@ -62,7 +62,7 @@ import (
 )
 
 func TestUnaryServerInterceptorAllowsValidBasicAuth(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -253,7 +253,7 @@ var serializationFailureServiceDesc = grpc.ServiceDesc{
 }
 
 func TestUnaryServerInterceptorRejectsInvalidBasicAuth(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -275,8 +275,53 @@ func TestUnaryServerInterceptorRejectsInvalidBasicAuth(t *testing.T) {
 	}
 }
 
+// TestUnaryServerInterceptorAuthorizesScopedBasicCredentialByRPCScope verifies that a scoped Basic credential
+// needs the scope of the RPC like a Bearer token, while the unrestricted credential holds every scope.
+func TestUnaryServerInterceptorAuthorizesScopedBasicCredentialByRPCScope(t *testing.T) {
+	basic := validBasicAuthConfig()
+	basic.Users = []config.BackchannelBasicAuthUser{{
+		Username: "grpc-lookup",
+		Password: secret.New("grpc-lookup-secret"),
+		Scopes:   []string{definitions.ScopeLookupIdentity},
+	}}
+
+	interceptor := UnaryServerInterceptor(ServerDeps{
+		Cfg:    grpcAuthTestConfig(basic, config.OIDCAuth{}),
+		Logger: slog.Default(),
+	})
+
+	tests := []struct {
+		name       string
+		username   string
+		password   string
+		fullMethod string
+		wantCode   codes.Code
+	}{
+		{name: "scoped credential holds the RPC scope", username: "grpc-lookup", password: "grpc-lookup-secret",
+			fullMethod: authv1.AuthService_LookupIdentity_FullMethodName, wantCode: codes.OK},
+		{name: "scoped credential lacks the RPC scope", username: "grpc-lookup", password: "grpc-lookup-secret",
+			fullMethod: authv1.AuthService_Authenticate_FullMethodName, wantCode: codes.PermissionDenied},
+		{name: "unrestricted credential holds every scope", username: "grpc-client", password: "grpc-secret-1234",
+			fullMethod: authv1.AuthService_Authenticate_FullMethodName, wantCode: codes.OK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := metadata.NewIncomingContext(
+				context.Background(),
+				metadata.Pairs("authorization", basicAuthorization(tt.username, tt.password)),
+			)
+
+			_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: tt.fullMethod}, okUnaryHandler)
+			if status.Code(err) != tt.wantCode {
+				t.Fatalf("code = %v, want %v (err = %v)", status.Code(err), tt.wantCode, err)
+			}
+		})
+	}
+}
+
 func TestUnaryServerInterceptorRejectsEmptyConfiguredBasicCredentials(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled: true,
 	}, config.OIDCAuth{})
 	interceptor := UnaryServerInterceptor(ServerDeps{
@@ -297,7 +342,7 @@ func TestUnaryServerInterceptorRejectsEmptyConfiguredBasicCredentials(t *testing
 }
 
 func TestUnaryServerInterceptorAllowsEitherConfiguredMechanism(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -330,7 +375,7 @@ func TestUnaryServerInterceptorAllowsEitherConfiguredMechanism(t *testing.T) {
 }
 
 func TestUnaryServerInterceptorAllowsBearerWithAuthenticateScope(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{Enabled: true})
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg: cfg,
 		OIDCValidator: staticTokenValidator{
@@ -356,7 +401,7 @@ func TestUnaryServerInterceptorAllowsBearerWithAuthenticateScope(t *testing.T) {
 }
 
 func TestUnaryServerInterceptorRejectsCrossResourceBearer(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{Enabled: true})
 
 	for _, testCase := range []struct {
 		name     string
@@ -390,7 +435,7 @@ func TestUnaryServerInterceptorRejectsCrossResourceBearer(t *testing.T) {
 }
 
 func TestUnaryServerInterceptorRejectsBearerListAccountsWithoutScope(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{Enabled: true})
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg: cfg,
 		OIDCValidator: staticTokenValidator{
@@ -412,7 +457,7 @@ func TestUnaryServerInterceptorRejectsBearerListAccountsWithoutScope(t *testing.
 }
 
 func TestUnaryServerInterceptorAllowsBearerListAccountsWithScope(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{Enabled: true})
 	interceptor := UnaryServerInterceptor(ServerDeps{
 		Cfg: cfg,
 		OIDCValidator: staticTokenValidator{
@@ -438,7 +483,7 @@ func TestUnaryServerInterceptorAllowsBearerListAccountsWithScope(t *testing.T) {
 }
 
 func TestUnaryServerInterceptorMapsPanicsToInternal(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -463,7 +508,7 @@ func TestUnaryServerInterceptorMapsPanicsToInternal(t *testing.T) {
 }
 
 func TestUnaryServerInterceptorRequiresClientCertificateWhenConfigured(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -487,7 +532,7 @@ func TestUnaryServerInterceptorRequiresClientCertificateWhenConfigured(t *testin
 }
 
 func TestUnaryServerInterceptorAllowsClientCertificateWhenConfigured(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -620,7 +665,7 @@ func TestUnaryServerInterceptorExtractsIncomingTraceContext(t *testing.T) {
 	restore := installGRPCTraceTestGlobals(tp)
 	defer restore()
 
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),
@@ -1187,7 +1232,7 @@ func outgoingBasicAuthContext(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, authorizationMetadataKey, basicAuthorization("grpc-client", "grpc-secret-1234"))
 }
 
-func grpcAuthTestConfig(basic config.BasicAuth, oidc config.OIDCAuth) *config.FileSettings {
+func grpcAuthTestConfig(basic config.BackchannelBasicAuth, oidc config.OIDCAuth) *config.FileSettings {
 	return &config.FileSettings{
 		Server: &config.ServerSection{
 			BasicAuth: basic,
@@ -1206,8 +1251,8 @@ func grpcAuthTestConfig(basic config.BasicAuth, oidc config.OIDCAuth) *config.Fi
 	}
 }
 
-func validBasicAuthConfig() config.BasicAuth {
-	return config.BasicAuth{
+func validBasicAuthConfig() config.BackchannelBasicAuth {
+	return config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),

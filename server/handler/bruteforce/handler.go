@@ -35,15 +35,15 @@ func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
-// Register provides the exported Register method.
+// Register mounts the brute-force routes. Listing needs a security read scope, whatever the HTTP method of the
+// filtered listing; flushing needs a security write scope.
 func (h *Handler) Register(router gin.IRouter) {
-	bg := router.Group(
-		"/"+definitions.CatBruteForce,
-		oidcbearer.RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin),
-	)
+	bg := router.Group("/" + definitions.CatBruteForce)
+	read := oidcbearer.RequireAnyScope(definitions.SecurityReadScopes()...)
+	write := oidcbearer.RequireAnyScope(definitions.SecurityWriteScopes()...)
 
-	bg.GET("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-	bg.POST("/"+definitions.ServList, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
-	bg.DELETE("/"+definitions.ServFlush, core.NewBruteForceFlushHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner)))
-	bg.DELETE("/"+definitions.ServFlush+"/async", core.NewBruteForceFlushAsyncHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner)))
+	bg.GET("/"+definitions.ServList, read, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+	bg.POST("/"+definitions.ServList, read, core.NewBruteForceListHandler(h.deps.Cfg, h.deps.Logger, h.deps.Redis))
+	bg.DELETE("/"+definitions.ServFlush, write, core.NewBruteForceFlushHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner)))
+	bg.DELETE("/"+definitions.ServFlush+"/async", write, core.NewBruteForceFlushAsyncHandlerWithEvents(h.deps.Cfg, h.deps.Logger, h.deps.Redis, pluginruntime.BruteForceEventEmitter(h.deps.PluginRunner)))
 }

@@ -1035,7 +1035,7 @@ func restartBaselineServer(parts restartBaselineCandidateParts, artifacts restar
 			MaxConnsPerHost: 4, MaxIdleConns: 4, MaxIdleConnsPerHost: 2,
 			TLS: config.HTTPClientTLS{CAFile: artifacts.httpCA},
 		},
-		BasicAuth: config.BasicAuth{
+		BasicAuth: config.BackchannelBasicAuth{
 			Enabled: true, Username: "backchannel", Password: secret.New("backchannel-password"),
 		},
 		Frontend: config.Frontend{

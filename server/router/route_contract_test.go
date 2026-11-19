@@ -283,7 +283,7 @@ func buildIDPContractRouter(t *testing.T) *gin.Engine {
 func routeContractConfig() *config.FileSettings {
 	return &config.FileSettings{
 		Server: &config.ServerSection{
-			BasicAuth: config.BasicAuth{
+			BasicAuth: config.BackchannelBasicAuth{
 				Enabled:  true,
 				Username: "api-client",
 				Password: secret.New("api-secret-1234"),

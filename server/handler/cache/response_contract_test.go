@@ -24,8 +24,8 @@ import (
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
-	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/openapi/requesttest"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
 	"github.com/gin-gonic/gin"
@@ -77,7 +77,7 @@ func newCacheResponseContractRouter(t *testing.T) *gin.Engine {
 	router := gin.New()
 	group := router.Group("/api/v1")
 	group.Use(func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxBasicAuthValidatedKey, true)
+		mdauth.StoreCaller(ctx, mdauth.NewUnrestrictedBasicCaller("management"))
 		ctx.Next()
 	})
 	New(deps).Register(group)

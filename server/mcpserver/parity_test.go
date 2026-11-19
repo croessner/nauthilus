@@ -29,6 +29,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	handlerdeps "github.com/croessner/nauthilus/v4/server/handler/deps"
 	"github.com/croessner/nauthilus/v4/server/handler/support"
+	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
 	"github.com/croessner/nauthilus/v4/server/supporthistory/historytest"
@@ -68,7 +69,7 @@ func httpBody(t *testing.T, services supportapi.Services, operation supportapi.O
 
 	engine := gin.New()
 	group := engine.Group("/api/v1", func(ctx *gin.Context) {
-		ctx.Set(definitions.CtxOIDCClaimsKey, jwt.MapClaims{definitions.ClaimClientID: "support-console", "sub": "support-console",
+		oidcbearer.BindClaims(ctx, jwt.MapClaims{definitions.ClaimClientID: "support-console", "sub": "support-console",
 			"scope": scopes})
 		ctx.Next()
 	})

@@ -41,6 +41,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/ipscoper"
 	"github.com/croessner/nauthilus/v4/server/log/level"
 	"github.com/croessner/nauthilus/v4/server/lualib/cacheflush"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
 	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	"github.com/croessner/nauthilus/v4/server/model/admin"
 	bf "github.com/croessner/nauthilus/v4/server/model/bruteforce"
@@ -1173,14 +1174,11 @@ func (deps restAdminDeps) validate() error {
 func handleBruteForceList(ctx *gin.Context, deps restAdminDeps) {
 	logger := deps.effectiveLogger()
 
-	// Check if OIDC Bearer token has the required scope
-	claims := oidcbearer.GetClaimsFromContext(ctx)
-	if claims != nil {
-		if !oidcbearer.HasAnyScope(claims, definitions.ScopeSecurity, definitions.ScopeAdmin) {
-			ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{policyAttributeSuffixError: "missing required scope: " + definitions.ScopeSecurity + " or " + definitions.ScopeAdmin})
+	// A Bearer token and a scoped Basic credential both need a scope of the listing.
+	if caller := mdauth.CallerFromContext(ctx); caller != nil && !caller.Grants(definitions.SecurityReadScopes()...) {
+		ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{policyAttributeSuffixError: oidcbearer.MissingScopeMessage(definitions.SecurityReadScopes()...)})
 
-			return
-		}
+		return
 	}
 
 	var filterCmd *bf.FilterCmd

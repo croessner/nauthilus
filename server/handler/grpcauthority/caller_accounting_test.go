@@ -77,7 +77,7 @@ func (v *countingTokenValidator) ValidateToken(context.Context, string) (jwt.Map
 func callerAccountingTestConfig(t *testing.T) *config.FileSettings {
 	t.Helper()
 
-	cfg := grpcAuthTestConfig(config.BasicAuth{
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: "grpc-client",
 		Password: secret.New("grpc-secret-1234"),

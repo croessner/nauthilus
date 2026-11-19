@@ -151,7 +151,7 @@ type restartRouteCarrier struct {
 	identity          *config.IDPSection
 	frontend          restartFrontendCarrier
 	disabledEndpoints config.Endpoint
-	backchannelBasic  config.BasicAuth
+	backchannelBasic  config.BackchannelBasicAuth
 	backchannelOIDC   config.OIDCAuth
 }
 

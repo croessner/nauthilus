@@ -2498,6 +2498,7 @@ func (f *FileSettings) validate() (err error) {
 		f.validatePlugins,
 		f.validateGRPCAuthServer,
 		f.validateMetricsEndpointAuth,
+		f.validateBackchannelBasicAuth,
 		f.validateHistory,
 		f.validateOperationsDiagnostics,
 		f.validateOpenAPIValidation,
@@ -2982,8 +2983,13 @@ func validateGRPCAuthBackchannelAuth(server *ServerSection) error {
 	return nil
 }
 
-// validateGRPCAuthBasicAuth validates required backchannel basic-auth fields.
+// validateGRPCAuthBasicAuth requires a usable backchannel Basic credential: the unrestricted pair or at least one
+// scoped credential. Without scoped credentials it names the missing fields of the unrestricted pair.
 func validateGRPCAuthBasicAuth(server *ServerSection) error {
+	if basicAuth := server.GetBasicAuth(); basicAuth.HasUnrestrictedCredential() || len(basicAuth.GetUsers()) > 0 {
+		return nil
+	}
+
 	var problems []string
 
 	if strings.TrimSpace(server.GetBasicAuth().GetUsername()) == "" {

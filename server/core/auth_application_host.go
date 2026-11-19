@@ -25,7 +25,10 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib"
+	mdauth "github.com/croessner/nauthilus/v4/server/middleware/auth"
+	"github.com/croessner/nauthilus/v4/server/middleware/oidcbearer"
 	monittrace "github.com/croessner/nauthilus/v4/server/monitoring/trace"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gin-gonic/gin"
 	"github.com/segmentio/ksuid"
@@ -157,9 +160,7 @@ func (h *authApplicationHost) newContext(parent context.Context, input AuthInput
 	ginCtx.Set(definitions.CtxLocalCacheAuthKey, false)
 	ginCtx.Set(definitions.CtxDataExchangeKey, lualib.NewContext())
 
-	if claims := parent.Value(authApplicationOIDCClaimsKey); claims != nil {
-		ginCtx.Set(definitions.CtxOIDCClaimsKey, claims)
-	}
+	bindBackchannelCaller(parent, ginCtx)
 
 	return ginCtx, nil
 }
@@ -227,4 +228,23 @@ func authApplicationCorrelationID(input string) string {
 	}
 
 	return ksuid.New().String()
+}
+
+// bindBackchannelCaller carries the backchannel caller of the transport into the synthetic request, so scope
+// checks of the auth pipeline see the same caller. A transport that passes only token claims is given the caller
+// those claims authenticate.
+func bindBackchannelCaller(parent context.Context, ginCtx *gin.Context) {
+	carried := parent.Value(authApplicationOIDCClaimsKey)
+	if carried != nil {
+		ginCtx.Set(definitions.CtxOIDCClaimsKey, carried)
+	}
+
+	caller, _ := parent.Value(authApplicationCallerKey).(*mdauth.Caller)
+	if claims, ok := carried.(jwt.MapClaims); ok && caller == nil {
+		caller = oidcbearer.CallerFromClaims(claims)
+	}
+
+	if caller != nil {
+		ginCtx.Set(definitions.CtxBackchannelCallerKey, caller)
+	}
 }

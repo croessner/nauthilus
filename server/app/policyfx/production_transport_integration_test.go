@@ -116,7 +116,7 @@ func enableGRPCAuthorityBackchannel(configured *config.FileSettings) {
 		configured.Server = &config.ServerSection{}
 	}
 
-	configured.Server.BasicAuth = config.BasicAuth{
+	configured.Server.BasicAuth = config.BackchannelBasicAuth{
 		Enabled:  true,
 		Username: productionTransportBackchannelUser,
 		Password: secret.New(productionTransportBackchannelPassword),

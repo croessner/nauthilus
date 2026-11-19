@@ -39,11 +39,11 @@ func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{deps: deps}
 }
 
-// Register provides the exported Register method.
+// Register mounts the cache routes. Every one of them flushes state and needs a security write scope.
 func (h *Handler) Register(router gin.IRouter) {
 	cg := router.Group(
 		"/"+definitions.CatCache,
-		oidcbearer.RequireAnyScope(definitions.ScopeSecurity, definitions.ScopeAdmin),
+		oidcbearer.RequireAnyScope(definitions.SecurityWriteScopes()...),
 	)
 
 	var flushOpts []core.TokenFlusher

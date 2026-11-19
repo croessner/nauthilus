@@ -477,7 +477,7 @@ func TestBufconnIdentityBackendServiceAuthzFailures(t *testing.T) {
 		t,
 		service,
 		store,
-		grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true}),
+		grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{Enabled: true}),
 		staticTokenValidator{claims: grpcBackchannelAccessClaims(definitions.ScopeMFARead)},
 	)
 
@@ -613,7 +613,7 @@ func TestBufconnFinishTOTPRegistrationAllowsRetryAfterInvalidCode(t *testing.T) 
 
 //nolint:funlen
 func TestUnaryServerInterceptorEnforcesIdentityScopeMatrix(t *testing.T) {
-	cfg := grpcAuthTestConfig(config.BasicAuth{}, config.OIDCAuth{Enabled: true})
+	cfg := grpcAuthTestConfig(config.BackchannelBasicAuth{}, config.OIDCAuth{Enabled: true})
 
 	cases := []struct {
 		name       string

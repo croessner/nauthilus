@@ -54,7 +54,7 @@ type ServerSection struct {
 	RateLimitBurst            int                      `mapstructure:"rate_limit_burst" validate:"omitempty,min=0"`
 	DisabledEndpoints         Endpoint                 `mapstructure:"disabled_endpoints" validate:"omitempty"`
 	TLS                       TLS                      `mapstructure:"tls" validate:"omitempty"`
-	BasicAuth                 BasicAuth                `mapstructure:"basic_auth" validate:"omitempty"`
+	BasicAuth                 BackchannelBasicAuth     `mapstructure:"basic_auth" validate:"omitempty"`
 	OIDCAuth                  OIDCAuth                 `mapstructure:"oidc_auth" validate:"omitempty"`
 	InstanceName              string                   `mapstructure:"instance_name" validate:"omitempty,max=255,printascii"`
 	Log                       Log                      `mapstructure:"log" validate:"omitempty"`
@@ -751,11 +751,11 @@ func (s *ServerSection) GetEndpoint() *Endpoint {
 	return &s.DisabledEndpoints
 }
 
-// GetBasicAuth retrieves a pointer to the BasicAuth configuration from the ServerSection instance.
-// Returns a new empty BasicAuth struct if the ServerSection is nil.
-func (s *ServerSection) GetBasicAuth() *BasicAuth {
+// GetBasicAuth retrieves the backchannel Basic caller authentication of the ServerSection instance.
+// Returns an empty, disabled configuration if the ServerSection is nil.
+func (s *ServerSection) GetBasicAuth() *BackchannelBasicAuth {
 	if s == nil {
-		return &BasicAuth{}
+		return &BackchannelBasicAuth{}
 	}
 
 	return &s.BasicAuth

@@ -249,3 +249,36 @@ func joinOIDCSessionsScopes(scopes []string) string {
 
 	return result
 }
+
+// TestOIDCSessionsAPI_SeparatesReadFromWriteScope verifies that the security read scope only lists sessions, the
+// security write scope only deletes them, and the wider security scope still does both.
+func TestOIDCSessionsAPI_SeparatesReadFromWriteScope(t *testing.T) {
+	tests := []struct {
+		scope      string
+		method     string
+		wantStored bool
+	}{
+		{scope: definitions.ScopeSecurityRead, method: http.MethodGet, wantStored: true},
+		{scope: definitions.ScopeSecurityRead, method: http.MethodDelete},
+		{scope: definitions.ScopeSecurityWrite, method: http.MethodDelete, wantStored: true},
+		{scope: definitions.ScopeSecurityWrite, method: http.MethodGet},
+		{scope: definitions.ScopeSecurity, method: http.MethodGet, wantStored: true},
+		{scope: definitions.ScopeSecurity, method: http.MethodDelete, wantStored: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" with "+tt.scope, func(t *testing.T) {
+			storage := &oidcSessionsStorageSpy{}
+			router := setupOIDCSessionsRouter(newOIDCSessionsTestDeps(nil), storage, newOIDCSessionsTokenValidator(tt.scope))
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(tt.method, "/api/v1/oidc/sessions/user1", nil)
+			request.Header.Set("Authorization", "Bearer scoped-token")
+
+			router.ServeHTTP(response, request)
+
+			assert.Equal(t, !tt.wantStored, response.Code == http.StatusForbidden, response.Body.String())
+			assert.Equal(t, tt.wantStored, storage.calls > 0)
+		})
+	}
+}
