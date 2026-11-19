@@ -130,6 +130,9 @@
   "Access your email address": "Acessar seu endereco de e-mail para que o aplicativo possa entrar em contato e personalizar a comunicacao.",
   "Access your group memberships": "Acessar seus grupos para determinar quais equipes, funcoes ou areas voce pode usar.",
   "Maintain access when you are offline": "Manter o acesso quando voce estiver offline, para nao precisar entrar novamente toda vez.",
+  "Read recorded sign-in history for support": "Ler o historico de logins registrados das contas para fins de suporte (somente leitura).",
+  "Read details of recorded sign-in attempts for support": "Ler os detalhes de tentativas de login registradas para fins de suporte (somente leitura).",
+  "Read operational diagnostics for support": "Ler os diagnosticos operacionais do servico de autenticacao para fins de suporte (somente leitura).",
   "No additional permissions requested.": "Nenhuma permissao adicional foi solicitada. Voce pode continuar sem conceder acesso extra.",
   "Forgot password?": "Esqueceu a palavra-passe?"
 }

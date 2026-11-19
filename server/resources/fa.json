@@ -130,6 +130,9 @@
   "Access your email address": "دسترسی به نشانی ایمیل شما تا برنامه بتواند با شما ارتباط بگیرد و پیام ها را شخصی سازی کند.",
   "Access your group memberships": "دسترسی به عضویت های گروهی شما برای تعیین اینکه به کدام تیم ها، نقش ها یا بخش ها دسترسی دارید.",
   "Maintain access when you are offline": "حفظ دسترسی در زمان آفلاین بودن تا لازم نباشد هر بار دوباره وارد شوید.",
+  "Read recorded sign-in history for support": "خواندن سابقه ورودهای ثبت‌شده حساب‌ها برای اهداف پشتیبانی (فقط خواندنی).",
+  "Read details of recorded sign-in attempts for support": "خواندن جزئیات تلاش‌های ورود ثبت‌شده برای اهداف پشتیبانی (فقط خواندنی).",
+  "Read operational diagnostics for support": "خواندن عیب‌یابی‌های عملیاتی سرویس احراز هویت برای اهداف پشتیبانی (فقط خواندنی).",
   "No additional permissions requested.": "هیچ مجوز اضافی درخواست نشده است. می توانید بدون اعطای دسترسی بیشتر ادامه دهید.",
   "Forgot password?": "رمز عبور را فراموش کرده‌اید؟"
 }

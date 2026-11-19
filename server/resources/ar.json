@@ -130,6 +130,9 @@
   "Access your email address": "الوصول الى عنوان بريدك الالكتروني لكي يتمكن التطبيق من التواصل معك وتخصيص الرسائل.",
   "Access your group memberships": "الوصول الى عضويات المجموعات الخاصة بك لتحديد الفرق او الادوار او الاقسام التي يمكنك استخدامها.",
   "Maintain access when you are offline": "الاحتفاظ بالوصول اثناء عدم الاتصال، حتى لا تحتاج الى تسجيل الدخول في كل مرة.",
+  "Read recorded sign-in history for support": "قراءة سجل تسجيلات الدخول المسجلة للحسابات لأغراض الدعم (قراءة فقط).",
+  "Read details of recorded sign-in attempts for support": "قراءة تفاصيل محاولات تسجيل الدخول المسجلة لأغراض الدعم (قراءة فقط).",
+  "Read operational diagnostics for support": "قراءة التشخيصات التشغيلية لخدمة المصادقة لأغراض الدعم (قراءة فقط).",
   "No additional permissions requested.": "لم يتم طلب صلاحيات اضافية. يمكنك المتابعة بدون منح وصول اضافي.",
   "Forgot password?": "هل نسيت كلمة المرور؟"
 }

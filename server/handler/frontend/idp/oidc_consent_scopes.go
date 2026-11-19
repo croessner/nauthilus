@@ -31,7 +31,22 @@ const (
 	consentMsgScopeGroups  = "Access your group memberships"
 	consentMsgScopeOffline = "Maintain access when you are offline"
 	consentMsgNoAdditional = "No additional permissions requested."
+
+	consentMsgScopeHistoryRead    = "Read recorded sign-in history for support"
+	consentMsgScopeHistoryDetail  = "Read details of recorded sign-in attempts for support"
+	consentMsgScopeOperationsRead = "Read operational diagnostics for support"
 )
+
+// consentStandardScopeMessages maps the scopes Nauthilus defines itself to their localized consent message IDs.
+var consentStandardScopeMessages = map[string]string{
+	definitions.ScopeProfile:        consentMsgScopeProfile,
+	definitions.ScopeEmail:          consentMsgScopeEmail,
+	definitions.ScopeGroups:         consentMsgScopeGroups,
+	definitions.ScopeOfflineAccess:  consentMsgScopeOffline,
+	definitions.ScopeHistoryRead:    consentMsgScopeHistoryRead,
+	definitions.ScopeHistoryDetail:  consentMsgScopeHistoryDetail,
+	definitions.ScopeOperationsRead: consentMsgScopeOperationsRead,
+}
 
 func consentScopeDescriptions(
 	ctx *gin.Context,
@@ -81,19 +96,14 @@ func consentScopeDescription(
 	return scope, true
 }
 
+// localizedStandardScopeDescription returns the localized consent text of a scope Nauthilus defines itself.
 func localizedStandardScopeDescription(ctx *gin.Context, cfg config.File, logger *slog.Logger, scope string) (string, bool) {
-	switch scope {
-	case definitions.ScopeProfile:
-		return frontend.GetLocalized(ctx, cfg, logger, consentMsgScopeProfile), true
-	case definitions.ScopeEmail:
-		return frontend.GetLocalized(ctx, cfg, logger, consentMsgScopeEmail), true
-	case definitions.ScopeGroups:
-		return frontend.GetLocalized(ctx, cfg, logger, consentMsgScopeGroups), true
-	case definitions.ScopeOfflineAccess:
-		return frontend.GetLocalized(ctx, cfg, logger, consentMsgScopeOffline), true
-	default:
+	messageID, ok := consentStandardScopeMessages[scope]
+	if !ok {
 		return "", false
 	}
+
+	return frontend.GetLocalized(ctx, cfg, logger, messageID), true
 }
 
 func localizedCustomScopeDescription(scopes []config.Oauth2CustomScope, requestedScope, lang string) string {
