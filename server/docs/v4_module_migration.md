@@ -53,6 +53,16 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## Unreleased: Loki Diagnostics Query Cost
+
+- The `loki` source of the operational diagnostics filters every profile query
+  by its message literal (`|= "<literal>"`) before it applies the message
+  pattern. Before, Loki ran the pattern over every line of the window, so a
+  window with many lines, for example the 15 minutes after a restart with
+  debug logging, exceeded the source `timeout`: the source answered
+  `LOKI_TIMEOUT` and its findings read `unknown`. Counted symptoms are
+  unchanged.
+
 ## v4.1.0: Support History, Scoped Backchannel Credentials, And Brute-Force Toleration
 
 Nauthilus 4.1 is a feature release on the v4 line. The module path,

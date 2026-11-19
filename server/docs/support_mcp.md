@@ -378,8 +378,10 @@ fails without replacing its VM, and a plugin that reports a fault inside a succe
 ### `loki` (optional, historical)
 
 Only the compiled `nauthilus_diagnostics` profile runs: instant metric queries
-`sum by (<instance_label>) (count_over_time(<selector> |~ "<msg field pattern>" [<window>s]))` plus one coverage query
-without a line filter. The pattern matches the literal only as the complete `msg` field of a slog JSON line
+`sum by (<instance_label>) (count_over_time(<selector> |= "<literal>" |~ "<msg field pattern>" [<window>s]))` plus one
+coverage query without a line filter. The substring stage drops every line without the literal before the pattern
+runs, so a query stays cheap on windows with many lines, for example after a restart with debug logging. The pattern
+matches the literal only as the complete `msg` field of a slog JSON line
 (`"msg":"<literal>"`) or text line (`msg="<literal>"`); both encoders escape quotes inside values, so text a client
 typed (for example a username) can never be counted as a symptom. This requires Loki to store the raw slog line of
 the JSON or text handler: a shipper that wraps lines (for example unparsed Docker `json-file` records with escaped

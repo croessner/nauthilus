@@ -198,7 +198,7 @@ func TestLokiQueryAndTenantBoundary(t *testing.T) {
 
 	want := []string{
 		`sum by (pod) (count_over_time(` + testSelector + ` [1800s]))`,
-		`sum by (pod) (count_over_time(` + testSelector + ` |~ "\"msg\":\"clickhouse pending batch flush failed\"|(^|\\s)msg=\"clickhouse pending batch flush failed\"" [1800s]))`,
+		`sum by (pod) (count_over_time(` + testSelector + ` |= "clickhouse pending batch flush failed" |~ "\"msg\":\"clickhouse pending batch flush failed\"|(^|\\s)msg=\"clickhouse pending batch flush failed\"" [1800s]))`,
 	}
 
 	for index, request := range fake.requests {
@@ -239,6 +239,38 @@ func TestMessagePatternMatchesOnlyTheMessageField(t *testing.T) {
 		if got := pattern.MatchString(line); got != want {
 			t.Errorf("match(%s) = %v, want %v", line, got, want)
 		}
+	}
+}
+
+// TestProfileQueriesFilterByLiteralBeforeThePattern pins the substring stage in front of the message pattern. Loki
+// applies line filters in order, and the unanchored pattern alone runs over every line of the window: a 15-minute
+// window with 68 MB of debug lines took more than six seconds per profile query and exhausted the source timeout. The
+// substring stage must never drop a line the pattern counts, and the coverage query stays without a line filter.
+func TestProfileQueriesFilterByLiteralBeforeThePattern(t *testing.T) {
+	const rangeSeconds = 900
+
+	for _, entry := range diagnosticsProfile {
+		stages := " |= " + strconv.Quote(entry.literal) + " |~ " + strconv.Quote(messagePattern(entry.literal))
+		want := "sum by (pod) (count_over_time(" + testSelector + stages + " [900s]))"
+
+		if got := countQuery("pod", testSelector, entry.literal, rangeSeconds); got != want {
+			t.Errorf("query(%q) = %s, want %s", entry.literal, got, want)
+		}
+
+		pattern := regexp.MustCompile(messagePattern(entry.literal))
+
+		for _, line := range []string{
+			`{"level":"ERROR","msg":` + strconv.Quote(entry.literal) + `,"pool":"auth"}`,
+			`time=t level=ERROR msg=` + strconv.Quote(entry.literal) + ` pool=auth`,
+		} {
+			if !pattern.MatchString(line) || !strings.Contains(line, entry.literal) {
+				t.Errorf("line %s must pass both stages of %q", line, entry.literal)
+			}
+		}
+	}
+
+	if got := countQuery("pod", testSelector, "", rangeSeconds); strings.Contains(got, "|") {
+		t.Errorf("coverage query carries a line filter: %s", got)
 	}
 }
 

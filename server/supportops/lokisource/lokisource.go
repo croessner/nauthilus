@@ -96,12 +96,19 @@ func streamSelector(selector map[string]string) string {
 // countQuery returns the metric query counting matching lines per instance over rangeSeconds. A profile literal
 // is matched only as the value of the log message field, never anywhere in the line.
 func countQuery(instanceLabel string, selector string, literal string, rangeSeconds int64) string {
-	filter := ""
-	if literal != "" {
-		filter = " |~ " + strconv.Quote(messagePattern(literal))
+	return fmt.Sprintf("sum by (%s) (count_over_time(%s%s [%ds]))", instanceLabel, selector, lineFilter(literal), rangeSeconds)
+}
+
+// lineFilter returns the line filter stages of a profile literal, and none for the coverage query. Loki applies the
+// stages in order: the substring stage drops every line without the literal before the unanchored message pattern
+// runs, which keeps a query cheap on windows that hold many lines. The pattern quotes the literal verbatim, so the
+// substring stage never drops a line the pattern would count.
+func lineFilter(literal string) string {
+	if literal == "" {
+		return ""
 	}
 
-	return fmt.Sprintf("sum by (%s) (count_over_time(%s%s [%ds]))", instanceLabel, selector, filter, rangeSeconds)
+	return " |= " + strconv.Quote(literal) + " |~ " + strconv.Quote(messagePattern(literal))
 }
 
 // messagePattern returns the RE2 line filter that matches literal as the complete msg field of a slog JSON line
