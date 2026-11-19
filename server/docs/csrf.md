@@ -33,17 +33,16 @@ router.Use(csrf.New())
 
 // Get token in handler for form/template
 func myHandler(ctx *gin.Context) {
-token := csrf.Token(ctx)
-ctx.HTML(http.StatusOK, "form.html", gin.H{
-"CSRFToken": token,
-})
+    token := csrf.Token(ctx)
+    ctx.HTML(http.StatusOK, "form.html", gin.H{
+        "CSRFToken": token,
+    })
 }
 ```
 
 ### HTML Form Integration
 
 ```html
-
 <form method="POST" action="/submit">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <!-- other form fields -->
@@ -88,23 +87,23 @@ The main interface for CSRF handlers.
 
 ```go
 type Handler interface {
-// Middleware returns the Gin middleware function
-Middleware() gin.HandlerFunc
+    // Middleware returns the Gin middleware function
+    Middleware() gin.HandlerFunc
 
-// Token returns the masked CSRF token for the current request
-Token(ctx *gin.Context) string
+    // Token returns the masked CSRF token for the current request
+    Token(ctx *gin.Context) string
 
-// RegenerateToken generates and returns a new CSRF token
-RegenerateToken(ctx *gin.Context) string
+    // RegenerateToken generates and returns a new CSRF token
+    RegenerateToken(ctx *gin.Context) string
 
-// SetFailureHandler sets the handler called when CSRF validation fails
-SetFailureHandler(handler gin.HandlerFunc)
+    // SetFailureHandler sets the handler called when CSRF validation fails
+    SetFailureHandler(handler gin.HandlerFunc)
 
-// SetBaseCookie sets the base cookie configuration
-SetBaseCookie(cookie http.Cookie)
+    // SetBaseCookie sets the base cookie configuration
+    SetBaseCookie(cookie http.Cookie)
 
-// Reason returns the error that caused CSRF validation to fail
-Reason(ctx *gin.Context) error
+    // Reason returns the error that caused CSRF validation to fail
+    Reason(ctx *gin.Context) error
 }
 ```
 
@@ -114,8 +113,8 @@ Interface for generating random CSRF tokens.
 
 ```go
 type TokenGenerator interface {
-// Generate creates a new random CSRF token (32 bytes)
-Generate() ([]byte, error)
+    // Generate creates a new random CSRF token (32 bytes)
+    Generate() ([]byte, error)
 }
 ```
 
@@ -125,13 +124,13 @@ Interface for one-time-pad masking operations.
 
 ```go
 type TokenMasker interface {
-// Mask applies one-time-pad masking to a token
-// Returns 64 bytes: 32-byte key + 32-byte masked token
-Mask(token []byte) ([]byte, error)
+    // Mask applies one-time-pad masking to a token
+    // Returns 64 bytes: 32-byte key + 32-byte masked token
+    Mask(token []byte) ([]byte, error)
 
-// Unmask removes the one-time-pad masking from a token
-// Expects 64 bytes, returns original 32-byte token
-Unmask(maskedToken []byte) []byte
+    // Unmask removes the one-time-pad masking from a token
+    // Expects 64 bytes, returns original 32-byte token
+    Unmask(maskedToken []byte) []byte
 }
 ```
 
@@ -141,9 +140,9 @@ Interface for validating CSRF tokens.
 
 ```go
 type TokenValidator interface {
-// Validate checks if the sent token matches the real token
-// realToken: 32 bytes (unmasked), sentToken: 64 bytes (masked)
-Validate(realToken, sentToken []byte) bool
+    // Validate checks if the sent token matches the real token
+    // realToken: 32 bytes (unmasked), sentToken: 64 bytes (masked)
+    Validate(realToken, sentToken []byte) bool
 }
 ```
 
@@ -153,11 +152,11 @@ Interface for encoding tokens to strings.
 
 ```go
 type TokenEncoder interface {
-// Encode converts bytes to a string representation
-Encode(data []byte) string
+    // Encode converts bytes to a string representation
+    Encode(data []byte) string
 
-// Decode converts a string representation back to bytes
-Decode(data string) ([]byte, error)
+    // Decode converts a string representation back to bytes
+    Decode(data string) ([]byte, error)
 }
 ```
 
@@ -167,8 +166,8 @@ Interface for validating request origin.
 
 ```go
 type OriginValidator interface {
-// ValidateOrigin checks if the request origin is allowed
-ValidateOrigin(r *http.Request, selfOrigin *url.URL) error
+    // ValidateOrigin checks if the request origin is allowed
+    ValidateOrigin(r *http.Request, selfOrigin *url.URL) error
 }
 ```
 
@@ -182,13 +181,13 @@ The main CSRF handler implementation.
 
 ```go
 type DefaultHandler struct {
-failureHandler  gin.HandlerFunc
-baseCookie      http.Cookie
-generator       TokenGenerator
-masker          TokenMasker
-validator       TokenValidator
-encoder         TokenEncoder
-originValidator OriginValidator
+    failureHandler  gin.HandlerFunc
+    baseCookie      http.Cookie
+    generator       TokenGenerator
+    masker          TokenMasker
+    validator       TokenValidator
+    encoder         TokenEncoder
+    originValidator OriginValidator
 }
 ```
 
@@ -210,7 +209,7 @@ Validates Origin and Referer headers.
 
 ```go
 type DefaultOriginValidator struct {
-allowedOrigins map[string]bool
+    allowedOrigins map[string]bool
 }
 ```
 
@@ -240,12 +239,12 @@ Sets a custom handler for CSRF validation failures.
 
 ```go
 handler := csrf.NewHandler(
-csrf.WithFailureHandler(func(ctx *gin.Context) {
-ctx.JSON(http.StatusForbidden, gin.H{
-"error": "CSRF validation failed",
-"reason": csrf.Token(ctx),
-})
-}),
+    csrf.WithFailureHandler(func(ctx *gin.Context) {
+        ctx.JSON(http.StatusForbidden, gin.H{
+            "error": "CSRF validation failed",
+            "reason": csrf.Token(ctx),
+        })
+    }),
 )
 ```
 
@@ -261,14 +260,14 @@ Sets the base cookie configuration for CSRF tokens.
 
 ```go
 handler := csrf.NewHandler(
-csrf.WithBaseCookie(http.Cookie{
-Name:     "my_csrf_token",
-Path:     "/",
-Secure:   true,
-HttpOnly: true,
-SameSite: http.SameSiteStrictMode,
-MaxAge:   3600,
-}),
+    csrf.WithBaseCookie(http.Cookie{
+        Name:     "my_csrf_token",
+        Path:     "/",
+        Secure:   true,
+        HttpOnly: true,
+        SameSite: http.SameSiteStrictMode,
+        MaxAge:   3600,
+    }),
 )
 ```
 
@@ -343,10 +342,10 @@ from the context.
 
 ```go
 func handler(ctx *gin.Context) {
-token := csrf.Token(ctx)
-ctx.HTML(http.StatusOK, "form.html", gin.H{
-"CSRFToken": token,
-})
+    token := csrf.Token(ctx)
+    ctx.HTML(http.StatusOK, "form.html", gin.H{
+        "CSRFToken": token,
+    })
 }
 ```
 
@@ -377,11 +376,11 @@ The package defines the following error types for CSRF validation failures:
 
 ```go
 func handler(ctx *gin.Context) {
-h := csrf.NewHandler()
-reason := h.Reason(ctx)
-if reason != nil {
-log.Printf("CSRF failed: %v", reason)
-}
+    h := csrf.NewHandler()
+    reason := h.Reason(ctx)
+    if reason != nil {
+        log.Printf("CSRF failed: %v", reason)
+    }
 }
 ```
 
@@ -485,24 +484,24 @@ decoded, err := encoder.Decode(encoded)
 
 ```go
 handler := csrf.NewHandler(
-csrf.WithBaseCookie(http.Cookie{
-Name:     "app_csrf",
-Path:     "/",
-Secure:   true,
-HttpOnly: true,
-SameSite: http.SameSiteStrictMode,
-MaxAge:   86400,
-}),
-csrf.WithFailureHandler(func (ctx *gin.Context) {
-ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-"error":   "csrf_failed",
-"message": "Invalid or missing CSRF token",
-})
-}),
-csrf.WithOriginValidator(csrf.NewOriginValidator(
-"https://trusted-origin.com",
-"https://another-trusted.com",
-)),
+    csrf.WithBaseCookie(http.Cookie{
+        Name:     "app_csrf",
+        Path:     "/",
+        Secure:   true,
+        HttpOnly: true,
+        SameSite: http.SameSiteStrictMode,
+        MaxAge:   86400,
+    }),
+    csrf.WithFailureHandler(func(ctx *gin.Context) {
+        ctx.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+            "error":   "csrf_failed",
+            "message": "Invalid or missing CSRF token",
+        })
+    }),
+    csrf.WithOriginValidator(csrf.NewOriginValidator(
+        "https://trusted-origin.com",
+        "https://another-trusted.com",
+    )),
 )
 
 router.Use(handler.Middleware())
@@ -514,10 +513,10 @@ For sensitive operations, you may want to regenerate the token:
 
 ```go
 func sensitiveHandler(ctx *gin.Context) {
-h := ctx.MustGet("csrf_handler").(*csrf.DefaultHandler)
-newToken := h.RegenerateToken(ctx)
+    h := ctx.MustGet("csrf_handler").(*csrf.DefaultHandler)
+    newToken := h.RegenerateToken(ctx)
 
-// Use newToken for the next request
+    // Use newToken for the next request
 }
 ```
 
@@ -533,8 +532,8 @@ router.POST("/api/sensitive", csrfMiddleware, sensitiveHandler)
 apiGroup := router.Group("/api")
 apiGroup.Use(csrfMiddleware)
 {
-apiGroup.POST("/create", createHandler)
-apiGroup.PUT("/update", updateHandler)
+    apiGroup.POST("/create", createHandler)
+    apiGroup.PUT("/update", updateHandler)
 }
 ```
 
@@ -581,8 +580,8 @@ If migrating from `github.com/justinas/nosurf`:
 
 ```go
 import (
-"github.com/justinas/nosurf"
-"github.com/gwatts/gin-adapter"
+    "github.com/justinas/nosurf"
+    "github.com/gwatts/gin-adapter"
 )
 
 router.Use(adapter.Wrap(nosurf.NewPure))
