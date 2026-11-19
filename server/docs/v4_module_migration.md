@@ -53,7 +53,224 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
-## Unreleased: Brute-Force Toleration Accounting And Ban Evidence
+## v4.1.0: Support History, Scoped Backchannel Credentials, And Brute-Force Toleration
+
+Nauthilus 4.1 is a feature release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Items
+marked **Action** need an operator decision or a configuration change.
+
+### Upgrade effects
+
+- Every live browser session ends once and stored OIDC consents are requested
+  once more, because session-state payloads in Redis are now sealed with
+  `storage.redis.encryption_secret` and plaintext records are discarded.
+- Consent pages started on a 4.0.x instance must be restarted during a
+  rolling update; nothing needs to be migrated.
+- Each edge replica fetches its authority token once more, because the cached
+  token is now stored encrypted.
+- **Action:** rebuild every private native plugin against this source with
+  the server PGO profile (`sh scripts/native-pgo-flag.sh` prints the flag). A
+  PGO-built server refuses plugins compiled without it.
+- **Action:** apply
+  `contrib/clickhouse-kubernetes/migrations/diagnostic-contract.sql` before
+  deploying the ClickHouse plugin; ClickHouse drops unknown fields silently
+  by default.
+- **Action:** on Redis Cluster, delete the untagged and
+  `{lua-nauthilus}`-renamed `multilayer:global:current_metrics` hashes of the
+  bundled Lua plugins once; all other old keys expire.
+
+### Support history, diagnostics, and MCP
+
+- A read-only support history API answers from the evidence the ClickHouse
+  plugin recorded: `POST /api/v1/support/authentication-attempts/search`,
+  `/api/v1/support/authentication-attempts/detail`, and
+  `/api/v1/support/bruteforce-bans/search`, with the scopes
+  `nauthilus:history_read` and `nauthilus:history_detail`. It is configured
+  under `storage.history.clickhouse` with a dedicated reader account
+  (`contrib/clickhouse-kubernetes/history-reader.sql`). Every call is audited
+  (`audit=support_history`); without a configured source the routes answer
+  `503 HISTORY_NOT_CONFIGURED`.
+- The history carries OIDC code issuance and redemption, the answered status
+  of a request, and brute-force bans with their contributing attempts. An
+  attempt search accepts `response_mode` (`detailed` or `compact`) and
+  `include_ban_context`. Recorded free text is sanitized and capped at 256
+  characters.
+- `POST /api/v1/support/operations/diagnostics` (scope
+  `nauthilus:operations_read`) reports findings and hypotheses from the
+  instance-local `nauthilus_runtime` source and from the optional `loki` and
+  `prometheus` sources under `observability.diagnostics.operations`.
+  **Action:** the Loki source needs the raw slog line stored in Loki, and the
+  Prometheus scrape must keep the core metric families the query profile
+  reads.
+- Diagnostics classify `ldap_errors_total` by operation and result code. A
+  rejected user password (`bind`, code `49`) is the informational symptom
+  `LDAP_BIND_REJECTED`; the `auth_backend` component has runtime evidence
+  instead of reading `unknown`.
+- An optional read-only MCP endpoint (`runtime.servers.mcp`, disabled by
+  default) offers the support tools over OAuth 2.1 with Nauthilus as issuer
+  and RFC 9728 protected resource metadata. It accepts pre-registered static
+  clients only. New metric `mcp_requests_total{result}`; audit records
+  `audit=support_mcp` and `audit=support_operations`.
+- The Admin Client gains a `support` command group, `bruteforce list
+  --via-mapping`, and the standalone installer
+  `contrib/client/install-admin-client.sh`. Repeated `--resolve` flags
+  replace `NAUTHILUS_RESOLVE`, and `bruteforce list` requests pages of 100
+  entries by default.
+
+### Backchannel caller authorization
+
+- `auth.backchannel.basic_auth.users` defines scoped HTTP Basic credentials
+  (`username`, `password`, `scopes`). A scoped credential is authorized like
+  a Bearer token carrying those scopes on the HTTP API, the gRPC authority
+  listener, and custom Lua and native hooks that declare scopes. The
+  top-level `username` and `password` remain the unrestricted credential;
+  Nauthilus warns at configuration load while it is configured.
+- **Behaviour change:** `nauthilus:authenticate` is no longer a base scope of
+  every `/api/v1` route. Each route family asks only for its own scopes;
+  `nauthilus:authenticate` opens `/api/v1/auth/*` and the management OpenAPI
+  documents. Nothing an existing token could do before is refused now. A
+  valid credential without the route scope receives `403`.
+- New scopes `nauthilus:security_read` (brute-force and OIDC session
+  listings) and `nauthilus:security_write` (cache and brute-force flushes,
+  OIDC session deletion). `nauthilus:security` includes both.
+- The `/api/v1/support/*` routes accept a scoped Basic credential holding the
+  support scopes; the unrestricted credential and `nauthilus:admin` receive
+  `403`.
+- **Behaviour change:** `auth.backchannel.basic_auth` is validated more
+  strictly. `enabled: true` requires the `username` and `password` pair or at
+  least one `users` entry, the pair must be set together, usernames must be
+  unique and contain neither a colon nor a space, and `users[].scopes` must
+  list at least one valid scope. **Action:** check configurations that enable
+  Basic authentication before the upgrade.
+- **Behaviour change:** a custom hook that declares scopes refuses the
+  unrestricted Basic credential with `403` instead of `401`.
+
+### OIDC, browser sessions, and SAML
+
+- **Security fix:** pending consent decisions were stored in the
+  authorization-code key space, so a client could redeem the consent
+  challenge at the token endpoint and receive tokens before the user
+  consented. Consent state has its own key family, and the token endpoint
+  refuses code values outside the issued shape with `invalid_grant`.
+- **Security:** browser session payloads (anchor, flows, enrollment, step-up,
+  WebAuthn ceremony, TOTP and recovery material, consent, logout index) are
+  sealed with ChaCha20-Poly1305 under `storage.redis.encryption_secret`. A
+  payload that does not open is deleted and the browser starts a fresh
+  session.
+- **Security:** the edge token cache stores the authority bearer token
+  encrypted, deletes a rejected token by digest, and releases its refresh
+  lock only by its owner.
+- **Security:** secret configuration values render as `<hidden>` in every
+  formatted and logged output. With debug logging, earlier v4 releases
+  printed OIDC client secrets in the configuration they log at startup.
+  **Action:** restrict or purge such debug logs and rotate the OIDC client
+  secrets they contain.
+- Browser sessions slide their idle expiry while in use: every opened session
+  is extended to now plus 30 minutes, at most once per 5 minutes and never
+  past the absolute expiry. Before, a session ended 30 minutes after login.
+- **Behaviour change:** generated OIDC signing keys follow
+  `identity.oidc.key_max_age` (default 7 days) instead of a 365-day fallback,
+  and cleanup removes every inactive key older than that age. A
+  `key_rotation_interval` that is not shorter than `key_max_age` is replaced
+  by half the maximum age with a warning.
+- **Behaviour change:** RFC 8414 authorization server metadata is served at
+  `/.well-known/oauth-authorization-server`, and every redirect-based
+  authorization response carries the RFC 9207 `iss` parameter. **Action:**
+  route the new well-known path to Nauthilus and keep `identity.oidc.issuer`
+  exactly as clients know it.
+- `identity.oidc.hosted_resources` describes resources Nauthilus hosts itself
+  (static clients only, a user right from `groups` or `group_dns`,
+  `max_authentication_age`, and `max_access_token_lifetime`).
+- `claims` of a custom scope is optional. For an enabled OIDC issuer the
+  configuration load warns about a mapped claim no scope allowed for its
+  client releases, a custom scope no client may request, and a client scope
+  that is neither built in nor declared. **Action:** review the warnings
+  after the upgrade; they never fail the load.
+- The consent page shows translated texts for `nauthilus:history_read`,
+  `nauthilus:history_detail`, and `nauthilus:operations_read` in all shipped
+  locales.
+- The admin user flush revokes OIDC tokens by backend account through the new
+  `<prefix>oidc:account:{<account_slot>}:subjects` index, so tokens whose
+  subject is the backend unique user ID no longer survive a flush. Tokens
+  issued before the upgrade have no binding until their next refresh.
+- SAML: a LogoutRequest listing several `SessionIndex` elements matches when
+  any of them matches, HTTP-Redirect SLO messages are signed with `SigAlg`
+  and `Signature` query parameters, SHA-1 AuthnRequest signatures are also
+  rejected in the library validation path, and concurrent LogoutResponses of
+  one fan-out transaction are applied atomically.
+
+### Policy and post-actions
+
+- An authn target can declare `terminal_post_actions`. They run once per
+  answered request, whichever rule answered it, including built-in rejects
+  such as ban hits. New metric
+  `policy_terminal_post_actions_total{operation,post_action,result}`.
+- Best-effort post-action plans are accepted only while fewer than half of
+  `policy.runtime.post_actions.queue_capacity` is in flight; rejections count
+  as `post_action_acceptance_failures_total{error_class="best_effort_saturated"}`
+  and never fail a request.
+- A Policy reload with an in-flight post-action no longer stalls for the
+  cleanup budget, and a tempfail answered without a presenting rule names the
+  failed checkpoint as its stage.
+
+### ClickHouse plugin
+
+- Login rows carry `contract_version = 1`, the sealed terminal outcome,
+  `transport_status`, `flow_ref`, `brute_force_tolerated`, and
+  `reputation_assessments`. Optional streams record step events and
+  brute-force evidence. New host metric
+  `plugin_auth_events_total{outcome,lane}`.
+- **Behaviour change:** tempfails are recorded as `outcome=tempfail` with
+  `http_status=500` and their tempfail text instead of a credential failure.
+  Dashboards that filter on `status_msg='Invalid login or password'` stop
+  counting them.
+- **Behaviour change:** the 20 retired login columns (the flat `reputation_*`
+  columns and the `gp_*`, `prot_*`, and `dyn_*` fields) are no longer
+  exported. **Action:** update dashboards and queries; the bundled Grafana
+  dashboard reads `reputation_assessments`.
+- `max_brute_force_reject_rows` (default half of `max_buffer_rows`) reserves
+  a share of the login buffer for brute-force rejects; excess rows are
+  counted as `dropped_reject_limit`.
+
+### Brute-force flushes, listings, and bundled Lua plugins
+
+- **Behaviour change:** affected accounts age out per account after
+  `auth.controls.brute_force.affected_accounts.retention` (default `24h`);
+  `cleanup_enabled: false` keeps the previous behaviour. The leased
+  background maintenance needs Redis 6.2 or newer.
+- `POST /api/v1/bruteforce/list` accepts
+  `"account_resolution": "account_mapping"` for 1 to 100 distinct accounts
+  and returns per-name `resolutions`.
+- **Behaviour change:** if the stored account mappings cannot be read,
+  `/api/v1/cache/flush` answers `503 Account mapping lookup failed` before
+  removing anything; automation must retry. The flush no longer removes
+  mappings of other users whose login names start with `<name>|`.
+- The user flush deletes the RWP window of every login identity behind the
+  flushed accounts; before, windows survived until `rwp_window` expired.
+- The bundled Lua plugins keep the keys of one Redis script on one hash tag,
+  so Redis Cluster no longer separates writers from readers.
+  `soft_delay.lua` and `dynamic_response.lua` read the per-protocol layouts
+  the writers create, `haveibeenpwnd.lua` sends its leak notification again,
+  and the `reset_account` admin hook clears the current keys of one account.
+
+### Build and dependencies
+
+- Server builds apply profile-guided optimization from `server/default.pgo`,
+  which the release workflow refreshes from a dedicated authentication
+  workload. Native plugins are built with the same profile.
+- `github.com/twmb/franz-go` is pinned to v1.22.1 (`pkg/kmsg` v1.14.0) and
+  `github.com/pierrec/lz4/v4` to v4.1.31, because lz4 v4.1.32 and later
+  cannot be built with `-buildmode=plugin` on amd64. Out-of-tree plugins that
+  share these modules must use the same versions.
+- Dependency updates include `crewjam/saml` v0.6.3, OpenTelemetry v1.47.0,
+  `quic-go` v0.65.0, `go-webauthn` v0.18.2, `go-oidc` v3.21.0, and the new
+  official MCP Go SDK v1.8.0.
+- `pluginapi/v1` gains the optional event sinks `AuthEventSink` and
+  `BruteForceEventSink`, `PostActionRequest.Outcome` and `FactsTrimmed`,
+  `IDPInfo.FlowRef`, `RequestDiagnostics.BruteForceTolerated`, and the
+  exchange features `FeatureTLSEncryption` and `FeatureRelayDomains`.
+
+### Brute-force toleration accounting and ban evidence
 
 - **Behaviour change:** brute-force toleration works again. Since the Policy
   authority cutover before v4.0.0 no request recorded positive or negative
