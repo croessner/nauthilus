@@ -17,11 +17,12 @@ package config
 
 import "fmt"
 
-// Oauth2CustomScope describes the exported Oauth2CustomScope type.
+// Oauth2CustomScope declares a scope of the deployment: its name and its consent text. Claims are optional and
+// list the claims the scope releases; a scope without claims only authorizes, for example at a resource server.
 type Oauth2CustomScope struct {
 	Name        string            `mapstructure:"name" validate:"required,scope_token"`
 	Description string            `mapstructure:"description" validate:"required"`
-	Claims      []OIDCCustomClaim `mapstructure:"claims" validate:"required,dive"`
+	Claims      []OIDCCustomClaim `mapstructure:"claims" validate:"omitempty,dive"`
 	Other       map[string]any    `mapstructure:",remain"`
 }
 

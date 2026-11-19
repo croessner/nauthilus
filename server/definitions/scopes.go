@@ -32,3 +32,48 @@ func SecurityWriteScopes() []string {
 func SecurityJobScopes() []string {
 	return []string{ScopeSecurityRead, ScopeSecurityWrite, ScopeSecurity, ScopeAdmin}
 }
+
+// StandardClaim describes a standard OpenID Connect claim: the scope that releases it and its default type.
+type StandardClaim struct {
+	Scope string
+	Type  string
+}
+
+// StandardClaims returns the standard OpenID Connect claims Nauthilus releases through its built-in scopes.
+func StandardClaims() map[string]StandardClaim {
+	return map[string]StandardClaim{
+		ClaimName:                {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimGivenName:           {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimFamilyName:          {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimMiddleName:          {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimNickName:            {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimPreferredUserName:   {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimProfile:             {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimWebsite:             {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimPicture:             {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimGender:              {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimBirtDate:            {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimZoneInfo:            {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimLocale:              {Scope: ScopeProfile, Type: ClaimTypeString},
+		ClaimUpdatedAt:           {Scope: ScopeProfile, Type: ClaimTypeInteger},
+		ClaimEmail:               {Scope: ScopeEmail, Type: ClaimTypeString},
+		ClaimEmailVerified:       {Scope: ScopeEmail, Type: ClaimTypeBoolean},
+		ClaimPhoneNumber:         {Scope: ScopePhone, Type: ClaimTypeString},
+		ClaimPhoneNumberVerified: {Scope: ScopePhone, Type: ClaimTypeBoolean},
+		ClaimAddress:             {Scope: ScopeAddress, Type: ClaimTypeAddress},
+		ClaimGroups:              {Scope: ScopeGroups, Type: ClaimTypeStringArray},
+	}
+}
+
+// BuiltinScopes returns every scope Nauthilus defines itself: the standard OpenID Connect scopes and its own
+// management, policy, and support scopes. Any other scope is defined by the deployment.
+func BuiltinScopes() []string {
+	return []string{
+		ScopeOpenID, ScopeOfflineAccess, ScopeProfile, ScopeEmail, ScopeAddress, ScopePhone, ScopeGroups,
+		ScopeAdmin, ScopePolicyEvaluate, ScopePolicyDiagnostics,
+		ScopeSecurity, ScopeSecurityRead, ScopeSecurityWrite,
+		ScopeAuthenticate, ScopeLookupIdentity, ScopeListAccounts,
+		ScopeMFARead, ScopeMFAVerify, ScopeMFAWrite, ScopeWebAuthnRead, ScopeWebAuthnWrite, ScopeAttributeRead,
+		ScopeHistoryRead, ScopeHistoryDetail, ScopeOperationsRead,
+	}
+}

@@ -62,31 +62,14 @@ func requestedScopeSet(requestedScopes []string) map[string]struct{} {
 
 // standardClaimDefinitions returns built-in OIDC claim definitions.
 func standardClaimDefinitions() map[string]claimDefinition {
-	return map[string]claimDefinition{
-		definitions.ClaimName:              {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimGivenName:         {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimFamilyName:        {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimMiddleName:        {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimNickName:          {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimPreferredUserName: {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimProfile:           {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimWebsite:           {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimPicture:           {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimGender:            {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimBirtDate:          {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimZoneInfo:          {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimLocale:            {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimUpdatedAt:         {Scopes: []string{definitions.ScopeProfile}, DefaultType: definitions.ClaimTypeInteger},
-		definitions.ClaimEmail:             {Scopes: []string{definitions.ScopeEmail}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimEmailVerified:     {Scopes: []string{definitions.ScopeEmail}, DefaultType: definitions.ClaimTypeBoolean},
-		definitions.ClaimPhoneNumber:       {Scopes: []string{definitions.ScopePhone}, DefaultType: definitions.ClaimTypeString},
-		definitions.ClaimPhoneNumberVerified: {
-			Scopes:      []string{definitions.ScopePhone},
-			DefaultType: definitions.ClaimTypeBoolean,
-		},
-		definitions.ClaimAddress: {Scopes: []string{definitions.ScopeAddress}, DefaultType: definitions.ClaimTypeAddress},
-		definitions.ClaimGroups:  {Scopes: []string{definitions.ScopeGroups}, DefaultType: definitions.ClaimTypeStringArray},
+	standardClaims := definitions.StandardClaims()
+	claimDefinitions := make(map[string]claimDefinition, len(standardClaims))
+
+	for claimName, standardClaim := range standardClaims {
+		claimDefinitions[claimName] = claimDefinition{Scopes: []string{standardClaim.Scope}, DefaultType: standardClaim.Type}
 	}
+
+	return claimDefinitions
 }
 
 // applyCustomClaimDefinitions merges configured custom scope claims.

@@ -2522,6 +2522,7 @@ func (f *FileSettings) validate() (err error) {
 		f.setDefaultIDPSettings,
 		f.validateIDPMFASettings,
 		f.validateIDPOIDCCustomScopes,
+		f.warnIDPOIDCScopeFindings,
 		f.validateIDPOIDCGrantAuthSettings,
 		f.validateIDPOIDCIntrospectionSettings,
 		f.validateIDPOIDCTokenIntrospectionSettings,

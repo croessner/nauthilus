@@ -1293,8 +1293,22 @@ all configured mappings for the client are included.
 
 ### 6.2 Custom Scopes
 
-The IdP supports custom scopes. These are defined globally and can group one or
-more custom claims:
+The IdP supports custom scopes. A custom scope declares a scope of the deployment: its name and the text shown on the
+consent page. It can additionally list the custom claims it releases; `claims` is optional. A scope without claims only
+authorizes, for example at a resource server that checks the `scope` claim of the access token:
+
+```yaml
+identity:
+  oidc:
+    custom_scopes:
+      - name: "mail:diagnose"
+        description: "Read mail store diagnostics (read-only)"
+```
+
+Declaring a scope does not allow any client to request it. A client may request the scopes listed in its own
+`scopes`; the custom scope supplies the consent text and, when it lists claims, the claim release.
+
+Custom scopes are defined globally and can group one or more custom claims:
 
 ```yaml
 identity:
@@ -1348,6 +1362,19 @@ identity:
                     attribute: "anotherBackendAttribute"
                     type: "string"
 ```
+
+A mapped claim is only written to a token when a requested scope releases it: its standard scope (for example `groups`
+for the `groups` claim) or a custom scope that lists the claim. A client that requests only resource scopes therefore
+gets `groups` in its access token only if one of those scopes lists `groups` under `claims`.
+
+When the OIDC issuer is enabled, the configuration is checked for three inconsistencies at load. Each is logged as a
+warning and never fails the load, because a scope may be defined by a component the configuration does not describe:
+
+| Warning | Meaning |
+|---|---|
+| `OIDC claim mapping is never released: no scope allowed for the client releases the claim` | A claim in `id_token_claims` or `access_token_claims` has no releasing scope among the scopes of that client. The mapping is skipped for every request that names a scope. Add the claim to a custom scope the client may request, or allow the standard scope. |
+| `OIDC custom scope is not allowed for any client` | No client lists the scope in `scopes`, and dynamic client registration does not offer it. Without `client_id` the warning names a global custom scope, otherwise a custom scope of that client. |
+| `OIDC client scope is neither built in nor declared in custom_scopes or by a hook` | A scope in `scopes` or `implied_scopes` of the client is defined nowhere: it is not built in, not a custom scope, and not required by a Lua hook or a native plugin hook. This is usually a typing error. Declare the scope as a custom scope when another component defines it. |
 
 ### 6.3 Token Lifetime Configuration
 
