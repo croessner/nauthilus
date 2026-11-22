@@ -780,12 +780,11 @@ pipelines, named pools, and a script registry to Lua. It owns no keys and
   both tags are empty and the rewrite applies again, so keep hash tags
   enabled on Redis Cluster.
 - **Write access**: the full module (writes, pipelines, scripts, named
-  pools) is bound only for process-owned Lua: init scripts, custom HTTP hooks,
-  the cache-flush hook, and Lua backends. Policy-VM callbacks (subject and
-  environment sources, Lua actions) get a read-only allowlist on the read
-  handle. Every bundled callback of those kinds that writes Redis is
-  therefore `reference-only` (`server/lua-plugins.d/POLICY_VM_COMPATIBILITY.md`).
-  The keys below are documented because the code ships in the repository.
+  pools) is bound in every Lua runtime: init scripts, custom HTTP hooks, the
+  cache-flush hook, Lua backends, and the authentication callbacks (subject
+  and environment sources, Lua actions). The 4.0.0 to 4.1.0 releases gave the
+  authentication callbacks a read-only allowlist; 4.1.1 removed it
+  (`server/lua-plugins.d/POLICY_VM_COMPATIBILITY.md`).
 - **Named pools**: `register_redis_pool` can create clients for other Redis
   servers; keys written through such a pool live there. `init/init.lua`
   optionally registers `CUSTOM_REDIS_POOL_NAME` and uploads its scripts there.

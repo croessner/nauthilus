@@ -1,72 +1,100 @@
-# Authentication Policy VM compatibility
+# Lua runtimes and bundled callback status
 
 Top-level `policy` is the only production authority for Lua environment sources, subject sources, and actions. A
-configured callback is compiled from the candidate's immutable artifact snapshot and loaded in the stage-specific
-Policy VM before that candidate can be committed. There is no legacy Lua runtime fallback.
+configured callback is compiled from the candidate's immutable artifact snapshot before that candidate can be
+committed. There is no legacy Lua runtime fallback.
 
-The Policy VM intentionally exposes a narrow host surface:
+## One Lua API for every runtime
 
-- profile-compatible captured Lua modules plus deterministic base, table, string, and math operations;
-- request context, request HTTP metadata, CBOR, JSON, crypto, tracing, policy-attribute emission, localized lookup,
-  bounded UTC time, and password helpers;
-- read-only access to the candidate-injected default Redis handle, brute-force facts, connection-target lookup, and
-  bounded cache reads;
-- metric updates against host-created collectors;
-- backend-result projection for subject sources and HTTP response mutation only for synchronous response actions.
+Environment sources, subject sources, and actions run with the same Lua API as custom hooks and Lua backends. Since
+Nauthilus 4.1.1 the authentication callbacks are no longer limited to a reduced host surface: the 4.0.0 to 4.1.0
+releases rejected callbacks that wrote to Redis or the cache, opened outbound connections, used LDAP, DNS, or mail,
+created metrics, selected a backend server, or loaded `os`, `io`, and other standard libraries. Every one of those
+capabilities is available again.
 
-It does not expose environment variables, `os`, `io`, filesystem or dynamic loaders, named Redis pools, Redis writes,
-Redis pipelines or scripts, arbitrary backend/LDAP/DNS targets, outbound HTTP, mail, target registration, metric
-creation, or detached work. Configuration that loads a script requiring one of those capabilities is rejected before
-candidate publication.
+A callback can use:
 
-The status values below are normative for the checked-in callbacks:
+- the complete Lua standard library, including `os`, `io`, `debug`, `coroutine`, `load`, `loadstring`, `dofile`, and
+  `loadfile`;
+- every bundled helper library, for example `json`, `strings`, `base64`, `template`, `tcp`, `http`, `time` with any
+  time zone, and `glua_crypto`;
+- `nauthilus_redis` with read and write commands, pipelines, scripts, and named pools;
+- `nauthilus_cache`, `nauthilus_prometheus` including `create_*_vec`, `nauthilus_brute_force` including custom
+  tolerations, `nauthilus_psnet` including `register_connection_target`, and `nauthilus_misc` including
+  `wait_random`;
+- outbound HTTP through `glua_http`, plus `nauthilus_mail`, `nauthilus_dns`, `nauthilus_soft_whitelist`, and
+  `nauthilus_ldap` when an LDAP backend is configured;
+- `nauthilus_http_request` and `nauthilus_http_response` in every stage; response headers set by an environment
+  source, a subject source, or a synchronous action reach the client, while status and body of an authentication
+  response stay with the server;
+- `nauthilus_backend` in subject sources, including `get_backend_servers`, `select_backend_server`,
+  `get_selected_backend_server`, and `check_backend_connection`;
+- dynamic module selection such as `require(name)`.
 
-- `supported`: may be selected by top-level `policy`; focused tests prove production decode, validation, and candidate
-  preparation for representative callbacks.
+Three properties of the Nauthilus 4 runtime remain and are not restrictions of the API:
+
+- **Modules come from the candidate snapshot.** `require` resolves host modules and the Lua files captured from the
+  configured `package_path` when the configuration was loaded. `package.path` is empty, so a module file that is
+  changed or added on disk becomes visible with the next configuration reload, not in the middle of a generation.
+  `dofile` and `loadfile` read the file system directly.
+- **A post-action has no live response.** POST-Actions run after the response left the server. Their
+  `nauthilus_http_response` module keeps every documented function, and each call has no effect.
+- **VMs are pooled.** Each callback has its own VM pool. A global variable that a script sets stays in that VM and
+  is visible to later requests of the same callback, as in custom hooks and in Nauthilus 3. Keep request data in
+  local variables or in `nauthilus_context`.
+
+Candidate preparation compiles every configured callback and never executes it. Module-level code therefore runs
+only when a request executes the callback. A script is rejected when it does not compile, or when the name of its
+entry point (`nauthilus_call_environment`, `nauthilus_call_subject`, or `nauthilus_call_action`) occurs neither in
+the script nor in a Lua module captured from the configured `package_path`; that catches a script configured for the
+wrong stage. A module name that cannot be resolved fails when the request runs the `require`.
+
+## Bundled authentication callbacks
+
+Every bundled environment source, subject source, and action passes candidate preparation; the test
+`TestBundledAuthnCallbacksPrepareAsPolicyProvidersAndEffects` proves it for each file. The status values are:
+
+- `supported`: may be selected by top-level `policy`.
+- `supported, native alternative`: may be selected by top-level `policy`; a bundled native Go plugin covers the same
+  use case and is the maintained production path.
 - `test-only`: retained for the Lua callback test harness; it is not an operator configuration example.
-- `reference-only`: retained as migration or design material. Do not place it in `policy.namespaces.authn`; production
-  candidate preparation rejects its unavailable capability. Replace it with a generation-owned builtin or native
-  provider/effect before activation.
 
-| Callback | Status | Production boundary |
+| Callback | Status | Notes |
 | --- | --- | --- |
-| `actions/analytics.lua` | reference-only | Its legacy callback mutates request runtime context; it has not been promoted as a production Policy example. |
-| `actions/bruteforce.lua` | reference-only | Requires an arbitrary TCP/HAProxy target. |
-| `actions/bruteforce_header.lua` | supported | Synchronous response action only; the header name is fixed in the captured script and does not use ambient environment state. |
-| `actions/clickhouse.lua` | reference-only | Requires outbound HTTP, Redis/cache writes, and legacy ambient configuration; use native `authn/plugin.clickhouse.post_action`. |
-| `actions/dynamic_response.lua` | reference-only | Requires mail, Redis writes/scripts, and ambient configuration. |
-| `actions/failed_login_tracker.lua` | reference-only | Requires Redis writes and a pipeline. |
-| `actions/haveibeenpwnd.lua` | reference-only | Requires outbound HTTP, mail, Redis/cache writes, and ambient configuration; use native `authn/plugin.haveibeenpwnd.post_action`. |
-| `actions/telegram.lua` | reference-only | Requires an outbound Telegram client and ambient credentials. |
-| `actions/test_context_chain.lua` | test-only | Exercises the callback test harness and legacy diagnostic logging. |
-| `environment/account_longwindow_metrics.lua` | reference-only | Requires Redis scripts/writes and ambient tuning values. |
-| `environment/blocklist.lua` | reference-only | Requires arbitrary outbound HTTP. |
-| `environment/failed_login_hotspot.lua` | reference-only | Requires a Redis write for snapshot gating and ambient tuning values. |
-| `environment/global_pattern_monitoring.lua` | reference-only | Requires Redis scripts/writes. |
-| `environment/security_metrics.lua` | reference-only | Requires a Redis pipeline and ambient tuning values. |
-| `environment/test_context_chain.lua` | test-only | Exercises the callback test harness and legacy diagnostic logging. |
-| `subject/account_centric_monitoring.lua` | reference-only | Requires Redis scripts/writes and ambient tuning values. |
-| `subject/account_protection_mode.lua` | reference-only | Requires Redis/cache writes and response mutation from the subject stage. |
-| `subject/geoip.lua` | reference-only | Requires arbitrary outbound HTTP and cache writes; use the generation-owned native GeoIP provider where applicable. |
-| `subject/idp_policy.lua` | supported | Uses request-local IdP facts and registered policy attributes only. |
-| `subject/monitoring.lua` | reference-only | Requires Redis writes, a backend target, and ambient configuration. |
-| `subject/soft_delay.lua` | reference-only | Requires Redis/cache writes and ambient tuning values. |
-| `subject/test_context_chain.lua` | test-only | Exercises the callback test harness and legacy diagnostic logging. |
+| `actions/analytics.lua` | supported | Records request analytics in the request runtime context. |
+| `actions/bruteforce.lua` | supported | Updates an HAProxy map through a TCP target. |
+| `actions/bruteforce_header.lua` | supported | Synchronous response action; the header name is fixed in the script. |
+| `actions/clickhouse.lua` | supported, native alternative | Outbound HTTP plus Redis and cache writes; native path: `authn/plugin.clickhouse.post_action`. |
+| `actions/dynamic_response.lua` | supported | Uses mail, Redis writes and scripts, and environment configuration. |
+| `actions/failed_login_tracker.lua` | supported | Uses Redis writes and a pipeline. |
+| `actions/haveibeenpwnd.lua` | supported, native alternative | Outbound HTTP, mail, Redis and cache writes; native path: `authn/plugin.haveibeenpwnd.post_action`. |
+| `actions/telegram.lua` | supported | Uses an outbound Telegram client and credentials from the environment. |
+| `actions/test_context_chain.lua` | test-only | Exercises the callback test harness. |
+| `environment/account_longwindow_metrics.lua` | supported | Uses Redis scripts and writes and tuning values from the environment. |
+| `environment/blocklist.lua` | supported | Calls an external blocklist service over HTTP. |
+| `environment/failed_login_hotspot.lua` | supported | Writes a Redis snapshot gate; pairs with `actions/failed_login_tracker.lua`. |
+| `environment/global_pattern_monitoring.lua` | supported | Uses Redis scripts and writes. |
+| `environment/security_metrics.lua` | supported | Uses a Redis pipeline and tuning values from the environment. |
+| `environment/test_context_chain.lua` | test-only | Exercises the callback test harness. |
+| `subject/account_centric_monitoring.lua` | supported | Uses Redis scripts and writes and tuning values from the environment. |
+| `subject/account_protection_mode.lua` | supported | Uses Redis and cache writes and sets response headers. |
+| `subject/geoip.lua` | supported, native alternative | Outbound HTTP and cache writes; native path: the bundled `geoip` plugin. |
+| `subject/idp_policy.lua` | supported | Uses request-local IdP facts and registered policy attributes. |
+| `subject/monitoring.lua` | supported | Uses Redis writes and selects the backend server. |
+| `subject/soft_delay.lua` | supported | Uses Redis and cache writes and tuning values from the environment. |
+| `subject/test_context_chain.lua` | test-only | Exercises the callback test harness. |
 
 ## Other checked-in Lua surfaces
 
-The following files are exhaustive for the remaining checked-in Lua tree. Their status is separate from the
-environment, subject, and action Policy VM profile:
+The following files are exhaustive for the remaining checked-in Lua tree:
 
-- `backend-runtime`: sealed from candidate-captured artifact bytes and activated only by an explicit configured
-  `authn/builtin/lua_backend` binding in the generation-owned catalog. Mere file presence does not activate it, and it
-  is not a `lua_environment`, `lua_subject`, or Lua effect script.
+- `backend-runtime`: a Lua backend implementation, activated only by an explicit configured
+  `authn/builtin/lua_backend` binding. Mere file presence does not activate it.
 - `process-owned`: loaded only by the configured initialization or custom-hook lifecycle. It cannot be selected as a
-  Policy provider or effect and does not expand the Policy VM profile.
-- `candidate-schema`: evaluated only while preparing the candidate schema contribution.
-- `captured-library`: a shared dependency whose complete static source graph remains subject to the owning VM profile.
-  A forbidden module or mutable API anywhere in that graph rejects the dependency before execution, even when the
-  candidate would not call that function.
+  Policy provider or effect.
+- `candidate-schema`: evaluated only while preparing the candidate schema contribution. A registry script runs with
+  the complete Lua standard library; request host modules are not bound because no request exists at that point.
+- `shared-library`: a shared module that any runtime loads with `require`.
 - `standalone-example`: documentation-only Lua with no production callback entry point.
 
 | Lua file | Status | Authority boundary |
@@ -85,14 +113,14 @@ environment, subject, and action Policy VM profile:
 | `init/proxy-init.lua` | process-owned | Configured initialization script; not an authentication Policy callback. |
 | `init/testing_csv_loader.lua` | process-owned | Configured test initialization script; not an authentication Policy callback. |
 | `policy/registry.lua` | candidate-schema | Registers candidate-owned Lua attributes; it does not execute per request. |
-| `share/nauthilus_geoip_bridge.lua` | captured-library | Shared bridge; availability follows the owning VM profile. |
-| `share/nauthilus_keys.lua` | captured-library | Shared key helper; its `nauthilus_util` dependency makes it unavailable in Policy VMs. |
-| `share/nauthilus_policy_facts.lua` | captured-library | Shared request-local Policy fact emitter. |
-| `share/nauthilus_redis_pool.lua` | captured-library | Shared Redis pool resolver; its `nauthilus_util` dependency and named-pool lookup make it unavailable in Policy VMs. |
-| `share/nauthilus_util.lua` | captured-library | Process/backend helper; its environment lookup and cache mutations make the whole module unavailable in Policy VMs. |
+| `share/nauthilus_geoip_bridge.lua` | shared-library | Shared GeoIP bridge. |
+| `share/nauthilus_keys.lua` | shared-library | Shared Redis key helper. |
+| `share/nauthilus_policy_facts.lua` | shared-library | Shared request-local Policy fact emitter. |
+| `share/nauthilus_redis_pool.lua` | shared-library | Shared Redis pool resolver. |
+| `share/nauthilus_util.lua` | shared-library | Shared helper functions, including environment lookup. |
 | `examples/otel_demo.lua` | standalone-example | Standalone OpenTelemetry API demonstration with no callback entry point. |
 
-The supported examples are [`examples/policy-safe-idp.yml`](examples/policy-safe-idp.yml) and
+The checked-in example configurations are [`examples/policy-safe-idp.yml`](examples/policy-safe-idp.yml) and
 [`examples/policy-safe-bruteforce-header.yml`](examples/policy-safe-bruteforce-header.yml). Paths in those repository
-fixtures are relative so the contract test can seal the checked-in bytes; deployments must use the corresponding
-absolute paths under their immutable configuration-artifact tree.
+fixtures are relative so the test can capture the checked-in bytes; deployments must use the corresponding absolute
+paths under their configuration-artifact tree.

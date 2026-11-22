@@ -27,7 +27,7 @@ this contract; they must not invent identifiers, stages, or causes that this con
 | Writer | Status | Contract |
 |---|---|---|
 | Native plugin `contrib/plugins/clickhouse` (`authn/plugin.clickhouse.post_action`) | Active in production | This document |
-| Lua `server/lua-plugins.d/actions/clickhouse.lua` | Retired, reference only, not configurable as Policy action | Legacy columns only; writes `contract_version = 0` implicitly (column default). No new columns. Still sends the retired columns of section 3, so it cannot write into tables without them under strict field checking. |
+| Lua `server/lua-plugins.d/actions/clickhouse.lua` | Unmaintained alternative; configurable as a Lua action again since 4.1.1 | Legacy columns only; writes `contract_version = 0` implicitly (column default). No new columns. Still sends the retired columns of section 3, so it cannot write into tables without them under strict field checking. |
 
 ## 3. Field matrix for `nauthilus.logins`
 

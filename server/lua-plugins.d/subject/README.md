@@ -21,9 +21,9 @@ use the separate `_G["policy.facts.collect"]` contract documented in [`../policy
 
 ## Bundled callback status
 
-Only `idp_policy.lua` is a supported operator example under the production Policy VM. The other operational scripts
-require Redis/cache mutation, outbound HTTP, backend targeting, subject-stage response mutation, or ambient tuning;
-`test_context_chain.lua` is test-only. The normative classification and exact reasons are in
+Every subject source in this directory can be configured as a `lua_subject` provider; `test_context_chain.lua` is
+test-only. Subject sources run with the complete Lua API, including Redis and cache writes, outbound HTTP, response
+headers, and backend server selection through `nauthilus_backend`. The per-file status is in
 [`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md).
 
 ## Available Plugins
@@ -38,12 +38,10 @@ Monitors authentication attempts at the account level to detect potential distri
 - Detects distributed brute force attacks where many IPs target a single account
 - Adds suspicious accounts to a monitoring list for enhanced protection
 
-**Historical behavior:**
-The reference-only callback used the following thresholds:
+**Behavior:**
+The callback uses the following thresholds:
 - `threshold_unique_ips`: 10 (alerts if more than 10 unique IPs try to access an account)
 - `threshold_ip_to_fail_ratio`: 0.8 (alerts if the ratio of unique IPs to failed attempts is high)
-
-Its custom Redis pool and write/script requirements are not available in the Policy VM.
 
 ### geoip.lua
 Analyzes the geographic origin of authentication requests using IP geolocation to detect suspicious login attempts from unusual locations.
@@ -55,8 +53,8 @@ Analyzes the geographic origin of authentication requests using IP geolocation t
 - Supports whitelisting and blacklisting of countries and regions
 - Provides detailed logging of geographic access patterns
 
-**Historical configuration:**
-The reference-only callback used the following ambient value:
+**Configuration:**
+The callback reads the following environment variable:
 - `GEOIP_POLICY_URL`: URL endpoint for the geoip_policyd service
 
 The plugin connects to the geoip_policyd service to evaluate geographic access policies and determine if authentication should be allowed based on the client's location.
@@ -79,8 +77,8 @@ Provides comprehensive monitoring of authentication activities, system performan
 - Provides real-time visibility into system health
 - Supports integration with monitoring systems via metrics export
 
-**Historical behavior:**
-The reference-only callback used the following monitoring values:
+**Behavior:**
+The callback uses the following monitoring values:
 - `monitoring_sensitivity`: Adjusts the sensitivity of anomaly detection (low, medium, high)
 - `monitoring_metrics_retention`: How long to retain detailed metrics (in days)
 

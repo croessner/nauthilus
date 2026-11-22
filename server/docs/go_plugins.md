@@ -660,9 +660,8 @@ the deferred Lua subject checks. Lua-only dependencies inside either side retain
 `SourceDescriptor.Requires` and `SourceDescriptor.After` still address native plugin components only; they must not name
 Lua checks. The compiler rejects a graph that would require native execution again after deferred Lua execution. Reload
 uses the same compiler validation and leaves the previous complete Policy generation active when the candidate graph is
-invalid. The Lua provider uses the checked-in `subject/idp_policy.lua` callback, which is preparation-tested against the
-production subject profile; it reads request-local IdP facts and emits registered Policy attributes without selecting a
-backend target.
+invalid. The Lua provider uses the checked-in `subject/idp_policy.lua` callback, which is preparation-tested; it reads
+request-local IdP facts and emits registered Policy attributes.
 
 Some Lua helper families intentionally remain plugin-owned in the native contract:
 

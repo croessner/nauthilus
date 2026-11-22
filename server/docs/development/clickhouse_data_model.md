@@ -41,7 +41,7 @@ when the selected Policy rule carries the effect
 |---|---|---|---|
 | Native Go plugin `clickhouse` (Policy post-action, `AuthEventSink`, `BruteForceEventSink`) | Active | `logins`, `auth_events`, `bruteforce_lifecycle`, `bruteforce_attempts` | `contrib/plugins/clickhouse/*.go` |
 | Materialized view `bruteforce_attempt_summary_mv` | Active (server side) | `bruteforce_attempt_summary` | `contrib/clickhouse-kubernetes/schema.sql` |
-| Lua action `server/lua-plugins.d/actions/clickhouse.lua` | Retired, reference only; the production Policy VM rejects it | `logins` (legacy column subset only) | `server/lua-plugins.d/actions/clickhouse.lua` |
+| Lua action `server/lua-plugins.d/actions/clickhouse.lua` | Unmaintained alternative to the native plugin; configurable as a Lua action again since 4.1.1 | `logins` (legacy column subset only) | `server/lua-plugins.d/actions/clickhouse.lua` |
 
 ### 1.2 Readers
 
@@ -202,10 +202,11 @@ Requests without authentication are skipped, except OIDC token post-actions
 | Dedup key | SHA-256 digest only. |
 | Logs, metrics, spans | No row bodies, SQL, usernames, client IPs, or credentials; flush errors are logged without error text. |
 
-### 3.6 Retired Lua Action
+### 3.6 Lua Action
 
-`server/lua-plugins.d/actions/clickhouse.lua` is kept as a reference only and
-receives no new columns. It batches through `nauthilus_cache`, flushes only on
+`server/lua-plugins.d/actions/clickhouse.lua` can be configured as a Lua action
+(the 4.0.0 to 4.1.0 releases rejected it), but it receives no new columns; the
+native plugin is the maintained writer. It batches through `nauthilus_cache`, flushes only on
 size (`CLICKHOUSE_BATCH_SIZE`, default 100), deduplicates only authenticated
 rows for a fixed 300 s on the plain key `clickhouse:authdedup:<username>:<client_ip>`,
 and sends the legacy column subset: `ts`, `session`, `service`,

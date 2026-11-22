@@ -200,17 +200,17 @@ to the `plugins` section, for example the module `path`, `allow_capabilities`, o
 requires a Nauthilus process restart. A SIGHUP reload refuses such a candidate as restart-bound (`plugin restart
 required`) and keeps the running configuration.
 
-## Historical Lua action
+## Lua action
 
-`server/lua-plugins.d/actions/clickhouse.lua` is retained as reference material only. It requires ambient credentials,
-arbitrary outbound HTTP, Redis writes, and cache mutation, so the production authentication Policy VM rejects it during
-candidate preparation. Do not add its environment variables or configure it as a top-level Policy action. Use the
-native module and exact `authn/plugin.clickhouse.post_action` obligation above.
+`server/lua-plugins.d/actions/clickhouse.lua` is the older Lua writer. It reads its credentials from environment
+variables and uses outbound HTTP, Redis writes, and the Lua cache. Since Nauthilus 4.1.1 it can be configured as a
+top-level Policy action again, but it receives no new columns and still sends retired columns that fresh tables from
+`schema.sql` no longer have. Prefer the native module and the exact `authn/plugin.clickhouse.post_action` obligation
+above.
 
 ## Optional: Read-only query hook
 
-This custom HTTP hook has a separate process-owned lifecycle; its outbound HTTP and environment-backed configuration
-are not Policy VM capabilities.
+This custom HTTP hook has a separate process-owned lifecycle.
 
 If you enable `server/lua-plugins.d/hooks/clickhouse-query.lua`, set:
 - CLICKHOUSE_SELECT_BASE: e.g. `http://clickhouse.auth.svc.cluster.local:8123`

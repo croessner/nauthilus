@@ -82,10 +82,9 @@ handle. `name()` and `is_custom()` let `init/init.lua` register the pool.
 ### nauthilus_util.lua
 A comprehensive utility module that provides common functions used throughout the Nauthilus plugin system.
 
-`get_current_timestamp()` is UTC-only and does not inspect the process environment. `getenv()` remains a process-callback
-helper for historical backend/hook/init scripts. Authentication Policy callbacks must not import `nauthilus_util`: the
-static candidate validator rejects its complete dependency graph because it contains ambient environment lookup and
-cache mutation, even if the callback intends to use only a different helper.
+`get_current_timestamp()` is UTC-only and does not inspect the process environment. `getenv()` reads a process
+environment variable and caches the value in `nauthilus_cache`. Every Lua runtime can import `nauthilus_util`,
+including environment sources, subject sources, and actions.
 
 **Features:**
 - **Table Operations**

@@ -22,11 +22,12 @@ non-retryable result.
 
 ## Bundled callback status
 
-Only `bruteforce_header.lua` is a supported production example, and only as a synchronous response action. The other
-operational Lua actions require Redis/cache mutation, outbound HTTP/TCP/mail, ambient credentials/tuning, or legacy
-runtime exchange; `test_context_chain.lua` is test-only. Use native
-`authn/plugin.clickhouse.post_action` and `authn/plugin.haveibeenpwnd.post_action` for those two bundled replacements.
-The normative per-file classification is [`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md).
+Every action in this directory can be configured as a `lua_action` effect; `test_context_chain.lua` is test-only.
+Actions run with the complete Lua API, including Redis and cache writes, outbound HTTP, TCP, and mail. A synchronous
+action can set HTTP response headers. A POST-Action runs after the response left the server, so its
+`nauthilus_http_response` calls have no effect. The bundled native plugins `authn/plugin.clickhouse.post_action` and
+`authn/plugin.haveibeenpwnd.post_action` are maintained alternatives to `clickhouse.lua` and `haveibeenpwnd.lua`. The
+per-file status is in [`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md).
 
 The checked-in synchronous response-action configuration is
 [`../examples/policy-safe-bruteforce-header.yml`](../examples/policy-safe-bruteforce-header.yml).
@@ -42,8 +43,6 @@ A plugin that collects and analyzes authentication data for reporting and visual
 - Supports data aggregation for reporting dashboards
 - Provides insights into system usage patterns
 
-**Production status:** Reference-only. It has not been promoted as a generation-owned Policy action example.
-
 ### bruteforce.lua
 Detects and mitigates brute force attacks by monitoring failed login attempts and implementing countermeasures when suspicious activity is detected.
 
@@ -53,8 +52,8 @@ Detects and mitigates brute force attacks by monitoring failed login attempts an
 - Can temporarily block IPs with excessive failed attempts
 - Logs detailed information about potential brute force attacks
 
-**Historical configuration:**
-The reference-only callback used the following ambient values:
+**Configuration:**
+The callback reads the following environment variables:
 - `HAPROXY_STATS`: HAProxy stats socket endpoint
 - `HAPROXY_SMTP_MAP`: HAProxy map file for SMTP protocol
 - `HAPROXY_GENERIC_MAP`: HAProxy map file for other protocols
@@ -69,13 +68,13 @@ Implements a sophisticated security response system that dynamically adjusts sec
 - Uses Redis to store and track metrics, suspicious IPs, and regions
 - Dynamically adjusts security settings like captcha requirements and rate limiting
 
-**Historical configuration:**
-The reference-only callback used the following ambient values:
+**Configuration:**
+The callback reads the following environment variables:
 - `SMTP_*` variables for email notifications
 - `ADMIN_EMAIL_ADDRESSES`: Comma-separated list of admin email addresses for notifications
 - `CUSTOM_REDIS_POOL_NAME`: Optional custom Redis pool name
 
-The historical callback calculated threat levels and attempted to apply security measures without manual intervention.
+The callback calculates threat levels and applies security measures without manual intervention.
 
 ### failed_login_tracker.lua
 Tracks failed login attempts for unrecognized accounts, maintaining a top-100 list of usernames with the most failed attempts.
@@ -86,13 +85,10 @@ Tracks failed login attempts for unrecognized accounts, maintaining a top-100 li
 - Maintains a top-100 list of failed logins
 - Provides logging and context information
 
-**Production status:** Reference-only. Its Redis write pipeline and custom-pool selection are unavailable in the Policy
-VM.
-
 ### haveibeenpwnd.lua
 Checks user credentials against the "Have I Been Pwned" database to identify compromised passwords.
 
-Native replacement: configure the bundled Go plugin `haveibeenpwnd` and reference the native policy effect ID
+Native alternative: configure the bundled Go plugin `haveibeenpwnd` and reference the native policy effect ID
 `authn/plugin.haveibeenpwnd.post_action`. The native plugin keeps the k-anonymity HTTP, Redis gate, cache behavior, and SMTP/LMTP
 mail notification through `Host.Mail("haveibeenpwnd")`. Enable mail in `plugins.modules[].config.mail` and add the
 `mail` capability beside `credentials` before restart. Both claim the notification once through the `send_mail`
@@ -105,8 +101,8 @@ through a direct Redis `HSETNX`.
 - Alerts users and administrators about compromised credentials
 - Integrates with the Nauthilus notification system
 
-**Historical Lua configuration:**
-The reference-only Lua callback used the following ambient values; the native replacement uses typed module config:
+**Lua configuration:**
+The Lua callback reads the following environment variables; the native plugin uses typed module config:
 - `CUSTOM_REDIS_POOL_NAME`: Optional custom Redis pool name
 - `SMTP_*` variables: SMTP server configuration for sending notifications (SMTP_USE_LMTP, SMTP_SERVER, SMTP_PORT, SMTP_HELO_NAME, SMTP_TLS, SMTP_STARTTLS, SMTP_USERNAME, SMTP_PASSWORD, SMTP_MAIL_FROM)
 - `SSP_WEBSITE`: URL to the self-service password change website
@@ -128,8 +124,8 @@ Sends security notifications and alerts to a Telegram channel or group.
   - It uses the server's configured nonce internally and returns a 64-character lowercase SHA-256 hex string.
 - The rendered Telegram message includes the field "PASSWORD HASH" along with other context.
 
-**Historical configuration:**
-The reference-only callback used the following ambient credentials:
+**Configuration:**
+The callback reads the following credentials from environment variables:
 - `TELEGRAM_PASSWORD`: Your Telegram bot token/password
 - `TELEGRAM_CHAT_ID`: The chat ID to send notifications to
 
@@ -141,10 +137,10 @@ The reference-only callback used the following ambient credentials:
 ### clickhouse.lua
 Exports metrics about non-authenticated requests (including those without an existing account) to ClickHouse using batched inserts.
 
-Native replacement: configure the bundled Go plugin `clickhouse` and reference the native policy effect ID
+Native alternative: configure the bundled Go plugin `clickhouse` and reference the native policy effect ID
 `authn/plugin.clickhouse.post_action`. The native plugin writes the same JSONEachRow field names through host-managed HTTP, Redis, and
 cache facades, except the retired flat `reputation_*`, `gp_*`, `prot_*`, and `dyn_*` fields, which no producer fills any
-more. This retired script still sends them, so it only works with tables that keep those columns: fresh tables from
+more. The Lua script still sends them, so it only works with tables that keep those columns: fresh tables from
 `contrib/clickhouse-kubernetes/schema.sql` no longer have them, and its retirement block drops them from existing tables. Native post-actions cannot apply runtime deltas, so the Lua `rt.post_clickhouse = true` marker is not
 mutated back into request runtime state.
 
@@ -242,7 +238,7 @@ SETTINGS index_granularity = 8192;
 Notes:
 - ts is DateTime64(3, 'UTC'); other fields are String for schema stability. ClickHouse JSONEachRow will parse ISO-like timestamp strings for ts automatically.
 
-Historical Lua configuration (environment variables):
+Lua configuration (environment variables):
 - CLICKHOUSE_INSERT_URL: Full HTTP endpoint including the INSERT and FORMAT JSONEachRow, e.g.
   http://clickhouse:8123/?query=INSERT%20INTO%20nauthilus.logins%20FORMAT%20JSONEachRow
 - CLICKHOUSE_USER / CLICKHOUSE_PASSWORD: Optional; sent via X-ClickHouse-User/Key headers.

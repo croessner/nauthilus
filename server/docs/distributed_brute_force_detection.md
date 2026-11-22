@@ -4,12 +4,12 @@
 
 This document outlines a comprehensive approach to detecting and mitigating distributed brute force attacks that bypass traditional IP-based brute force protection mechanisms. It addresses scenarios where attackers use a large number of unique IP addresses (potentially millions) with a small number of login attempts per IP to avoid triggering traditional brute force detection systems.
 
-> **Production status:** This is an architecture and threat-analysis document, not a current deployment runbook. The
-> Lua snippets and the bundled global-pattern, account-monitoring, and dynamic-response callbacks below require mutable
-> Redis, ambient configuration, mail, or other host capabilities that the generation-owned authentication Policy VM
-> deliberately does not expose. Do not place those scripts in top-level `policy`; candidate preparation rejects them.
-> See [`../lua-plugins.d/POLICY_VM_COMPATIBILITY.md`](../lua-plugins.d/POLICY_VM_COMPATIBILITY.md) for the normative
-> checked-in callback classification.
+> **Production status:** This is an architecture and threat-analysis document, not a deployment runbook. The Lua
+> snippets and the bundled global-pattern, account-monitoring, and dynamic-response callbacks below use Redis writes
+> and scripts, environment variables, and mail. Since Nauthilus 4.1.1 authentication callbacks run with the complete
+> Lua API again, so these scripts can be selected by top-level `policy`. See
+> [`../lua-plugins.d/POLICY_VM_COMPATIBILITY.md`](../lua-plugins.d/POLICY_VM_COMPATIBILITY.md) for the status of every
+> checked-in callback.
 
 ## Problem Statement
 
@@ -190,8 +190,8 @@ end
 
 The reference collection maps global recognition to `environment/global_pattern_monitoring.lua`, account evidence to
 `subject/account_centric_monitoring.lua`, and response experiments to `actions/dynamic_response.lua`. The custom admin
-and simulation hooks remain separate process-owned HTTP callbacks. This mapping documents the prototype; it is not a
-Policy activation surface.
+and simulation hooks remain separate process-owned HTTP callbacks. The three callbacks take effect only when top-level
+`policy` selects them.
 
 The prototype stores sliding-window counters, distributed state, and historical patterns in Redis. It also contains
 atomic Redis scripts used to combine related mutations:
@@ -212,8 +212,8 @@ atomic Redis scripts used to combine related mutations:
    - Used for storing historical metrics only if they don't already exist
    - Ensures that historical data is not overwritten by concurrent operations
 
-The process-owned historical initialization script can upload those Redis programs when explicitly configured. That
-process lifecycle does not make any reference-only authentication callback selectable by top-level `policy`.
+The process-owned initialization script can upload those Redis programs when explicitly configured. The callbacks
+themselves run only when top-level `policy` selects them.
 
 ### Future design work
 
@@ -279,21 +279,20 @@ scrape_configs:
 ## Production integration boundary
 
 The built-in `authn/builtin/brute_force` provider remains available through an explicit top-level authn domain plan.
-The broader distributed detector described here is not a completed production feature under the hard-cut Policy
-runtime:
+The broader distributed detector described here is implemented by three bundled Lua callbacks:
 
 - `environment/global_pattern_monitoring.lua` requires Redis scripts and writes;
 - `subject/account_centric_monitoring.lua` requires Redis scripts, writes, and ambient tuning values;
 - `actions/dynamic_response.lua` requires Redis writes/scripts, mail, and ambient SMTP/tuning values.
 
-Those capabilities are intentionally absent from the request-owned Policy VM, so there is no supported YAML block,
-environment-variable recipe, copy step, or reload procedure for activating these three callbacks. A production
-implementation must first provide generation-owned native or builtin providers/effects with typed configuration,
-bounded targets, candidate validation, and explicit policy selection. Until such components exist and pass the normal
-prepare/validate/commit gate, this document supplies threat-model and algorithm material only.
+Since Nauthilus 4.1.1 all of these capabilities are available to authentication callbacks, and candidate preparation
+accepts the three scripts. Configure them as `lua_environment`, `lua_subject`, and `lua_action` entries below
+`policy.namespaces.authn` and bind them in the owning domain plan; their tuning values come from the environment
+variables listed in the plugin READMEs. This document supplies the threat model and the algorithms; it does not
+contain a tested end-to-end deployment configuration for the detector.
 
 ## Conclusion
 
 Distributed brute force attacks require global and account-centric evidence in addition to per-source throttling. The
-algorithms above remain useful design input, but their historical Lua implementations are not production authority and
-must not be presented as deployed protection.
+algorithms above are implemented by the bundled Lua callbacks named in this document. They protect a deployment only
+where top-level `policy` selects them, and this document contains no tested end-to-end configuration for that.

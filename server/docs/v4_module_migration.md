@@ -53,7 +53,96 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
-## Unreleased: Loki Diagnostics Query Cost
+## v4.1.1: Full Lua API For Authentication Callbacks
+
+Nauthilus 4.1.1 is a patch release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Private
+native plugins must be rebuilt against this source, as for every release.
+
+### Lua environment sources, subject sources, and actions
+
+Nauthilus 4.0.0 to 4.1.0 ran Lua environment sources, subject sources, and
+actions with a reduced host API and rejected a configuration whose callback
+used anything else. That limit was never intended and broke callbacks that
+worked on Nauthilus 3. Version 4.1.1 removes it: these callbacks run with the
+same Lua API as custom hooks and Lua backends.
+
+Available again in environment sources, subject sources, and actions:
+
+- Redis writes, pipelines, scripts, and named pools: `register_redis_pool`,
+  `redis_set`, `redis_incr`, `redis_del`, `redis_rename`, `redis_expire`,
+  `redis_mset`, `redis_run_script`, `redis_upload_script`, `redis_pipeline`,
+  and the hash, sorted-set, list, HyperLogLog, and set write commands.
+  `get_redis_connection` accepts named pools and returns a writable handle.
+- `nauthilus_cache` write functions: `cache_set`, `cache_delete`,
+  `cache_update`, `cache_flush`, `cache_push`, `cache_pop_all`.
+- Outbound HTTP (`glua_http`), `nauthilus_mail`, `nauthilus_dns`,
+  `nauthilus_soft_whitelist`, and `nauthilus_ldap` when an LDAP backend is
+  configured.
+- `nauthilus_prometheus.create_summary_vec`, `create_counter_vec`,
+  `create_histogram_vec`, and `create_gauge_vec`;
+  `nauthilus_psnet.register_connection_target`; the custom-toleration
+  functions of `nauthilus_brute_force`; `nauthilus_misc.wait_random`.
+- `nauthilus_backend` in subject sources with `get_backend_servers`,
+  `select_backend_server`, `get_selected_backend_server`, and
+  `check_backend_connection`. A selected server reaches the `Auth-Server` and
+  `Auth-Port` response headers again.
+- `nauthilus_http_response` in environment sources and subject sources, not
+  only in synchronous response actions. Response headers set there reach the
+  client; status and body of an authentication response stay with the
+  server.
+- The standard libraries `os`, `io`, `debug`, `coroutine`, and `channel`,
+  including `os.getenv`, and the base functions `print`, `load`,
+  `loadstring`, `collectgarbage`, `getfenv`, `setfenv`, `module`, and
+  `newproxy`.
+- Every bundled helper library, not only `json`: `strings`, `base64`,
+  `template`, `tcp`, `http`, `regexp`, `yaml`, `db`, `inspect`, `crypto`, and
+  the others. `time` is the complete library again and accepts any time zone.
+- `require` with a computed module name.
+- `dofile` and `loadfile` in every Lua runtime, including custom hooks, Lua
+  backends, init scripts, and the cache-flush script.
+- Policy registry scripts run with the complete Lua standard library again.
+
+Further effects:
+
+- The static source check is gone. A script is no longer rejected because a
+  forbidden name appears in it, in a shared module it requires, or in a
+  string such as `"os"`.
+- The shared modules `nauthilus_util`, `nauthilus_keys`, and
+  `nauthilus_redis_pool` load in every runtime.
+- Candidate preparation compiles every configured callback and no longer
+  executes any of them. A script is rejected when it does not compile, or
+  when the name of its entry point occurs neither in the script nor in a
+  Lua module captured from the configured `package_path`. Module-level code
+  runs only with a request, and an unresolvable module name fails when the
+  request runs the `require`.
+- Each callback has its own VM pool, and the VM is reused. Nauthilus 4.0.0
+  to 4.1.0 rebuilt the global table for every request; 4.1.1 keeps it, as
+  custom hooks and Nauthilus 3 do. A global variable a script sets is
+  visible to later requests of the same callback, so keep request data in
+  local variables or in `nauthilus_context`.
+- All bundled environment sources, subject sources, and actions pass
+  candidate preparation. `server/lua-plugins.d/POLICY_VM_COMPATIBILITY.md`
+  no longer classifies any of them as `reference-only`.
+
+What stays as in 4.0 and 4.1.0:
+
+- `require` resolves Lua modules from the files captured from the configured
+  `package_path` when the configuration was loaded; `package.path` is empty.
+  A changed or added module file becomes active with the next configuration
+  reload.
+- A POST-Action runs after the response left the server. Its
+  `nauthilus_http_response` functions now exist and have no effect; before,
+  calling one raised an error.
+- `nauthilus_i18n.register_catalog` belongs to init scripts, as in
+  Nauthilus 3.
+- Generic Policy providers (`kind: lua`) keep their separate sandbox.
+
+**Action:** none is required. Operators who moved logic into a Lua backend,
+a custom hook, or a native plugin only to work around the limit can keep that
+setup or move it back.
+
+### Loki diagnostics query cost
 
 - The `loki` source of the operational diagnostics filters every profile query
   by its message literal (`|= "<literal>"`) before it applies the message

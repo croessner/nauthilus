@@ -2,12 +2,13 @@
 
 This directory contains Lua plugins for the Nauthilus authentication system. These plugins extend and customize the functionality of Nauthilus, allowing for flexible authentication workflows, security features, and integrations with external systems.
 
-## Production Policy VM status
+## Lua runtimes and callback status
 
-The checked-in directory is both an active plugin source and a historical example collection; file presence is not an
-activation or support claim. [`POLICY_VM_COMPATIBILITY.md`](POLICY_VM_COMPATIBILITY.md) is the normative classification
-for every environment, subject, and action callback under the generation-owned authentication Policy VM. Candidate
-preparation rejects callbacks that require ambient or effectful capabilities outside that profile.
+Every Lua runtime exposes the same Lua API. Environment sources, subject sources, and actions can use Redis writes,
+outbound HTTP, LDAP, DNS, mail, metric creation, backend selection, and the complete standard library, exactly like
+custom hooks and Lua backends. File presence in this directory is not an activation: a callback runs only when the
+configuration selects it. [`POLICY_VM_COMPATIBILITY.md`](POLICY_VM_COMPATIBILITY.md) describes the runtimes and lists
+the status of every checked-in script.
 
 ## Plugin Directory Structure
 
@@ -17,8 +18,8 @@ The plugins are organized into subdirectories based on their purpose and when th
 Action plugins are executed in response to authentication events and can perform various tasks such as tracking failed logins, implementing dynamic security responses, and sending notifications.
 
 ### [backend](./backend/)
-Backend plugins run in a sealed, generation-owned backend runtime only when explicitly selected through
-`authn/builtin/lua_backend`; they are not Policy source or effect scripts.
+Backend plugins run only when explicitly selected through `authn/builtin/lua_backend`; they are not Policy source or
+effect scripts.
 
 ### [environment](./environment/)
 Lua environment source plugins collect pre-authentication signals and can trigger environment-derived decisions.
@@ -30,13 +31,14 @@ Lua subject source plugins run with subject context and can emit subject-derived
 Hook plugins are process-owned custom HTTP callbacks. They are not authentication Policy callbacks.
 
 ### [init](./init/)
-Initialization plugins are process-owned startup callbacks. They do not expand a request Policy VM's capabilities.
+Initialization plugins are process-owned startup callbacks.
 
 ### [policy](./policy/)
 Policy registry scripts register candidate-owned Lua attributes during preparation; they do not execute per request.
 
 ### [share](./share/)
-Shared modules are captured dependencies. The owning VM profile still controls which host functions a helper may call.
+Shared modules are loaded with `require` from the configured `package_path`. They are captured together with the
+configuration, so a changed module file becomes active with the next configuration reload.
 
 ## Plugin Execution Flow
 
