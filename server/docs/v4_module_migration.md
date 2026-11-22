@@ -116,11 +116,14 @@ Further effects:
   Lua module captured from the configured `package_path`. Module-level code
   runs only with a request, and an unresolvable module name fails when the
   request runs the `require`.
-- Each callback has its own VM pool, and the VM is reused. Nauthilus 4.0.0
-  to 4.1.0 rebuilt the global table for every request; 4.1.1 keeps it, as
-  custom hooks and Nauthilus 3 do. A global variable a script sets is
-  visible to later requests of the same callback, so keep request data in
-  local variables or in `nauthilus_context`.
+- Each callback has its own pool of pre-built VMs. The callback script
+  still runs in a fresh request environment: a global variable the script
+  assigns lives only for that request. Nauthilus 4.0.0 to 4.1.0 also rebuilt
+  the VM's base global table for every request; 4.1.1 keeps it, as custom
+  hooks and Nauthilus 3 do. Explicit writes to `_G`, changes to shared
+  tables such as `string`, and globals assigned by a module loaded with
+  `require` are therefore visible to later requests of the same callback.
+  Do not keep request data there.
 - All bundled environment sources, subject sources, and actions pass
   candidate preparation. `server/lua-plugins.d/POLICY_VM_COMPATIBILITY.md`
   no longer classifies any of them as `reference-only`.

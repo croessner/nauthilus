@@ -39,9 +39,13 @@ Three properties of the Nauthilus 4 runtime remain and are not restrictions of t
   `dofile` and `loadfile` read the file system directly.
 - **A post-action has no live response.** POST-Actions run after the response left the server. Their
   `nauthilus_http_response` module keeps every documented function, and each call has no effect.
-- **VMs are pooled.** Each callback has its own VM pool. A global variable that a script sets stays in that VM and
-  is visible to later requests of the same callback, as in custom hooks and in Nauthilus 3. Keep request data in
-  local variables or in `nauthilus_context`.
+- **VMs are pooled.** Each callback has its own pool of pre-built VMs. The callback script runs in a fresh request
+  environment on top of the VM's base environment: a global variable the script assigns, including its entry
+  function, lives only for that request, and the request-bound modules are mapped into that environment. State
+  outside the request environment stays in the VM and is visible to later requests of the same callback, as in
+  custom hooks and in Nauthilus 3: explicit writes to `_G`, changes to shared tables such as `string`, and globals
+  assigned by a module loaded with `require`. Do not keep request data there. A module loaded with `require` is
+  executed again for every request.
 
 Candidate preparation compiles every configured callback and never executes it. Module-level code therefore runs
 only when a request executes the callback. A script is rejected when it does not compile, or when the name of its
