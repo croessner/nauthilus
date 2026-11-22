@@ -29,6 +29,7 @@ const (
 	maximumTotalSize           = 32 << 20
 	preloadBaselineRegistryKey = "_NAUTHILUS_SEALED_PRELOADS"
 	preparedRegistryKey        = "_NAUTHILUS_SEALED_PREPARED"
+	capturedModuleChunkPrefix  = "@captured-module/"
 	luaGlobalName              = "_G"
 )
 
@@ -45,9 +46,13 @@ var standardLoadedNames = map[string]struct{}{
 	lua.ChannelLibName:   {},
 }
 
+// capturedModule is one immutable module of a snapshot: its bytes and the prototype compiled from them once.
+//
+// gopher-lua writes a prototype only while compiling it, so every VM instantiates the same prototype.
 type capturedModule struct {
-	source []byte
-	name   string
+	prototype *lua.FunctionProto
+	source    []byte
+	name      string
 }
 
 // Modules is an immutable snapshot of external Lua package membership and bytes.
@@ -144,13 +149,14 @@ func capturePattern(
 			return fmt.Errorf("lua module %q has an invalid snapshot size", path)
 		}
 
-		if _, err := compileModule(path, source); err != nil {
+		prototype, err := compileModule(capturedModuleChunkPrefix+moduleName, source)
+		if err != nil {
 			return fmt.Errorf("compile Lua module %q: %w", path, err)
 		}
 
 		*totalSize += len(source)
 		modules.entries[moduleName] = capturedModule{
-			name: moduleName, source: append([]byte(nil), source...),
+			prototype: prototype, name: moduleName, source: append([]byte(nil), source...),
 		}
 	}
 
@@ -333,7 +339,7 @@ func installSealedSearchers(
 	return packageTable, loaded, nil
 }
 
-// searcher returns a loader compiled only from candidate-captured module bytes.
+// searcher returns a loader that instantiates the prototype compiled once from candidate-captured module bytes.
 func (m *Modules) searcher(state *lua.LState) int {
 	name := state.CheckString(1)
 
@@ -344,14 +350,7 @@ func (m *Modules) searcher(state *lua.LState) int {
 		return 1
 	}
 
-	prototype, err := compileModule("@captured-module/"+module.name, module.source)
-	if err != nil {
-		state.RaiseError("captured Lua module %q is invalid: %v", name, err)
-
-		return 0
-	}
-
-	state.Push(state.NewFunctionFromProto(prototype))
+	state.Push(state.NewFunctionFromProto(module.prototype))
 
 	return 1
 }

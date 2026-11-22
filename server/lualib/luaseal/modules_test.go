@@ -10,6 +10,7 @@ package luaseal
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -300,5 +301,119 @@ func TestModulesMentionsSearchesCapturedSources(t *testing.T) {
 		if got := test.modules.Mentions(test.text); got != test.want {
 			t.Errorf("Mentions(%q) = %t, want %t", test.text, got, test.want)
 		}
+	}
+}
+
+// TestCapturedModulesShareOneCompiledPrototype proves a captured module is compiled once per snapshot: every VM
+// that requires it instantiates the same immutable prototype instead of parsing and compiling the source again.
+func TestCapturedModulesShareOneCompiledPrototype(t *testing.T) {
+	directory := t.TempDir()
+	writeModule(t, filepath.Join(directory, "shared.lua"), `return function() return "captured" end`)
+
+	pattern := filepath.Join(directory, "?.lua")
+
+	modules, err := CaptureSnapshot([]string{pattern}, captureLuaModuleSnapshot(t, pattern))
+	if err != nil {
+		t.Fatalf("CaptureSnapshot() error = %v", err)
+	}
+
+	var prototypes [2]*lua.FunctionProto
+
+	for index := range prototypes {
+		state := lua.NewState()
+
+		if err = prepareAndInstall(state, modules); err != nil {
+			state.Close()
+			t.Fatalf("seal state %d: %v", index, err)
+		}
+
+		if err = state.DoString(`loaded = require("shared"); assert(loaded() == "captured")`); err != nil {
+			state.Close()
+			t.Fatalf("require in state %d: %v", index, err)
+		}
+
+		function, ok := state.GetGlobal("loaded").(*lua.LFunction)
+		if !ok || function.Proto == nil {
+			state.Close()
+			t.Fatalf("state %d: module did not return a Lua function", index)
+		}
+
+		prototypes[index] = function.Proto
+
+		state.Close()
+	}
+
+	if prototypes[0] != prototypes[1] {
+		t.Fatal("captured module was compiled separately for each VM")
+	}
+}
+
+// statefulSharedModuleSource keeps a call counter in the module table, so a reused module instance is observable.
+const statefulSharedModuleSource = `
+local module = { calls = 0 }
+
+function module.sum(limit)
+    local total = 0
+
+    for value = 1, limit do
+        total = total + value
+    end
+
+    module.calls = module.calls + 1
+
+    return total
+end
+
+return module
+`
+
+// TestCapturedModulePrototypeIsSafeAcrossConcurrentVMs runs one shared prototype in several VMs at once; the race
+// detector covers the sharing.
+func TestCapturedModulePrototypeIsSafeAcrossConcurrentVMs(t *testing.T) {
+	directory := t.TempDir()
+	writeModule(t, filepath.Join(directory, "shared.lua"), statefulSharedModuleSource)
+
+	pattern := filepath.Join(directory, "?.lua")
+
+	modules, err := CaptureSnapshot([]string{pattern}, captureLuaModuleSnapshot(t, pattern))
+	if err != nil {
+		t.Fatalf("CaptureSnapshot() error = %v", err)
+	}
+
+	const states = 8
+
+	failures := make(chan error, states)
+	wait := sync.WaitGroup{}
+
+	for range states {
+		wait.Go(func() {
+			state := lua.NewState()
+			defer state.Close()
+
+			for range 50 {
+				if runErr := prepareAndInstall(state, modules); runErr != nil {
+					failures <- runErr
+
+					return
+				}
+
+				if runErr := state.DoString(`
+local shared = require("shared")
+assert(shared.sum(100) == 5050)
+assert(shared.calls == 1, "module state leaked from an earlier require")
+`); runErr != nil {
+					failures <- runErr
+
+					return
+				}
+			}
+		})
+	}
+
+	wait.Wait()
+	close(failures)
+
+	for failure := range failures {
+		t.Errorf("concurrent VM: %v", failure)
 	}
 }

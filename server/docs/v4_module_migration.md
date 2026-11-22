@@ -53,6 +53,18 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## Unreleased: Lua Module Compilation
+
+- A Lua module that a script loads with `require` from the configured
+  `package_path` is compiled once when the configuration is loaded. Before,
+  every `require` parsed and compiled the module source again, in every
+  request and in every Lua runtime. The module is still executed for every
+  request; only the compilation is shared. In the benchmark
+  `BenchmarkCallEnvironmentLuaSourceWithSharedModules`, an environment
+  source request that loads four bundled shared modules dropped from about
+  1.65 ms to 0.29 ms and from about 1.9 MiB to 0.25 MiB of allocations.
+  Behavior is unchanged.
+
 ## v4.1.1: Full Lua API For Authentication Callbacks
 
 Nauthilus 4.1.1 is a patch release on the v4 line. The module path,
