@@ -45,7 +45,7 @@ Three properties of the Nauthilus 4 runtime remain and are not restrictions of t
   outside the request environment stays in the VM and is visible to later requests of the same callback, as in
   custom hooks and in Nauthilus 3: explicit writes to `_G`, changes to shared tables such as `string`, and globals
   assigned by a module loaded with `require`. Do not keep request data there. A module loaded with `require` is
-  executed again for every request.
+  compiled once when the configuration is loaded (since 4.1.2) and executed again for every request.
 
 Candidate preparation compiles every configured callback and never executes it. Module-level code therefore runs
 only when a request executes the callback. A script is rejected when it does not compile, or when the name of its

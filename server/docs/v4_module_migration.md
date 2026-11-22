@@ -53,17 +53,30 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
-## Unreleased: Lua Module Compilation
+## v4.1.2: Lua Modules Compiled Once
+
+Nauthilus 4.1.2 is a patch release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Private
+native plugins must be rebuilt against this source, as for every release.
 
 - A Lua module that a script loads with `require` from the configured
   `package_path` is compiled once when the configuration is loaded. Before,
   every `require` parsed and compiled the module source again, in every
-  request and in every Lua runtime. The module is still executed for every
-  request; only the compilation is shared. In the benchmark
-  `BenchmarkCallEnvironmentLuaSourceWithSharedModules`, an environment
-  source request that loads four bundled shared modules dropped from about
-  1.65 ms to 0.29 ms and from about 1.9 MiB to 0.25 MiB of allocations.
-  Behavior is unchanged.
+  request and in every Lua runtime: environment sources, subject sources,
+  actions, custom hooks, Lua backends, and the cache-flush script. The
+  module is still executed for every request; only the compilation is
+  shared. Behavior is unchanged.
+- In the benchmark `BenchmarkCallEnvironmentLuaSourceWithSharedModules`, an
+  environment source request that loads four bundled shared modules dropped
+  from about 1.65 ms to 0.29 ms and from about 1.9 MiB to 0.25 MiB of
+  allocations per request.
+- Documentation: the 4.1.1 notes said that every global variable a callback
+  script sets stays in its pooled VM. That is corrected below and in
+  `server/lua-plugins.d/POLICY_VM_COMPATIBILITY.md`: a global the script
+  assigns is request-local; explicit writes to `_G`, changes to shared
+  tables, and globals of required modules persist.
+
+**Action:** none is required.
 
 ## v4.1.1: Full Lua API For Authentication Callbacks
 
