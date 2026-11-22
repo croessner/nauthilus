@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/lualib/luamod"
@@ -193,10 +194,19 @@ func (e *authnCandidateExecution) applyAuthnLuaActionFlags(request *lualib.Commo
 	request.SubjectStageExpected = flags.SubjectStageExpected
 }
 
-// execute runs the captured prototype once in its exact generation-specific pool.
-func (i *authnLuaActionInvocation) execute(ctx context.Context) (result effectsupervisor.Result) {
-	if err := i.validate(); err != nil {
+// execute runs the captured prototype once and maps the outcome to the bounded effect result vocabulary.
+func (i *authnLuaActionInvocation) execute(ctx context.Context) effectsupervisor.Result {
+	if err := i.run(ctx); err != nil {
 		return effectsupervisor.Failed(authnLuaActionFailureClass)
+	}
+
+	return effectsupervisor.Succeeded()
+}
+
+// run leases one VM from the exact generation-specific pool and returns the unredacted execution error.
+func (i *authnLuaActionInvocation) run(ctx context.Context) (err error) {
+	if err = i.validate(); err != nil {
+		return err
 	}
 
 	pool := i.pools.GetOrCreate(i.poolKey, vmpool.PoolOptions{
@@ -205,18 +215,12 @@ func (i *authnLuaActionInvocation) execute(ctx context.Context) (result effectsu
 
 	lease, err := pool.AcquireLease(ctx)
 	if err != nil {
-		return effectsupervisor.Failed(authnLuaActionFailureClass)
+		return err
 	}
 
-	var runErr error
-	defer lease.ReleaseRecoveringOnError(&runErr)
+	defer lease.ReleaseRecoveringOnError(&err)
 
-	runErr = i.executeWithState(ctx, lease.State())
-	if runErr != nil {
-		return effectsupervisor.Failed(authnLuaActionFailureClass)
-	}
-
-	return effectsupervisor.Succeeded()
+	return i.executeWithState(ctx, lease.State())
 }
 
 // validate rejects incomplete or response-retaining post-action captures.
@@ -243,9 +247,7 @@ func (i *authnLuaActionInvocation) executeWithState(ctx context.Context, state *
 
 	state.SetContext(deadlineCtx)
 
-	profile := i.policyProfile()
-
-	if err := luaseal.PreparePolicyProfile(state, i.modules, profile); err != nil {
+	if err := luaseal.Prepare(state, i.modules); err != nil {
 		return err
 	}
 
@@ -261,7 +263,7 @@ func (i *authnLuaActionInvocation) executeWithState(ctx context.Context, state *
 	request := state.NewTable()
 	i.request.SetupRequest(state, i.auth.Cfg(), request)
 
-	if err := luaseal.InstallPolicyProfile(state, i.modules, profile); err != nil {
+	if err := luaseal.Install(state, i.modules); err != nil {
 		return err
 	}
 
@@ -272,27 +274,21 @@ func (i *authnLuaActionInvocation) executeWithState(ctx context.Context, state *
 	return executeAuthnLuaActionCallback(state, request)
 }
 
-// policyProfile selects the sealed capability profile for sync or post-action execution.
-func (i *authnLuaActionInvocation) policyProfile() luaseal.PolicyProfile {
-	if i.allowResponse {
-		return luaseal.PolicyProfileResponseAction
-	}
-
-	return luaseal.PolicyProfileAction
-}
-
 // bindLuaActionModules installs request-local host modules into one leased state.
 func (i *authnLuaActionInvocation) bindLuaActionModules(ctx context.Context, state *lua.LState) {
 	manager := luamod.NewModuleManager(ctx, i.auth.Cfg(), i.auth.Logger(), i.auth.Redis())
-	manager.BindAllPolicyRequest(ctx, state, i.requestCtx, i.auth.deps.Tolerate)
+	manager.BindRequestModules(ctx, state, luamod.RequestModules{
+		Context:      i.requestCtx,
+		Tolerate:     i.auth.deps.Tolerate,
+		HTTPRequest:  i.httpRequest,
+		HTTPResponse: i.response,
+		LDAP:         backend.LoaderModLDAP(ctx, i.auth.Cfg()),
+	})
 	manager.BindI18NRuntime(state, i.i18n, lualib.I18NModeRequest)
 
-	if i.httpRequest != nil {
-		manager.BindHTTP(state, lualib.NewHTTPMetaFromRequest(i.httpRequest))
-	}
-
-	if i.allowResponse {
-		manager.BindHTTPResponse(state, i.response)
+	if !i.allowResponse {
+		// A post-action runs after the response left the server; the response API stays callable without effect.
+		manager.BindModule(state, definitions.LuaModHTTPResponse, lualib.LoaderHTTPResponseInert())
 	}
 }
 

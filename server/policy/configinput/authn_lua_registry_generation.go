@@ -25,7 +25,7 @@ import (
 
 const authnLuaRegistryModule = "nauthilus_policy"
 
-// PrepareConfiguredAuthnLuaFacts executes dedicated authn registry scripts in an isolated candidate VM.
+// PrepareConfiguredAuthnLuaFacts executes dedicated authn registry scripts in a candidate-local VM.
 func PrepareConfiguredAuthnLuaFacts(
 	ctx context.Context,
 	configured policyconfig.PolicyConfig,
@@ -73,7 +73,10 @@ func newAuthnLuaFactCollector() *authnLuaFactCollector {
 	return &authnLuaFactCollector{seen: make(map[string]struct{})}
 }
 
-// execute runs one registry script with only the declaration API exposed.
+// execute runs one registry script in a plain Lua VM that adds only the declaration API.
+//
+// The VM carries the complete standard library, as registry scripts always had. Request host modules are not
+// bound because no request exists while a configuration candidate is prepared.
 func (c *authnLuaFactCollector) execute(
 	ctx context.Context,
 	artifacts LuaArtifactReader,
@@ -95,7 +98,7 @@ func (c *authnLuaFactCollector) execute(
 		return err
 	}
 
-	state := newAuthnLuaRegistryState()
+	state := lua.NewState()
 	defer state.Close()
 
 	state.SetContext(ctx)
@@ -105,41 +108,6 @@ func (c *authnLuaFactCollector) execute(
 	state.SetGlobal(authnLuaRegistryModule, module)
 
 	return lualib.DoCompiledFile(state, prototype)
-}
-
-// newAuthnLuaRegistryState exposes only pure standard helpers and the dedicated declaration API.
-func newAuthnLuaRegistryState() *lua.LState {
-	state := lua.NewState(lua.Options{SkipOpenLibs: true})
-	for _, open := range []lua.LGFunction{lua.OpenBase, lua.OpenTable, lua.OpenString, lua.OpenMath} {
-		open(state)
-		state.Pop(1)
-	}
-
-	for _, name := range []string{
-		"collectgarbage", "dofile", "load", "loadfile", "loadstring", "print", "_printregs",
-		"module", "newproxy", "getfenv", "setfenv",
-	} {
-		state.SetGlobal(name, lua.LNil)
-	}
-
-	state.SetGlobal("require", state.NewFunction(authnLuaRegistryRequire))
-
-	return state
-}
-
-// authnLuaRegistryRequire resolves only pure code-owned standard libraries.
-func authnLuaRegistryRequire(state *lua.LState) int {
-	name := state.CheckString(1)
-	switch name {
-	case lua.TabLibName, lua.StringLibName, lua.MathLibName:
-		state.Push(state.GetGlobal(name))
-
-		return 1
-	default:
-		state.RaiseError("registry module %q is unavailable", name)
-
-		return 0
-	}
 }
 
 // register validates one Lua declaration before adding it to the candidate.

@@ -231,45 +231,18 @@ func (m *Manager) IsIPAddressBlocked(L *lua.LState) int {
 
 // LoaderModBruteForce initializes the Lua module with functions for managing custom toleration settings and pushes it to the state.
 func LoaderModBruteForce(ctx context.Context, cfg config.File, logger *slog.Logger, redis rediscli.Client, t tolerate.Tolerate) lua.LGFunction {
-	return newBruteForceLoader(ctx, cfg, logger, redis, t, true)
-}
-
-// LoaderModBruteForceRequest exposes read-only toleration and blocking facts to Policy request VMs.
-func LoaderModBruteForceRequest(
-	ctx context.Context,
-	cfg config.File,
-	logger *slog.Logger,
-	redis rediscli.Client,
-	tolerance tolerate.Tolerate,
-) lua.LGFunction {
-	return newBruteForceLoader(ctx, cfg, logger, redis, tolerance, false)
-}
-
-// newBruteForceLoader builds either the process management or request fact surface.
-func newBruteForceLoader(
-	ctx context.Context,
-	cfg config.File,
-	logger *slog.Logger,
-	redis rediscli.Client,
-	tolerance tolerate.Tolerate,
-	allowMutation bool,
-) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewBruteForceManager(ctx, cfg, logger, redis, tolerance)
+		manager := NewBruteForceManager(ctx, cfg, logger, redis, t)
 
-		functions := map[string]lua.LGFunction{
-			definitions.LuaFnBfGetCusotmTolerations: manager.GetCustomTolerations,
-			definitions.LuaFnBfGetTolerateMap:       manager.GetTolerateMap,
-			definitions.LuaFnBfIsIPAddressBlocked:   manager.IsIPAddressBlocked,
-		}
-		if allowMutation {
-			functions[definitions.LuaFnBfSetCustomTolerations] = manager.SetCustomTolerations
-			functions[definitions.LuaFnBfSetCustomToleration] = manager.SetCustomToleration
-			functions[definitions.LuaFnBfDeleteCustomToleration] = manager.DeleteCustomToleration
-		}
-
-		mod := L.SetFuncs(L.NewTable(), functions)
+		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			definitions.LuaFnBfSetCustomTolerations:   manager.SetCustomTolerations,
+			definitions.LuaFnBfSetCustomToleration:    manager.SetCustomToleration,
+			definitions.LuaFnBfDeleteCustomToleration: manager.DeleteCustomToleration,
+			definitions.LuaFnBfGetCusotmTolerations:   manager.GetCustomTolerations,
+			definitions.LuaFnBfGetTolerateMap:         manager.GetTolerateMap,
+			definitions.LuaFnBfIsIPAddressBlocked:     manager.IsIPAddressBlocked,
+		})
 
 		if ctx != nil {
 			lualib.BindRequestRuntimeContext(ctx, L, mod)

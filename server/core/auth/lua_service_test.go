@@ -271,10 +271,6 @@ func newLuaSubjectTestProgram(t *testing.T, name string, scriptPath string) *lua
 	}
 	defer clear(source)
 
-	if err = modules.ValidateSource(scriptPath, source, luaseal.PolicyProfileSubject); err != nil {
-		t.Fatalf("validate captured Lua subject source: %v", err)
-	}
-
 	prototype, err := lualib.CompileLuaSource(scriptPath, source)
 	if err != nil {
 		t.Fatalf("CompileLuaSource() error = %v", err)

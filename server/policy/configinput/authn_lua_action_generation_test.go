@@ -23,6 +23,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
 	"github.com/croessner/nauthilus/v4/server/policy/effectsupervisor"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/testing/luaapiprobe"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -101,12 +102,9 @@ func assertPreparedAuthnLuaActionCapturedModules(t *testing.T, action *preparedA
 			t.Fatalf("open action state %d: %v", index, openErr)
 		}
 
-		state, stateErr := newAuthnLuaSourceValidationState(
-			action.SealedLuaModules(),
-			luaseal.PolicyProfileResponseAction,
-		)
+		state, stateErr := newSealedLuaTestState(action.SealedLuaModules())
 		if stateErr != nil {
-			t.Fatalf("validation state %d: %v", index, stateErr)
+			t.Fatalf("sealed state %d: %v", index, stateErr)
 		}
 
 		if stateErr = lualib.DoCompiledFile(state, prototype); stateErr != nil {
@@ -229,53 +227,41 @@ end
 	}
 }
 
-// TestPrepareConfiguredAuthnLuaActionsValidatesKnownRequestModuleCalls proves safe precommit callback execution.
-func TestPrepareConfiguredAuthnLuaActionsValidatesKnownRequestModuleCalls(t *testing.T) {
-	script := writeAuthnLuaActionScript(t, `
-local response = require("nauthilus_http_response")
+// TestPrepareConfiguredAuthnLuaActionsAcceptFullHostAPI proves candidate preparation never rejects an action for
+// the host API it uses and never executes it, for synchronous actions and for post-actions.
+func TestPrepareConfiguredAuthnLuaActionsAcceptFullHostAPI(t *testing.T) {
+	postActionFixture := strings.Replace(configuredAuthnLuaActionFixture, "action_type: lua", "action_type: post", 1)
+	postActionFixture = strings.Replace(postActionFixture, "execution: host_sync", "execution: host_post_action", 1)
 
-function nauthilus_call_action(request)
-    response.add_http_response_header("X-Policy-Test", "accepted")
-
-    return 0
-end
-`)
-	configured := decodePolicy(t, fmt.Sprintf(configuredAuthnLuaActionFixture, script)).Policy
-
-	_, err := PrepareConfiguredAuthnLuaActions(t.Context(), ConfiguredAuthnLuaActionInput{
-		PostActionAcceptance: &nativeGenerationAcceptor{},
-		Artifacts:            capturePolicyLuaTestArtifacts(t, configured),
-		Pools:                vmpool.NewManager(),
-		Policy:               configured,
-		Generation:           74,
-	})
-	if err != nil {
-		t.Fatalf("PrepareConfiguredAuthnLuaActions() error = %v", err)
-	}
-}
-
-func TestPrepareConfiguredAuthnLuaPostActionRejectsHTTPResponseCapability(t *testing.T) {
-	script := writeAuthnLuaActionScript(t, `
+	for _, test := range []struct {
+		name    string
+		fixture string
+	}{
+		{name: "synchronous action", fixture: configuredAuthnLuaActionFixture},
+		{name: "post-action", fixture: postActionFixture},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			script := writeAuthnLuaActionScript(t, luaapiprobe.Script(t, unexecutableModuleLevelCode+`
 function nauthilus_call_action(_request)
-    local response = require("nauthilus_http_response")
-    response.add_http_response_header("X-Policy-Test", "forbidden")
+    probe.run()
+    require("nauthilus_http_response").add_http_response_header("X-Policy-Test", "accepted")
 
-    return 0
+    return nauthilus_builtin.ACTION_RESULT_OK
 end
-`)
-	fixture := strings.Replace(configuredAuthnLuaActionFixture, "action_type: lua", "action_type: post", 1)
-	fixture = strings.Replace(fixture, "execution: host_sync", "execution: host_post_action", 1)
-	configured := decodePolicy(t, fmt.Sprintf(fixture, script)).Policy
+`))
+			configured := decodePolicy(t, fmt.Sprintf(test.fixture, script)).Policy
 
-	_, err := PrepareConfiguredAuthnLuaActions(t.Context(), ConfiguredAuthnLuaActionInput{
-		PostActionAcceptance: &nativeGenerationAcceptor{},
-		Artifacts:            capturePolicyLuaTestArtifacts(t, configured),
-		Pools:                vmpool.NewManager(),
-		Policy:               configured,
-		Generation:           76,
-	})
-	if err == nil {
-		t.Fatal("PrepareConfiguredAuthnLuaActions() accepted HTTP response mutation in a post action")
+			_, err := PrepareConfiguredAuthnLuaActions(t.Context(), ConfiguredAuthnLuaActionInput{
+				PostActionAcceptance: &nativeGenerationAcceptor{},
+				Artifacts:            capturePolicyLuaTestArtifacts(t, configured),
+				Pools:                vmpool.NewManager(),
+				Policy:               configured,
+				Generation:           74,
+			})
+			if err != nil {
+				t.Fatalf("PrepareConfiguredAuthnLuaActions() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -287,7 +273,6 @@ func TestPrepareConfiguredAuthnLuaActionsRejectsInvalidCandidateScripts(t *testi
 	}{
 		{name: "syntax", source: "function nauthilus_call_action("},
 		{name: "missing callback", source: "return true"},
-		{name: "unsupported return", source: "function nauthilus_call_action(request) return 2 end"},
 	}
 
 	for _, test := range tests {

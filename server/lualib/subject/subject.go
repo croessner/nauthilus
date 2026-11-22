@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -50,6 +51,7 @@ import (
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -86,23 +88,6 @@ func NewBackendManagerWithCurrent(ctx context.Context, cfg config.File, logger *
 	}
 }
 
-func bindSubjectModuleIntoReq(L *lua.LState, moduleName string, loader lua.LGFunction) {
-	if loader == nil {
-		return
-	}
-
-	_ = loader(L)
-
-	if mod, ok := L.Get(-1).(*lua.LTable); ok {
-		L.Pop(1)
-		luapool.BindModuleIntoReq(L, moduleName, mod)
-
-		return
-	}
-
-	L.Pop(1)
-}
-
 // LoaderModBackend initializes and returns a Lua module containing backend-related functionalities for LuaState.
 func LoaderModBackend(ctx context.Context, cfg config.File, logger *slog.Logger, request *Request, backendResult **lualib.LuaBackendResult, removeAttributes *[]string) lua.LGFunction {
 	return LoaderModBackendWithCurrent(ctx, cfg, logger, request, backendResult, removeAttributes, nil, nil)
@@ -126,39 +111,6 @@ func LoaderModBackendWithCurrent(ctx context.Context, cfg config.File, logger *s
 		})
 
 		return stack.PushResult(mod)
-	}
-}
-
-// LoaderModBackendProjectionWithCurrent exposes only request-local backend-result transformations.
-func LoaderModBackendProjectionWithCurrent(
-	ctx context.Context,
-	cfg config.File,
-	logger *slog.Logger,
-	request *Request,
-	backendResult **lualib.LuaBackendResult,
-	removeAttributes *[]string,
-	currentBackendResult *lualib.LuaBackendResult,
-	currentRemoveAttributes []string,
-) lua.LGFunction {
-	return func(L *lua.LState) int {
-		stack := luastack.NewManager(L)
-		manager := NewBackendManagerWithCurrent(
-			ctx,
-			cfg,
-			logger,
-			request,
-			backendResult,
-			removeAttributes,
-			currentBackendResult,
-			currentRemoveAttributes,
-		)
-
-		return stack.PushResult(L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetCurrentBackendResult:     manager.getCurrentBackendResult,
-			definitions.LuaFnApplyBackendResult:          manager.applyBackendResult,
-			definitions.LuaFnRemoveFromBackendResult:     manager.removeFromBackendResult,
-			definitions.LuaFnGetRemovedBackendAttributes: manager.getRemovedBackendAttributes,
-		}))
 	}
 }
 
@@ -860,7 +812,7 @@ func (r *Request) callSubjectLua(
 
 				var localStatus *string
 
-				if err = luaseal.PreparePolicyProfile(Llocal, sc.Modules, luaseal.PolicyProfileSubject); err != nil {
+				if err = luaseal.Prepare(Llocal, sc.Modules); err != nil {
 					return err
 				}
 
@@ -960,16 +912,24 @@ func (r *Request) callSubjectLua(
 
 				luapool.PrepareRequestEnv(Llocal)
 
-				// The result value constructor is local to the captured subject generation.
-				bindSubjectModuleIntoReq(
-					Llocal,
-					definitions.LuaBackendResultTypeName,
-					lualib.LoaderModBackendResult(ctx, cfg, logger),
-				)
-				bindSubjectModuleIntoReq(
+				modManager := luamod.NewModuleManager(luaCtx, cfg, logger, redisClient)
+
+				requestModules := luamod.RequestModules{
+					Context:      localRequest.Context,
+					Tolerate:     localRequest.Tolerate,
+					HTTPResponse: ctx,
+					LDAP:         backend.LoaderModLDAP(luaCtx, cfg),
+				}
+				if ctx != nil {
+					requestModules.HTTPRequest = ctx.Request
+				}
+
+				modManager.BindRequestModules(luaCtx, Llocal, requestModules)
+				modManager.BindBackendResult(Llocal)
+				modManager.BindModule(
 					Llocal,
 					definitions.LuaModBackend,
-					LoaderModBackendProjectionWithCurrent(
+					LoaderModBackendWithCurrent(
 						luaCtx,
 						cfg,
 						logger,
@@ -980,13 +940,6 @@ func (r *Request) callSubjectLua(
 						mergedRemoveAttributes.GetStringSlice(),
 					),
 				)
-
-				modManager := luamod.NewModuleManager(luaCtx, cfg, logger, redisClient)
-				modManager.BindAllPolicyRequest(luaCtx, Llocal, localRequest.Context, localRequest.Tolerate)
-				if ctx != nil && ctx.Request != nil {
-					modManager.BindHTTP(Llocal, lualib.NewHTTPMetaFromRequest(ctx.Request))
-				}
-
 				modManager.BindModule(
 					Llocal,
 					definitions.LuaModPolicy,
@@ -1005,12 +958,11 @@ func (r *Request) callSubjectLua(
 					attribute.Int("level", levelIndex),
 				)
 
-				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.module_authority")
-
-				if e := luaseal.InstallPolicyProfile(Llocal, sc.Modules, luaseal.PolicyProfileSubject); e != nil {
+				// failLoadPhase closes the failed phase span and the execution span and records the script failure.
+				failLoadPhase := func(phaseSpan trace.Span, e error) error {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
-					packagePathSpan.RecordError(e)
-					packagePathSpan.End()
+					phaseSpan.RecordError(e)
+					phaseSpan.End()
 					execSpan.RecordError(e)
 					execSpan.End()
 					r.recordSubjectScriptResult(egCtx, sc.Name, false, subjectStatusText(localStatus), time.Since(scriptStarted), e)
@@ -1018,19 +970,18 @@ func (r *Request) callSubjectLua(
 					return e
 				}
 
+				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.module_authority")
+
+				if e := luaseal.Install(Llocal, sc.Modules); e != nil {
+					return failLoadPhase(packagePathSpan, e)
+				}
+
 				packagePathSpan.End()
 
 				_, loadSpan := scriptTrace.Start(execCtx, "lua.script.load_chunk")
 
 				if e := lualib.DoCompiledFile(Llocal, sc.CompiledScript); e != nil {
-					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
-					loadSpan.RecordError(e)
-					loadSpan.End()
-					execSpan.RecordError(e)
-					execSpan.End()
-					r.recordSubjectScriptResult(egCtx, sc.Name, false, subjectStatusText(localStatus), time.Since(scriptStarted), e)
-
-					return e
+					return failLoadPhase(loadSpan, e)
 				}
 
 				loadSpan.End()

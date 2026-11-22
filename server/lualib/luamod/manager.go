@@ -19,6 +19,7 @@ package luamod
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
 	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
@@ -27,7 +28,6 @@ import (
 	bflib "github.com/croessner/nauthilus/v4/server/lualib/bruteforce"
 	"github.com/croessner/nauthilus/v4/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/v4/server/lualib/luapool"
-	"github.com/croessner/nauthilus/v4/server/lualib/metrics"
 	"github.com/croessner/nauthilus/v4/server/lualib/redislib"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
@@ -41,6 +41,24 @@ type ModuleManager struct {
 	cfg         config.File
 	logger      *slog.Logger
 	redisClient rediscli.Client
+}
+
+// RequestModules carries the per-request owners that complete the default module surface of one Lua runtime.
+type RequestModules struct {
+	// Context is the request-local Lua context behind nauthilus_context.
+	Context *lualib.Context
+
+	// Tolerate provides the brute-force toleration state behind nauthilus_brute_force.
+	Tolerate tolerate.Tolerate
+
+	// HTTPRequest is the inbound request behind nauthilus_http_request; nil leaves the module unbound.
+	HTTPRequest *http.Request
+
+	// HTTPResponse is the live response behind nauthilus_http_response; nil leaves the module unbound.
+	HTTPResponse *gin.Context
+
+	// LDAP loads nauthilus_ldap. The module is bound only when an LDAP backend is configured.
+	LDAP lua.LGFunction
 }
 
 // NewModuleManager creates a new ModuleManager instance.
@@ -105,13 +123,6 @@ func (mm *ModuleManager) BindRedis(redisCtx context.Context, L *lua.LState) {
 	mm.BindModule(L, definitions.LuaModRedis, loader)
 }
 
-// BindRedisRequest binds Redis commands without process-global pool registration.
-func (mm *ModuleManager) BindRedisRequest(redisCtx context.Context, L *lua.LState) {
-	loader := redislib.LoaderModRedisRequest(redisCtx, mm.cfg, mm.redisClient)
-
-	mm.BindModule(L, definitions.LuaModRedis, loader)
-}
-
 // BindLDAP binds the nauthilus_ldap module.
 func (mm *ModuleManager) BindLDAP(L *lua.LState, loader lua.LGFunction) {
 	if mm.cfg.HaveLDAPBackend() {
@@ -122,13 +133,6 @@ func (mm *ModuleManager) BindLDAP(L *lua.LState, loader lua.LGFunction) {
 // BindPsnet binds the nauthilus_psnet module.
 func (mm *ModuleManager) BindPsnet(L *lua.LState) {
 	loader := connmgr.LoaderModPsnet(mm.ctx, mm.cfg, mm.logger)
-
-	mm.BindModule(L, definitions.LuaModPsnet, loader)
-}
-
-// BindPsnetRequest binds connection counters without process-global target registration.
-func (mm *ModuleManager) BindPsnetRequest(L *lua.LState) {
-	loader := connmgr.LoaderModPsnetRequest(mm.ctx, mm.cfg, mm.logger)
 
 	mm.BindModule(L, definitions.LuaModPsnet, loader)
 }
@@ -160,40 +164,9 @@ func (mm *ModuleManager) BindBruteForce(L *lua.LState, tolerate tolerate.Tolerat
 	mm.BindModule(L, definitions.LuaModBruteForce, loader)
 }
 
-// BindBruteForceRequest binds read-only toleration and blocking facts.
-func (mm *ModuleManager) BindBruteForceRequest(L *lua.LState, tolerance tolerate.Tolerate) {
-	loader := bflib.LoaderModBruteForceRequest(mm.ctx, mm.cfg, mm.logger, mm.redisClient, tolerance)
-
-	mm.BindModule(L, definitions.LuaModBruteForce, loader)
-}
-
 // BindCBOR binds the nauthilus_cbor module.
 func (mm *ModuleManager) BindCBOR(L *lua.LState) {
 	mm.BindModule(L, definitions.LuaModCBOR, lualib.LoaderModCBOR())
-}
-
-// BindMiscRequest binds deterministic request-safe miscellaneous helpers.
-func (mm *ModuleManager) BindMiscRequest(L *lua.LState) {
-	mm.BindModule(L, definitions.LuaModMisc, lualib.LoaderModMiscRequest(mm.ctx, mm.cfg, mm.logger))
-}
-
-// BindCacheRequest binds read-only process-cache observations.
-func (mm *ModuleManager) BindCacheRequest(L *lua.LState) {
-	mm.BindModule(L, definitions.LuaModCache, lualib.LoaderModCacheRequest(mm.ctx, mm.cfg, mm.logger))
-}
-
-// BindPrometheusRequest binds updates to startup-registered metric vectors.
-func (mm *ModuleManager) BindPrometheusRequest(L *lua.LState) {
-	mm.BindModule(
-		L,
-		definitions.LuaModPrometheus,
-		metrics.LoaderModPrometheusRequest(mm.ctx, mm.cfg, mm.logger),
-	)
-}
-
-// BindPolicyTime binds UTC-only, context-bounded time helpers.
-func (mm *ModuleManager) BindPolicyTime(L *lua.LState) {
-	mm.BindModule(L, "time", lualib.LoaderModPolicyTime())
 }
 
 // BindI18N binds the nauthilus_i18n module.
@@ -211,65 +184,49 @@ func (mm *ModuleManager) BindRequestI18N(ctx context.Context, L *lua.LState) {
 	mm.BindI18NRuntime(L, requestI18NRuntime(ctx), lualib.I18NModeRequest)
 }
 
-// BindAllDefault binds all default modules into the Lua state.
+// BindAllDefault binds the default modules that need no HTTP or LDAP owner into the Lua state.
 func (mm *ModuleManager) BindAllDefault(redisCtx context.Context, L *lua.LState, requestCtx *lualib.Context, tolerate tolerate.Tolerate) {
-	mm.bindRequestDefaults(
-		redisCtx,
-		L,
-		requestCtx,
-		tolerate,
-		mm.BindRedis,
-		mm.BindPsnet,
-		mm.BindDNS,
-		mm.BindBruteForce,
-	)
-}
-
-// BindAllPolicyRequest binds request modules without process-global registration authorities.
-func (mm *ModuleManager) BindAllPolicyRequest(
-	redisCtx context.Context,
-	L *lua.LState,
-	requestCtx *lualib.Context,
-	tolerance tolerate.Tolerate,
-) {
-	mm.bindRequestDefaults(
-		redisCtx,
-		L,
-		requestCtx,
-		tolerance,
-		mm.BindRedisRequest,
-		mm.BindPsnetRequest,
-		nil,
-		mm.BindBruteForceRequest,
-	)
-	mm.BindMiscRequest(L)
-	mm.BindCacheRequest(L)
-	mm.BindPrometheusRequest(L)
-	mm.BindPolicyTime(L)
-}
-
-// bindRequestDefaults composes the common request module surface around injected mutable boundaries.
-func (mm *ModuleManager) bindRequestDefaults(
-	redisCtx context.Context,
-	L *lua.LState,
-	requestCtx *lualib.Context,
-	tolerance tolerate.Tolerate,
-	bindRedis func(context.Context, *lua.LState),
-	bindPsnet func(*lua.LState),
-	bindDNS func(*lua.LState),
-	bindBruteForce func(*lua.LState, tolerate.Tolerate),
-) {
 	mm.BindContext(L, requestCtx)
 	mm.BindCBOR(L)
-	bindRedis(redisCtx, L)
-	bindPsnet(L)
-
-	if bindDNS != nil {
-		bindDNS(L)
-	}
+	mm.BindRedis(redisCtx, L)
+	mm.BindPsnet(L)
+	mm.BindDNS(L)
 	mm.BindOTEL(L)
-	bindBruteForce(L, tolerance)
+	mm.BindBruteForce(L, tolerate)
 	mm.BindRequestI18N(redisCtx, L)
+}
+
+// BindRequestModules binds the complete module surface of one Lua runtime.
+//
+// Custom hooks, Lua backends, the cache-flush script, environment sources, subject sources, and actions all bind
+// through this method, so every runtime exposes the same Lua API.
+func (mm *ModuleManager) BindRequestModules(redisCtx context.Context, L *lua.LState, modules RequestModules) {
+	mm.BindAllDefault(redisCtx, L, modules.Context, modules.Tolerate)
+
+	if modules.HTTPRequest != nil {
+		mm.BindHTTP(L, lualib.NewHTTPMetaFromRequest(modules.HTTPRequest))
+	}
+
+	mm.BindHTTPResponse(L, modules.HTTPResponse)
+	mm.BindLDAP(L, modules.LDAP)
+}
+
+// BindBackendResult exposes the backend-result constructor as a global and as a request module.
+//
+// Captured shared modules run in the global environment, so the constructor must be a real global there as well.
+func (mm *ModuleManager) BindBackendResult(L *lua.LState) {
+	_ = lualib.LoaderModBackendResult(mm.ctx, mm.cfg, mm.logger)(L)
+
+	mod, ok := L.Get(-1).(*lua.LTable)
+
+	L.Pop(1)
+
+	if !ok {
+		return
+	}
+
+	L.SetGlobal(definitions.LuaBackendResultTypeName, mod)
+	luapool.BindModuleIntoReq(L, definitions.LuaBackendResultTypeName, mod)
 }
 
 // requestI18NRuntime binds request Lua to the immutable resolver captured by its Decision session.

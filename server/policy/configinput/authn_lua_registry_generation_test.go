@@ -129,16 +129,25 @@ func assertCompiledAuthnLuaFact(
 	}
 }
 
-// TestPrepareConfiguredAuthnLuaFactsUsesRestrictedRegistryVM proves ambient host modules and I/O are absent.
-func TestPrepareConfiguredAuthnLuaFactsUsesRestrictedRegistryVM(t *testing.T) {
-	scriptPath := filepath.Join(t.TempDir(), "restricted.lua")
+// TestPrepareConfiguredAuthnLuaFactsKeepsStandardLibrary proves registry scripts run with the complete Lua
+// standard library, for example to derive attribute names from the process environment.
+func TestPrepareConfiguredAuthnLuaFactsKeepsStandardLibrary(t *testing.T) {
+	t.Setenv("NAUTHILUS_LUA_REGISTRY_PROBE", "set")
+
+	scriptPath := filepath.Join(t.TempDir(), "registry.lua")
 	if err := os.WriteFile(scriptPath, []byte(`
 local stringlib = require("string")
 assert(stringlib.lower("SAFE") == "safe")
-assert(os == nil and io == nil and package == nil and debug == nil)
-assert(load == nil and loadfile == nil and dofile == nil and loadstring == nil)
-local loaded_host = pcall(require, "nauthilus_context")
-assert(not loaded_host)
+
+for _, name in ipairs({ "os", "io", "debug", "coroutine", "package", "string", "table", "math" }) do
+    assert(type(_G[name]) == "table", "library " .. name .. " is not available")
+end
+
+for _, name in ipairs({ "print", "load", "loadstring", "dofile", "loadfile", "require", "getfenv", "setfenv" }) do
+    assert(type(_G[name]) == "function", "base function " .. name .. " is not available")
+end
+
+assert(os.getenv("NAUTHILUS_LUA_REGISTRY_PROBE") == "set")
 nauthilus_policy.register_attribute({
     id = "lua.contract.restricted",
     stage = "pre_auth",

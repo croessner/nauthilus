@@ -20,6 +20,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
+	"github.com/croessner/nauthilus/v4/server/testing/luaapiprobe"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -283,11 +284,30 @@ func assertPreparedAuthnLuaSourcesCapturedModules(
 	}
 }
 
-// runCapturedModulePrototype executes one shared prototype in its own validation state.
+// newSealedLuaTestState builds a plain VM whose require resolves only the captured module snapshot.
+func newSealedLuaTestState(modules *luaseal.Modules) (*lua.LState, error) {
+	state := lua.NewState()
+
+	if err := luaseal.Prepare(state, modules); err != nil {
+		state.Close()
+
+		return nil, err
+	}
+
+	if err := luaseal.Install(state, modules); err != nil {
+		state.Close()
+
+		return nil, err
+	}
+
+	return state, nil
+}
+
+// runCapturedModulePrototype executes one shared prototype in its own sealed state.
 func runCapturedModulePrototype(modules *luaseal.Modules, prototype *lua.FunctionProto, index int) error {
-	state, err := newAuthnLuaSourceValidationState(modules, luaseal.PolicyProfileSubject)
+	state, err := newSealedLuaTestState(modules)
 	if err != nil {
-		return fmt.Errorf("validation state %d: %w", index, err)
+		return fmt.Errorf("sealed state %d: %w", index, err)
 	}
 	defer state.Close()
 
@@ -302,22 +322,49 @@ func runCapturedModulePrototype(modules *luaseal.Modules, prototype *lua.Functio
 	return nil
 }
 
-func TestPrepareConfiguredAuthnLuaSourcesRejectsDeferredMutableCapability(t *testing.T) {
-	configured := configuredAuthnLuaSourcePolicy(t)
-	authn := configured.Namespaces["authn"]
+// unexecutableModuleLevelCode fails when it runs outside a request: it uses the legacy dynamic_loader call, a host
+// module as a bare global, and finally raises an error. Candidate preparation must accept it because it never
+// executes a callback script.
+const unexecutableModuleLevelCode = `
+dynamic_loader("nauthilus_redis")
 
-	environment := authn.Providers["lua_environment_risk"]
-	if err := os.WriteFile(environment.ScriptPath, []byte(`
-local redis = require("nauthilus_redis")
+local module_level_context_get = nauthilus_context.context_get
+local module_level_country = "x-" .. require("nauthilus_misc").get_country_name("DE")
+
+error("candidate preparation must not execute callback scripts")
+`
+
+// TestPrepareConfiguredAuthnLuaSourcesAcceptFullHostAPI proves candidate preparation never rejects a source for
+// the host API it uses and never executes it. The probe names every mutating and registering function.
+func TestPrepareConfiguredAuthnLuaSourcesAcceptFullHostAPI(t *testing.T) {
+	configured := configuredAuthnLuaSourcePolicy(t)
+	entryPoints := map[string]string{
+		policyconfig.ProviderKindLuaEnvironment: `
 function nauthilus_call_environment(_request)
-    redis.redis_set("mutable", "forbidden")
-    return 0, 0, 0
+    probe.run()
+
+    return nauthilus_builtin.ENVIRONMENT_TRIGGER_NO, nauthilus_builtin.ENVIRONMENT_ABORT_NO, nauthilus_builtin.ENVIRONMENT_RESULT_OK
 end
-`), 0o600); err != nil {
-		t.Fatalf("write mutable environment callback: %v", err)
+`,
+		policyconfig.ProviderKindLuaSubject: `
+function nauthilus_call_subject(_request)
+    probe.run()
+    probe.backend_selection()
+    require("nauthilus_backend").select_backend_server("192.0.2.77", 993)
+
+    return nauthilus_builtin.SUBJECT_ACCEPT, nauthilus_builtin.SUBJECT_RESULT_OK
+end
+`,
 	}
 
-	_, err := PrepareConfiguredAuthnLuaSources(
+	for name, provider := range configured.Namespaces["authn"].Providers {
+		source := luaapiprobe.Script(t, unexecutableModuleLevelCode+entryPoints[provider.Kind])
+		if err := os.WriteFile(provider.ScriptPath, []byte(source), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	prepared, err := PrepareConfiguredAuthnLuaSources(
 		t.Context(),
 		19,
 		configured,
@@ -325,8 +372,67 @@ end
 		nil,
 		vmpool.NewManager(),
 	)
+	if err != nil {
+		t.Fatalf("PrepareConfiguredAuthnLuaSources() error = %v", err)
+	}
+
+	if len(prepared) != len(configured.Namespaces["authn"].Providers) {
+		t.Fatalf("prepared sources = %d, want every configured provider", len(prepared))
+	}
+}
+
+// TestPrepareConfiguredAuthnLuaSourcesAcceptEntryPointFromCapturedModule proves a callback may live in a shared
+// module that the configured script only requires.
+func TestPrepareConfiguredAuthnLuaSourcesAcceptEntryPointFromCapturedModule(t *testing.T) {
+	configured := configuredAuthnLuaSourcePolicy(t)
+	directory := t.TempDir()
+	module := `
+function nauthilus_call_environment(_request) return 0, 0, 0 end
+function nauthilus_call_subject(_request) return 0, 0 end
+`
+
+	if err := os.WriteFile(filepath.Join(directory, "callbacks.lua"), []byte(module), 0o600); err != nil {
+		t.Fatalf("write shared callbacks: %v", err)
+	}
+
+	for name, provider := range configured.Namespaces["authn"].Providers {
+		if err := os.WriteFile(provider.ScriptPath, []byte(`require("callbacks")`+"\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	pattern := filepath.Join(directory, "?.lua")
+	artifacts := capturePolicyLuaTestArtifacts(t, configured, pattern)
+
+	modules, err := luaseal.CaptureSnapshot([]string{pattern}, artifacts)
+	if err != nil {
+		t.Fatalf("CaptureSnapshot() error = %v", err)
+	}
+
+	if _, err = PrepareConfiguredAuthnLuaSources(t.Context(), 21, configured, artifacts, modules, vmpool.NewManager()); err != nil {
+		t.Fatalf("PrepareConfiguredAuthnLuaSources() error = %v", err)
+	}
+}
+
+// TestPrepareConfiguredAuthnLuaSourcesRejectsMissingEntryPoint keeps the one remaining load-time check.
+func TestPrepareConfiguredAuthnLuaSourcesRejectsMissingEntryPoint(t *testing.T) {
+	configured := configuredAuthnLuaSourcePolicy(t)
+
+	environment := configured.Namespaces["authn"].Providers["lua_environment_risk"]
+	if err := os.WriteFile(environment.ScriptPath, []byte("return true\n"), 0o600); err != nil {
+		t.Fatalf("write environment callback: %v", err)
+	}
+
+	_, err := PrepareConfiguredAuthnLuaSources(
+		t.Context(),
+		20,
+		configured,
+		capturePolicyLuaTestArtifacts(t, configured),
+		nil,
+		vmpool.NewManager(),
+	)
 	if err == nil {
-		t.Fatal("PrepareConfiguredAuthnLuaSources() accepted a deferred Redis mutation")
+		t.Fatal("PrepareConfiguredAuthnLuaSources() accepted a source without its entry point")
 	}
 }
 

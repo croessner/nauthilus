@@ -729,7 +729,7 @@ func runCompiledLuaCommon(
 
 	L.SetContext(luaCtx)
 
-	if err = luaseal.PrepareProcess(L, modules); err != nil {
+	if err = luaseal.Prepare(L, modules); err != nil {
 		return err
 	}
 
@@ -776,9 +776,12 @@ func bindCommonLuaModules(
 		i18nRuntime = lualib.DefaultI18NRuntime().NewCatalogSession()
 	}
 
-	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerance)
+	modManager.BindRequestModules(luaCtx, L, luamod.RequestModules{
+		Context:  lualib.NewContext(),
+		Tolerate: tolerance,
+		LDAP:     backend.LoaderModLDAP(luaCtx, cfg),
+	})
 	modManager.BindI18NRuntime(L, i18nRuntime, lualib.I18NModeStartup)
-	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
 }
 
 func prepareCommonLuaRequest(L *lua.LState, cfg config.File) (*lua.LTable, *lualib.CommonRequest) {
@@ -828,7 +831,7 @@ func runLuaCustomWrapper(ctx *gin.Context, cfg config.File, logger *slog.Logger,
 	L.SetContext(luaCtx)
 
 	prototype, modules := script.prepared()
-	if err = luaseal.PrepareProcess(L, modules); err != nil {
+	if err = luaseal.Prepare(L, modules); err != nil {
 		xsp.RecordError(err)
 
 		return nil, err
@@ -890,10 +893,13 @@ func bindCustomLuaModules(luaCtx context.Context, ctx *gin.Context, cfg config.F
 
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redis)
 
-	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerate.GetTolerate())
-	modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(ctx.Request))
-	modManager.BindHTTPResponse(L, ctx)
-	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
+	modManager.BindRequestModules(luaCtx, L, luamod.RequestModules{
+		Context:      lualib.NewContext(),
+		Tolerate:     tolerate.GetTolerate(),
+		HTTPRequest:  ctx.Request,
+		HTTPResponse: ctx,
+		LDAP:         backend.LoaderModLDAP(luaCtx, cfg),
+	})
 }
 
 func logCustomLuaExecutionResult(ctx *gin.Context, cfg config.File, logger *slog.Logger, guid string, hook string, err error) {
@@ -978,7 +984,7 @@ func executeAndHandleError(logger *slog.Logger, compiledScript *lua.FunctionProt
 		return nil, err
 	}
 
-	if err = luaseal.InstallProcess(L, modules); err != nil {
+	if err = luaseal.Install(L, modules); err != nil {
 		processError(logger, err, hook)
 
 		return nil, err

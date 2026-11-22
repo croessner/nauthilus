@@ -232,7 +232,7 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	L.SetContext(luaCtx)
 
-	if err = luaseal.PrepareProcess(L, program.modules); err != nil {
+	if err = luaseal.Prepare(L, program.modules); err != nil {
 		return nil, err
 	}
 
@@ -240,8 +240,11 @@ func RunCacheFlushScript(ctx context.Context, cfg config.File, logger *slog.Logg
 
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-	modManager.BindAllDefault(luaCtx, L, lualib.NewContext(), tolerate.GetTolerate())
-	modManager.BindLDAP(L, backend.LoaderModLDAP(luaCtx, cfg))
+	modManager.BindRequestModules(luaCtx, L, luamod.RequestModules{
+		Context:  lualib.NewContext(),
+		Tolerate: tolerate.GetTolerate(),
+		LDAP:     backend.LoaderModLDAP(luaCtx, cfg),
+	})
 
 	logs := new(lualib.CustomLogKeyValue)
 
@@ -296,7 +299,7 @@ func executeCacheFlushScript(L *lua.LState, program *compiledCacheFlushScript, r
 		return fmt.Errorf("prepared cache flush program is incomplete")
 	}
 
-	if err := luaseal.InstallProcess(L, program.modules); err != nil {
+	if err := luaseal.Install(L, program.modules); err != nil {
 		return err
 	}
 

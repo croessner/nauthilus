@@ -215,8 +215,11 @@ func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 	}
 }
 
-// LoaderHTTPResponseValidation exposes the exact HTTP response API as side-effect-free functions.
-func LoaderHTTPResponseValidation() lua.LGFunction {
+// LoaderHTTPResponseInert exposes the exact HTTP response API as side-effect-free functions.
+//
+// It serves post-actions, which run after the response left the server: scripts keep calling the documented
+// functions without raising an error.
+func LoaderHTTPResponseInert() lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
 		manager := NewHTTPResponseManager()
@@ -259,7 +262,7 @@ func newHTTPResponseModule(L *lua.LState, functionGroups ...map[string]lua.LGFun
 	return mod
 }
 
-// inertHTTPResponseFunctions retains exact function names while suppressing validation-time effects.
+// inertHTTPResponseFunctions retains exact function names while suppressing every response effect.
 func inertHTTPResponseFunctions(functionGroups ...map[string]lua.LGFunction) map[string]lua.LGFunction {
 	functions := make(map[string]lua.LGFunction)
 

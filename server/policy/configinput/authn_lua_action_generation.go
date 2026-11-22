@@ -13,7 +13,6 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
@@ -178,7 +177,8 @@ func newConfiguredAuthnLuaActionBindingSet(
 	})
 }
 
-// prepareConfiguredAuthnLuaAction captures bytes and validates the exact callback and return vocabulary.
+// prepareConfiguredAuthnLuaAction captures bytes, compiles them, and requires the action entry point without
+// executing the script.
 func prepareConfiguredAuthnLuaAction(
 	generation uint64,
 	name string,
@@ -198,7 +198,7 @@ func prepareConfiguredAuthnLuaAction(
 		return nil, err
 	}
 
-	if err = validateConfiguredAuthnLuaActionSource(configured, source, prototype, modules); err != nil {
+	if err = requireAuthnLuaEntryPoint(source, modules, definitions.LuaFnCallAction); err != nil {
 		return nil, err
 	}
 
@@ -210,54 +210,6 @@ func prepareConfiguredAuthnLuaAction(
 		poolKey:    fmt.Sprintf("policy-authn:%d:lua_action:%s", generation, id),
 		generation: generation,
 	}, nil
-}
-
-// validateConfiguredAuthnLuaActionSource executes the callback once in its exact sealed capability profile.
-func validateConfiguredAuthnLuaActionSource(
-	configured policyconfig.EffectConfig,
-	source []byte,
-	prototype *lua.FunctionProto,
-	modules *luaseal.Modules,
-) error {
-	profile := luaseal.PolicyProfileResponseAction
-	if configured.Execution == string(registry.ExecutionHostPostAction) {
-		profile = luaseal.PolicyProfileAction
-	}
-
-	if err := modules.ValidateSource(configured.ScriptPath, source, profile); err != nil {
-		return err
-	}
-
-	state, err := newAuthnLuaSourceValidationState(modules, profile)
-	if err != nil {
-		return err
-	}
-	defer state.Close()
-
-	lualib.SetBuiltinTableForAction(state, func(*lua.LState) int { return 0 })
-
-	if err = lualib.DoCompiledFile(state, prototype); err != nil {
-		return err
-	}
-
-	callback := state.GetGlobal(definitions.LuaFnCallAction)
-	if callback.Type() != lua.LTFunction {
-		return fmt.Errorf("required callback %s is unavailable", definitions.LuaFnCallAction)
-	}
-
-	if err = state.CallByParam(lua.P{Fn: callback, NRet: 1, Protect: true}, state.NewTable()); err != nil {
-		return err
-	}
-
-	result := state.Get(-1)
-	state.Pop(1)
-
-	number, ok := result.(lua.LNumber)
-	if !ok || (number != 0 && number != 1) {
-		return fmt.Errorf("configured action returned an unsupported result")
-	}
-
-	return nil
 }
 
 // ID returns the exact configured effect identity.

@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/croessner/nauthilus/v4/server/backend"
 	"github.com/croessner/nauthilus/v4/server/bruteforce/tolerate"
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
@@ -47,6 +48,7 @@ import (
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -383,7 +385,7 @@ func (r *Request) executeScripts(
 
 				var localStatus *string
 
-				if err = luaseal.PreparePolicyProfile(Llocal, source.Modules, luaseal.PolicyProfileEnvironment); err != nil {
+				if err = luaseal.Prepare(Llocal, source.Modules); err != nil {
 					return err
 				}
 
@@ -444,16 +446,22 @@ func (r *Request) executeScripts(
 
 				modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-				modManager.BindAllPolicyRequest(luaCtx, Llocal, localRequest.Context, localRequest.Tolerate)
+				requestModules := luamod.RequestModules{
+					Context:      localRequest.Context,
+					Tolerate:     localRequest.Tolerate,
+					HTTPResponse: ctx,
+					LDAP:         backend.LoaderModLDAP(luaCtx, cfg),
+				}
+				if ctx != nil {
+					requestModules.HTTPRequest = ctx.Request
+				}
+
+				modManager.BindRequestModules(luaCtx, Llocal, requestModules)
 				modManager.BindModule(
 					Llocal,
 					definitions.LuaModPolicy,
 					lualib.LoaderModPolicy(localRequest.PolicyContext, policy.StagePreAuth),
 				)
-
-				if ctx != nil && ctx.Request != nil {
-					modManager.BindHTTP(Llocal, lualib.NewHTTPMetaFromRequest(ctx.Request))
-				}
 
 				mspan.End()
 				envSpan.End()
@@ -466,12 +474,11 @@ func (r *Request) executeScripts(
 					attribute.Int("level", levelIndex),
 				)
 
-				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.module_authority")
-
-				if e := luaseal.InstallPolicyProfile(Llocal, source.Modules, luaseal.PolicyProfileEnvironment); e != nil {
+				// failLoadPhase closes the failed phase span and the execution span and records the script failure.
+				failLoadPhase := func(phaseSpan trace.Span, e error) error {
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
-					packagePathSpan.RecordError(e)
-					packagePathSpan.End()
+					phaseSpan.RecordError(e)
+					phaseSpan.End()
 					execSpan.RecordError(e)
 					execSpan.End()
 					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
@@ -479,19 +486,18 @@ func (r *Request) executeScripts(
 					return e
 				}
 
+				_, packagePathSpan := scriptTrace.Start(execCtx, "lua.script.module_authority")
+
+				if e := luaseal.Install(Llocal, source.Modules); e != nil {
+					return failLoadPhase(packagePathSpan, e)
+				}
+
 				packagePathSpan.End()
 
 				_, loadSpan := scriptTrace.Start(execCtx, "lua.script.load_chunk")
 
 				if e := lualib.DoCompiledFile(Llocal, source.CompiledScript); e != nil {
-					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
-					loadSpan.RecordError(e)
-					loadSpan.End()
-					execSpan.RecordError(e)
-					execSpan.End()
-					r.recordEnvironmentScriptResult(egCtx, source.Name, false, false, statusText(localStatus), time.Since(scriptStarted), e)
-
-					return e
+					return failLoadPhase(loadSpan, e)
 				}
 
 				loadSpan.End()

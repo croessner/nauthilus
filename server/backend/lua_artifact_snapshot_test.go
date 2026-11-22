@@ -38,8 +38,8 @@ func prepareCapturedLuaBackend(t *testing.T) (*config.FileSettings, *preparedLua
 	modulePath := filepath.Join(directory, "shared.lua")
 
 	if err := os.WriteFile(scriptPath, []byte(`
-assert(dofile == nil)
-assert(loadfile == nil)
+assert(type(dofile) == "function")
+assert(type(loadfile) == "function")
 local shared = require("shared")
 captured_backend = shared.value
 `), 0o600); err != nil {
@@ -98,7 +98,7 @@ func assertCapturedLuaBackendVM(
 	state := lua.NewState()
 	defer state.Close()
 
-	if err := luaseal.PrepareProcess(state, program.modules); err != nil {
+	if err := luaseal.Prepare(state, program.modules); err != nil {
 		t.Fatalf("fresh backend VM %d preparation error = %v", index, err)
 	}
 

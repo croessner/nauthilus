@@ -66,18 +66,6 @@ func LoaderModMisc(ctx context.Context, cfg config.File, logger *slog.Logger) lu
 	}
 }
 
-// LoaderModMiscRequest exposes deterministic helpers without unbounded request sleeps.
-func LoaderModMiscRequest(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
-	return func(L *lua.LState) int {
-		manager := NewMiscManager(ctx, cfg, logger)
-
-		return pushLuaModule(L, map[string]lua.LGFunction{
-			definitions.LuaFnGetCountryName: manager.getCountryName,
-			definitions.LuaFnScopedIP:       manager.scopedIP,
-		})
-	}
-}
-
 // LoaderModPassword registers the password-related functions in the Lua runtime and returns the module.
 func LoaderModPassword(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {

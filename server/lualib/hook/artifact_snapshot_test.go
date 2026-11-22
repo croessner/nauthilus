@@ -27,8 +27,8 @@ func TestPreCompileLuaHooksUsesSealedEntryAndModulesAcrossFreshVMs(t *testing.T)
 	modulePath := filepath.Join(directory, "shared.lua")
 
 	if err := os.WriteFile(scriptPath, []byte(`
-assert(dofile == nil)
-assert(loadfile == nil)
+assert(type(dofile) == "function")
+assert(type(loadfile) == "function")
 local shared = require("shared")
 function nauthilus_run_hook(request)
   return {module = shared.value}
@@ -105,7 +105,7 @@ func requireSealedHookResult(
 	state := lua.NewState()
 	defer state.Close()
 
-	if err := luaseal.PrepareProcess(state, modules); err != nil {
+	if err := luaseal.Prepare(state, modules); err != nil {
 		t.Fatalf("fresh hook VM %d preparation error = %v", index, err)
 	}
 

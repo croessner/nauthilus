@@ -397,7 +397,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 		return
 	}
 
-	if leaseErr = luaseal.PrepareProcess(L, program.modules); leaseErr != nil {
+	if leaseErr = luaseal.Prepare(L, program.modules); leaseErr != nil {
 		processError(cfg, logger, leaseErr, luaRequest, logs)
 
 		return
@@ -446,30 +446,14 @@ func bindLuaRequestModules(
 ) {
 	modManager := luamod.NewModuleManager(ctx, cfg, logger, redisClient)
 
-	modManager.BindAllDefault(luaRequest.HTTPClientContext, L, luaRequest.Context, luaRequest.Tolerate)
-
-	if luaRequest.HTTPClientRequest != nil {
-		modManager.BindHTTP(L, lualib.NewHTTPMetaFromRequest(luaRequest.HTTPClientRequest))
-	}
-
-	modManager.BindLDAP(L, LoaderModLDAP(luaCtx, cfg))
+	modManager.BindRequestModules(luaRequest.HTTPClientContext, L, luamod.RequestModules{
+		Context:     luaRequest.Context,
+		Tolerate:    luaRequest.Tolerate,
+		HTTPRequest: luaRequest.HTTPClientRequest,
+		LDAP:        LoaderModLDAP(luaCtx, cfg),
+	})
 	modManager.BindModule(L, definitions.LuaModPolicy, lualib.LoaderModPolicy(luaRequest.PolicyContext, policy.StageAuthBackend))
-	bindBackendResultModule(ctx, cfg, logger, L)
-}
-
-// bindBackendResultModule exposes backend-result userdata helpers in globals and request env.
-func bindBackendResultModule(ctx context.Context, cfg config.File, logger *slog.Logger, L *lua.LState) {
-	lualib.LoaderModBackendResult(ctx, cfg, logger)(L)
-
-	if mod, ok := L.Get(-1).(*lua.LTable); ok {
-		L.Pop(1)
-		L.SetGlobal(definitions.LuaBackendResultTypeName, mod)
-		luapool.BindModuleIntoReq(L, definitions.LuaBackendResultTypeName, mod)
-
-		return
-	}
-
-	L.Pop(1)
+	modManager.BindBackendResult(L)
 }
 
 // setupGlobals initializes and registers a set of global Lua variables and functions in the provided Lua state.
@@ -508,7 +492,7 @@ func executeAndHandleError(cfg config.File, logger *slog.Logger, program *prepar
 		return err
 	}
 
-	if err = luaseal.InstallProcess(L, program.modules); err != nil {
+	if err = luaseal.Install(L, program.modules); err != nil {
 		processError(cfg, logger, err, luaRequest, logs)
 
 		return err

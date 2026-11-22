@@ -245,14 +245,11 @@ func TestGenerationOwnedLuaPathsUseSealedModuleAuthority(t *testing.T) {
 			t.Errorf("generation-owned Lua runtime %s retains live package.path authority", path)
 		}
 
-		for _, forbidden := range []string{"BindAllDefault(", "LoaderModRedis(", "LoaderModPsnet("} {
-			if strings.Contains(string(contents), forbidden) {
-				t.Errorf("generation-owned Lua runtime %s retains mutable request module authority %s", path, forbidden)
+		// Environment sources, subject sources, and actions share the one module surface of hooks and backends.
+		for _, required := range []string{"BindRequestModules(", "luaseal.Prepare(", "luaseal.Install("} {
+			if !strings.Contains(string(contents), required) {
+				t.Errorf("generation-owned Lua runtime %s does not call %s", path, required)
 			}
-		}
-
-		if !strings.Contains(string(contents), "luaseal.InstallPolicyProfile(") {
-			t.Errorf("generation-owned Lua runtime %s does not install sealed module authority", path)
 		}
 	}
 }

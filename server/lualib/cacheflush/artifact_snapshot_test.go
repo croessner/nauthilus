@@ -80,8 +80,8 @@ func TestPreparedCacheFlushUsesSealedModulesAcrossFreshVMs(t *testing.T) {
 	modulePath := filepath.Join(directory, "shared.lua")
 
 	if err := os.WriteFile(scriptPath, []byte(`
-assert(dofile == nil)
-assert(loadfile == nil)
+assert(type(dofile) == "function")
+assert(type(loadfile) == "function")
 local shared = require("shared")
 function nauthilus_cache_flush(request)
   return {shared.value}, shared.value
@@ -140,7 +140,7 @@ func requireSealedCacheFlushResult(
 	state := lua.NewState()
 	defer state.Close()
 
-	if err := luaseal.PrepareProcess(state, program.modules); err != nil {
+	if err := luaseal.Prepare(state, program.modules); err != nil {
 		t.Fatalf("fresh cache-flush VM %d preparation error = %v", index, err)
 	}
 

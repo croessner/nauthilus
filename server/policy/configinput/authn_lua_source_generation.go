@@ -17,7 +17,6 @@ import (
 
 	"github.com/croessner/nauthilus/v4/server/config/policyconfig"
 	"github.com/croessner/nauthilus/v4/server/definitions"
-	"github.com/croessner/nauthilus/v4/server/lualib"
 	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/croessner/nauthilus/v4/server/lualib/vmpool"
 	policy "github.com/croessner/nauthilus/v4/server/policy"
@@ -158,7 +157,7 @@ func activatedAuthnHostProviderIDs(
 	return result
 }
 
-// prepareAuthnLuaSource compiles and validates one exact callback without publishing it.
+// prepareAuthnLuaSource compiles one exact callback and requires its entry point without executing it.
 func prepareAuthnLuaSource(
 	generation uint64,
 	id string,
@@ -187,27 +186,8 @@ func prepareAuthnLuaSource(
 		prefix = authnLuaEnvironmentPrefix
 	}
 
-	profile := luaseal.PolicyProfileSubject
-	if configured.Kind == policyconfig.ProviderKindLuaEnvironment {
-		profile = luaseal.PolicyProfileEnvironment
-	}
-
-	if err = modules.ValidateSource(configured.ScriptPath, source, profile); err != nil {
+	if err = requireAuthnLuaEntryPoint(source, modules, callback); err != nil {
 		return nil, err
-	}
-
-	state, err := newAuthnLuaSourceValidationState(modules, profile)
-	if err != nil {
-		return nil, err
-	}
-	defer state.Close()
-
-	if err = lualib.DoCompiledFile(state, prototype); err != nil {
-		return nil, err
-	}
-
-	if state.GetGlobal(callback).Type() != lua.LTFunction {
-		return nil, fmt.Errorf("required callback %s is unavailable", callback)
 	}
 
 	name := strings.TrimPrefix(localName, prefix)
@@ -231,87 +211,6 @@ func compileCapturedAuthnLuaSource(name string, source []byte) (*lua.FunctionPro
 	}
 
 	return lua.Compile(chunk, name)
-}
-
-// newAuthnLuaSourceValidationState applies the request VM loader policy without host side effects.
-func newAuthnLuaSourceValidationState(modules *luaseal.Modules, profile luaseal.PolicyProfile) (*lua.LState, error) {
-	state := lua.NewState(lua.Options{SkipOpenLibs: true})
-	for _, open := range []lua.LGFunction{lua.OpenBase, lua.OpenPackage, lua.OpenTable, lua.OpenString, lua.OpenMath} {
-		open(state)
-		state.Pop(1)
-	}
-
-	for _, name := range []string{lua.TabLibName, lua.StringLibName, lua.MathLibName} {
-		moduleName := name
-		state.PreloadModule(moduleName, func(current *lua.LState) int {
-			current.Push(current.GetGlobal(moduleName))
-
-			return 1
-		})
-	}
-
-	for _, name := range authnLuaValidationModuleNames() {
-		state.PreloadModule(name, authnLuaValidationModule)
-	}
-
-	state.PreloadModule(definitions.LuaModHTTPResponse, lualib.LoaderHTTPResponseValidation())
-	state.PreloadModule("time", lualib.LoaderModPolicyTime())
-
-	if err := luaseal.PreparePolicyProfile(state, modules, profile); err != nil {
-		state.Close()
-
-		return nil, err
-	}
-
-	if err := luaseal.InstallPolicyProfile(state, modules, profile); err != nil {
-		state.Close()
-
-		return nil, err
-	}
-
-	return state, nil
-}
-
-// authnLuaValidationModuleNames returns code-owned runtime modules with inert candidate bindings.
-func authnLuaValidationModuleNames() []string {
-	return []string{
-		definitions.LuaModPassword,
-		definitions.LuaModRedis,
-		definitions.LuaModMisc,
-		definitions.LuaModContext,
-		definitions.LuaModBackend,
-		definitions.LuaBackendResultTypeName,
-		definitions.LuaModHTTPRequest,
-		definitions.LuaModCBOR,
-		definitions.LuaModPrometheus,
-		definitions.LuaModBruteForce,
-		definitions.LuaModCache,
-		definitions.LuaModPsnet,
-		definitions.LuaModOpenTelemetry,
-		definitions.LuaModPolicy,
-		definitions.LuaModI18N,
-		"json",
-		"glua_crypto",
-	}
-}
-
-// authnLuaValidationModule exposes an inert table during off-side callback validation.
-func authnLuaValidationModule(state *lua.LState) int {
-	module := state.NewTable()
-	meta := state.NewTable()
-	meta.RawSetString("__index", state.NewFunction(func(current *lua.LState) int {
-		current.Push(current.NewFunction(func(call *lua.LState) int {
-			call.Push(lua.LNil)
-
-			return 1
-		}))
-
-		return 1
-	}))
-	state.SetMetatable(module, meta)
-	state.Push(module)
-
-	return 1
 }
 
 // ID returns the exact catalog provider identity.
