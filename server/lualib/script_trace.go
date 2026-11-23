@@ -31,6 +31,9 @@ const (
 
 	// LuaScriptKindEnvironment identifies environment source script execution.
 	LuaScriptKindEnvironment = "environment"
+
+	// luaScriptStableAttributes is the number of attributes every Lua script phase span can carry by itself.
+	luaScriptStableAttributes = 5
 )
 
 // LuaScriptTraceOptions describes stable attributes shared by all spans of one Lua script execution.
@@ -43,42 +46,51 @@ type LuaScriptTraceOptions struct {
 
 // LuaScriptTrace starts child spans for the common Lua execution phases.
 type LuaScriptTrace struct {
-	tracer monittrace.Tracer
-	attrs  []attribute.KeyValue
+	tracer  monittrace.Tracer
+	options LuaScriptTraceOptions
 }
 
 // NewLuaScriptTrace creates a trace helper with stable Lua script attributes.
 func NewLuaScriptTrace(options LuaScriptTraceOptions) LuaScriptTrace {
-	attrs := make([]attribute.KeyValue, 0, 4)
-
-	if options.Kind != "" {
-		attrs = append(attrs, attribute.String("lua.kind", options.Kind))
-	}
-
-	if options.ScriptName != "" {
-		attrs = append(attrs, attribute.String("lua.script.name", options.ScriptName))
-	}
-
-	if options.Mode != "" {
-		attrs = append(attrs, attribute.String("lua.mode", options.Mode))
-	}
-
-	if options.Level >= 0 {
-		attrs = append(attrs, attribute.Int("lua.level", options.Level))
-	}
-
 	return LuaScriptTrace{
-		tracer: monittrace.New("nauthilus/lua/script"),
-		attrs:  attrs,
+		tracer:  monittrace.New("nauthilus/lua/script"),
+		options: options,
 	}
 }
 
 // Start begins a Lua script phase span and attaches stable script attributes plus extra attributes.
+//
+// The attributes are only assembled for a span that records them.
 func (t LuaScriptTrace) Start(ctx context.Context, spanName string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
-	allAttrs := make([]attribute.KeyValue, 0, len(t.attrs)+len(attrs)+1)
-	allAttrs = append(allAttrs, t.attrs...)
-	allAttrs = append(allAttrs, attribute.String("lua.phase", strings.TrimPrefix(spanName, "lua.script.")))
-	allAttrs = append(allAttrs, attrs...)
+	ctx, span := t.tracer.Start(ctx, spanName)
+	if span.IsRecording() {
+		span.SetAttributes(t.phaseAttributes(spanName, attrs)...)
+	}
 
-	return t.tracer.Start(ctx, spanName, allAttrs...)
+	return ctx, span
+}
+
+// phaseAttributes returns the stable script attributes, the phase name, and the extra attributes of one span.
+func (t LuaScriptTrace) phaseAttributes(spanName string, attrs []attribute.KeyValue) []attribute.KeyValue {
+	allAttrs := make([]attribute.KeyValue, 0, luaScriptStableAttributes+len(attrs))
+
+	if t.options.Kind != "" {
+		allAttrs = append(allAttrs, attribute.String("lua.kind", t.options.Kind))
+	}
+
+	if t.options.ScriptName != "" {
+		allAttrs = append(allAttrs, attribute.String("lua.script.name", t.options.ScriptName))
+	}
+
+	if t.options.Mode != "" {
+		allAttrs = append(allAttrs, attribute.String("lua.mode", t.options.Mode))
+	}
+
+	if t.options.Level >= 0 {
+		allAttrs = append(allAttrs, attribute.Int("lua.level", t.options.Level))
+	}
+
+	allAttrs = append(allAttrs, attribute.String("lua.phase", strings.TrimPrefix(spanName, "lua.script.")))
+
+	return append(allAttrs, attrs...)
 }

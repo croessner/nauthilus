@@ -129,7 +129,7 @@ func (p *Pool) Acquire(ctx context.Context) (*lua.LState, error) {
 		n := atomic.AddInt64(&p.inUse, 1)
 
 		stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(float64(n))
-		asp.SetAttributes(attribute.Int64("in_use_after", n))
+		monittrace.SetAttributes(asp, attribute.Int64("in_use_after", n))
 
 		return st, nil
 	}
@@ -221,7 +221,7 @@ func (p *Pool) Release(L *lua.LState) {
 		L.Close()
 
 		level.Warn(log.Logger).Log(definitions.LogKeyMsg, "lua_vm_pool_overflow_close", "key", string(p.key))
-		rsp.SetAttributes(attribute.Bool("overflow_close", true))
+		monittrace.SetAttributes(rsp, attribute.Bool("overflow_close", true))
 	}
 
 	// Decrement in-use counter and update gauge
@@ -234,7 +234,7 @@ func (p *Pool) Release(L *lua.LState) {
 	}
 
 	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(float64(n))
-	rsp.SetAttributes(attribute.Int64("in_use_after", n))
+	monittrace.SetAttributes(rsp, attribute.Int64("in_use_after", n))
 }
 
 // Replace discards a broken VM and replaces it with a fresh one.
@@ -274,7 +274,7 @@ func (p *Pool) Replace(L *lua.LState) {
 	}
 
 	stats.GetMetrics().GetLuaVMInUse().WithLabelValues(string(p.key)).Set(float64(n))
-	xsp.SetAttributes(attribute.Int64("in_use_after", n))
+	monittrace.SetAttributes(xsp, attribute.Int64("in_use_after", n))
 }
 
 // Manager owns one isolated set of keyed Lua VM pools.

@@ -629,7 +629,8 @@ func (r *Request) callSubjectLua(
 	defer requestScope.Restore()
 
 	defer func() {
-		fsp.SetAttributes(
+		monittrace.SetAttributes(
+			fsp,
 			attribute.Bool("result", action),
 			attribute.Int("removed_attrs", len(removeAttributes)),
 		)
@@ -668,7 +669,8 @@ func (r *Request) callSubjectLua(
 	sctx, selSpan := tr.Start(fctx, "subject_sources.select_applicable")
 	_ = sctx
 
-	selSpan.SetAttributes(
+	monittrace.SetAttributes(
+		selSpan,
 		attribute.String("mode", mode),
 		attribute.Int("configured_total", len(sources.LuaScripts)),
 		attribute.Int("runnable", runnable),
@@ -706,7 +708,8 @@ func (r *Request) callSubjectLua(
 
 	plan, cached, err := sources.planForMode(modeMask)
 	plannedCount := pipeline.PlannedNodeCount(plan)
-	pspan.SetAttributes(
+	monittrace.SetAttributes(
+		pspan,
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
 		attribute.Int("scripts", plannedCount),
@@ -1005,7 +1008,7 @@ func (r *Request) callSubjectLua(
 				if subjectFunc.Type() != lua.LTFunction {
 					e := fmt.Errorf("entry function '%s' is not defined in Lua subject source %s", definitions.LuaFnCallSubject, sc.Name)
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, fctx), e, sc.Name, stopTimer)
-					lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", false))
+					monittrace.SetAttributes(lookupSpan, attribute.Bool("lua.entrypoint.found", false))
 					lookupSpan.RecordError(e)
 					lookupSpan.End()
 					execSpan.RecordError(e)
@@ -1015,7 +1018,7 @@ func (r *Request) callSubjectLua(
 					return e
 				}
 
-				lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", true))
+				monittrace.SetAttributes(lookupSpan, attribute.Bool("lua.entrypoint.found", true))
 				lookupSpan.End()
 
 				_, callSpan := scriptTrace.Start(execCtx, "lua.script.call",
@@ -1044,11 +1047,13 @@ func (r *Request) callSubjectLua(
 				fr.ret = ret
 				fr.action = takeAction
 
-				execSpan.SetAttributes(
+				monittrace.SetAttributes(
+					execSpan,
 					attribute.Int("result", ret),
 					attribute.Bool("action", takeAction),
 				)
-				decodeSpan.SetAttributes(
+				monittrace.SetAttributes(
+					decodeSpan,
 					attribute.Int("lua.result", ret),
 					attribute.Bool("lua.action", takeAction),
 				)
@@ -1131,7 +1136,7 @@ func (r *Request) callSubjectLua(
 			return false, nil, nil, e
 		}
 
-		wspan.SetAttributes(attribute.Int("completed", len(levelResults)))
+		monittrace.SetAttributes(wspan, attribute.Int("completed", len(levelResults)))
 		wspan.End()
 
 		sort.Slice(levelResults, func(i, j int) bool {
@@ -1174,7 +1179,8 @@ func (r *Request) callSubjectLua(
 
 		results = append(results, levelResults...)
 
-		mspan.SetAttributes(
+		monittrace.SetAttributes(
+			mspan,
 			attribute.Int("merged_attrs", len(mergedBackendResult.Attributes)),
 			attribute.Int("removed_attrs_unique", len(mergedRemoveAttributes.GetStringSlice())),
 		)
@@ -1217,7 +1223,8 @@ func (r *Request) callSubjectLua(
 	}
 
 	_, finalMergeSpan := tr.Start(fctx, "subject_sources.merge.final")
-	finalMergeSpan.SetAttributes(
+	monittrace.SetAttributes(
+		finalMergeSpan,
 		attribute.Int("merged_attrs", len(mergedBackendResult.Attributes)),
 		attribute.Int("removed_attrs_unique", len(mergedRemoveAttributes.GetStringSlice())),
 		attribute.Int("rejected_count", len(rejectedSubjectSources)),

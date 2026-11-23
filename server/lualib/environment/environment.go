@@ -297,7 +297,8 @@ func (r *Request) executeScripts(
 	_ = pctx
 
 	plan, cached, err := sources.planForMode(mode)
-	pspan.SetAttributes(
+	monittrace.SetAttributes(
+		pspan,
 		attribute.Bool("cached", cached),
 		attribute.Int("levels", len(plan.Levels)),
 		attribute.Int("scripts", pipeline.PlannedNodeCount(plan)),
@@ -520,7 +521,7 @@ func (r *Request) executeScripts(
 				if callEnvironmentFunc.Type() != lua.LTFunction {
 					e := fmt.Errorf("entry function '%s' is not defined in Lua environment source %s", definitions.LuaFnCallEnvironment, source.Name)
 					r.handleError(logger, luaCancel, lualib.NewRuntimeCancellationDiagnostics(luaCtx, egCtx, ctx), e, source.Name, stopTimer)
-					lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", false))
+					monittrace.SetAttributes(lookupSpan, attribute.Bool("lua.entrypoint.found", false))
 					lookupSpan.RecordError(e)
 					lookupSpan.End()
 					execSpan.RecordError(e)
@@ -530,7 +531,7 @@ func (r *Request) executeScripts(
 					return e
 				}
 
-				lookupSpan.SetAttributes(attribute.Bool("lua.entrypoint.found", true))
+				monittrace.SetAttributes(lookupSpan, attribute.Bool("lua.entrypoint.found", true))
 				lookupSpan.End()
 
 				_, callSpan := scriptTrace.Start(execCtx, "lua.script.call",
@@ -561,12 +562,14 @@ func (r *Request) executeScripts(
 				fr.ret = ret
 				fr.abort = ab
 				fr.triggered = tr
-				execSpan.SetAttributes(
+				monittrace.SetAttributes(
+					execSpan,
 					attribute.Int("result", ret),
 					attribute.Bool("abort", ab),
 					attribute.Bool("triggered", tr),
 				)
-				decodeSpan.SetAttributes(
+				monittrace.SetAttributes(
+					decodeSpan,
 					attribute.Int("lua.result", ret),
 					attribute.Bool("lua.abort", ab),
 					attribute.Bool("lua.triggered", tr),
@@ -624,7 +627,7 @@ func (r *Request) executeScripts(
 			return false, false, e
 		}
 
-		wspan.SetAttributes(attribute.Int("completed", len(levelResults)))
+		monittrace.SetAttributes(wspan, attribute.Int("completed", len(levelResults)))
 		wspan.End()
 
 		mctx, mspan := tr.Start(traceCtx, "environment_sources.level.merge",
@@ -658,7 +661,8 @@ func (r *Request) executeScripts(
 			lualib.MergeStatusAndLogs(&statusSet, &r.Logs, &r.StatusMessage, *fr.statusText, fr.logs)
 		}
 
-		mspan.SetAttributes(
+		monittrace.SetAttributes(
+			mspan,
 			attribute.Bool("triggered", triggered),
 			attribute.Bool("skip_remaining", skipRemainingEnvironment),
 		)
