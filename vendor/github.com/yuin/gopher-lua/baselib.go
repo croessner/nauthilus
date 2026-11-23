@@ -948,7 +948,7 @@ func base55NextKey(tb *LTable, key LValue) (LValue, bool) {
 		if index >= 1 && index <= int64(tb.arrayLen()) {
 			return key, true
 		}
-		if _, ok := tb.sparse[int(index-1)]; ok {
+		if tb.slotGet(int(index-1)) != LNil {
 			return key, true
 		}
 	case LNumber:
@@ -960,7 +960,7 @@ func base55NextKey(tb *LTable, key LValue) (LValue, bool) {
 		if tb.findField(string(s)) >= 0 {
 			return key, true
 		}
-	} else if _, ok := tb.k2i[tb.normKey(key)]; ok {
+	} else if _, ok := tb.keyIndex(key); ok {
 		return key, true
 	}
 	// An unboxed array part shrinks when its last element is cleared, so

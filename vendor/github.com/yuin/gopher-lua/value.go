@@ -148,19 +148,12 @@ type LTable struct {
 	array []LValue
 	// fields holds the string-keyed entries in insertion order and
 	// fieldIndex locates them once there are too many for a linear
-	// search (see table.go). keys and k2i keep the insertion order of the
-	// other hash keys, which live in dict.
+	// search (see table.go). nums holds the unboxed numbers of the
+	// entries: one fieldNum per entry that fields has room for, or nil
+	// as long as no entry has held a number.
 	fields     []tableField
+	nums       *fieldNum
 	fieldIndex []uint32
-	// fieldKeys caches the keys of the fields as Lua values, by position,
-	// for traversals (converting a string to a Lua value allocates). It
-	// is nil until the table is traversed a second time (walked marks
-	// the first), so that a table that is traversed once pays nothing.
-	fieldKeys []LValue
-	walked    bool
-	dict      map[LValue]LValue
-	keys      []LValue
-	k2i       map[LValue]int
 
 	// iarr and farr are the unboxed array parts used when akind is
 	// arrayKindInt or arrayKindFloat (see table.go).
@@ -173,13 +166,13 @@ type LTable struct {
 	// Lua 5.1 profile count them (see table.go).
 	tail int
 	// sparse holds the elements of the array part that lie in the nil
-	// slots behind the stored elements, by 0-based slot index (see
-	// table_sparse.go). sparseKeys caches their indexes in ascending
-	// order (nil: to be rebuilt) and sparseTop the largest one.
-	sparse      map[int]LValue
-	sparseKeys  []int
-	sparseTop   int
-	sparseTopOK bool
+	// slots behind the stored elements (see table_sparse.go). It is nil
+	// if there are none, which is what compiled code checks.
+	sparse *tableSparse
+	// extra holds the parts that most tables do not have: the entries
+	// with other keys than strings and array indexes, and the keys kept
+	// for traversals. It is nil until one of them is needed.
+	extra *tableExtra
 	// akind is the representation of the array part.
 	akind uint8
 	// typedOK allows the array part to use the unboxed representations.
@@ -192,10 +185,37 @@ type LTable struct {
 	// intKeys is set for tables created by a Lua 5.5 profile state:
 	// integral number keys are reported as LInteger instead of LNumber.
 	intKeys bool
+	// walked is set by the first traversal of the table (see beginWalk).
+	walked bool
 	// version is bumped whenever a string-keyed entry holding a function or
 	// a table is replaced or removed. JIT compiled code uses it to guard
 	// speculated lookups of functions and library tables.
 	version uint32
+}
+
+// tableExtra holds the parts of a table that most tables do not have.
+type tableExtra struct {
+	// dict holds the entries whose keys are neither strings nor array
+	// indexes; keys and k2i keep the order in which they were added.
+	dict map[LValue]LValue
+	keys []LValue
+	k2i  map[LValue]int
+	// fieldKeys caches the keys of the fields as Lua values, by position,
+	// for traversals (converting a string to a Lua value allocates). It
+	// is nil until the table is traversed a second time, so that a table
+	// that is traversed once pays nothing.
+	fieldKeys []LValue
+}
+
+// tableSparse holds the elements of the array part of a table that lie
+// behind the stored elements, by 0-based slot index. keys caches the
+// indexes in ascending order (nil: to be rebuilt) and top the largest one
+// (valid if topOK is set).
+type tableSparse struct {
+	elems map[int]LValue
+	keys  []int
+	top   int
+	topOK bool
 }
 
 func (tb *LTable) String() string   { return fmt.Sprintf("table: %p", tb) }

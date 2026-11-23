@@ -1713,10 +1713,10 @@ func (fe *jitFrontend) envField(kidx int) (key string, present, number bool) {
 		return key, false, false
 	}
 	i := fe.env.findField(key)
-	if i < 0 || fe.env.fields[i].removed() {
+	if i < 0 || fe.env.fieldRemoved(i) {
 		return key, false, false
 	}
-	return key, true, fe.env.fields[i].kind != fieldBoxed
+	return key, true, fe.env.fieldKind(i) != fieldBoxed
 }
 
 // getGlobal translates R(a) := Gbl[Kst(kidx)]: a function or a table is
@@ -2571,44 +2571,48 @@ func (fe *jitFrontend) getUpval(a, idx int) bool {
 	return true
 }
 
-// fieldRef locates the number field key of the table in register slot
-// and emits the guards under which native code may access it in place:
-// the register holds a table whose string-keyed entry at the position
-// found now is the entry for key. Entries never move, and a raw hit needs
-// no metamethod, so nothing else has to be checked. It returns the
-// address of the entries, the displacement of the entry and its kind.
+// fieldRef is a string-keyed entry of a table that compiled code may
+// access in place.
+type fieldRef struct {
+	table *jit.Value // the table
+	data  *jit.Value // the address of its entries
+	disp  int64      // the displacement of the entry
+	index int        // the position of the entry
+	kind  uint8      // what the entry holds now
+}
+
+// fieldRefAt locates the entry for key of the table at a location and
+// emits the guards under which native code may access it in place: the
+// location holds a table whose string-keyed entry at the position found
+// now is the entry for key. Entries never move, and a raw hit needs no
+// metamethod, so nothing else has to be checked.
 //
 // The key is recognized by the address of its bytes. Constants of all
 // functions share one copy (see intern.go); a table filled with another
 // copy of the key, for example by Go code, is accepted through the copy
 // found now.
-func (fe *jitFrontend) fieldRef(slot int, key string, boxedOK bool) (data *jit.Value, disp int64, kind uint8, ok bool) {
-	home, ok := fe.homeSlot(slot)
-	if !ok {
-		return nil, 0, 0, false
-	}
-	return fe.fieldRefAt(home, key, boxedOK)
-}
-
-// fieldRefAt is fieldRef for the table at a location.
-func (fe *jitFrontend) fieldRefAt(home int, key string, boxedOK bool) (data *jit.Value, disp int64, kind uint8, ok bool) {
+func (fe *jitFrontend) fieldRefAt(home int, key string, boxedOK bool) (ref fieldRef, ok bool) {
 	tb, isTable := fe.peek(home).(*LTable)
 	if !isTable || fe.jp.feedback[feedbackKey{fe.fbpc(), int16(locSlot(home)), fbField}] >= jitFieldMisses {
-		return nil, 0, 0, false
+		return ref, false
 	}
 	idx := tb.findField(key)
 	if idx >= 0 {
 		fe.fieldSample = tb.fields[idx].value
 	}
-	if idx < 0 || idx >= jitMaxFieldIndex || tb.fields[idx].removed() || (tb.fields[idx].kind == fieldBoxed && !boxedOK) {
-		return nil, 0, 0, false
+	if idx < 0 || idx >= jitMaxFieldIndex || tb.fieldRemoved(idx) || (tb.fieldKind(idx) == fieldBoxed && !boxedOK) {
+		return ref, false
+	}
+	if tb.fieldKind(idx) == fieldBoxed && isNumberValue(fe.fieldSample) {
+		// a table of a state without the JIT keeps no unboxed numbers
+		return ref, false
 	}
 	f := &tb.fields[idx]
 	tp := fe.tableAt(home)
-	data = fe.load(jit.OpLoad64, jit.TInt, tp, int64(offTableFields)+sliceOffData)
+	data := fe.load(jit.OpLoad64, jit.TInt, tp, int64(offTableFields)+sliceOffData)
 	n := fe.load(jit.OpLoad64, jit.TInt, tp, int64(offTableFields)+sliceOffLen)
 	fe.guard(fe.op(jit.OpULt, jit.TInt, fe.constInt(int64(idx)), n), home, fbField)
-	disp = int64(idx) * int64(fieldSize)
+	disp := int64(idx) * int64(fieldSize)
 	keyLen := fe.load(jit.OpLoad64, jit.TInt, data, disp+int64(offFieldKey)+8)
 	keyAddr := fe.load(jit.OpLoad64, jit.TInt, data, disp+int64(offFieldKey))
 	match := fe.op(jit.OpEq, jit.TInt, keyAddr, fe.constInt(int64(uintptr(unsafe.Pointer(unsafe.StringData(key))))))
@@ -2619,7 +2623,26 @@ func (fe *jitFrontend) fieldRefAt(home int, key string, boxedOK bool) (data *jit
 	}
 	sameLen := fe.op(jit.OpEq, jit.TInt, keyLen, fe.constInt(int64(len(key))))
 	fe.guard(fe.op(jit.OpAnd, jit.TInt, match, sameLen), home, fbField)
-	return data, disp, f.kind, true
+	return fieldRef{table: tp, data: data, disp: disp, index: idx, kind: tb.fieldKind(idx)}, true
+}
+
+// isNumberValue reports whether v is a Lua number.
+func isNumberValue(v LValue) bool {
+	switch v.(type) {
+	case LNumber, LInteger:
+		return true
+	}
+	return false
+}
+
+// fieldNumAt returns the address of the unboxed numbers of the table of
+// an entry and the displacement of the number of that entry. The table
+// has unboxed numbers once one of its entries has held a number; they
+// cover every entry.
+func (fe *jitFrontend) fieldNumAt(home int, ref fieldRef) (nums *jit.Value, disp int64) {
+	nums = fe.load(jit.OpLoad64, jit.TInt, ref.table, int64(offTableNums))
+	fe.guard(fe.op(jit.OpNe, jit.TInt, nums, fe.constInt(0)), home, fbField)
+	return nums, int64(ref.index) * int64(numSize)
 }
 
 // getField translates R(a) := R(b)[K(c)] for a number field of a table.
@@ -2633,33 +2656,40 @@ func (fe *jitFrontend) getField(a, b, c int) bool {
 
 // getFieldAt translates R(a) := T[key] for the table T at a location.
 func (fe *jitFrontend) getFieldAt(a, home int, key string) bool {
-	data, disp, kind, ok := fe.fieldRefAt(home, key, true)
+	ref, ok := fe.fieldRefAt(home, key, true)
 	if !ok {
 		return false
 	}
-	cur := fe.loadMem(jit.MemField, jit.OpLoad8, jit.TInt, data, disp+int64(offFieldKind))
-	fe.guard(fe.op(jit.OpEq, jit.TInt, cur, fe.constInt(int64(kind))), home, fbField)
-	switch kind {
-	case fieldInt:
-		fe.set(a, skInt, fe.loadMem(jit.MemField, jit.OpLoad64, jit.TInt, data, disp+int64(offFieldNum)))
-	case fieldFloat:
-		fe.set(a, skFloat, fe.loadMem(jit.MemField, jit.OpLoadF64, jit.TFloat, data, disp+int64(offFieldNum)))
-	default:
+	if ref.kind == fieldBoxed {
 		// a string, table, function, ...: the register refers to the
-		// value where it is. (An entry that was removed holds nil and
-		// would have to consult __index.)
-		itab := fe.load(jit.OpLoad64, jit.TInt, data, disp+int64(offFieldValue))
-		fe.guard(fe.op(jit.OpNe, jit.TInt, itab, fe.constInt(int64(itabNil))), home, fbField)
-		fe.st[a] = slotState{kind: skRef, src: int32(a), val: fe.op(jit.OpAdd, jit.TInt, data, fe.constInt(disp+int64(offFieldValue)))}
+		// value where it is. The value of an entry is a number exactly if
+		// the entry is a number entry, whose value may be out of date,
+		// and an entry that was removed holds nil and would have to
+		// consult __index.
+		itab := fe.load(jit.OpLoad64, jit.TInt, ref.data, ref.disp+int64(offFieldValue))
+		boxed := fe.op(jit.OpNe, jit.TInt, itab, fe.constInt(int64(itabNil)))
+		boxed = fe.op(jit.OpAnd, jit.TInt, boxed, fe.op(jit.OpNe, jit.TInt, itab, fe.constInt(int64(itabNumber))))
+		boxed = fe.op(jit.OpAnd, jit.TInt, boxed, fe.op(jit.OpNe, jit.TInt, itab, fe.constInt(int64(itabInteger))))
+		fe.guard(boxed, home, fbField)
+		fe.st[a] = slotState{kind: skRef, src: int32(a), val: fe.op(jit.OpAdd, jit.TInt, ref.data, fe.constInt(ref.disp+int64(offFieldValue)))}
 		fe.refPeek[int32(a)] = fe.fieldSample
+		return true
+	}
+	nums, disp := fe.fieldNumAt(home, ref)
+	cur := fe.loadMem(jit.MemField, jit.OpLoad8, jit.TInt, nums, disp+int64(offNumKind))
+	fe.guard(fe.op(jit.OpEq, jit.TInt, cur, fe.constInt(int64(ref.kind))), home, fbField)
+	if ref.kind == fieldInt {
+		fe.set(a, skInt, fe.loadMem(jit.MemField, jit.OpLoad64, jit.TInt, nums, disp+int64(offNumNum)))
+	} else {
+		fe.set(a, skFloat, fe.loadMem(jit.MemField, jit.OpLoadF64, jit.TFloat, nums, disp+int64(offNumNum)))
 	}
 	return true
 }
 
 // setField translates R(a)[K(b)] := RK(c) for a number stored into a
 // field that holds a number already. The number goes into the unboxed
-// part of the entry; kind and the stale flag, which tells the interpreter
-// to rebuild the boxed value, are written as one word.
+// number of the entry; kind and the stale flag, which tells the
+// interpreter to rebuild the boxed value, are written as one word.
 func (fe *jitFrontend) setField(a, b, c int) bool {
 	var key string
 	if b&opBitRk != 0 {
@@ -2688,20 +2718,21 @@ func (fe *jitFrontend) setFieldAt(home int, key string, c int) bool {
 	if !ok {
 		return false
 	}
-	data, disp, _, ok := fe.fieldRefAt(home, key, false)
+	ref, ok := fe.fieldRefAt(home, key, false)
 	if !ok {
 		return false
 	}
 	// the entry must hold a number: replacing other values can involve
 	// the version counter of the table
-	cur := fe.loadMem(jit.MemField, jit.OpLoad8, jit.TInt, data, disp+int64(offFieldKind))
+	nums, disp := fe.fieldNumAt(home, ref)
+	cur := fe.loadMem(jit.MemField, jit.OpLoad8, jit.TInt, nums, disp+int64(offNumKind))
 	fe.guard(fe.op(jit.OpNe, jit.TInt, cur, fe.constInt(int64(fieldBoxed))), home, fbField)
 	kind, store := int64(fieldInt), jit.OpStore64
 	if vk == skFloat {
 		kind, store = int64(fieldFloat), jit.OpStoreF64
 	}
-	fe.store(jit.MemField, store, data, disp+int64(offFieldNum), val)
-	fe.store(jit.MemField, jit.OpStore64, data, disp+int64(offFieldKind), fe.constInt(kind|1<<8))
+	fe.store(jit.MemField, store, nums, disp+int64(offNumNum), val)
+	fe.store(jit.MemField, jit.OpStore64, nums, disp+int64(offNumKind), fe.constInt(kind|1<<8))
 	return true
 }
 

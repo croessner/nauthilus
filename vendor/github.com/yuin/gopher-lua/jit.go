@@ -374,8 +374,8 @@ func (ls *LState) initJIT() {
 	ls.jitOwner = true
 
 	ls.typedArrays = true
-	ls.G.Registry.typedOK = true
-	ls.G.Global.typedOK = true
+	ls.G.Registry.enableTyped()
+	ls.G.Global.enableTyped()
 	jitJumpTable()
 	ls.mainLoop = selectMainLoop(true, ls.ctx != nil)
 }
@@ -515,6 +515,7 @@ var (
 	offTableFarr      = unsafe.Offsetof(LTable{}.farr)
 	offTableMetatable = unsafe.Offsetof(LTable{}.Metatable)
 	offTableFields    = unsafe.Offsetof(LTable{}.fields)
+	offTableNums      = unsafe.Offsetof(LTable{}.nums)
 
 	// closures and their upvalue cells
 	offFnUpvalues = unsafe.Offsetof(LFunction{}.Upvalues)
@@ -524,14 +525,15 @@ var (
 	offUvIndex    = unsafe.Offsetof(Upvalue{}.index)
 	offUvReg      = unsafe.Offsetof(Upvalue{}.reg)
 
-	// layout of tableField; kind and stale are adjacent bytes that native
-	// code writes together as one little-endian word
+	// layout of tableField and of fieldNum; kind and stale are adjacent
+	// bytes that native code writes together as one little-endian word
 	fieldSize     = unsafe.Sizeof(tableField{})
 	offFieldKey   = unsafe.Offsetof(tableField{}.key)
-	offFieldNum   = unsafe.Offsetof(tableField{}.num)
-	offFieldKind  = unsafe.Offsetof(tableField{}.kind)
-	offFieldStale = unsafe.Offsetof(tableField{}.stale)
 	offFieldValue = unsafe.Offsetof(tableField{}.value)
+	numSize       = unsafe.Sizeof(fieldNum{})
+	offNumNum     = unsafe.Offsetof(fieldNum{}.num)
+	offNumKind    = unsafe.Offsetof(fieldNum{}.kind)
+	offNumStale   = unsafe.Offsetof(fieldNum{}.stale)
 
 	// jitLayoutOK is false if the Go runtime does not lay out interface
 	// values and slices the way the native code expects.
@@ -589,7 +591,7 @@ func checkJITLayout() bool {
 	if *(*string)(dataOf(LString(str))) != str {
 		return false
 	}
-	if offFieldStale != offFieldKind+1 || offFieldKind%8 != 0 || fieldSize != offFieldKind+8 || !littleEndian() {
+	if offNumStale != offNumKind+1 || offNumKind%8 != 0 || numSize != offNumKind+8 || !littleEndian() {
 		return false
 	}
 	return true

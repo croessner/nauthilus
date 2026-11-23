@@ -74,8 +74,8 @@ github.com/coreos/go-oidc/v3 v3.21.0 h1:wZo4Q9Pum8dYEj0eMUPrqR+kvuGkeUplbLpNCkBq
 github.com/coreos/go-oidc/v3 v3.21.0/go.mod h1:DYCf24+ncYi+XkIH97GY1+dqoRlbaSI26KVTCI9SrY4=
 github.com/crewjam/saml v0.6.3 h1:Hs1bP4ttHUsmFuBmCUJr/lwmLbnwey17PQyeouolad0=
 github.com/crewjam/saml v0.6.3/go.mod h1:7H5d46arM5wE5h/KXGIXFFEKq1Rv1H8jiwxzRUfQ3Ys=
-github.com/croessner/gopher-lua-jit v0.2.1 h1:JB6SXDl+SymGgTU+bn66agCXAqD3Ty4mgAsjf7UU9Sw=
-github.com/croessner/gopher-lua-jit v0.2.1/go.mod h1:ewhiWEhs5+tnWsLWC4AmzYP2L2p1/nBe+LKWykFjqfk=
+github.com/croessner/gopher-lua-jit v0.2.2 h1:vZuPRat/urN5zn715182GQtr3i0t+yRu34NbTffysqA=
+github.com/croessner/gopher-lua-jit v0.2.2/go.mod h1:ewhiWEhs5+tnWsLWC4AmzYP2L2p1/nBe+LKWykFjqfk=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=

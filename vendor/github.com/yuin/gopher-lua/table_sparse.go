@@ -36,8 +36,8 @@ var tableSparseGap = 64
 
 // slotGet returns the content of a slot behind the stored elements.
 func (tb *LTable) slotGet(index int) LValue {
-	if tb.sparse != nil {
-		if v, ok := tb.sparse[index]; ok {
+	if s := tb.sparse; s != nil {
+		if v, ok := s.elems[index]; ok {
 			return v
 		}
 	}
@@ -46,77 +46,85 @@ func (tb *LTable) slotGet(index int) LValue {
 
 // sparsePut stores an element in a slot behind the stored elements.
 func (tb *LTable) sparsePut(index int, value LValue) {
-	if tb.sparse == nil {
-		tb.sparse = make(map[int]LValue)
-		tb.sparseKeys, tb.sparseTop, tb.sparseTopOK = make([]int, 0, 4), index, true
+	s := tb.sparse
+	if s == nil {
+		s = &tableSparse{elems: make(map[int]LValue), keys: make([]int, 0, 4), top: index, topOK: true}
+		tb.sparse = s
 	}
-	if _, exists := tb.sparse[index]; !exists {
+	if _, exists := s.elems[index]; !exists {
 		// the sorted keys stay usable if the new one goes to their end
-		if n := len(tb.sparseKeys); tb.sparseKeys != nil && (n == 0 || tb.sparseKeys[n-1] < index) {
-			tb.sparseKeys = append(tb.sparseKeys, index)
+		if n := len(s.keys); s.keys != nil && (n == 0 || s.keys[n-1] < index) {
+			s.keys = append(s.keys, index)
 		} else {
-			tb.sparseKeys = nil
+			s.keys = nil
 		}
 	}
-	tb.sparse[index] = value
-	if tb.sparseTopOK && index > tb.sparseTop {
-		tb.sparseTop = index
+	s.elems[index] = value
+	if s.topOK && index > s.top {
+		s.top = index
 	}
 }
 
 // sparseDelete empties a slot behind the stored elements.
 func (tb *LTable) sparseDelete(index int) {
-	if _, ok := tb.sparse[index]; !ok {
+	s := tb.sparse
+	if s == nil {
 		return
 	}
-	delete(tb.sparse, index)
-	if len(tb.sparse) == 0 {
-		tb.sparse, tb.sparseKeys = nil, nil
+	if _, ok := s.elems[index]; !ok {
+		return
+	}
+	delete(s.elems, index)
+	if len(s.elems) == 0 {
+		tb.sparse = nil
 		return
 	}
 	// (the sorted keys may keep keys that are gone: readers skip them)
-	if index == tb.sparseTop {
-		tb.sparseTopOK = false
+	if index == s.top {
+		s.topOK = false
 	}
 }
 
 // sparseSorted returns the indexes of the sparse elements in ascending
-// order, possibly with indexes of elements that were removed since.
+// order, possibly with indexes of elements that were removed since. The
+// table must have sparse elements.
 func (tb *LTable) sparseSorted() []int {
-	if tb.sparseKeys == nil {
-		keys := make([]int, 0, len(tb.sparse))
-		for k := range tb.sparse {
+	s := tb.sparse
+	if s.keys == nil {
+		keys := make([]int, 0, len(s.elems))
+		for k := range s.elems {
 			keys = append(keys, k)
 		}
 		sort.Ints(keys)
-		tb.sparseKeys = keys
+		s.keys = keys
 	}
-	return tb.sparseKeys
+	return s.keys
 }
 
 // sparseLast returns the largest index of a sparse element. The table
 // must have sparse elements.
 func (tb *LTable) sparseLast() int {
-	if !tb.sparseTopOK {
+	s := tb.sparse
+	if !s.topOK {
 		keys := tb.sparseSorted()
 		for len(keys) > 0 {
-			if _, ok := tb.sparse[keys[len(keys)-1]]; ok {
+			if _, ok := s.elems[keys[len(keys)-1]]; ok {
 				break
 			}
 			keys = keys[:len(keys)-1]
 		}
-		tb.sparseKeys = keys
-		tb.sparseTop, tb.sparseTopOK = keys[len(keys)-1], true
+		s.keys = keys
+		s.top, s.topOK = keys[len(keys)-1], true
 	}
-	return tb.sparseTop
+	return s.top
 }
 
 // sparseNext returns the first sparse element at or behind the slot
-// index from.
+// index from. The table must have sparse elements.
 func (tb *LTable) sparseNext(from int) (index int, value LValue, ok bool) {
 	keys := tb.sparseSorted()
 	for i := sort.SearchInts(keys, from); i < len(keys); i++ {
-		if v, ok := tb.sparse[keys[i]]; ok {
+		if v, ok := tb.sparse.elems[keys[i]]; ok {
 			return keys[i], v, true
 		}
 	}
@@ -126,17 +134,18 @@ func (tb *LTable) sparseNext(from int) (index int, value LValue, ok bool) {
 // sparseShift moves the sparse elements at and behind the slot index
 // from by delta slots (one up or one down).
 func (tb *LTable) sparseShift(from, delta int) {
-	if tb.sparse == nil {
+	s := tb.sparse
+	if s == nil {
 		return
 	}
-	moved := make(map[int]LValue, len(tb.sparse))
-	for k, v := range tb.sparse {
+	moved := make(map[int]LValue, len(s.elems))
+	for k, v := range s.elems {
 		if k >= from {
 			k += delta
 		}
 		moved[k] = v
 	}
-	tb.sparse, tb.sparseKeys, tb.sparseTopOK = moved, nil, false
+	s.elems, s.keys, s.topOK = moved, nil, false
 }
 
 // sparseSet handles an assignment to a slot at or behind the end of the
@@ -166,7 +175,7 @@ func (tb *LTable) sparseSet(index, n int, value LValue) bool {
 func (tb *LTable) absorb() {
 	for tb.sparse != nil {
 		n := tb.arrayLen()
-		v, ok := tb.sparse[n]
+		v, ok := tb.sparse.elems[n]
 		if !ok {
 			return
 		}
@@ -186,7 +195,7 @@ func (tb *LTable) densify() {
 	for index := n; index < n+tb.tail; index++ {
 		tb.array = append(tb.array, tb.slotGet(index))
 	}
-	tb.sparse, tb.sparseKeys, tb.tail = nil, nil, 0
+	tb.sparse, tb.tail = nil, 0
 }
 
 // insertSlot inserts value at the 0-based slot index i of an array part

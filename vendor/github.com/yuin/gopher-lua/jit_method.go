@@ -87,7 +87,7 @@ func (fe *jitFrontend) selfMethod(a, b, c int) bool {
 		return false
 	case own >= 0:
 		// a function the object holds itself
-		if fn, _ = obj.fields[own].value.(*LFunction); fn == nil || obj.fields[own].kind != fieldBoxed {
+		if fn, _ = obj.fields[own].value.(*LFunction); fn == nil {
 			return false
 		}
 	default:
@@ -108,8 +108,6 @@ func (fe *jitFrontend) selfMethod(a, b, c int) bool {
 		disp := int64(own) * int64(fieldSize)
 		fe.guard(fe.op(jit.OpULt, jit.TInt, fe.constInt(int64(own)), n), home, fbField)
 		ok := fe.keyMatches(data, disp, obj.fields[own].key)
-		kind := fe.loadMem(jit.MemField, jit.OpLoad8, jit.TInt, data, disp+int64(offFieldKind))
-		ok = fe.op(jit.OpAnd, jit.TInt, ok, fe.op(jit.OpEq, jit.TInt, kind, fe.constInt(int64(fieldBoxed))))
 		itab := fe.load(jit.OpLoad64, jit.TInt, data, disp+int64(offFieldValue))
 		val := fe.load(jit.OpLoad64, jit.TInt, data, disp+int64(offFieldValue)+8)
 		ok = fe.op(jit.OpAnd, jit.TInt, ok, fe.op(jit.OpEq, jit.TInt, itab, fe.constInt(int64(itabFunc))))

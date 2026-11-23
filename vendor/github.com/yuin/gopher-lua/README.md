@@ -35,7 +35,7 @@ The module keeps GopherLua's import path, so it is used through a `replace`
 directive in the `go.mod` of your program:
 
 ```bash
-go mod edit -replace github.com/yuin/gopher-lua=github.com/croessner/gopher-lua-jit@v0.2.1
+go mod edit -replace github.com/yuin/gopher-lua=github.com/croessner/gopher-lua-jit@v0.2.2
 go mod tidy
 ```
 

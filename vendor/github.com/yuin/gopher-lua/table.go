@@ -3,6 +3,7 @@ package lua
 import (
 	"hash/maphash"
 	"math"
+	"unsafe"
 )
 
 // Initial capacities of the array and hash parts. Both parts are
@@ -14,14 +15,23 @@ const defaultHashCap = 4
 // tableField is one string-keyed entry of a table. A removed entry keeps
 // its position with the value LNil, so that the positions of the other
 // entries and the iteration order stay stable.
-//
-// Numbers are stored unboxed in num (kind fieldInt or fieldFloat), which
-// lets JIT compiled code read and write number fields without touching
-// pointers. For such a field value caches the boxed number; native code
-// that writes num sets stale, and the box is rebuilt on the next read.
 type tableField struct {
 	key   string
 	value LValue
+}
+
+// fieldNum is the unboxed number of a string-keyed entry (kind fieldInt or
+// fieldFloat), which lets JIT compiled code read and write number fields
+// without touching pointers. The value of such an entry caches the boxed
+// number; native code that writes num sets stale, and the box is rebuilt
+// on the next read.
+//
+// The unboxed numbers live next to the entries, not in them, and only
+// the tables of a state with the JIT on (typedOK) keep them: there the
+// value of an entry is a number if and only if its kind is not
+// fieldBoxed. Other tables, and tables that hold functions, strings and
+// tables only, pay nothing for them.
+type fieldNum struct {
 	num   uint64
 	kind  uint8
 	stale bool
@@ -34,35 +44,116 @@ const (
 	fieldFloat              // a float, as float64 bits in num
 )
 
-// get returns the value of the field.
-func (f *tableField) get() LValue {
-	if f.stale {
-		if f.kind == fieldInt {
-			f.value = boxInt(int64(f.num))
-		} else {
-			f.value = LNumber(math.Float64frombits(f.num))
-		}
-		f.stale = false
-	}
-	return f.value
+// numAt returns the unboxed number of the entry at position i. The table
+// must have unboxed numbers.
+func (tb *LTable) numAt(i int) *fieldNum {
+	return (*fieldNum)(unsafe.Add(unsafe.Pointer(tb.nums), uintptr(i)*unsafe.Sizeof(fieldNum{})))
 }
 
-// set stores a value in the field.
-func (f *tableField) set(value LValue) {
+// needNum returns the unboxed number of the entry at position i, giving
+// the table unboxed numbers if it has none.
+func (tb *LTable) needNum(i int) *fieldNum {
+	if tb.nums == nil {
+		tb.nums = unsafe.SliceData(make([]fieldNum, cap(tb.fields)))
+	}
+	return tb.numAt(i)
+}
+
+// regrowNums gives the unboxed numbers the capacity of the entries after
+// the entries were moved, keeping those of the first n entries.
+func (tb *LTable) regrowNums(n int) {
+	if tb.nums == nil {
+		return
+	}
+	nums := make([]fieldNum, cap(tb.fields))
+	copy(nums, unsafe.Slice(tb.nums, n))
+	tb.nums = unsafe.SliceData(nums)
+}
+
+// fieldKind returns the kind of the entry at position i.
+func (tb *LTable) fieldKind(i int) uint8 {
+	if tb.nums == nil {
+		return fieldBoxed
+	}
+	return tb.numAt(i).kind
+}
+
+// fieldGet returns the value of the entry at position i.
+func (tb *LTable) fieldGet(i int) LValue {
+	if tb.nums != nil {
+		tb.rebox(i)
+	}
+	return tb.fields[i].value
+}
+
+// rebox rebuilds the boxed value of the entry at position i if compiled
+// code has written its number. (Kept out of line so that fieldGet is
+// inlined: tables without unboxed numbers only pay for the check above.)
+//
+//go:noinline
+func (tb *LTable) rebox(i int) {
+	n := tb.numAt(i)
+	if !n.stale {
+		return
+	}
+	if n.kind == fieldInt {
+		tb.fields[i].value = boxInt(int64(n.num))
+	} else {
+		tb.fields[i].value = LNumber(math.Float64frombits(n.num))
+	}
+	n.stale = false
+}
+
+// fieldSet stores a value in the entry at position i.
+func (tb *LTable) fieldSet(i int, value LValue) {
+	tb.fields[i].value = value
+	if tb.typedOK {
+		tb.setNum(i, value)
+	}
+}
+
+// setNum keeps the unboxed number of the entry at position i in step
+// with the value that was stored in it.
+func (tb *LTable) setNum(i int, value LValue) {
 	switch v := value.(type) {
 	case LNumber:
-		f.kind, f.num = fieldFloat, math.Float64bits(float64(v))
+		*tb.needNum(i) = fieldNum{num: math.Float64bits(float64(v)), kind: fieldFloat}
 	case LInteger:
-		f.kind, f.num = fieldInt, uint64(v)
+		*tb.needNum(i) = fieldNum{num: uint64(v), kind: fieldInt}
 	default:
-		f.kind = fieldBoxed
+		if tb.nums != nil {
+			*tb.numAt(i) = fieldNum{}
+		}
 	}
-	f.value, f.stale = value, false
 }
 
-// removed reports whether the entry was removed from the table.
-func (f *tableField) removed() bool {
-	return f.kind == fieldBoxed && f.value == LNil
+// enableTyped lets a table that was created before the JIT was switched
+// on use the unboxed representations, like the tables created after it.
+func (tb *LTable) enableTyped() {
+	tb.typedOK = true
+	for i := range tb.fields {
+		tb.setNum(i, tb.fields[i].value)
+	}
+}
+
+// fieldRemoved reports whether the entry at position i was removed from
+// the table. (The value of a number entry is a number, also while stale.)
+func (tb *LTable) fieldRemoved(i int) bool {
+	return tb.fields[i].value == LNil
+}
+
+// appendField adds an entry for key behind the others and returns its
+// position.
+func (tb *LTable) appendField(key string) int {
+	if tb.fields == nil {
+		tb.fields = make([]tableField, 0, defaultHashCap)
+	}
+	room := cap(tb.fields)
+	tb.fields = append(tb.fields, tableField{key: key})
+	if cap(tb.fields) != room {
+		tb.regrowNums(len(tb.fields) - 1)
+	}
+	return len(tb.fields) - 1
 }
 
 // fieldLinearMax is the number of string-keyed entries up to which a
@@ -191,29 +282,38 @@ func (tb *LTable) intKey(i int) LValue {
 	return LNumber(i)
 }
 
+// needExtra returns the rarely used parts of the table, creating them.
+func (tb *LTable) needExtra() *tableExtra {
+	if tb.extra == nil {
+		tb.extra = &tableExtra{}
+	}
+	return tb.extra
+}
+
 // beginWalk notes the start of a traversal. From the second traversal
 // of a table on, the keys of its fields are kept as Lua values.
 func (tb *LTable) beginWalk() {
 	switch {
 	case !tb.walked:
 		tb.walked = true
-	case tb.fieldKeys == nil && len(tb.fields) > 0:
-		tb.fieldKeys = make([]LValue, len(tb.fields))
+	case len(tb.fields) > 0 && (tb.extra == nil || tb.extra.fieldKeys == nil):
+		tb.needExtra().fieldKeys = make([]LValue, len(tb.fields))
 	}
 }
 
 // fieldKey returns the key of the field at position i as a Lua value.
 func (tb *LTable) fieldKey(i int) LValue {
-	if tb.fieldKeys == nil {
+	x := tb.extra
+	if x == nil || x.fieldKeys == nil {
 		return LString(tb.fields[i].key)
 	}
-	for len(tb.fieldKeys) < len(tb.fields) {
-		tb.fieldKeys = append(tb.fieldKeys, nil) // fields added since
+	for len(x.fieldKeys) < len(tb.fields) {
+		x.fieldKeys = append(x.fieldKeys, nil) // fields added since
 	}
-	key := tb.fieldKeys[i]
+	key := x.fieldKeys[i]
 	if key == nil {
 		key = LString(tb.fields[i].key)
-		tb.fieldKeys[i] = key
+		x.fieldKeys[i] = key
 	}
 	return key
 }
@@ -637,21 +737,16 @@ func (tb *LTable) RawSetInt(key int, value LValue) {
 func (tb *LTable) RawSetString(key string, value LValue) {
 	i := tb.findField(key)
 	if i >= 0 {
-		f := &tb.fields[i]
-		if tb.watched && f.kind == fieldBoxed && f.value != value {
-			tb.noteFieldChange(f.value)
+		if old := tb.fields[i].value; tb.watched && old != value && tb.fieldKind(i) == fieldBoxed {
+			tb.noteFieldChange(old)
 		}
-		f.set(value)
+		tb.fieldSet(i, value)
 		return
 	}
 	if value == LNil {
 		return
 	}
-	if tb.fields == nil {
-		tb.fields = make([]tableField, 0, defaultHashCap)
-	}
-	tb.fields = append(tb.fields, tableField{key: key})
-	tb.fields[len(tb.fields)-1].set(value)
+	tb.fieldSet(tb.appendField(key), value)
 	if tb.watchedKeys {
 		// compiled code relies on the key being absent
 		tb.version++
@@ -671,6 +766,7 @@ func (tb *LTable) reserveFields(n int) {
 		fields := make([]tableField, len(tb.fields), need)
 		copy(fields, tb.fields)
 		tb.fields = fields
+		tb.regrowNums(len(fields))
 	}
 }
 
@@ -744,24 +840,48 @@ func (tb *LTable) RawSetH(key LValue, value LValue) {
 		return
 	}
 	key = tb.normKey(key)
-	if tb.dict == nil {
-		tb.dict = make(map[LValue]LValue)
-	}
-	if tb.keys == nil {
-		tb.keys = []LValue{}
-		tb.k2i = map[LValue]int{}
-	}
-
+	x := tb.extra
 	if value == LNil {
-		// TODO tb.keys and tb.k2i should also be removed
-		delete(tb.dict, key)
-	} else {
-		tb.dict[key] = value
-		if _, ok := tb.k2i[key]; !ok {
-			tb.k2i[key] = len(tb.keys)
-			tb.keys = append(tb.keys, key)
+		// TODO keys and k2i should also be removed
+		if x != nil {
+			delete(x.dict, key)
+		}
+		return
+	}
+	if x == nil {
+		x = tb.needExtra()
+	}
+	if x.dict == nil {
+		x.dict = make(map[LValue]LValue)
+		x.keys = []LValue{}
+		x.k2i = map[LValue]int{}
+	}
+	x.dict[key] = value
+	if _, ok := x.k2i[key]; !ok {
+		x.k2i[key] = len(x.keys)
+		x.keys = append(x.keys, key)
+	}
+}
+
+// dictGet returns the value of an entry whose key is neither a string
+// nor an array index.
+func (tb *LTable) dictGet(key LValue) LValue {
+	if x := tb.extra; x != nil {
+		if v, ok := x.dict[key]; ok {
+			return v
 		}
 	}
+	return LNil
+}
+
+// keyIndex returns the position of key among the keys that are neither
+// strings nor array indexes, and whether the table has ever held it.
+func (tb *LTable) keyIndex(key LValue) (int, bool) {
+	if x := tb.extra; x != nil {
+		i, ok := x.k2i[tb.normKey(key)]
+		return i, ok
+	}
+	return 0, false
 }
 
 // RawGet returns an LValue associated with a given key without __index metamethod.
@@ -788,13 +908,7 @@ func (tb *LTable) RawGet(key LValue) LValue {
 	case LString:
 		return tb.RawGetString(string(v))
 	}
-	if tb.dict == nil {
-		return LNil
-	}
-	if v, ok := tb.dict[key]; ok {
-		return v
-	}
-	return LNil
+	return tb.dictGet(key)
 }
 
 // RawGetInt returns an LValue at position `key` without __index metamethod.
@@ -814,19 +928,13 @@ func (tb *LTable) RawGetH(key LValue) LValue {
 	if s, sok := key.(LString); sok {
 		return tb.RawGetString(string(s))
 	}
-	if tb.dict == nil {
-		return LNil
-	}
-	if v, ok := tb.dict[tb.normKey(key)]; ok {
-		return v
-	}
-	return LNil
+	return tb.dictGet(tb.normKey(key))
 }
 
 // RawGetString returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetString(key string) LValue {
 	if i := tb.findField(key); i >= 0 {
-		return tb.fields[i].get()
+		return tb.fieldGet(i)
 	}
 	return LNil
 }
@@ -852,21 +960,24 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	}
 	if tb.sparse != nil {
 		for _, index := range append([]int(nil), tb.sparseSorted()...) {
-			if v, ok := tb.sparse[index]; ok {
+			// (the callback may have changed the table)
+			if v := tb.slotGet(index); v != LNil {
 				cb(tb.intKey(index+1), v)
 			}
 		}
 	}
 	for i := 0; i < len(tb.fields); i++ {
-		if f := &tb.fields[i]; !f.removed() {
-			cb(tb.fieldKey(i), f.get())
+		if !tb.fieldRemoved(i) {
+			cb(tb.fieldKey(i), tb.fieldGet(i))
 		}
 	}
 	// (the other keys in the order in which they were added, like Next)
-	for i := 0; i < len(tb.keys); i++ {
-		key := tb.keys[i]
-		if v, ok := tb.dict[key]; ok && v != LNil {
-			cb(key, v)
+	if x := tb.extra; x != nil {
+		for i := 0; i < len(x.keys); i++ {
+			key := x.keys[i]
+			if v, ok := x.dict[key]; ok && v != LNil {
+				cb(key, v)
+			}
 		}
 	}
 }
@@ -909,15 +1020,16 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 		}
 		return LNil, LNil
 	}
-	return tb.nextKey(tb.k2i[tb.normKey(key)] + 1)
+	i, _ := tb.keyIndex(key)
+	return tb.nextKey(i + 1)
 }
 
 // nextField continues a traversal at position i of the string-keyed
 // entries, followed by the other hash keys.
 func (tb *LTable) nextField(i int) (LValue, LValue) {
 	for ; i < len(tb.fields); i++ {
-		if f := &tb.fields[i]; !f.removed() {
-			return tb.fieldKey(i), f.get()
+		if !tb.fieldRemoved(i) {
+			return tb.fieldKey(i), tb.fieldGet(i)
 		}
 	}
 	return tb.nextKey(0)
@@ -926,9 +1038,13 @@ func (tb *LTable) nextField(i int) (LValue, LValue) {
 // nextKey continues a traversal at position i of the hash keys that are
 // not strings.
 func (tb *LTable) nextKey(i int) (LValue, LValue) {
-	for ; i < len(tb.keys); i++ {
-		key := tb.keys[i]
-		if v := tb.dict[key]; v != nil && v != LNil {
+	x := tb.extra
+	if x == nil {
+		return LNil, LNil
+	}
+	for ; i < len(x.keys); i++ {
+		key := x.keys[i]
+		if v := x.dict[key]; v != nil && v != LNil {
 			return key, v
 		}
 	}
@@ -943,10 +1059,10 @@ func (tb *LTable) Clone() *LTable {
 	if len(tb.array) > 0 {
 		c.array = append(make([]LValue, 0, len(tb.array)), tb.array...)
 	}
-	if tb.sparse != nil {
-		c.sparse = make(map[int]LValue, len(tb.sparse))
-		for k, v := range tb.sparse {
-			c.sparse[k] = v
+	if s := tb.sparse; s != nil {
+		c.sparse = &tableSparse{elems: make(map[int]LValue, len(s.elems))}
+		for k, v := range s.elems {
+			c.sparse.elems[k] = v
 		}
 	}
 	if len(tb.iarr) > 0 {
@@ -959,18 +1075,20 @@ func (tb *LTable) Clone() *LTable {
 		c.fields = make([]tableField, 0, len(tb.fields))
 		for i := range tb.fields {
 			// removed entries are dropped: nothing refers to their positions
-			if f := &tb.fields[i]; !f.removed() {
-				f.get() // the copy must not share a stale box
-				c.fields = append(c.fields, *f)
+			if !tb.fieldRemoved(i) {
+				c.fields = append(c.fields, tableField{key: tb.fields[i].key})
+				c.fieldSet(len(c.fields)-1, tb.fieldGet(i))
 			}
 		}
 		if len(c.fields) > fieldLinearMax {
 			c.indexFields(len(c.fields))
 		}
 	}
-	for _, key := range tb.keys {
-		if v := tb.dict[key]; v != nil && v != LNil {
-			c.RawSetH(key, v)
+	if x := tb.extra; x != nil {
+		for _, key := range x.keys {
+			if v := x.dict[key]; v != nil && v != LNil {
+				c.RawSetH(key, v)
+			}
 		}
 	}
 	return c

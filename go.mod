@@ -186,4 +186,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace github.com/yuin/gopher-lua => github.com/croessner/gopher-lua-jit v0.2.1
+replace github.com/yuin/gopher-lua => github.com/croessner/gopher-lua-jit v0.2.2
