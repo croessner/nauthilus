@@ -785,7 +785,7 @@ func bindCommonLuaModules(
 }
 
 func prepareCommonLuaRequest(L *lua.LState, cfg config.File) (*lua.LTable, *lualib.CommonRequest) {
-	requestTable := L.NewTable()
+	requestTable := lualib.NewRequestTable(L)
 	cr := lualib.GetCommonRequest()
 
 	cr.RedisPrefix = cfg.GetServer().GetRedis().GetPrefix()
@@ -924,7 +924,7 @@ func logCustomLuaExecutionResult(ctx *gin.Context, cfg config.File, logger *slog
 }
 
 func prepareCustomLuaRequest(ctx *gin.Context, cfg config.File, L *lua.LState, guid string) (*lua.LTable, *lualib.CommonRequest) {
-	requestTable := L.NewTable()
+	requestTable := lualib.NewRequestTable(L)
 	cr := lualib.GetCommonRequest()
 
 	cr.Session = guid

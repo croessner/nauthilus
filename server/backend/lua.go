@@ -407,7 +407,7 @@ func handleLuaRequest(ctx context.Context, cfg config.File, logger *slog.Logger,
 	bindLuaRequestModules(ctx, luaCtx, cfg, logger, redisClient, L, luaRequest)
 	setupGlobals(ctx, cfg, logger, luaRequest, L, logs)
 
-	request := L.NewTable()
+	request := lualib.NewRequestTable(L)
 	luaCommand, nret := setLuaRequestParameters(cfg, L, luaRequest, request)
 
 	err := executeAndHandleError(cfg, logger, program, luaCommand, luaRequest, L, request, nret, logs)

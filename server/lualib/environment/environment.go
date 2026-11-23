@@ -406,7 +406,7 @@ func (r *Request) executeScripts(
 				localRequest := *r
 				localRequest.Context = localContext
 
-				request := Llocal.NewTable()
+				request := lualib.NewRequestTable(Llocal)
 
 				localRequest.SetupRequest(Llocal, cfg, request)
 

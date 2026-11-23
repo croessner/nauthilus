@@ -316,6 +316,15 @@ func (c *CommonRequest) setStringSliceField(L *lua.LState, request *lua.LTable, 
 	request.RawSetString(key, tbl)
 }
 
+// requestTableCapacity is the room a Lua request table gets up front. It covers the fields that SetupRequest
+// writes and the few a runtime adds itself, so filling the table does not grow it step by step.
+const requestTableCapacity = 80
+
+// NewRequestTable creates the table that carries the request fields to a Lua callback.
+func NewRequestTable(L *lua.LState) *lua.LTable {
+	return L.CreateTable(0, requestTableCapacity)
+}
+
 // SetupRequest sets up the request object with the common request properties.
 func (c *CommonRequest) SetupRequest(L *lua.LState, cfg config.File, request *lua.LTable) *lua.LTable {
 	logFormat, logLevel := requestLogSettings(cfg)

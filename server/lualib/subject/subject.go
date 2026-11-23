@@ -873,7 +873,7 @@ func (r *Request) callSubjectLua(
 				)
 
 				// Build request table
-				request := Llocal.NewTable()
+				request := lualib.NewRequestTable(Llocal)
 
 				localRequest.SetupRequest(Llocal, cfg, request)
 

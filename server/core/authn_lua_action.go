@@ -260,7 +260,7 @@ func (i *authnLuaActionInvocation) executeWithState(ctx context.Context, state *
 		lualib.NewLoggingManager(deadlineCtx, i.auth.Cfg(), i.auth.Logger(), logs).AddCustomLog,
 	)
 
-	request := state.NewTable()
+	request := lualib.NewRequestTable(state)
 	i.request.SetupRequest(state, i.auth.Cfg(), request)
 
 	if err := luaseal.Install(state, i.modules); err != nil {

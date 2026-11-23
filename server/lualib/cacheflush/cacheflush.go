@@ -283,7 +283,7 @@ func resolveLuaFunction(L *lua.LState, name string) lua.LValue {
 }
 
 func buildRequestTable(L *lua.LState, cfg config.File, user string, guid string) *lua.LTable {
-	requestTable := L.NewTable()
+	requestTable := lualib.NewRequestTable(L)
 	cr := lualib.GetCommonRequest()
 	cr.Session = guid
 	cr.Username = user

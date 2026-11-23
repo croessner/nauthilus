@@ -412,3 +412,38 @@ func TestCommonRequestResetStageExpectedFlags(t *testing.T) {
 		t.Fatal("expected SubjectStageExpected to be false after reset")
 	}
 }
+
+// requestTableRuntimeFields is the number of fields a runtime adds to a request table besides SetupRequest.
+const requestTableRuntimeFields = 8
+
+func TestRequestTableHasRoomForTheRequestFields(t *testing.T) {
+	requests := map[string]*CommonRequest{
+		"empty":     {},
+		"populated": idpSetupRequestFixture(),
+	}
+
+	for name, commonRequest := range requests {
+		t.Run(name, func(t *testing.T) {
+			L := lua.NewState()
+			defer L.Close()
+
+			request := NewRequestTable(L)
+
+			commonRequest.SetupRequest(L, nil, request)
+
+			fields := 0
+
+			request.ForEach(func(lua.LValue, lua.LValue) {
+				fields++
+			})
+
+			if fields == 0 {
+				t.Fatal("expected SetupRequest to write request fields")
+			}
+
+			if fields+requestTableRuntimeFields > requestTableCapacity {
+				t.Fatalf("SetupRequest writes %d fields; raise requestTableCapacity (%d)", fields, requestTableCapacity)
+			}
+		})
+	}
+}
