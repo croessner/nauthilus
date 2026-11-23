@@ -22,7 +22,7 @@ GOLANGCI_LINT ?= golangci-lint
 # The release image owns the list of bundled native plugins; local checks read it from there.
 BUNDLED_NATIVE_PLUGINS ?= $(shell sed -n 's/^ARG BUNDLED_NATIVE_PLUGINS="\(.*\)"$$/\1/p' Dockerfile)
 NATIVE_PLUGINS_CHECK_DIR ?= temp/native-plugins-check
-GOLANGCI_LINT_VERSION ?= 2.14.0
+GOLANGCI_LINT_VERSION ?= 2.15.0
 
 export GOEXPERIMENT := runtimesecret
 
