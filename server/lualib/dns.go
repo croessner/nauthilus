@@ -282,11 +282,15 @@ func finishDNSLookupTrace(tsp trace.Span, answerCount int) {
 func LoaderModDNS(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewDNSManager(ctx, cfg, logger)
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			"resolve": manager.Resolve,
-		})
+		// The manager resolves its context per call from the request binding, so it is built without one.
+		mod := NewRequestModule(L, definitions.LuaModDNS, 1, func() *lua.LTable {
+			manager := NewDNSManager(context.Background(), cfg, logger)
+
+			return L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+				"resolve": manager.Resolve,
+			})
+		}, cfg, logger)
 
 		if ctx != nil {
 			BindRequestRuntimeContext(ctx, L, mod)

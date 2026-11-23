@@ -202,16 +202,19 @@ func (m *HTTPRequestManager) URLPartialDecode(L *lua.LState) int {
 func LoaderModHTTP(meta HTTPRequestMeta) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewHTTPRequestManager()
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnGetAllHTTPRequestHeaders: manager.GetAllHTTPRequestHeaders,
-			definitions.LuaFnGetHTTPRequestHeader:     manager.GetHTTPRequestHeader,
-			definitions.LuaFnGetHTTPRequestBody:       manager.GetHTTPRequestBody,
-			definitions.LuaFnGetHTTPMethod:            manager.GetHTTPMethod,
-			definitions.LuaFnGetHTTPQueryParam:        manager.GetHTTPQueryParam,
-			definitions.LuaFnGetHTTPPath:              manager.GetHTTPPath,
-			definitions.LuaFnURLPartialDecode:         manager.URLPartialDecode,
+		mod := NewRequestModule(L, definitions.LuaModHTTPRequest, 1, func() *lua.LTable {
+			manager := NewHTTPRequestManager()
+
+			return L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+				definitions.LuaFnGetAllHTTPRequestHeaders: manager.GetAllHTTPRequestHeaders,
+				definitions.LuaFnGetHTTPRequestHeader:     manager.GetHTTPRequestHeader,
+				definitions.LuaFnGetHTTPRequestBody:       manager.GetHTTPRequestBody,
+				definitions.LuaFnGetHTTPMethod:            manager.GetHTTPMethod,
+				definitions.LuaFnGetHTTPQueryParam:        manager.GetHTTPQueryParam,
+				definitions.LuaFnGetHTTPPath:              manager.GetHTTPPath,
+				definitions.LuaFnURLPartialDecode:         manager.URLPartialDecode,
+			})
 		})
 
 		if meta != nil {

@@ -85,12 +85,15 @@ func (m *ContextManager) ContextDelete(L *lua.LState) int {
 func LoaderModContext(luaCtx *Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewContextManager()
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCtxSet:    manager.ContextSet,
-			definitions.LuaFnCtxGet:    manager.ContextGet,
-			definitions.LuaFnCtxDelete: manager.ContextDelete,
+		mod := NewRequestModule(L, definitions.LuaModContext, 1, func() *lua.LTable {
+			manager := NewContextManager()
+
+			return L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+				definitions.LuaFnCtxSet:    manager.ContextSet,
+				definitions.LuaFnCtxGet:    manager.ContextGet,
+				definitions.LuaFnCtxDelete: manager.ContextDelete,
+			})
 		})
 
 		if luaCtx != nil {

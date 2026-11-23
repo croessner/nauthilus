@@ -120,6 +120,38 @@ func TestContextModuleFailsClosedWithoutRequestBinding(t *testing.T) {
 	}
 }
 
+func TestRequestModuleChangesDoNotReachTheNextRequest(t *testing.T) {
+	L := newRuntimeContextTestState(t)
+	PrepareRequestEnv(L)
+	bindRuntimeTestContext(t, L, lualib.NewContext())
+
+	if err := L.DoString(`
+		local ctx = require("nauthilus_context")
+		ctx.context_set = function() error("tampered") end
+		ctx.leak = "first request"
+	`); err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+
+	ResetLuaState(L)
+	PrepareRequestEnv(L)
+
+	second := lualib.NewContext()
+	bindRuntimeTestContext(t, L, second)
+
+	if err := L.DoString(`
+		local ctx = require("nauthilus_context")
+		assert(ctx.leak == nil, "a field of an earlier request is visible")
+		ctx.context_set("request_id", "second")
+	`); err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+
+	if got := second.Get("request_id"); got != "second" {
+		t.Fatalf("expected the second request to reach its own context, got %v", got)
+	}
+}
+
 func TestRuntimeModuleFailsClosedWithoutRequestBinding(t *testing.T) {
 	L := newRuntimeContextTestState(t)
 	PrepareRequestEnv(L)

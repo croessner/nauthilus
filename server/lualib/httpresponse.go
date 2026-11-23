@@ -203,9 +203,12 @@ func (m *HTTPResponseManager) HTTPRedirect(L *lua.LState) int {
 func LoaderModHTTPResponse(ctx *gin.Context) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		manager := NewHTTPResponseManager()
 
-		mod := newHTTPResponseModule(L, httpHeaderFunctions(manager), httpBodyFunctions(manager))
+		mod := NewRequestModule(L, definitions.LuaModHTTPResponse, 1, func() *lua.LTable {
+			manager := NewHTTPResponseManager()
+
+			return newHTTPResponseModule(L, httpHeaderFunctions(manager), httpBodyFunctions(manager))
+		})
 
 		if ctx != nil {
 			bindRequestValue(L, mod, luaHTTPResponseContextKey, ctx)

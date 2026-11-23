@@ -453,12 +453,16 @@ func (m *PsnetManager) luaRegisterTarget(L *lua.LState) int {
 func LoaderModPsnet(ctx context.Context, cfg config.File, logger *slog.Logger) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		m := NewPsnetManager(ctx, cfg, logger)
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnRegisterConnectionTarget: m.luaRegisterTarget,
-			definitions.LuaFnGetConnectionTarget:      m.luaCountOpenConnections,
-		})
+		// The manager resolves its context per call from the request binding, so it is built without one.
+		mod := lualib.NewRequestModule(L, definitions.LuaModPsnet, 1, func() *lua.LTable {
+			m := NewPsnetManager(context.Background(), cfg, logger)
+
+			return L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+				definitions.LuaFnRegisterConnectionTarget: m.luaRegisterTarget,
+				definitions.LuaFnGetConnectionTarget:      m.luaCountOpenConnections,
+			})
+		}, cfg, logger)
 
 		if ctx != nil {
 			lualib.BindRequestRuntimeContext(ctx, L, mod)

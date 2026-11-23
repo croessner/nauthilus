@@ -326,16 +326,22 @@ func luaMapKeyToString(key lua.LValue) (string, error) {
 func LoaderModCBOR() lua.LGFunction {
 	return func(L *lua.LState) int {
 		stack := luastack.NewManager(L)
-		nullValue := L.NewUserData()
-		nullValue.Value = cborNull{}
-		manager := NewCBORManager(nullValue)
 
-		mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			definitions.LuaFnCBORDecode: manager.Decode,
-			definitions.LuaFnCBOREncode: manager.Encode,
-			definitions.LuaFnCBORBytes:  manager.Bytes,
+		// The null sentinel is an opaque value without state, so one instance serves every request of a VM.
+		mod := NewRequestModule(L, definitions.LuaModCBOR, 0, func() *lua.LTable {
+			nullValue := L.NewUserData()
+			nullValue.Value = cborNull{}
+			manager := NewCBORManager(nullValue)
+
+			built := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+				definitions.LuaFnCBORDecode: manager.Decode,
+				definitions.LuaFnCBOREncode: manager.Encode,
+				definitions.LuaFnCBORBytes:  manager.Bytes,
+			})
+			built.RawSetString("null", nullValue)
+
+			return built
 		})
-		mod.RawSetString("null", nullValue)
 
 		return stack.PushResult(mod)
 	}

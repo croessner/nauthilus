@@ -29,7 +29,9 @@ import (
 // It creates a new Lua table, sets the exported Redis functions, and pushes the table onto the stack.
 func LoaderModRedis(ctx context.Context, cfg config.File, client rediscli.Client) lua.LGFunction {
 	return func(L *lua.LState) int {
-		mod := L.SetFuncs(L.NewTable(), redisModuleFunctions(NewRedisManager(cfg, client)))
+		mod := lualib.NewRequestModule(L, definitions.LuaModRedis, 1, func() *lua.LTable {
+			return L.SetFuncs(L.NewTable(), redisModuleFunctions(NewRedisManager(cfg, client)))
+		}, cfg, client)
 
 		if ctx != nil {
 			lualib.BindRequestRuntimeContext(ctx, L, mod)
