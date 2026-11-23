@@ -17,7 +17,6 @@ package lualib
 
 import (
 	"context"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
@@ -27,12 +26,29 @@ const (
 	luaRequestEnvKey        = "__NAUTH_REQ_ENV"
 	luaRequestBindingPrefix = "__NAUTH_REQ_"
 	luaRequestModulesKey    = "__NAUTH_REQ_MODULE_TABLES"
-
-	luaRequestContextKey      = "__NAUTH_REQ_CONTEXT"
-	luaHTTPRequestMetaKey     = "__NAUTH_REQ_HTTP_REQUEST_META"
-	luaHTTPResponseContextKey = "__NAUTH_REQ_HTTP_RESPONSE_CONTEXT"
-	luaRuntimeContextKey      = "__NAUTH_REQ_RUNTIME_CONTEXT"
 )
+
+// requestBindingKeys lists every hidden field that carries request-bound data.
+//
+// Binding and scrubbing probe exactly these fields, so neither has to walk a module table to find them.
+var requestBindingKeys []string
+
+// The request-binding keys name the hidden fields that carry request-owned Go values in module tables and in the
+// request environment.
+var (
+	luaRequestContextKey      = newRequestBindingKey("CONTEXT")
+	luaHTTPRequestMetaKey     = newRequestBindingKey("HTTP_REQUEST_META")
+	luaHTTPResponseContextKey = newRequestBindingKey("HTTP_RESPONSE_CONTEXT")
+	luaRuntimeContextKey      = newRequestBindingKey("RUNTIME_CONTEXT")
+)
+
+// newRequestBindingKey registers a request-binding field so that binding and scrubbing cover it.
+func newRequestBindingKey(name string) string {
+	key := luaRequestBindingPrefix + name
+	requestBindingKeys = append(requestBindingKeys, key)
+
+	return key
+}
 
 // getRequestEnv returns the active request environment table stored on the Lua state.
 func getRequestEnv(L *lua.LState) *lua.LTable {
@@ -98,42 +114,13 @@ func BindRequestValuesToEnv(L *lua.LState, req *lua.LTable, mod *lua.LTable) {
 		return
 	}
 
-	mod.ForEach(func(key lua.LValue, value lua.LValue) {
-		fieldName, ok := key.(lua.LString)
-		if !ok {
-			return
+	for _, key := range requestBindingKeys {
+		if value := mod.RawGetString(key); value != lua.LNil {
+			L.SetField(req, key, value)
 		}
-
-		if !strings.HasPrefix(string(fieldName), luaRequestBindingPrefix) {
-			return
-		}
-
-		L.SetField(req, string(fieldName), value)
-	})
-
-	trackRequestModule(L, req, mod)
-}
-
-// collectRequestBindingKeys returns the table keys that carry request-bound data.
-func collectRequestBindingKeys(tbl *lua.LTable) []string {
-	if tbl == nil {
-		return nil
 	}
 
-	keys := make([]string, 0, 4)
-
-	tbl.ForEach(func(key lua.LValue, _ lua.LValue) {
-		fieldName, ok := key.(lua.LString)
-		if !ok {
-			return
-		}
-
-		if strings.HasPrefix(string(fieldName), luaRequestBindingPrefix) {
-			keys = append(keys, string(fieldName))
-		}
-	})
-
-	return keys
+	trackRequestModule(L, req, mod)
 }
 
 // collectTableKeys returns all keys currently stored in the provided Lua table.
@@ -151,15 +138,24 @@ func collectTableKeys(tbl *lua.LTable) []lua.LValue {
 	return keys
 }
 
+// scrubRequestField removes one hidden request field from the provided Lua table if the table holds it.
+func scrubRequestField(L *lua.LState, tbl *lua.LTable, key string) {
+	if tbl.RawGetString(key) != lua.LNil {
+		L.SetField(tbl, key, lua.LNil)
+	}
+}
+
 // scrubRequestBindingTable removes all request-bound fields from the provided Lua table.
 func scrubRequestBindingTable(L *lua.LState, tbl *lua.LTable) {
 	if L == nil || tbl == nil {
 		return
 	}
 
-	for _, key := range collectRequestBindingKeys(tbl) {
-		L.SetField(tbl, key, lua.LNil)
+	for _, key := range requestBindingKeys {
+		scrubRequestField(L, tbl, key)
 	}
+
+	scrubRequestField(L, tbl, luaRequestModulesKey)
 }
 
 // scrubTrackedRequestModules removes request-bound values from tracked module tables and drops stale references.
