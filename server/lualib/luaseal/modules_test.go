@@ -8,6 +8,7 @@
 package luaseal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -230,6 +231,149 @@ local script_only_ok = pcall(require, "script_only")
 assert(script_only_ok == false)
 `); err != nil {
 		t.Fatalf("second lease retained stale authority: %v", err)
+	}
+}
+
+func TestLeaseKeepsAnUntouchedPreloadTable(t *testing.T) {
+	state := lua.NewState()
+	defer state.Close()
+
+	state.PreloadModule("dynamic_host", hostModuleLoader("host"))
+
+	preloadTable := func() lua.LValue {
+		return state.GetField(state.GetGlobal(lua.LoadLibName), "preload")
+	}
+
+	if err := prepareAndInstall(state, nil); err != nil {
+		t.Fatalf("first lease: %v", err)
+	}
+
+	first := preloadTable()
+
+	if err := state.DoString(`assert(require("dynamic_host").value == "host")`); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+
+	if err := prepareAndInstall(state, nil); err != nil {
+		t.Fatalf("second lease: %v", err)
+	}
+
+	if preloadTable() != first {
+		t.Fatal("expected a preload table that no script touched to be kept")
+	}
+
+	// Adding and removing an entry leaves the table as it was; a real change replaces it.
+	if err := state.DoString(`
+package.preload.temporary = function() return {} end
+package.preload.temporary = nil
+`); err != nil {
+		t.Fatalf("second request: %v", err)
+	}
+
+	if err := prepareAndInstall(state, nil); err != nil {
+		t.Fatalf("third lease: %v", err)
+	}
+
+	if preloadTable() != first {
+		t.Fatal("expected a preload table with unchanged entries to be kept")
+	}
+
+	if err := state.DoString(`package.preload.script_only = function() return {} end`); err != nil {
+		t.Fatalf("third request: %v", err)
+	}
+
+	if err := prepareAndInstall(state, nil); err != nil {
+		t.Fatalf("fourth lease: %v", err)
+	}
+
+	if preloadTable() == first {
+		t.Fatal("expected a changed preload table to be replaced")
+	}
+
+	if err := state.DoString(`
+assert(require("dynamic_host").value == "host")
+assert(pcall(require, "script_only") == false)
+`); err != nil {
+		t.Fatalf("fourth request: %v", err)
+	}
+}
+
+func TestLeaseRestoresPreloadsAScriptRedirected(t *testing.T) {
+	mutations := map[string]string{
+		"metatable": `
+setmetatable(package.preload, { __index = function() return function() return { value = "script" } end end })
+`,
+		"replaced table": `
+local copy = {}
+for name, loader in pairs(package.preload) do copy[name] = loader end
+package.preload = setmetatable(copy, { __index = function() return function() return { value = "script" } end end })
+`,
+		"removed table": `
+package.preload = nil
+`,
+		"replaced loader": `
+package.preload.dynamic_host = function() return { value = "script" } end
+`,
+		"removed loader": `
+package.preload.dynamic_host = nil
+`,
+		"numeric entry": `
+package.preload[1] = function() return { value = "script" } end
+`,
+	}
+
+	for name, mutation := range mutations {
+		t.Run(name, func(t *testing.T) {
+			state := lua.NewState()
+			defer state.Close()
+
+			state.PreloadModule("dynamic_host", hostModuleLoader("host"))
+
+			if err := prepareAndInstall(state, nil); err != nil {
+				t.Fatalf("first lease: %v", err)
+			}
+
+			if err := state.DoString(mutation); err != nil {
+				t.Fatalf("mutate preloads: %v", err)
+			}
+
+			if err := prepareAndInstall(state, nil); err != nil {
+				t.Fatalf("second lease: %v", err)
+			}
+
+			if err := state.DoString(`
+assert(getmetatable(package.preload) == nil, "the preload table kept a metatable")
+assert(rawget(package.preload, 1) == nil, "the preload table kept a script entry")
+assert(require("dynamic_host").value == "host", "the host loader was not restored")
+assert(pcall(require, "ghost") == false, "a script loader survived the lease")
+`); err != nil {
+				t.Fatalf("second request: %v", err)
+			}
+		})
+	}
+}
+
+func TestLeaseOfAnUntouchedStateDoesNotCopyPreloads(t *testing.T) {
+	state := lua.NewState()
+	defer state.Close()
+
+	for index := range 48 {
+		state.PreloadModule(fmt.Sprintf("host_%d", index), hostModuleLoader("host"))
+	}
+
+	lease := func() {
+		if err := prepareAndInstall(state, nil); err != nil {
+			t.Fatalf("lease: %v", err)
+		}
+	}
+
+	lease()
+	lease()
+
+	// Both lease steps install the searchers anew, which costs six allocations each. Copying the loaders would
+	// add a table, its field storage and its index, in both steps.
+	if allocations := testing.AllocsPerRun(50, lease); allocations > 12 {
+		t.Fatalf("expected a lease of an untouched state to need at most 12 allocations, got %v", allocations)
 	}
 }
 

@@ -222,7 +222,12 @@ func Install(state *lua.LState, modules *Modules) error {
 		return fmt.Errorf("lua package preload table is unavailable")
 	}
 
-	state.SetField(registry, preloadBaselineRegistryKey, cloneLuaTable(preloads))
+	// The baseline only needs a new copy if the host changed its preload surface since the last lease.
+	baseline, hasBaseline := state.GetField(registry, preloadBaselineRegistryKey).(*lua.LTable)
+	if !hasBaseline || !unchangedLoaders(baseline, preloads) {
+		state.SetField(registry, preloadBaselineRegistryKey, cloneLuaTable(preloads))
+	}
+
 	state.SetField(registry, "_PRELOAD", preloads)
 	state.SetField(registry, preparedRegistryKey, lua.LNil)
 
@@ -245,11 +250,46 @@ func restorePreloads(state *lua.LState, packageTable *lua.LTable) error {
 		return nil
 	}
 
-	restored := cloneLuaTable(baseline)
+	// A preload table that no script touched already is what a copy of the baseline would be.
+	restored, isTable := state.GetField(packageTable, "preload").(*lua.LTable)
+	if !isTable || !unchangedLoaders(baseline, restored) {
+		restored = cloneLuaTable(baseline)
+	}
+
 	state.SetField(packageTable, "preload", restored)
 	state.SetField(registry, "_PRELOAD", restored)
 
 	return nil
+}
+
+// unchangedLoaders reports whether a loader table still holds exactly the entries of its baseline.
+//
+// A metatable counts as a change: it could resolve loaders that the baseline does not hold.
+func unchangedLoaders(baseline *lua.LTable, current *lua.LTable) bool {
+	if current.Metatable != lua.LNil {
+		return false
+	}
+
+	entries := 0
+	unchanged := true
+
+	baseline.ForEach(func(key lua.LValue, value lua.LValue) {
+		entries++
+
+		if current.RawGet(key) != value {
+			unchanged = false
+		}
+	})
+
+	if !unchanged {
+		return false
+	}
+
+	current.ForEach(func(lua.LValue, lua.LValue) {
+		entries--
+	})
+
+	return entries == 0
 }
 
 // cloneLuaTable copies one flat host-owned loader table into a detached Lua table.
