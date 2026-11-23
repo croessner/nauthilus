@@ -103,6 +103,9 @@ type LuaConf struct {
 	HookVMPoolSize         int      `mapstructure:"hook_vm_pool_size" validate:"omitempty,min=1,max=1000000"`
 	CacheFlushScriptPath   string   `mapstructure:"cache_flush_script_path" validate:"omitempty,file"`
 
+	// JIT controls the native just-in-time compiler of the pooled Lua VMs. It is enabled unless set to false.
+	JIT *bool `mapstructure:"jit"`
+
 	// Optional: generic IP scoping for Lua-driven signals and metrics.
 	LuaIPv6CIDR uint `mapstructure:"ip_scoping_v6_cidr" validate:"omitempty,min=1,max=128"`
 	LuaIPv4CIDR uint `mapstructure:"ip_scoping_v4_cidr" validate:"omitempty,min=1,max=32"`
@@ -175,6 +178,16 @@ func (l *LuaConf) GetHookVMPoolSize() int {
 	}
 
 	return l.HookVMPoolSize
+}
+
+// GetJIT reports whether pooled Lua VMs compile hot loops to native code. The compiler is on by default; an
+// explicit false is the operator's switch to run the interpreter only.
+func (l *LuaConf) GetJIT() bool {
+	if l == nil || l.JIT == nil {
+		return true
+	}
+
+	return *l.JIT
 }
 
 // GetQueueLength returns the max queue length for Lua backend requests; 0 means unlimited.

@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	"github.com/croessner/nauthilus/v4/server/definitions"
+	"github.com/croessner/nauthilus/v4/server/lualib/luavm"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -92,9 +94,10 @@ func (tr *TestRunner) Run() (*TestResult, error) {
 	return result, nil
 }
 
-// prepareLuaState creates a Lua state and installs all test modules.
+// prepareLuaState creates a Lua state and installs all test modules. The state runs with the JIT compiler like the
+// pooled production VMs do by default, so plugin tests cover the same execution path.
 func (tr *TestRunner) prepareLuaState() (*lua.LState, func(), error) {
-	L := lua.NewState()
+	L := luavm.NewState(true)
 	tr.configureLuaPackagePath(L)
 
 	cleanup, err := SetupMockModules(L, tr.mockData, tr.logger)

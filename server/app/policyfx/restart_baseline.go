@@ -140,6 +140,7 @@ type restartLuaConfigCarrier struct {
 	hookVMPoolSize         int
 	luaIPv6CIDR            uint
 	luaIPv4CIDR            uint
+	jit                    bool
 }
 
 type restartBruteForceCarrier struct {
@@ -562,7 +563,7 @@ func restartLuaConfig(server *config.ServerSection, lua *config.LuaSection) rest
 // restartLuaConfiguration projects process VM inputs while excluding init scripts.
 func restartLuaConfiguration(input *config.LuaConf) restartLuaConfigCarrier {
 	if input == nil {
-		return restartLuaConfigCarrier{}
+		return restartLuaConfigCarrier{jit: input.GetJIT()}
 	}
 
 	return restartLuaConfigCarrier{
@@ -572,6 +573,7 @@ func restartLuaConfiguration(input *config.LuaConf) restartLuaConfigCarrier {
 		queueLength: input.QueueLength, actionNumberOfWorkers: input.ActionNumberOfWorkers,
 		environmentVMPoolSize: input.EnvironmentVMPoolSize, subjectVMPoolSize: input.SubjectVMPoolSize,
 		hookVMPoolSize: input.HookVMPoolSize, luaIPv6CIDR: input.LuaIPv6CIDR, luaIPv4CIDR: input.LuaIPv4CIDR,
+		jit: input.GetJIT(),
 	}
 }
 

@@ -36,6 +36,8 @@ import (
 	bflib "github.com/croessner/nauthilus/v4/server/lualib/bruteforce"
 	"github.com/croessner/nauthilus/v4/server/lualib/connmgr"
 	"github.com/croessner/nauthilus/v4/server/lualib/luastack"
+	"github.com/croessner/nauthilus/v4/server/lualib/luavm"
+
 	"github.com/croessner/nauthilus/v4/server/lualib/metrics"
 	gluacrypto "github.com/tengattack/gluacrypto/crypto"
 
@@ -52,7 +54,7 @@ const (
 // NewLuaState creates a new Lua VM with standard libraries opened and stateless modules preloaded.
 // Context-bound modules are NOT bound here (see PrepareRequestEnv).
 func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
-	L := lua.NewState()
+	L := luavm.NewState(jitEnabled(cfg))
 
 	// Remember the base environment (_G) to enable inheritance.
 	setBaseEnv(L, L.Get(lua.GlobalsIndex))
@@ -95,6 +97,20 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	L.PreloadModule(definitions.LuaModI18N, lualib.LoaderI18NStateless())
 
 	return L
+}
+
+// jitEnabled resolves the JIT switch of the Lua configuration. Pooled VMs are long-lived, so native code compiled
+// for a hot loop keeps paying off across requests; without a configuration the compiler default applies.
+func jitEnabled(cfg config.File) bool {
+	if cfg == nil {
+		return (*config.LuaConf)(nil).GetJIT()
+	}
+
+	if conf, ok := cfg.GetLua().GetConfig().(*config.LuaConf); ok {
+		return conf.GetJIT()
+	}
+
+	return (*config.LuaConf)(nil).GetJIT()
 }
 
 // LoaderRedisStateless returns an empty, stateless module table for nauthilus_redis.

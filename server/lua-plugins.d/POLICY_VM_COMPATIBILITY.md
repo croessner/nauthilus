@@ -53,6 +53,25 @@ entry point (`nauthilus_call_environment`, `nauthilus_call_subject`, or `nauthil
 the script nor in a Lua module captured from the configured `package_path`; that catches a script configured for the
 wrong stage. A module name that cannot be resolved fails when the request runs the `require`.
 
+## Lua engine and JIT compiler
+
+Lua code runs on a GopherLua-compatible Lua 5.1 engine with a native just-in-time compiler for hot loops
+(`github.com/croessner/gopher-lua-jit`). The pooled virtual machines that execute backends, hooks, actions,
+environment sources, and subject sources compile numeric loops and loops over number arrays to machine code on
+Linux and macOS (amd64 and arm64); everything else, and every other platform, runs in the interpreter with
+identical results.
+
+The compiler is enabled by default. Set `jit: false` in the default Lua backend configuration
+(`auth.backends.lua.backend.default`) to run the interpreter only. Changing the switch takes effect after a
+restart.
+
+Scripts need no changes. Two details differ from earlier releases:
+
+- `pairs` visits the array part first, then string keys in insertion order, then all other keys in insertion order.
+- Several compiler defects of the previous engine are fixed, for example `goto` no longer detaches closures from
+  the local variables of the surrounding function, and `v = t.x and y` assigns `nil` or `false` when `t.x` is
+  falsy instead of leaving `v` unchanged.
+
 ## Bundled authentication callbacks
 
 Every bundled environment source, subject source, and action passes candidate preparation; the test

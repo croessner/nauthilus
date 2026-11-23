@@ -659,6 +659,10 @@ func restartStorageAndLuaMutations() []restartBaselineMutation {
 		{name: "Lua workers queues and pools", mutate: func(_ *testing.T, candidate *config.FileSettings, _ restartBaselineArtifacts) {
 			candidate.Lua.Config.HookVMPoolSize++
 		}},
+		{name: "Lua JIT switch", mutate: func(_ *testing.T, candidate *config.FileSettings, _ restartBaselineArtifacts) {
+			disabled := false
+			candidate.Lua.Config.JIT = &disabled
+		}},
 		{name: "named Lua backend", mutate: func(_ *testing.T, candidate *config.FileSettings, _ restartBaselineArtifacts) {
 			candidate.Lua.OptionalLuaBackends["named"].QueueLength++
 		}},
