@@ -217,3 +217,86 @@ func TestRequestModuleCostDoesNotDependOnMemberCount(t *testing.T) {
 		t.Fatalf("expected at most 2 allocations per request module, got %v", allocations)
 	}
 }
+
+func TestSharedModuleLoaderBuildsMembersOnce(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	loads := 0
+	names := make([]string, 0, 2)
+
+	L.PreloadModule("shared_test", SharedModuleLoader("shared_test", func(L *lua.LState) int {
+		loads++
+
+		names = append(names, L.CheckString(1))
+		L.Push(L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+			"answer": func(L *lua.LState) int {
+				L.Push(lua.LNumber(42))
+
+				return 1
+			},
+		}))
+
+		return 1
+	}))
+
+	script := `
+		local mod = require("shared_test")
+		assert(mod.answer() == 42)
+		assert(mod.tampered == nil, "a field of an earlier require is visible")
+		mod.tampered = true
+		mod.answer = nil
+		package.loaded.shared_test = nil
+	`
+
+	for range 3 {
+		if err := L.DoString(script); err != nil {
+			t.Fatalf("require failed: %v", err)
+		}
+	}
+
+	if loads != 1 {
+		t.Fatalf("expected the loader to run once, got %d runs", loads)
+	}
+
+	if len(names) != 1 || names[0] != "shared_test" {
+		t.Fatalf("expected the loader to receive the module name, got %v", names)
+	}
+}
+
+func TestSharedModuleLoaderPassesOtherResultsThrough(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	loads := 0
+
+	L.PreloadModule("scalar_test", SharedModuleLoader("scalar_test", func(L *lua.LState) int {
+		loads++
+
+		L.Push(lua.LString("not a table"))
+
+		return 1
+	}))
+	L.PreloadModule("empty_test", SharedModuleLoader("empty_test", func(*lua.LState) int {
+		loads++
+
+		return 0
+	}))
+
+	script := `
+		assert(require("scalar_test") == "not a table")
+		assert(require("empty_test") == true)
+		package.loaded.scalar_test = nil
+		package.loaded.empty_test = nil
+	`
+
+	for range 2 {
+		if err := L.DoString(script); err != nil {
+			t.Fatalf("require failed: %v", err)
+		}
+	}
+
+	if loads != 4 {
+		t.Fatalf("expected every require to run its loader, got %d runs", loads)
+	}
+}

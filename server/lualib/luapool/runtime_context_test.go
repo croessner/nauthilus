@@ -25,6 +25,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/config"
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/lualib"
+	"github.com/croessner/nauthilus/v4/server/lualib/luaseal"
 	"github.com/gin-gonic/gin"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -149,6 +150,48 @@ func TestRequestModuleChangesDoNotReachTheNextRequest(t *testing.T) {
 
 	if got := second.Get("request_id"); got != "second" {
 		t.Fatalf("expected the second request to reach its own context, got %v", got)
+	}
+}
+
+func TestStatelessModuleChangesDoNotReachTheNextRequest(t *testing.T) {
+	L := newRuntimeContextTestState(t)
+
+	// Every lease drops the modules an earlier request loaded, so each request requires them anew.
+	lease := func(script string) {
+		t.Helper()
+
+		if err := luaseal.Prepare(L, nil); err != nil {
+			t.Fatalf("Prepare() error = %v", err)
+		}
+
+		PrepareRequestEnv(L)
+
+		if err := luaseal.Install(L, nil); err != nil {
+			t.Fatalf("Install() error = %v", err)
+		}
+
+		if err := L.DoString(script); err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+
+		ResetLuaState(L)
+	}
+
+	for _, name := range []string{"nauthilus_cache", "nauthilus_misc", "glua_crypto", "time"} {
+		lease(fmt.Sprintf(`
+			local mod = require(%q)
+			for key in pairs(mod) do mod[key] = nil end
+			mod.leak = "first request"
+		`, name))
+
+		lease(fmt.Sprintf(`
+			local mod = require(%q)
+			assert(mod.leak == nil, "a field of an earlier request is visible")
+			assert(next(mod) ~= nil, "the module lost its members")
+			for _, value in pairs(mod) do
+				assert(type(value) ~= "table", "a module member is shared mutable state")
+			end
+		`, name))
 	}
 }
 

@@ -206,3 +206,49 @@ func sameOwner(left any, right any) bool {
 
 	return left == right
 }
+
+// sharedModuleKeyPrefix separates the member cache entries of wrapped preload loaders from request modules.
+const sharedModuleKeyPrefix = "preload:"
+
+// SharedModuleLoader wraps the loader of a host module so that its members are built once per Lua VM.
+//
+// It is meant for loaders that do nothing but fill a table with Go functions and constants, and that capture only
+// values that live as long as the VM. Such a loader yields equivalent members whenever it runs, so the wrapper
+// keeps them and hands every require a table of its own. A loader that returns anything else keeps running for
+// every require. Do not wrap a loader with side effects: they would happen once per VM instead of once per require.
+func SharedModuleLoader(name string, loader lua.LGFunction) lua.LGFunction {
+	key := sharedModuleKeyPrefix + name
+
+	return func(L *lua.LState) int {
+		result := lua.LNil
+
+		mod := NewRequestModule(L, key, 0, func() *lua.LTable {
+			result = runModuleLoader(L, loader)
+			built, _ := result.(*lua.LTable)
+
+			return built
+		})
+		if mod != nil {
+			result = mod
+		}
+
+		L.Push(result)
+
+		return 1
+	}
+}
+
+// runModuleLoader calls a loader with the arguments of the running Go function and returns its first result.
+func runModuleLoader(L *lua.LState, loader lua.LGFunction) lua.LValue {
+	top := L.GetTop()
+
+	result := lua.LNil
+
+	if loader(L) > 0 {
+		result = L.Get(top + 1)
+	}
+
+	L.SetTop(top)
+
+	return result
+}

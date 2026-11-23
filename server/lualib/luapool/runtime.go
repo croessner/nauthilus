@@ -43,6 +43,7 @@ import (
 
 	"github.com/cjoudrey/gluahttp"
 	libs "github.com/vadv/gopher-lua-libs"
+	libtime "github.com/vadv/gopher-lua-libs/time"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -63,7 +64,10 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	libs.Preload(L)
 
 	// Preload gluacrypto.
-	L.PreloadModule("glua_crypto", gluacrypto.Loader)
+	preloadShared(L, "glua_crypto", gluacrypto.Loader)
+
+	// The time library is requested by many scripts; its loader only fills a function table.
+	preloadShared(L, "time", libtime.Loader)
 
 	// Special case glua_http: needs an httpClient.
 	if httpClient != nil {
@@ -71,14 +75,15 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 		L.PreloadModule("glua_http", httpModule.Loader)
 	}
 
-	// Internal stateless modules. No context bindings!
-	L.PreloadModule(definitions.LuaModPassword, lualib.LoaderModPassword(context.Background(), cfg, log.Logger))
-	L.PreloadModule(definitions.LuaModMisc, lualib.LoaderModMisc(context.Background(), cfg, log.Logger))
+	// Internal stateless modules. No context bindings! Their managers hold nothing but the configuration and the
+	// logger of this VM, so the functions are built once and every require receives a table of its own.
+	preloadShared(L, definitions.LuaModPassword, lualib.LoaderModPassword(context.Background(), cfg, log.Logger))
+	preloadShared(L, definitions.LuaModMisc, lualib.LoaderModMisc(context.Background(), cfg, log.Logger))
 	L.PreloadModule(definitions.LuaModCBOR, lualib.LoaderModCBOR())
-	L.PreloadModule(definitions.LuaModPrometheus, metrics.LoaderModPrometheus(context.Background(), cfg, log.Logger))
-	L.PreloadModule(definitions.LuaModCache, lualib.LoaderModCache(context.Background(), cfg, log.Logger))
-	L.PreloadModule(definitions.LuaModSoftWhitelist, lualib.LoaderModSoftAllow(context.Background(), cfg, log.Logger))
-	L.PreloadModule(definitions.LuaModMail, lualib.LoaderModMail(context.Background(), cfg, log.Logger))
+	preloadShared(L, definitions.LuaModPrometheus, metrics.LoaderModPrometheus(context.Background(), cfg, log.Logger))
+	preloadShared(L, definitions.LuaModCache, lualib.LoaderModCache(context.Background(), cfg, log.Logger))
+	preloadShared(L, definitions.LuaModSoftWhitelist, lualib.LoaderModSoftAllow(context.Background(), cfg, log.Logger))
+	preloadShared(L, definitions.LuaModMail, lualib.LoaderModMail(context.Background(), cfg, log.Logger))
 	L.PreloadModule(definitions.LuaModBackend, lualib.LoaderBackendStateless())
 
 	// Preload stateless placeholders for context-bound modules. These will be
@@ -97,6 +102,13 @@ func NewLuaState(httpClient *stdhttp.Client, cfg config.File) *lua.LState {
 	L.PreloadModule(definitions.LuaModI18N, lualib.LoaderI18NStateless())
 
 	return L
+}
+
+// preloadShared preloads a stateless host module whose members are built once for the VM.
+//
+// Only loaders that fill a table with Go functions and constants qualify; see lualib.SharedModuleLoader.
+func preloadShared(L *lua.LState, name string, loader lua.LGFunction) {
+	L.PreloadModule(name, lualib.SharedModuleLoader(name, loader))
 }
 
 // jitEnabled resolves the JIT switch of the Lua configuration. Pooled VMs are long-lived, so native code compiled
