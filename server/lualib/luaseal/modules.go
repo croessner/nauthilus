@@ -222,7 +222,7 @@ func Install(state *lua.LState, modules *Modules) error {
 		return fmt.Errorf("lua package preload table is unavailable")
 	}
 
-	state.SetField(registry, preloadBaselineRegistryKey, cloneLuaTable(state, preloads))
+	state.SetField(registry, preloadBaselineRegistryKey, cloneLuaTable(preloads))
 	state.SetField(registry, "_PRELOAD", preloads)
 	state.SetField(registry, preparedRegistryKey, lua.LNil)
 
@@ -240,12 +240,12 @@ func restorePreloads(state *lua.LState, packageTable *lua.LTable) error {
 			return fmt.Errorf("lua package preload table is unavailable")
 		}
 
-		state.SetField(registry, preloadBaselineRegistryKey, cloneLuaTable(state, current))
+		state.SetField(registry, preloadBaselineRegistryKey, cloneLuaTable(current))
 
 		return nil
 	}
 
-	restored := cloneLuaTable(state, baseline)
+	restored := cloneLuaTable(baseline)
 	state.SetField(packageTable, "preload", restored)
 	state.SetField(registry, "_PRELOAD", restored)
 
@@ -253,14 +253,8 @@ func restorePreloads(state *lua.LState, packageTable *lua.LTable) error {
 }
 
 // cloneLuaTable copies one flat host-owned loader table into a detached Lua table.
-func cloneLuaTable(state *lua.LState, source *lua.LTable) *lua.LTable {
-	cloned := state.NewTable()
-
-	source.ForEach(func(key lua.LValue, value lua.LValue) {
-		cloned.RawSet(key, value)
-	})
-
-	return cloned
+func cloneLuaTable(source *lua.LTable) *lua.LTable {
+	return source.Clone()
 }
 
 // clearStaleModules drops every loaded module except the standard libraries.
