@@ -36,9 +36,12 @@ const (
 	ModeNoAuth
 )
 
+// requestModes lists all request modes supported by Lua pipeline planning.
+var requestModes = [...]ModeMask{ModeAuthenticated, ModeUnauthenticated, ModeNoAuth}
+
 // RequestModes returns all request modes supported by Lua pipeline planning.
 func RequestModes() []ModeMask {
-	return []ModeMask{ModeAuthenticated, ModeUnauthenticated, ModeNoAuth}
+	return append([]ModeMask(nil), requestModes[:]...)
 }
 
 // ModeText returns a stable low-cardinality label for a request mode.
@@ -127,13 +130,22 @@ func BuildPlan(nodes []Node, mode ModeMask) (Plan, error) {
 
 // BuildPlans validates nodes once and returns cached plans for all request modes.
 func BuildPlans(nodes []Node) (Plans, error) {
+	if len(nodes) == 1 {
+		return singleNodePlans(nodes[0])
+	}
+
+	return buildGraphPlans(nodes)
+}
+
+// buildGraphPlans plans any number of nodes through the dependency graph.
+func buildGraphPlans(nodes []Node) (Plans, error) {
 	if err := ValidateStatic(nodes); err != nil {
 		return nil, err
 	}
 
-	plans := make(Plans, len(RequestModes()))
+	plans := make(Plans, len(requestModes))
 
-	for _, mode := range RequestModes() {
+	for _, mode := range requestModes {
 		plan, err := buildRunnablePlan(nodes, mode)
 		if err != nil {
 			return nil, err
@@ -143,6 +155,49 @@ func BuildPlans(nodes []Node) (Plans, error) {
 	}
 
 	return plans, nil
+}
+
+// singleNodePlans plans a collection of exactly one node without building a dependency graph.
+//
+// A lone node has nothing it could depend on, so validation reduces to its name and its dependency list, and it
+// forms the only level in every mode that runs it. The result equals what the dependency graph yields; callers
+// treat plans as read-only, which lets the modes share one level.
+func singleNodePlans(node Node) (Plans, error) {
+	if err := validateSingleNode(node); err != nil {
+		return nil, err
+	}
+
+	runnable := Plan{Levels: [][]PlannedNode{{{Name: node.Name, Index: node.Index, Value: node.Value}}}}
+	idle := Plan{Levels: [][]PlannedNode{}}
+	plans := make(Plans, len(requestModes))
+
+	for _, mode := range requestModes {
+		if node.Modes&mode != 0 {
+			plans[mode] = runnable
+		} else {
+			plans[mode] = idle
+		}
+	}
+
+	return plans, nil
+}
+
+// validateSingleNode reports the error that static validation raises for a collection of exactly this node.
+func validateSingleNode(node Node) error {
+	if node.Name == "" {
+		return fmt.Errorf("script at index %d has empty name", node.Index)
+	}
+
+	if len(node.DependsOn) == 0 {
+		return nil
+	}
+
+	// The first dependency decides: only the node itself is a known name.
+	if dependencyName := node.DependsOn[0]; dependencyName != node.Name {
+		return fmt.Errorf("%s: unknown dependency %q", node.Name, dependencyName)
+	}
+
+	return fmt.Errorf("%s: self dependency is not allowed", node.Name)
 }
 
 // PlannedNodeCount returns the number of runnable nodes in a plan.
