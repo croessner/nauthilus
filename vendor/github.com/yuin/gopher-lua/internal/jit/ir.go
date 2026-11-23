@@ -196,6 +196,9 @@ type Value struct {
 	Aux   int64
 	Block *Block
 	Exit  *Exit
+	// Mem classifies the memory a load reads or a store writes (see the
+	// Mem constants); it decides which loads can be reused.
+	Mem uint8
 
 	// analysis results
 	uses  int
@@ -205,6 +208,23 @@ type Value struct {
 	start, end int
 	hint       *Value
 }
+
+// Memory classes of loads and stores. A load can be replaced by an
+// earlier load of the same address in the same block if no store of its
+// class and no callout lies in between.
+const (
+	// MemNone is unclassified memory: such a load is never reused, such
+	// a store invalidates every earlier load.
+	MemNone uint8 = iota
+	// MemStable is memory that compiled code never writes.
+	MemStable
+	// MemArrayLen is the length word of an unboxed array part.
+	MemArrayLen
+	// MemArray is an element of an unboxed array part.
+	MemArray
+	// MemField is the number or kind word of a table field.
+	MemField
+)
 
 // BlockKind is the kind of a basic block terminator.
 type BlockKind uint8

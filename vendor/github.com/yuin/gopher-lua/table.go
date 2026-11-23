@@ -1,6 +1,9 @@
 package lua
 
-import "hash/maphash"
+import (
+	"hash/maphash"
+	"math"
+)
 
 // Initial capacities of the array and hash parts. Both parts are
 // allocated on first use: most tables are small, and many use only one
@@ -11,9 +14,55 @@ const defaultHashCap = 4
 // tableField is one string-keyed entry of a table. A removed entry keeps
 // its position with the value LNil, so that the positions of the other
 // entries and the iteration order stay stable.
+//
+// Numbers are stored unboxed in num (kind fieldInt or fieldFloat), which
+// lets JIT compiled code read and write number fields without touching
+// pointers. For such a field value caches the boxed number; native code
+// that writes num sets stale, and the box is rebuilt on the next read.
 type tableField struct {
 	key   string
 	value LValue
+	num   uint64
+	kind  uint8
+	stale bool
+}
+
+// Kinds of table fields.
+const (
+	fieldBoxed uint8 = iota // any value but a number, in value
+	fieldInt                // an integer, as int64 bits in num
+	fieldFloat              // a float, as float64 bits in num
+)
+
+// get returns the value of the field.
+func (f *tableField) get() LValue {
+	if f.stale {
+		if f.kind == fieldInt {
+			f.value = boxInt(int64(f.num))
+		} else {
+			f.value = LNumber(math.Float64frombits(f.num))
+		}
+		f.stale = false
+	}
+	return f.value
+}
+
+// set stores a value in the field.
+func (f *tableField) set(value LValue) {
+	switch v := value.(type) {
+	case LNumber:
+		f.kind, f.num = fieldFloat, math.Float64bits(float64(v))
+	case LInteger:
+		f.kind, f.num = fieldInt, uint64(v)
+	default:
+		f.kind = fieldBoxed
+	}
+	f.value, f.stale = value, false
+}
+
+// removed reports whether the entry was removed from the table.
+func (f *tableField) removed() bool {
+	return f.kind == fieldBoxed && f.value == LNil
 }
 
 // fieldLinearMax is the number of string-keyed entries up to which a
@@ -37,7 +86,38 @@ const (
 	arrayKindGeneric uint8 = iota
 	arrayKindInt
 	arrayKindFloat
+	// arrayKindBool stores booleans as the words 0 and 1 in the same
+	// slice as arrayKindInt.
+	arrayKindBool
 )
+
+// wordValue converts value to an element of the word array (iarr) of an
+// array part of the given kind. It reports false if the value does not
+// fit that kind.
+func wordValue(kind uint8, value LValue) (int64, bool) {
+	switch v := value.(type) {
+	case LInteger:
+		if kind == arrayKindInt {
+			return int64(v), true
+		}
+	case LBool:
+		if kind == arrayKindBool {
+			if v {
+				return 1, true
+			}
+			return 0, true
+		}
+	}
+	return 0, false
+}
+
+// boxWord converts an element of the word array back to a value.
+func (tb *LTable) boxWord(w int64) LValue {
+	if tb.akind == arrayKindBool {
+		return LBool(w != 0)
+	}
+	return boxInt(w)
+}
 
 type lValueArraySorter struct {
 	L      *LState
@@ -105,7 +185,37 @@ func (tb *LTable) intKey(i int) LValue {
 	if tb.intKeys {
 		return boxInt(int64(i))
 	}
+	if i >= 0 && i < len(preloads) {
+		return preloads[i]
+	}
 	return LNumber(i)
+}
+
+// beginWalk notes the start of a traversal. From the second traversal
+// of a table on, the keys of its fields are kept as Lua values.
+func (tb *LTable) beginWalk() {
+	switch {
+	case !tb.walked:
+		tb.walked = true
+	case tb.fieldKeys == nil && len(tb.fields) > 0:
+		tb.fieldKeys = make([]LValue, len(tb.fields))
+	}
+}
+
+// fieldKey returns the key of the field at position i as a Lua value.
+func (tb *LTable) fieldKey(i int) LValue {
+	if tb.fieldKeys == nil {
+		return LString(tb.fields[i].key)
+	}
+	for len(tb.fieldKeys) < len(tb.fields) {
+		tb.fieldKeys = append(tb.fieldKeys, nil) // fields added since
+	}
+	key := tb.fieldKeys[i]
+	if key == nil {
+		key = LString(tb.fields[i].key)
+		tb.fieldKeys[i] = key
+	}
+	return key
 }
 
 // normKey converts a number key to the canonical form used by the hash
@@ -129,7 +239,7 @@ func (tb *LTable) normKey(key LValue) LValue {
 // arrayLen returns the physical length of the array part.
 func (tb *LTable) arrayLen() int {
 	switch tb.akind {
-	case arrayKindInt:
+	case arrayKindInt, arrayKindBool:
 		return len(tb.iarr)
 	case arrayKindFloat:
 		return len(tb.farr)
@@ -137,11 +247,42 @@ func (tb *LTable) arrayLen() int {
 	return len(tb.array)
 }
 
+// slots returns the number of slots of the array part as GopherLua
+// counts them: the stored elements and the nil slots behind them.
+func (tb *LTable) slots() int {
+	return tb.arrayLen() + tb.tail
+}
+
+// claimSlot accounts for an element that was appended to the stored
+// part: it takes the first nil slot behind it, if there is one.
+func (tb *LTable) claimSlot() {
+	if tb.tail > 0 {
+		tb.tail--
+	}
+}
+
+// nilSlot accounts for nil being assigned to the 0-based index at or
+// behind the end of the stored part: the array part reaches that slot.
+func (tb *LTable) nilSlot(index int) {
+	if n := index + 1 - tb.arrayLen(); n > tb.tail {
+		tb.tail = n
+	}
+}
+
+// storeTail turns the nil slots behind the stored part into stored
+// elements of a generic array part.
+func (tb *LTable) storeTail() {
+	tb.genericize()
+	for ; tb.tail > 0; tb.tail-- {
+		tb.array = append(tb.array, LNil)
+	}
+}
+
 // arrayGet returns the element at the 0-based index of the array part.
 func (tb *LTable) arrayGet(index int) LValue {
 	switch tb.akind {
-	case arrayKindInt:
-		return boxInt(tb.iarr[index])
+	case arrayKindInt, arrayKindBool:
+		return tb.boxWord(tb.iarr[index])
 	case arrayKindFloat:
 		return LNumber(tb.farr[index])
 	}
@@ -151,10 +292,10 @@ func (tb *LTable) arrayGet(index int) LValue {
 // genericize converts an unboxed array part to the generic representation.
 func (tb *LTable) genericize() {
 	switch tb.akind {
-	case arrayKindInt:
+	case arrayKindInt, arrayKindBool:
 		arr := make([]LValue, len(tb.iarr), cap(tb.iarr)+1)
 		for i, v := range tb.iarr {
-			arr[i] = boxInt(v)
+			arr[i] = tb.boxWord(v)
 		}
 		tb.array = arr
 		tb.iarr = nil
@@ -169,27 +310,46 @@ func (tb *LTable) genericize() {
 	tb.akind = arrayKindGeneric
 }
 
-// arraySet stores value at the 0-based index of the array part, growing
-// or converting the array part as needed.
+// arraySet stores value in the slot with the 0-based index of the array
+// part.
 func (tb *LTable) arraySet(index int, value LValue) {
+	n := tb.arrayLen()
+	if index >= n && tb.sparseSet(index, n, value) {
+		return
+	}
+	tb.arrayStore(index, value)
+	if tb.sparse != nil && tb.arrayLen() > n {
+		tb.absorb()
+	}
+}
+
+// arrayStore stores value at the 0-based index of the stored elements,
+// growing or converting them as needed. Behind their end it appends, or
+// fills the slots in between with nil; a nil there is only counted.
+func (tb *LTable) arrayStore(index int, value LValue) {
 	switch tb.akind {
-	case arrayKindInt:
+	case arrayKindInt, arrayKindBool:
 		alen := len(tb.iarr)
-		if v, ok := value.(LInteger); ok {
+		if v, ok := wordValue(tb.akind, value); ok {
 			if index < alen {
-				tb.iarr[index] = int64(v)
+				tb.iarr[index] = v
 				return
 			}
 			if index == alen {
-				tb.iarr = append(tb.iarr, int64(v))
+				tb.iarr = append(tb.iarr, v)
+				tb.claimSlot()
 				return
 			}
 		} else if value == LNil {
 			if index == alen-1 {
+				// (an unboxed array cannot hold nil: the slot of the
+				// last element becomes a nil slot behind the array)
 				tb.iarr = tb.iarr[:index]
+				tb.tail++
 				return
 			}
 			if index >= alen {
+				tb.nilSlot(index)
 				return
 			}
 		}
@@ -203,14 +363,17 @@ func (tb *LTable) arraySet(index int, value LValue) {
 			}
 			if index == alen {
 				tb.farr = append(tb.farr, float64(v))
+				tb.claimSlot()
 				return
 			}
 		} else if value == LNil {
 			if index == alen-1 {
 				tb.farr = tb.farr[:index]
+				tb.tail++
 				return
 			}
 			if index >= alen {
+				tb.nilSlot(index)
 				return
 			}
 		}
@@ -218,7 +381,12 @@ func (tb *LTable) arraySet(index int, value LValue) {
 	}
 	alen := len(tb.array)
 	switch {
+	case index >= alen && value == LNil:
+		// nil at or behind the end: GopherLua appends nil slots up to
+		// that position, which are counted instead of stored here
+		tb.nilSlot(index)
 	case index == alen:
+		tb.claimSlot()
 		if alen == 0 && tb.typedOK {
 			switch v := value.(type) {
 			case LInteger:
@@ -233,6 +401,12 @@ func (tb *LTable) arraySet(index int, value LValue) {
 				tb.array = nil
 				tb.akind = arrayKindFloat
 				return
+			case LBool:
+				tb.iarr = make([]int64, 1, typedCap(cap(tb.array)))
+				tb.iarr[0], _ = wordValue(arrayKindBool, v)
+				tb.array = nil
+				tb.akind = arrayKindBool
+				return
 			}
 		}
 		if tb.array == nil {
@@ -240,11 +414,14 @@ func (tb *LTable) arraySet(index int, value LValue) {
 		}
 		tb.array = append(tb.array, value)
 	case index > alen:
-		if value == LNil && tb.typedOK {
-			return
-		}
+		// a value behind the end: the slots in between are stored
 		if tb.array == nil {
 			tb.array = make([]LValue, 0, defaultArrayCap)
+		}
+		tb.storeTail()
+		if alen = len(tb.array); index < alen {
+			tb.array[index] = value
+			return
 		}
 		for i := 0; i < (index - alen); i++ {
 			tb.array = append(tb.array, LNil)
@@ -265,6 +442,10 @@ func typedCap(c int) int {
 
 // Len returns length of this LTable without using __len.
 func (tb *LTable) Len() int {
+	if tb.sparse != nil {
+		// (sparse elements lie behind the stored ones and are not nil)
+		return tb.sparseLast() + 1
+	}
 	if tb.akind != arrayKindGeneric {
 		return tb.arrayLen()
 	}
@@ -279,32 +460,19 @@ func (tb *LTable) Len() int {
 	return 0
 }
 
-// Append appends a given LValue to this LTable.
+// Append appends a given LValue to this LTable: behind the last slot of
+// the array part or, if that slot holds nil, behind the last element
+// that is not nil. Both are the position after the border Len reports.
 func (tb *LTable) Append(value LValue) {
 	if value == LNil {
 		return
 	}
-	if tb.akind != arrayKindGeneric {
-		tb.arraySet(tb.arrayLen(), value)
-		return
-	}
-	if len(tb.array) == 0 || tb.array[len(tb.array)-1] != LNil {
-		tb.arraySet(len(tb.array), value)
-	} else {
-		i := len(tb.array) - 2
-		for ; i >= 0; i-- {
-			if tb.array[i] != LNil {
-				break
-			}
-		}
-		tb.array[i+1] = value
-	}
+	tb.arraySet(tb.Len(), value)
 }
 
 // Insert inserts a given LValue at position `i` in this table.
 func (tb *LTable) Insert(i int, value LValue) {
-	alen := tb.arrayLen()
-	if i > alen {
+	if i > tb.slots() {
 		tb.RawSetInt(i, value)
 		return
 	}
@@ -313,12 +481,26 @@ func (tb *LTable) Insert(i int, value LValue) {
 		return
 	}
 	i -= 1
+	if tb.sparse != nil || (i > tb.arrayLen() && tb.tail > tableSparseGap) {
+		tb.insertSlot(i, value)
+		return
+	}
+	if i > tb.arrayLen() {
+		// between the nil slots behind the stored elements
+		tb.storeTail()
+	}
+	tb.insertStored(i, value)
+}
+
+// insertStored inserts value at the 0-based index i of the stored
+// elements (at most their length).
+func (tb *LTable) insertStored(i int, value LValue) {
 	switch tb.akind {
-	case arrayKindInt:
-		if v, ok := value.(LInteger); ok {
+	case arrayKindInt, arrayKindBool:
+		if v, ok := wordValue(tb.akind, value); ok {
 			tb.iarr = append(tb.iarr, 0)
 			copy(tb.iarr[i+1:], tb.iarr[i:])
-			tb.iarr[i] = int64(v)
+			tb.iarr[i] = v
 			return
 		}
 		tb.genericize()
@@ -347,20 +529,47 @@ func (tb *LTable) MaxN() int {
 // Remove removes from this table the element at a given position.
 func (tb *LTable) Remove(pos int) LValue {
 	larray := tb.arrayLen()
-	if larray == 0 {
+	slots := larray + tb.tail
+	if slots == 0 {
 		return LNil
 	}
 	i := pos - 1
+	if i >= slots {
+		return LNil
+	}
+	if i < 0 {
+		i = slots - 1 // the last slot
+	}
+	if i >= larray {
+		// one of the slots behind the stored elements goes away; the
+		// slots behind it move down
+		oldval := tb.slotGet(i)
+		if tb.sparse != nil {
+			tb.sparseDelete(i)
+			tb.sparseShift(i+1, -1)
+		}
+		tb.tail--
+		tb.absorb()
+		return oldval
+	}
+	oldval := tb.removeStored(i)
+	tb.sparseShift(larray, -1)
+	return oldval
+}
+
+// removeStored removes the stored element at the 0-based index i.
+func (tb *LTable) removeStored(i int) LValue {
+	larray := tb.arrayLen()
 	oldval := LNil
 	switch tb.akind {
-	case arrayKindInt:
+	case arrayKindInt, arrayKindBool:
 		switch {
 		case i >= larray:
 		case i == larray-1 || i < 0:
-			oldval = boxInt(tb.iarr[larray-1])
+			oldval = tb.boxWord(tb.iarr[larray-1])
 			tb.iarr = tb.iarr[:larray-1]
 		default:
-			oldval = boxInt(tb.iarr[i])
+			oldval = tb.boxWord(tb.iarr[i])
 			copy(tb.iarr[i:], tb.iarr[i+1:])
 			tb.iarr = tb.iarr[:larray-1]
 		}
@@ -429,10 +638,10 @@ func (tb *LTable) RawSetString(key string, value LValue) {
 	i := tb.findField(key)
 	if i >= 0 {
 		f := &tb.fields[i]
-		if tb.watched && f.value != value {
+		if tb.watched && f.kind == fieldBoxed && f.value != value {
 			tb.noteFieldChange(f.value)
 		}
-		f.value = value
+		f.set(value)
 		return
 	}
 	if value == LNil {
@@ -441,7 +650,12 @@ func (tb *LTable) RawSetString(key string, value LValue) {
 	if tb.fields == nil {
 		tb.fields = make([]tableField, 0, defaultHashCap)
 	}
-	tb.fields = append(tb.fields, tableField{key: key, value: value})
+	tb.fields = append(tb.fields, tableField{key: key})
+	tb.fields[len(tb.fields)-1].set(value)
+	if tb.watchedKeys {
+		// compiled code relies on the key being absent
+		tb.version++
+	}
 	switch n := len(tb.fields); {
 	case n <= fieldLinearMax:
 	case 2*n > len(tb.fieldIndex):
@@ -557,7 +771,7 @@ func (tb *LTable) RawGet(key LValue) LValue {
 		if isArrayKey(v) {
 			index := int(v) - 1
 			if index >= tb.arrayLen() {
-				return LNil
+				return tb.slotGet(index)
 			}
 			return tb.arrayGet(index)
 		}
@@ -566,7 +780,7 @@ func (tb *LTable) RawGet(key LValue) LValue {
 		if v >= 1 && v < LInteger(MaxArrayIndex) {
 			index := int(v) - 1
 			if index >= tb.arrayLen() {
-				return LNil
+				return tb.slotGet(index)
 			}
 			return tb.arrayGet(index)
 		}
@@ -586,8 +800,11 @@ func (tb *LTable) RawGet(key LValue) LValue {
 // RawGetInt returns an LValue at position `key` without __index metamethod.
 func (tb *LTable) RawGetInt(key int) LValue {
 	index := int(key) - 1
-	if index < 0 || index >= tb.arrayLen() {
+	if index < 0 {
 		return LNil
+	}
+	if index >= tb.arrayLen() {
+		return tb.slotGet(index)
 	}
 	return tb.arrayGet(index)
 }
@@ -609,17 +826,18 @@ func (tb *LTable) RawGetH(key LValue) LValue {
 // RawGetString returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetString(key string) LValue {
 	if i := tb.findField(key); i >= 0 {
-		return tb.fields[i].value
+		return tb.fields[i].get()
 	}
 	return LNil
 }
 
 // ForEach iterates over this table of elements, yielding each in turn to a given function.
 func (tb *LTable) ForEach(cb func(LValue, LValue)) {
+	tb.beginWalk()
 	switch tb.akind {
-	case arrayKindInt:
+	case arrayKindInt, arrayKindBool:
 		for i := 0; i < len(tb.iarr); i++ {
-			cb(tb.intKey(i+1), boxInt(tb.iarr[i]))
+			cb(tb.intKey(i+1), tb.boxWord(tb.iarr[i]))
 		}
 	case arrayKindFloat:
 		for i := 0; i < len(tb.farr); i++ {
@@ -632,16 +850,23 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 			}
 		}
 	}
-	for i := 0; i < len(tb.fields); i++ {
-		if f := tb.fields[i]; f.value != LNil {
-			cb(LString(f.key), f.value)
+	if tb.sparse != nil {
+		for _, index := range append([]int(nil), tb.sparseSorted()...) {
+			if v, ok := tb.sparse[index]; ok {
+				cb(tb.intKey(index+1), v)
+			}
 		}
 	}
-	if tb.dict != nil {
-		for k, v := range tb.dict {
-			if v != LNil {
-				cb(k, v)
-			}
+	for i := 0; i < len(tb.fields); i++ {
+		if f := &tb.fields[i]; !f.removed() {
+			cb(tb.fieldKey(i), f.get())
+		}
+	}
+	// (the other keys in the order in which they were added, like Next)
+	for i := 0; i < len(tb.keys); i++ {
+		key := tb.keys[i]
+		if v, ok := tb.dict[key]; ok && v != LNil {
+			cb(key, v)
 		}
 	}
 }
@@ -651,6 +876,7 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	idx := -1
 	if key == LNil {
 		idx = 0
+		tb.beginWalk()
 	} else {
 		switch k := key.(type) {
 		case LNumber:
@@ -670,6 +896,11 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 				return tb.intKey(idx + 1), v
 			}
 		}
+		if tb.sparse != nil {
+			if index, v, ok := tb.sparseNext(idx); ok {
+				return tb.intKey(index + 1), v
+			}
+		}
 		return tb.nextField(0)
 	}
 	if s, ok := key.(LString); ok {
@@ -685,8 +916,8 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 // entries, followed by the other hash keys.
 func (tb *LTable) nextField(i int) (LValue, LValue) {
 	for ; i < len(tb.fields); i++ {
-		if f := &tb.fields[i]; f.value != LNil {
-			return LString(f.key), f.value
+		if f := &tb.fields[i]; !f.removed() {
+			return tb.fieldKey(i), f.get()
 		}
 	}
 	return tb.nextKey(0)
@@ -708,9 +939,15 @@ func (tb *LTable) nextKey(i int) (LValue, LValue) {
 // and values, but not the metatable. It is equivalent to creating a table
 // and raw-setting every entry, without the intermediate allocations.
 func (tb *LTable) Clone() *LTable {
-	c := &LTable{Metatable: LNil, akind: tb.akind, typedOK: tb.typedOK, intKeys: tb.intKeys}
+	c := &LTable{Metatable: LNil, akind: tb.akind, typedOK: tb.typedOK, intKeys: tb.intKeys, tail: tb.tail}
 	if len(tb.array) > 0 {
 		c.array = append(make([]LValue, 0, len(tb.array)), tb.array...)
+	}
+	if tb.sparse != nil {
+		c.sparse = make(map[int]LValue, len(tb.sparse))
+		for k, v := range tb.sparse {
+			c.sparse[k] = v
+		}
 	}
 	if len(tb.iarr) > 0 {
 		c.iarr = append(make([]int64, 0, len(tb.iarr)), tb.iarr...)
@@ -722,8 +959,9 @@ func (tb *LTable) Clone() *LTable {
 		c.fields = make([]tableField, 0, len(tb.fields))
 		for i := range tb.fields {
 			// removed entries are dropped: nothing refers to their positions
-			if tb.fields[i].value != LNil {
-				c.fields = append(c.fields, tb.fields[i])
+			if f := &tb.fields[i]; !f.removed() {
+				f.get() // the copy must not share a stale box
+				c.fields = append(c.fields, *f)
 			}
 		}
 		if len(c.fields) > fieldLinearMax {

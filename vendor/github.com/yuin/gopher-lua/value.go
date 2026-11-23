@@ -152,20 +152,43 @@ type LTable struct {
 	// other hash keys, which live in dict.
 	fields     []tableField
 	fieldIndex []uint32
-	dict       map[LValue]LValue
-	keys       []LValue
-	k2i        map[LValue]int
+	// fieldKeys caches the keys of the fields as Lua values, by position,
+	// for traversals (converting a string to a Lua value allocates). It
+	// is nil until the table is traversed a second time (walked marks
+	// the first), so that a table that is traversed once pays nothing.
+	fieldKeys []LValue
+	walked    bool
+	dict      map[LValue]LValue
+	keys      []LValue
+	k2i       map[LValue]int
 
 	// iarr and farr are the unboxed array parts used when akind is
 	// arrayKindInt or arrayKindFloat (see table.go).
 	iarr []int64
 	farr []float64
+	// tail is the number of nil slots that GopherLua's array part would
+	// hold behind the stored elements: assigning nil to the last element
+	// leaves its slot behind, and so does assigning nil beyond the end.
+	// The slots are not stored, but table.insert and table.remove of the
+	// Lua 5.1 profile count them (see table.go).
+	tail int
+	// sparse holds the elements of the array part that lie in the nil
+	// slots behind the stored elements, by 0-based slot index (see
+	// table_sparse.go). sparseKeys caches their indexes in ascending
+	// order (nil: to be rebuilt) and sparseTop the largest one.
+	sparse      map[int]LValue
+	sparseKeys  []int
+	sparseTop   int
+	sparseTopOK bool
 	// akind is the representation of the array part.
 	akind uint8
 	// typedOK allows the array part to use the unboxed representations.
 	typedOK bool
 	// watched is set once JIT compiled code depends on the version field.
-	watched bool
+	// watchedKeys is set if that code also relies on string keys being
+	// absent (a method that is found further up a chain of classes).
+	watched     bool
+	watchedKeys bool
 	// intKeys is set for tables created by a Lua 5.5 profile state:
 	// integral number keys are reported as LInteger instead of LNumber.
 	intKeys bool
@@ -200,8 +223,11 @@ type Global struct {
 	Global        *LTable
 
 	builtinMts map[int]LValue
-	tempFiles  []*os.File
-	gccount    int32
+	// builtinMtGen changes whenever the metatable of a basic type is
+	// set: compiled code that resolved a string method depends on it.
+	builtinMtGen uint64
+	tempFiles    []*os.File
+	gccount      int32
 
 	// jit is the JIT compiler state shared by all threads of this state
 	// (nil when the JIT is disabled or unsupported on this platform).
@@ -264,3 +290,10 @@ type LChannel chan LValue
 
 func (ch LChannel) String() string   { return fmt.Sprintf("channel: %p", ch) }
 func (ch LChannel) Type() LValueType { return LTChannel }
+
+// setBuiltinMetatable sets the metatable shared by all values of a
+// basic type.
+func (g *Global) setBuiltinMetatable(typ LValueType, mt LValue) {
+	g.builtinMts[int(typ)] = mt
+	g.builtinMtGen++
+}

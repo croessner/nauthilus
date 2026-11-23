@@ -758,7 +758,7 @@ github.com/yosida95/uritemplate/v3
 # github.com/yuin/gluamapper v0.0.0-20150323120927-d836955830e7
 ## explicit
 github.com/yuin/gluamapper
-# github.com/yuin/gopher-lua v1.1.2 => github.com/croessner/gopher-lua-jit v0.1.1-0.20261123075558-465d46e65580
+# github.com/yuin/gopher-lua v1.1.2 => github.com/croessner/gopher-lua-jit v0.2.1
 ## explicit; go 1.23
 github.com/yuin/gopher-lua
 github.com/yuin/gopher-lua/ast
@@ -1138,4 +1138,4 @@ gopkg.in/yaml.v3
 # pgregory.net/rapid v1.3.0
 ## explicit; go 1.23
 pgregory.net/rapid
-# github.com/yuin/gopher-lua => github.com/croessner/gopher-lua-jit v0.1.1-0.20261123075558-465d46e65580
+# github.com/yuin/gopher-lua => github.com/croessner/gopher-lua-jit v0.2.1

@@ -38,6 +38,10 @@ type JITOptions struct {
 	// Log, if not nil, receives one line per JIT event (compilation,
 	// invalidation, blacklisting). It is meant for diagnostics.
 	Log io.Writer
+
+	// hotExit overrides jitHotExit; the tests use a small value so that
+	// short programs reach the recompilation paths.
+	hotExit int
 }
 
 // JITStats reports the activity of the JIT compiler of a state.
@@ -95,8 +99,12 @@ const (
 	// before it is blacklisted.
 	jitMaxCompiles = 6
 	// jitHotExit is the number of times a guard may fail before the unit
-	// is recompiled with the collected type feedback.
-	jitHotExit = 8
+	// is recompiled with the collected type feedback. Leaving native code
+	// once costs about a microsecond and compiling a unit a few hundred,
+	// so reacting earlier does not pay; and a burst of failures while a
+	// program warms up (the fields of its objects turn from integers
+	// into floats) must not be taken for the behaviour of the loop.
+	jitHotExit = 128
 	// jitMinIterations is the number of loop iterations native code has
 	// to execute per exit of one kind for the unit to be kept: below it
 	// the transitions between interpreter and native code cost more than
@@ -108,6 +116,48 @@ const (
 	jitMaxFlushes = 8
 	// jitMaxRegion bounds the number of instructions of a compiled region.
 	jitMaxRegion = 3000
+	// jitMaxFieldIndex bounds the position of a table field that native
+	// code accesses directly (the displacement must stay small).
+	jitMaxFieldIndex = 256
+	// jitFieldMisses is the number of units that a field guard (or an
+	// upvalue or callee guard) may make fail before its speculation is
+	// given up: the site sees tables of several layouts. Failures that
+	// do not make a unit fail are not counted: the last node of a list
+	// that lacks the "next" field costs one exit per traversal, which is
+	// cheaper than leaving the access to the interpreter on every node.
+	jitFieldMisses = 3
+	// jitCalloutWeight is the number of natively translated instructions
+	// one callout per loop iteration outweighs: a callout costs about as
+	// much as the interpreter needs for three to four instructions
+	// (measured on loops with one callout per iteration: those with
+	// three native instructions lose against the interpreter, those
+	// with four or more win).
+	jitCalloutWeight = 3
+	// jitLuaCallCallouts is what the call of a Lua function that is not
+	// inlined counts as in that comparison: it runs in an interpreter
+	// loop of its own, which costs more than the same call made by the
+	// interpreter (measured: a loop of six native instructions and one
+	// such call is a third slower than the interpreter).
+	jitLuaCallCallouts = 3
+	// jitCalloutStrikes is the number of strikes after which the
+	// interpreter executes an instruction on behalf of compiled code:
+	// its guards made a unit fail twice although they recorded what
+	// they met, or once without anything to learn from.
+	jitCalloutStrikes = 2
+	// jitMaxShapeFields bounds the number of string-keyed entries of an
+	// object whose keys compiled code checks one by one to prove that a
+	// method name is not among them.
+	jitMaxShapeFields = 8
+	// jitMaxClassDepth bounds the chain of __index tables that is
+	// followed to find a method.
+	jitMaxClassDepth = 4
+	// jitMaxInlineInsts bounds the size of a function that is translated
+	// in place of a call and jitMaxInlineDepth the nesting of such calls.
+	jitMaxInlineInsts = 40
+	jitMaxInlineDepth = 3
+	// jitMaxSlots bounds the registers a unit may use including the
+	// frames of inlined calls (register operands are eight bits wide).
+	jitMaxSlots = 250
 	// jitMaxDepth bounds the nesting of native activations of a thread.
 	jitMaxDepth = 64
 )
@@ -117,6 +167,7 @@ const (
 // goroutine that owns the state.
 type jitState struct {
 	threshold int32
+	hotExit   uint64
 	maxCode   int
 	fuel      uint64
 	log       io.Writer
@@ -200,8 +251,13 @@ type feedbackKey struct {
 
 // Kinds of feedback.
 const (
-	fbValue uint8 = iota // kind of the value in a register
-	fbArray              // array representation of the table in a register
+	fbValue   uint8 = iota // kind of the value in a register
+	fbArray                // array representation of the table in a register
+	fbField                // number of times a field access met another table layout
+	fbUpval                // number of times an upvalue held another kind of value
+	fbInline               // set when inlining the callee of a call did not pay off
+	fbNarrow               // set when a register did not hold the small integer it was narrowed to
+	fbCallout              // strikes against the native form of an instruction (slot -1)
 )
 
 // jitUnit is a piece of compiled code.
@@ -214,18 +270,24 @@ type jitUnit struct {
 	meta   []exitMeta
 	consts []LValue
 	nslots int
+	// inlined describes the calls translated in place (see inlineCall).
+	inlined []inlineCall
 
 	// env is the globals table the code was specialized for (nil if it
 	// does not depend on one); keep holds the tables whose version word
 	// is read by the code, so that they stay alive.
 	env  *LTable
 	keep []*LTable
-	// nativeOps is the number of native operations of the unit, used to
-	// judge whether callouts dominate its run time.
-	nativeOps int
-	callouts  uint64
+	// nativeInsts is the number of instructions of the unit that were
+	// translated to native code, used to judge whether callouts dominate
+	// its run time.
+	nativeInsts int
+	callouts    uint64
 
 	exitCounts []uint32
+	// exitKinds remembers, per exit, the kind of value its guard failed
+	// on (plus one), or exitKindsVary once it met several.
+	exitKinds  []uint8
 	entries    uint64
 	iterations uint64 // loop iterations executed natively
 	active     int    // number of running activations
@@ -236,8 +298,25 @@ type jitUnit struct {
 type jitThread struct {
 	// frames are context frames reused by nesting depth.
 	frames [][]uint64
+	// lazy holds, by nesting depth, the registers a running callout has
+	// not written back.
+	lazy []jitLazy
 	// acts is the stack of running native activations.
 	acts []*jitUnit
+	// skipHeader is set when native code handed the instruction at a loop
+	// header back to the interpreter: the loop is not entered again
+	// before the interpreter has executed that instruction.
+	skipHeader bool
+}
+
+// jitLazy describes the registers of a native activation that the
+// callout it is waiting for did not write back: its numbers that the
+// instruction does not touch. entries is nil while there are none.
+type jitLazy struct {
+	u       *jitUnit
+	entries []jit.ExitEntry
+	frame   []uint64
+	base    int
 }
 
 var jitTables struct {
@@ -251,6 +330,7 @@ func jitJumpTable() *[opCodeMax + 1]instFunc {
 	jitTables.once.Do(func() {
 		jitTables.table = jumpTable
 		jitTables.table[OP_FORLOOP] = opForLoopJIT
+		jitTables.table[OP_TFORLOOP] = opTForLoopJIT
 		jitTables.table[OP_JMP] = opJmpJIT
 	})
 	return &jitTables.table
@@ -278,6 +358,10 @@ func (ls *LState) initJIT() {
 	}
 	if js.threshold <= 0 {
 		js.threshold = jitDefaultThreshold
+	}
+	js.hotExit = jitHotExit
+	if opts.hotExit > 0 {
+		js.hotExit = uint64(opts.hotExit)
 	}
 	if js.maxCode <= 0 {
 		js.maxCode = jitDefaultMaxCode
@@ -420,12 +504,34 @@ var (
 	itabNil     = itabOf(LNil)
 	itabBool    = itabOf(LTrue)
 	itabTable   = itabOf(&LTable{})
+	itabFunc    = itabOf(&LFunction{})
+	itabString  = itabOf(LString("string"))
 
 	offTableAkind     = unsafe.Offsetof(LTable{}.akind)
 	offTableArray     = unsafe.Offsetof(LTable{}.array)
+	offTableTail      = unsafe.Offsetof(LTable{}.tail)
+	offTableSparse    = unsafe.Offsetof(LTable{}.sparse)
 	offTableIarr      = unsafe.Offsetof(LTable{}.iarr)
 	offTableFarr      = unsafe.Offsetof(LTable{}.farr)
 	offTableMetatable = unsafe.Offsetof(LTable{}.Metatable)
+	offTableFields    = unsafe.Offsetof(LTable{}.fields)
+
+	// closures and their upvalue cells
+	offFnUpvalues = unsafe.Offsetof(LFunction{}.Upvalues)
+	offFnEnv      = unsafe.Offsetof(LFunction{}.Env)
+	offUvValue    = unsafe.Offsetof(Upvalue{}.value)
+	offUvClosed   = unsafe.Offsetof(Upvalue{}.closed)
+	offUvIndex    = unsafe.Offsetof(Upvalue{}.index)
+	offUvReg      = unsafe.Offsetof(Upvalue{}.reg)
+
+	// layout of tableField; kind and stale are adjacent bytes that native
+	// code writes together as one little-endian word
+	fieldSize     = unsafe.Sizeof(tableField{})
+	offFieldKey   = unsafe.Offsetof(tableField{}.key)
+	offFieldNum   = unsafe.Offsetof(tableField{}.num)
+	offFieldKind  = unsafe.Offsetof(tableField{}.kind)
+	offFieldStale = unsafe.Offsetof(tableField{}.stale)
+	offFieldValue = unsafe.Offsetof(tableField{}.value)
 
 	// jitLayoutOK is false if the Go runtime does not lay out interface
 	// values and slices the way the native code expects.
@@ -473,7 +579,26 @@ func checkJITLayout() bool {
 	if itabInteger == itabNumber || itabNil == 0 || itabTable == itabNil || itabBool == itabNil {
 		return false
 	}
+	// strings are (address, length) pairs; the word that holds a field's
+	// kind and stale flag holds nothing else
+	str := "layout"
+	if sh := (*[2]uintptr)(unsafe.Pointer(&str)); sh[0] != uintptr(unsafe.Pointer(unsafe.StringData(str))) || sh[1] != 6 {
+		return false
+	}
+	// a boxed string is a pointer to such a pair
+	if *(*string)(dataOf(LString(str))) != str {
+		return false
+	}
+	if offFieldStale != offFieldKind+1 || offFieldKind%8 != 0 || fieldSize != offFieldKind+8 || !littleEndian() {
+		return false
+	}
 	return true
 }
 
 /* }}} */
+
+// littleEndian reports the byte order of the machine.
+func littleEndian() bool {
+	x := uint16(1)
+	return *(*byte)(unsafe.Pointer(&x)) == 1
+}

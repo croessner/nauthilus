@@ -6,14 +6,16 @@ import (
 )
 
 // Optimize runs the optimization pipeline: unreachable code removal,
-// constant folding and algebraic simplification (including strength
-// reduction), common subexpression elimination, phi simplification and
-// dead code elimination.
+// loop peeling, constant folding and algebraic simplification (including
+// strength reduction), common subexpression elimination, redundant load
+// and guard elimination, phi simplification and dead code elimination.
 func Optimize(f *Func) {
 	removeUnreachable(f)
+	peelLoops(f)
 	for round := 0; round < 4; round++ {
 		changed := simplify(f)
 		changed = cse(f) || changed
+		changed = memCSE(f) || changed
 		changed = simplifyPhis(f) || changed
 		if !changed {
 			break
@@ -561,6 +563,190 @@ func simplifyPhis(f *Func) bool {
 			b.Values = b.Values[:n]
 		}
 	}
+}
+
+// memKey identifies a memory word by how it is loaded.
+type memKey struct {
+	op   Op
+	base int
+	disp int64
+}
+
+// memWord is the known content of a memory word: the value that holds
+// it and the class of the word, which decides what invalidates it.
+type memWord struct {
+	v   *Value
+	mem uint8
+}
+
+// memKills summarizes what a piece of code can change in memory: the
+// classes it stores to, or everything (a callout, an unclassified store).
+type memKills struct {
+	all     bool
+	classes uint8 // bit per memory class
+}
+
+func (k *memKills) add(o memKills) {
+	k.all = k.all || o.all
+	k.classes |= o.classes
+}
+
+// kills reports whether the code can change a word of the given class.
+func (k memKills) kills(mem uint8) bool {
+	return k.all || k.classes&(1<<mem) != 0
+}
+
+// blockKills returns what the values of b can change in memory. A safe
+// point changes nothing: no Lua code runs there.
+func blockKills(b *Block) (k memKills) {
+	for _, v := range b.Values {
+		switch v.Op {
+		case OpStore64, OpStoreF64:
+			if v.Mem == MemNone {
+				k.all = true
+			} else {
+				k.classes |= 1 << v.Mem
+			}
+		case OpCallout:
+			k.all = true
+		}
+	}
+	return k
+}
+
+// memCSE removes redundant memory accesses and checks along the
+// dominator tree: a load of an address that was loaded before, with
+// nothing on any path in between that could have changed the word, and
+// a guard on a condition that a dominating guard already established.
+// A stored number is forwarded to later loads of the same word.
+func memCSE(f *Func) bool {
+	idom := dominators(f)
+	children := make([][]*Block, len(f.Blocks))
+	kills := make([]memKills, len(f.Blocks))
+	for _, b := range f.Blocks {
+		kills[b.order] = blockKills(b)
+		if b != f.Entry && idom[b.order] != nil {
+			children[idom[b.order].order] = append(children[idom[b.order].order], b)
+		}
+	}
+	// between returns what the code on the paths from the immediate
+	// dominator of b to b can change: the blocks that reach b without
+	// passing the dominator, which for the header of a loop includes
+	// the loop.
+	between := func(b *Block) (k memKills) {
+		stop := idom[b.order]
+		seen := map[*Block]bool{stop: true}
+		work := append([]*Block(nil), b.Preds...)
+		for len(work) > 0 {
+			q := work[len(work)-1]
+			work = work[:len(work)-1]
+			if seen[q] {
+				continue
+			}
+			seen[q] = true
+			k.add(kills[q.order])
+			work = append(work, q.Preds...)
+		}
+		return k
+	}
+	repl := make(map[*Value]*Value)
+	resolve := func(v *Value) *Value {
+		for {
+			n, ok := repl[v]
+			if !ok {
+				return v
+			}
+			v = n
+		}
+	}
+	changed := false
+	guarded := make(map[*Value]bool)
+	var walk func(b *Block, loads map[memKey]memWord)
+	walk = func(b *Block, loads map[memKey]memWord) {
+		var guards []*Value
+		n := 0
+		for _, v := range b.Values {
+			keep := true
+			switch v.Op {
+			case OpLoad64, OpLoad32, OpLoad8, OpLoadF64:
+				if v.Mem == MemNone {
+					break
+				}
+				k := memKey{v.Op, resolve(v.Args[0]).ID, v.Aux}
+				if prev, ok := loads[k]; ok && prev.v.Type == v.Type {
+					repl[v] = prev.v
+					keep = false
+				} else {
+					loads[k] = memWord{v, v.Mem}
+				}
+			case OpStore64, OpStoreF64:
+				// The store invalidates the loads of its class, except
+				// those of another word of the same object (the same
+				// base value at a different displacement). What it
+				// stored is the content of that word from now on.
+				base := resolve(v.Args[0]).ID
+				for k, l := range loads {
+					if v.Mem != MemNone && (l.mem != v.Mem || (k.base == base && (k.disp >= v.Aux+8 || k.disp+8 <= v.Aux))) {
+						continue
+					}
+					delete(loads, k)
+				}
+				if v.Mem != MemNone {
+					stored := resolve(v.Args[1])
+					if v.Op == OpStore64 && stored.Type == TInt {
+						loads[memKey{OpLoad64, base, v.Aux}] = memWord{stored, v.Mem}
+					} else if v.Op == OpStoreF64 && stored.Type == TFloat {
+						loads[memKey{OpLoadF64, base, v.Aux}] = memWord{stored, v.Mem}
+					}
+				}
+			case OpCallout:
+				// Go code may have run: nothing is known about memory
+				for k := range loads {
+					delete(loads, k)
+				}
+			case OpGuard:
+				// (a condition is a value: once checked it holds in all
+				// the code the check dominates)
+				cond := resolve(v.Args[0])
+				if guarded[cond] {
+					keep = false
+				} else {
+					guarded[cond] = true
+					guards = append(guards, cond)
+				}
+			}
+			if keep {
+				b.Values[n] = v
+				n++
+			} else {
+				changed = true
+			}
+		}
+		b.Values = b.Values[:n]
+		for _, c := range children[b.order] {
+			// what is known at the end of b holds at the start of a
+			// dominated block unless code in between can change it
+			inherited := make(map[memKey]memWord, len(loads))
+			if len(c.Preds) == 1 {
+				for k, l := range loads {
+					inherited[k] = l
+				}
+			} else if k := between(c); !k.all {
+				for key, l := range loads {
+					if !k.kills(l.mem) {
+						inherited[key] = l
+					}
+				}
+			}
+			walk(c, inherited)
+		}
+		for _, cond := range guards {
+			delete(guarded, cond)
+		}
+	}
+	walk(f.Entry, make(map[memKey]memWord))
+	replaceUses(f, repl)
+	return changed
 }
 
 // deadCode removes values whose results are never used and that have no

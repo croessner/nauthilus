@@ -948,6 +948,9 @@ func base55NextKey(tb *LTable, key LValue) (LValue, bool) {
 		if index >= 1 && index <= int64(tb.arrayLen()) {
 			return key, true
 		}
+		if _, ok := tb.sparse[int(index-1)]; ok {
+			return key, true
+		}
 	case LNumber:
 		if _, ok := floatToInteger(float64(k)); ok {
 			return key, false

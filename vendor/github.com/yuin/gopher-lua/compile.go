@@ -1022,11 +1022,17 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 			} else {
 				compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
 			}
-			ac.keyrk = reg
-			reg += compileExpr(context, reg, st.Key, ecnone(0))
-			if _, ok := st.Key.(*ast.StringExpr); ok {
-				ac.keyks = true
+			_, isString := st.Key.(*ast.StringExpr)
+			_, isNumber := st.Key.(*ast.NumberExpr)
+			if isString || isNumber || len(stmt.Lhs) == 1 {
+				// a constant key needs no register, and with a single
+				// target a variable used as key can be read in place
+				compileExprWithKMVPropagation(context, st.Key, &reg, &ac.keyrk)
+			} else {
+				ac.keyrk = reg
+				reg += compileExpr(context, reg, st.Key, ecnone(0))
 			}
+			ac.keyks = isString
 			acs = append(acs, ac)
 
 		default:
@@ -1718,10 +1724,13 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 		context.Proto.EnvUpvalue = int16(context.Upvalues.Find("_ENV"))
 		context.Proto.Version = Lua55
 	}
-	for _, clv := range context.Proto.Constants {
+	for i, clv := range context.Proto.Constants {
 		sv := ""
 		if slv, ok := clv.(LString); ok {
-			sv = string(slv)
+			// (interned, see intern.go: both views of the constant must
+			// share the canonical string)
+			sv = internConstant(string(slv))
+			context.Proto.Constants[i] = LString(sv)
 		}
 		context.Proto.stringConstants = append(context.Proto.stringConstants, sv)
 	}

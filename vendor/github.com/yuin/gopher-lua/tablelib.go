@@ -28,6 +28,7 @@ var tableFuncs = map[string]LGFunction{
 
 func tableSort(L *LState) int {
 	tbl := L.CheckTable(1)
+	tbl.densify()
 	tbl.genericize() // the sorter works on the generic array representation
 	// (only the elements up to the border are sorted: the array part may
 	// end with nil values after elements were removed by assignment)

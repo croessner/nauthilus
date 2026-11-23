@@ -24,7 +24,7 @@ func OpenChannel(L *LState) int {
 	mod = L.RegisterModule(ChannelLibName, channelFuncs)
 	mt := L.SetFuncs(L.NewTable(), channelMethods)
 	mt.RawSetString("__index", mt)
-	L.G.builtinMts[int(LTChannel)] = mt
+	L.G.setBuiltinMetatable(LTChannel, mt)
 	//	}
 	L.Push(mod)
 	return 1

@@ -243,6 +243,11 @@ func instEffect(fp *FunctionProto, pc int) (bcEffect, int) {
 		e.reads.add(A)
 		e.reads.add(A + 1)
 		e.reads.add(A + 2)
+		// the loop variables receive the results of the iterator (nil
+		// when the loop ends); B selects the layout with a closing value
+		for r := A + 3 + B; r < A+3+B+C; r++ {
+			e.writes.add(r)
+		}
 		// the instruction is followed by a JMP back to the loop body that
 		// is taken when the iterator returned a value
 		e.succs[0] = pc + 2 + opGetArgSbx(code[pc+1])

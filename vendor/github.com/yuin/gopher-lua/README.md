@@ -35,7 +35,7 @@ The module keeps GopherLua's import path, so it is used through a `replace`
 directive in the `go.mod` of your program:
 
 ```bash
-go mod edit -replace github.com/yuin/gopher-lua=github.com/croessner/gopher-lua-jit@v0.1.0
+go mod edit -replace github.com/yuin/gopher-lua=github.com/croessner/gopher-lua-jit@v0.2.1
 go mod tidy
 ```
 
@@ -106,12 +106,20 @@ More: [examples/basic](examples/basic), [examples/jit](examples/jit),
 | everything else | yes | falls back to the interpreter | cross-compiled only |
 
 Speed, on the benchmark kernels in [`benchmarks/`](benchmarks) (details and
-methodology in [docs/benchmarks.md](docs/benchmarks.md)):
+methodology in [docs/benchmarks.md](docs/benchmarks.md); measured on an old
+laptop with a base load that was very high at times, so read the ratios,
+not the absolute times):
 
-- the interpreter is on par with upstream GopherLua (it is the same design),
-- the JIT speeds up numeric and array loops by one to two orders of magnitude,
-- code dominated by function calls, string operations, hash-table field access
-  or metamethods is **not** accelerated by the JIT and runs at interpreter speed.
+- the interpreter is on par with upstream GopherLua (it is the same design;
+  field access and state creation are somewhat faster),
+- the JIT speeds up loops over numbers, arrays, fields, objects with
+  methods, module-level tables, string scanning and calls of small Lua
+  and library functions by one to two orders of magnitude (6x to 145x on
+  the kernels; 1.6x to 37x faster than the PUC-Rio Lua 5.5 interpreter;
+  between on par with and 3x behind LuaJIT),
+- code dominated by allocation (string building, tables or closures
+  created in the loop), recursion, metamethods or calls into Go is **not**
+  accelerated by the JIT and runs at interpreter speed.
 
 ## Documentation
 

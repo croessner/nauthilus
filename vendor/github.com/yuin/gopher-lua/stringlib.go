@@ -24,7 +24,7 @@ func OpenString(L *LState) int {
 	mod.RawSetString("gmatch", gmatch)
 	mod.RawSetString("gfind", gmatch)
 	mod.RawSetString("__index", mod)
-	L.G.builtinMts[int(LTString)] = mod
+	L.G.setBuiltinMetatable(LTString, mod)
 	//}
 	L.Push(mod)
 	return 1
@@ -493,7 +493,7 @@ func openString55(L *LState) int {
 	mod := L.RegisterModule(StringLibName, strFuncs55).(*LTable)
 	mt := L.NewTable()
 	mt.RawSetString("__index", mod)
-	L.G.builtinMts[int(LTString)] = mt
+	L.G.setBuiltinMetatable(LTString, mt)
 	L.Push(mod)
 	return 1
 }

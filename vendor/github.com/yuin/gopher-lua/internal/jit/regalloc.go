@@ -19,6 +19,9 @@ const (
 	LocSpill
 	// LocConst is a constant (only used in exit descriptions).
 	LocConst
+	// LocRegBase is the address of the Lua register window (only used
+	// in exit descriptions, for a value that is that address).
+	LocRegBase
 )
 
 // Loc is the location of a value.

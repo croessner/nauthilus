@@ -1866,6 +1866,7 @@ func (ls *LState) GetStack(level int) (*Debug, bool) {
 }
 
 func (ls *LState) GetLocal(dbg *Debug, no int) (string, LValue) {
+	ls.jitSyncLocals()
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
 		return name, ls.reg.Get(frame.LocalBase + no - 1)
@@ -1874,6 +1875,7 @@ func (ls *LState) GetLocal(dbg *Debug, no int) (string, LValue) {
 }
 
 func (ls *LState) SetLocal(dbg *Debug, no int, lv LValue) string {
+	ls.jitSyncLocals()
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
 		ls.reg.Set(frame.LocalBase+no-1, lv)
@@ -2234,7 +2236,7 @@ func (ls *LState) SetMetatable(obj LValue, mt LValue) {
 	case *LUserData:
 		v.Metatable = mt
 	default:
-		ls.G.builtinMts[int(obj.Type())] = mt
+		ls.G.setBuiltinMetatable(obj.Type(), mt)
 	}
 }
 

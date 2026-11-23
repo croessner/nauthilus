@@ -595,6 +595,8 @@ func debug55GetLocal(L *LState) int {
 		L.Push(LNil)
 		return 1
 	}
+	// (compiled code may not have written the register back yet)
+	L1.jitSyncLocals()
 	L.Push(LString(name))
 	L.Push(L1.reg.Get(reg))
 	return 2
@@ -615,6 +617,7 @@ func debug55SetLocal(L *LState) int {
 		L.Push(LNil)
 		return 1
 	}
+	L1.jitSyncLocals()
 	L1.reg.Set(reg, value)
 	L1.jitLocalChanged()
 	L.Push(LString(name))
