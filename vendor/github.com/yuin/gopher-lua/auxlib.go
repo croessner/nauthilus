@@ -17,19 +17,73 @@ func (ls *LState) CheckAny(n int) LValue {
 	return ls.Get(n)
 }
 
+// argInteger converts an argument value to an integer following the
+// language profile: Lua 5.1 truncates floats, Lua 5.5 requires an exact
+// integer representation and coerces numeric strings.
+func (ls *LState) argInteger(n int, v LValue) (int64, bool) {
+	switch iv := v.(type) {
+	case LInteger:
+		return int64(iv), true
+	case LNumber:
+		if !ls.lang55 {
+			return int64(iv), true
+		}
+		if i, ok := floatToInteger(float64(iv)); ok {
+			return i, true
+		}
+		ls.ArgError(n, "number has no integer representation")
+	case LString:
+		if ls.lang55 {
+			if num, ok := str2Number55(string(iv)); ok {
+				return ls.argInteger(n, num)
+			}
+		}
+	}
+	return 0, false
+}
+
 func (ls *LState) CheckInt(n int) int {
-	v := ls.Get(n)
-	if intv, ok := v.(LNumber); ok {
-		return int(intv)
+	if i, ok := ls.argInteger(n, ls.Get(n)); ok {
+		return int(i)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
 }
 
-func (ls *LState) CheckInt64(n int) int64 {
+// CheckInteger checks that argument n is a number with an integer
+// representation and returns it as an LInteger.
+func (ls *LState) CheckInteger(n int) LInteger {
+	if i, ok := ls.argInteger(n, ls.Get(n)); ok {
+		return LInteger(i)
+	}
+	ls.TypeError(n, LTNumber)
+	return 0
+}
+
+// OptInteger returns argument n as an LInteger, or d if it is absent.
+func (ls *LState) OptInteger(n int, d LInteger) LInteger {
 	v := ls.Get(n)
-	if intv, ok := v.(LNumber); ok {
-		return int64(intv)
+	if v == LNil {
+		return d
+	}
+	if i, ok := ls.argInteger(n, v); ok {
+		return LInteger(i)
+	}
+	ls.TypeError(n, LTNumber)
+	return 0
+}
+
+// ToInteger converts the value at index n to an LInteger. The second
+// result is false if the value is not a number with an exact integer
+// representation.
+func (ls *LState) ToInteger(n int) (LInteger, bool) {
+	i, ok := LVAsInteger(ls.Get(n))
+	return LInteger(i), ok
+}
+
+func (ls *LState) CheckInt64(n int) int64 {
+	if i, ok := ls.argInteger(n, ls.Get(n)); ok {
+		return i
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -40,13 +94,27 @@ func (ls *LState) CheckNumber(n int) LNumber {
 	if lv, ok := v.(LNumber); ok {
 		return lv
 	}
+	if lv, ok := v.(LInteger); ok {
+		return LNumber(lv)
+	}
 	if lv, ok := v.(LString); ok {
-		if num, err := parseNumber(string(lv)); err == nil {
-			return num
+		if num, ok := ls.strToNumber(string(lv)); ok {
+			return LVAsNumber(num)
 		}
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
+}
+
+// CheckNumberValue checks that argument n is a number (or a string
+// convertible to a number) and returns it preserving its subtype
+// (LInteger or LNumber).
+func (ls *LState) CheckNumberValue(n int) LValue {
+	if num, ok := ls.toNumberValue(ls.Get(n)); ok {
+		return num
+	}
+	ls.TypeError(n, LTNumber)
+	return LNil
 }
 
 func (ls *LState) CheckString(n int) string {
@@ -54,7 +122,7 @@ func (ls *LState) CheckString(n int) string {
 	if lv, ok := v.(LString); ok {
 		return string(lv)
 	} else if LVCanConvToString(v) {
-		return ls.ToString(n)
+		return ls.valueToString(v)
 	}
 	ls.TypeError(n, LTString)
 	return ""
@@ -133,6 +201,9 @@ func (ls *LState) CheckOption(n int, options []string) int {
 			return i
 		}
 	}
+	if ls.lang55 {
+		ls.ArgError(n, fmt.Sprintf("invalid option '%s'", str))
+	}
 	ls.ArgError(n, fmt.Sprintf("invalid option: %s (must be one of %s)", str, strings.Join(options, ",")))
 	return 0
 }
@@ -146,8 +217,8 @@ func (ls *LState) OptInt(n int, d int) int {
 	if v == LNil {
 		return d
 	}
-	if intv, ok := v.(LNumber); ok {
-		return int(intv)
+	if i, ok := ls.argInteger(n, v); ok {
+		return int(i)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -158,8 +229,8 @@ func (ls *LState) OptInt64(n int, d int64) int64 {
 	if v == LNil {
 		return d
 	}
-	if intv, ok := v.(LNumber); ok {
-		return int64(intv)
+	if i, ok := ls.argInteger(n, v); ok {
+		return i
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -173,6 +244,9 @@ func (ls *LState) OptNumber(n int, d LNumber) LNumber {
 	if lv, ok := v.(LNumber); ok {
 		return lv
 	}
+	if lv, ok := v.(LInteger); ok {
+		return LNumber(lv)
+	}
 	ls.TypeError(n, LTNumber)
 	return 0
 }
@@ -184,6 +258,9 @@ func (ls *LState) OptString(n int, d string) string {
 	}
 	if lv, ok := v.(LString); ok {
 		return string(lv)
+	}
+	if ls.lang55 && LVCanConvToString(v) {
+		return ls.valueToString(v)
 	}
 	ls.TypeError(n, LTString)
 	return ""
@@ -242,10 +319,20 @@ func (ls *LState) OptUserData(n int, d *LUserData) *LUserData {
 /* error operations {{{ */
 
 func (ls *LState) ArgError(n int, message string) {
+	if ls.lang55 {
+		debug55ArgError(ls, n, message)
+	}
 	ls.RaiseError("bad argument #%v to %v (%v)", n, ls.rawFrameFuncName(ls.currentFrame), message)
 }
 
 func (ls *LState) TypeError(n int, typ LValueType) {
+	if ls.lang55 {
+		got := "no value"
+		if n <= ls.GetTop() {
+			got = ls.typeNameOf(ls.Get(n))
+		}
+		debug55ArgError(ls, n, fmt.Sprintf("%v expected, got %v", typ.String(), got))
+	}
 	ls.RaiseError("bad argument #%v to %v (%v expected, got %v)", n, ls.rawFrameFuncName(ls.currentFrame), typ.String(), ls.Get(n).Type().String())
 }
 
@@ -305,6 +392,7 @@ func (ls *LState) RegisterModule(name string, funcs map[string]LGFunction) LValu
 }
 
 func (ls *LState) SetFuncs(tb *LTable, funcs map[string]LGFunction, upvalues ...LValue) *LTable {
+	tb.reserveFields(len(funcs))
 	for fname, fn := range funcs {
 		tb.RawSetString(fname, ls.NewClosure(fn, upvalues...))
 	}
@@ -422,10 +510,31 @@ func (ls *LState) ToStringMeta(lv LValue) LValue {
 		ls.Push(fn)
 		ls.Push(lv)
 		ls.Call(1, 1)
-		return ls.reg.Pop()
-	} else {
-		return LString(lv.String())
+		ret := ls.reg.Pop()
+		if ls.lang55 {
+			switch ret.(type) {
+			case LString:
+			case LNumber, LInteger:
+				return LString(ls.numToString(ret))
+			default:
+				ls.RaiseError("'__tostring' must return a string")
+			}
+		}
+		return ret
 	}
+	switch v := lv.(type) {
+	case LNumber, LInteger:
+		return LString(ls.numToString(v))
+	case *LTable, *LUserData:
+		if ls.lang55 {
+			if mt, ok := ls.metatable(lv, true).(*LTable); ok {
+				if name, ok := mt.RawGetString("__name").(LString); ok {
+					return LString(fmt.Sprintf("%s: %p", string(name), lv))
+				}
+			}
+		}
+	}
+	return LString(lv.String())
 }
 
 // Set a module loader to the package.preload table.

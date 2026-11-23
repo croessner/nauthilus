@@ -41,7 +41,7 @@ func LVAsBool(v LValue) bool { return v != LNil && v != LFalse }
 // if the LValue is a string or number, otherwise an empty string.
 func LVAsString(v LValue) string {
 	switch sn := v.(type) {
-	case LString, LNumber:
+	case LString, LNumber, LInteger:
 		return sn.String()
 	default:
 		return ""
@@ -52,7 +52,7 @@ func LVAsString(v LValue) string {
 // otherwise false.
 func LVCanConvToString(v LValue) bool {
 	switch v.(type) {
-	case LString, LNumber:
+	case LString, LNumber, LInteger:
 		return true
 	default:
 		return false
@@ -64,6 +64,8 @@ func LVAsNumber(v LValue) LNumber {
 	switch lv := v.(type) {
 	case LNumber:
 		return lv
+	case LInteger:
+		return LNumber(lv)
 	case LString:
 		if num, err := parseNumber(string(lv)); err == nil {
 			return num
@@ -143,11 +145,34 @@ func (nm LNumber) Format(f fmt.State, c rune) {
 type LTable struct {
 	Metatable LValue
 
-	array   []LValue
-	dict    map[LValue]LValue
-	strdict map[string]LValue
-	keys    []LValue
-	k2i     map[LValue]int
+	array []LValue
+	// fields holds the string-keyed entries in insertion order and
+	// fieldIndex locates them once there are too many for a linear
+	// search (see table.go). keys and k2i keep the insertion order of the
+	// other hash keys, which live in dict.
+	fields     []tableField
+	fieldIndex []uint32
+	dict       map[LValue]LValue
+	keys       []LValue
+	k2i        map[LValue]int
+
+	// iarr and farr are the unboxed array parts used when akind is
+	// arrayKindInt or arrayKindFloat (see table.go).
+	iarr []int64
+	farr []float64
+	// akind is the representation of the array part.
+	akind uint8
+	// typedOK allows the array part to use the unboxed representations.
+	typedOK bool
+	// watched is set once JIT compiled code depends on the version field.
+	watched bool
+	// intKeys is set for tables created by a Lua 5.5 profile state:
+	// integral number keys are reported as LInteger instead of LNumber.
+	intKeys bool
+	// version is bumped whenever a string-keyed entry holding a function or
+	// a table is replaced or removed. JIT compiled code uses it to guard
+	// speculated lookups of functions and library tables.
+	version uint32
 }
 
 func (tb *LTable) String() string   { return fmt.Sprintf("table: %p", tb) }
@@ -159,6 +184,9 @@ type LFunction struct {
 	Proto     *FunctionProto
 	GFunction LGFunction
 	Upvalues  []*Upvalue
+
+	// jitp caches the JIT state of the prototype for the owning state.
+	jitp *jitProto
 }
 type LGFunction func(*LState) int
 
@@ -174,6 +202,10 @@ type Global struct {
 	builtinMts map[int]LValue
 	tempFiles  []*os.File
 	gccount    int32
+
+	// jit is the JIT compiler state shared by all threads of this state
+	// (nil when the JIT is disabled or unsupported on this platform).
+	jit *jitState
 }
 
 type LState struct {
@@ -195,6 +227,25 @@ type LState struct {
 	mainLoop     func(*LState, *callFrame)
 	ctx          context.Context
 	ctxCancelFn  context.CancelFunc
+
+	// lang55 caches Options.LanguageVersion == Lua55.
+	lang55 bool
+	// typedArrays enables unboxed int/float array parts for new tables.
+	typedArrays bool
+	// jitOn is true if this thread runs with the JIT enabled main loop.
+	jitOn bool
+	// jitOwner is true for the state that created the JIT state (the one
+	// returned by NewState): closing it releases the native code.
+	jitOwner bool
+
+	// nny counts the nested interpreter loops started by Go code on this
+	// thread; the thread cannot yield while it is non-zero.
+	nny int
+	// tbc is the list of to-be-closed variables (registry indices) of this
+	// thread, in ascending order.
+	tbc []tbcEntry
+	// jit is the per-thread JIT execution state (nil when the JIT is off).
+	jit *jitThread
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }

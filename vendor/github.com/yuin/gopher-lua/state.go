@@ -109,6 +109,14 @@ type Options struct {
 	// If `MinimizeStackMemory` is set, the call stack will be automatically grown or shrank up to a limit of
 	// `CallStackSize` in order to minimize memory usage. This does incur a slight performance penalty.
 	MinimizeStackMemory bool
+	// LanguageVersion selects the Lua language profile. The zero value is
+	// Lua51, the GopherLua compatible profile; Lua55 enables Lua 5.5
+	// semantics (integers, bitwise operators, _ENV, to-be-closed variables
+	// and the Lua 5.5 standard library).
+	LanguageVersion LanguageVersion
+	// JIT configures the native just-in-time compiler. It is disabled by
+	// default.
+	JIT JITOptions
 }
 
 /* }}} */
@@ -628,6 +636,22 @@ func (rg *registry) SetNumber(regi int, vali LNumber) { // +inline-start
 	}
 } // +inline-end
 
+func (rg *registry) SetInteger(regi int, vali LInteger) { // +inline-start
+	newSize := regi + 1
+	// this section is inlined by go-inline
+	// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
+	{
+		requiredSize := newSize
+		if requiredSize > cap(rg.array) {
+			rg.resize(requiredSize)
+		}
+	}
+	rg.array[regi] = rg.alloc.LInteger2I(vali)
+	if regi >= rg.top {
+		rg.top = regi + 1
+	}
+} // +inline-end
+
 func (rg *registry) IsFull() bool {
 	return rg.top >= cap(rg.array)
 }
@@ -678,7 +702,10 @@ func newLState(options Options) *LState {
 		hasErrorFunc: false,
 		mainLoop:     mainLoop,
 		ctx:          nil,
+		lang55:       options.LanguageVersion == Lua55,
 	}
+	ls.G.Registry.intKeys = ls.lang55
+	ls.G.Global.intKeys = ls.lang55
 	if options.MinimizeStackMemory {
 		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
 	} else {
@@ -733,9 +760,6 @@ func (ls *LState) closeAllUpvalues() { // +inline-start
 } // +inline-end
 
 func (ls *LState) raiseError(level int, format string, args ...interface{}) {
-	if !ls.hasErrorFunc {
-		ls.closeAllUpvalues()
-	}
 	message := format
 	if len(args) > 0 {
 		message = fmt.Sprintf(format, args...)
@@ -1111,11 +1135,11 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 			if CompatVarArg {
 				ls.reg.SetTop(cf.LocalBase + nargs + np + 1)
 				if (proto.IsVarArg & VarArgNeedsArg) != 0 {
-					argtb := newLTable(nvarargs, 0)
+					argtb := ls.newTable(nvarargs, 0)
 					for i := 0; i < nvarargs; i++ {
 						argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
 					}
-					argtb.RawSetString("n", LNumber(nvarargs))
+					argtb.RawSetString("n", ls.newInt(int64(nvarargs)))
 					//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
 					ls.reg.array[cf.LocalBase+nargs+np] = argtb
 				} else {
@@ -1135,7 +1159,7 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 		ls.reg.Insert(fn, cf.LocalBase)
 	}
 	if cf.Fn == nil {
-		ls.RaiseError("attempt to call a non-function object")
+		ls.callError(fn)
 	}
 	if ls.stack.IsFull() {
 		ls.RaiseError("stack overflow")
@@ -1223,11 +1247,11 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 				if CompatVarArg {
 					ls.reg.SetTop(cf.LocalBase + nargs + np + 1)
 					if (proto.IsVarArg & VarArgNeedsArg) != 0 {
-						argtb := newLTable(nvarargs, 0)
+						argtb := ls.newTable(nvarargs, 0)
 						for i := 0; i < nvarargs; i++ {
 							argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
 						}
-						argtb.RawSetString("n", LNumber(nvarargs))
+						argtb.RawSetString("n", ls.newInt(int64(nvarargs)))
 						//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
 						ls.reg.array[cf.LocalBase+nargs+np] = argtb
 					} else {
@@ -1261,6 +1285,8 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 		Parent:     ls.currentFrame,
 		TailCall:   0,
 	}, lv, meta)
+	// while Go code runs a nested interpreter loop the thread cannot yield
+	ls.nny++
 	if ls.G.MainThread == nil {
 		ls.G.MainThread = ls
 		ls.G.CurrentThread = ls
@@ -1268,6 +1294,7 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 	} else {
 		ls.mainLoop(ls, ls.currentFrame)
 	}
+	ls.nny--
 	if nret != MultRet {
 		ls.reg.SetTop(rbase + nret)
 	}
@@ -1286,7 +1313,7 @@ func (ls *LState) getField(obj LValue, key LValue) LValue {
 		metaindex := ls.metaOp1(curobj, "__index")
 		if metaindex == LNil {
 			if !istable {
-				ls.RaiseError("attempt to index a non-table object(%v) with key '%s'", curobj.Type().String(), key.String())
+				ls.indexError(curobj, key.String())
 			}
 			return LNil
 		}
@@ -1300,7 +1327,7 @@ func (ls *LState) getField(obj LValue, key LValue) LValue {
 			curobj = metaindex
 		}
 	}
-	ls.RaiseError("too many recursions in gettable")
+	ls.chainError("__index", "too many recursions in gettable")
 	return nil
 }
 
@@ -1317,7 +1344,7 @@ func (ls *LState) getFieldString(obj LValue, key string) LValue {
 		metaindex := ls.metaOp1(curobj, "__index")
 		if metaindex == LNil {
 			if !istable {
-				ls.RaiseError("attempt to index a non-table object(%v) with key '%s'", curobj.Type().String(), key)
+				ls.indexError(curobj, key)
 			}
 			return LNil
 		}
@@ -1331,7 +1358,7 @@ func (ls *LState) getFieldString(obj LValue, key string) LValue {
 			curobj = metaindex
 		}
 	}
-	ls.RaiseError("too many recursions in gettable")
+	ls.chainError("__index", "too many recursions in gettable")
 	return nil
 }
 
@@ -1348,7 +1375,7 @@ func (ls *LState) setField(obj LValue, key LValue, value LValue) {
 		metaindex := ls.metaOp1(curobj, "__newindex")
 		if metaindex == LNil {
 			if !istable {
-				ls.RaiseError("attempt to index a non-table object(%v) with key '%s'", curobj.Type().String(), key.String())
+				ls.indexError(curobj, key.String())
 			}
 			ls.RawSet(tb, key, value)
 			return
@@ -1364,7 +1391,7 @@ func (ls *LState) setField(obj LValue, key LValue, value LValue) {
 			curobj = metaindex
 		}
 	}
-	ls.RaiseError("too many recursions in settable")
+	ls.chainError("__newindex", "too many recursions in settable")
 }
 
 func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
@@ -1380,7 +1407,7 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 		metaindex := ls.metaOp1(curobj, "__newindex")
 		if metaindex == LNil {
 			if !istable {
-				ls.RaiseError("attempt to index a non-table object(%v) with key '%s'", curobj.Type().String(), key)
+				ls.indexError(curobj, key)
 			}
 			tb.RawSetString(key, value)
 			return
@@ -1396,7 +1423,7 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 			curobj = metaindex
 		}
 	}
-	ls.RaiseError("too many recursions in settable")
+	ls.chainError("__newindex", "too many recursions in settable")
 }
 
 /* }}} */
@@ -1427,6 +1454,7 @@ func NewState(opts ...Options) *LState {
 			}
 		}
 		ls = newLState(opts[0])
+		ls.initJIT()
 		if !opts[0].SkipOpenLibs {
 			ls.OpenLibs()
 		}
@@ -1447,6 +1475,7 @@ func (ls *LState) Close() {
 	}
 	ls.stack.FreeAll()
 	ls.stack = nil
+	ls.closeJIT()
 }
 
 /* registry operations {{{ */
@@ -1602,11 +1631,12 @@ func (ls *LState) Remove(index int) {
 /* object allocation {{{ */
 
 func (ls *LState) NewTable() *LTable {
-	return newLTable(defaultArrayCap, defaultHashCap)
+	// both parts of the table are allocated on first use
+	return ls.newTable(0, 0)
 }
 
 func (ls *LState) CreateTable(acap, hcap int) *LTable {
-	return newLTable(acap, hcap)
+	return ls.newTable(acap, hcap)
 }
 
 // NewThread returns a new LState that shares with the original state all global objects.
@@ -1615,9 +1645,14 @@ func (ls *LState) NewThread() (*LState, context.CancelFunc) {
 	thread := newLState(ls.Options)
 	thread.G = ls.G
 	thread.Env = ls.Env
+	thread.typedArrays = ls.typedArrays
+	thread.jitOn = ls.jitOn
+	if thread.jitOn {
+		thread.mainLoop = mainLoopJIT
+	}
 	var f context.CancelFunc = nil
 	if ls.ctx != nil {
-		thread.mainLoop = mainLoopWithContext
+		thread.mainLoop = selectMainLoop(thread.jitOn, true)
 		thread.ctx, f = context.WithCancel(ls.ctx)
 		thread.ctxCancelFn = f
 	}
@@ -1625,7 +1660,17 @@ func (ls *LState) NewThread() (*LState, context.CancelFunc) {
 }
 
 func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
-	return newLFunctionL(proto, ls.Env, int(proto.NumUpvalues))
+	fn := newLFunctionL(proto, ls.Env, int(proto.NumUpvalues))
+	ls.initEnvUpvalue(fn, ls.Env)
+	return fn
+}
+
+// initEnvUpvalue initializes the _ENV upvalue of a main chunk compiled
+// for the Lua 5.5 profile.
+func (ls *LState) initEnvUpvalue(fn *LFunction, env LValue) {
+	if idx := int(fn.Proto.EnvUpvalue); idx >= 0 && idx < len(fn.Upvalues) && fn.Upvalues[idx] == nil {
+		fn.Upvalues[idx] = &Upvalue{value: env, closed: true}
+	}
 }
 
 func (ls *LState) NewUserData() *LUserData {
@@ -1661,6 +1706,9 @@ func (ls *LState) ToInt(n int) int {
 	if lv, ok := ls.Get(n).(LNumber); ok {
 		return int(lv)
 	}
+	if lv, ok := ls.Get(n).(LInteger); ok {
+		return int(lv)
+	}
 	if lv, ok := ls.Get(n).(LString); ok {
 		if num, err := parseNumber(string(lv)); err == nil {
 			return int(num)
@@ -1671,6 +1719,9 @@ func (ls *LState) ToInt(n int) int {
 
 func (ls *LState) ToInt64(n int) int64 {
 	if lv, ok := ls.Get(n).(LNumber); ok {
+		return int64(lv)
+	}
+	if lv, ok := ls.Get(n).(LInteger); ok {
 		return int64(lv)
 	}
 	if lv, ok := ls.Get(n).(LString); ok {
@@ -1735,9 +1786,6 @@ func (ls *LState) Error(lv LValue, level int) {
 	if str, ok := lv.(LString); ok {
 		ls.raiseError(level, string(str))
 	} else {
-		if !ls.hasErrorFunc {
-			ls.closeAllUpvalues()
-		}
 		ls.Push(lv)
 		ls.Panic(ls)
 	}
@@ -1829,6 +1877,7 @@ func (ls *LState) SetLocal(dbg *Debug, no int, lv LValue) string {
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
 		ls.reg.Set(frame.LocalBase+no-1, lv)
+		ls.jitLocalChanged()
 		return name
 	}
 	return ""
@@ -1884,6 +1933,11 @@ func (ls *LState) SetFEnv(obj LValue, env LValue) {
 	switch lv := obj.(type) {
 	case *LFunction:
 		lv.Env = tb
+		if !lv.IsG {
+			if idx := int(lv.Proto.EnvUpvalue); idx >= 0 && idx < len(lv.Upvalues) {
+				lv.Upvalues[idx] = &Upvalue{value: tb, closed: true}
+			}
+		}
 	case *LUserData:
 		lv.Env = tb
 	case *LState:
@@ -1964,7 +2018,7 @@ func (ls *LState) ObjLen(v1 LValue) int {
 		ls.Call(1, 1)
 		ret := ls.reg.Pop()
 		if ret.Type() == LTNumber {
-			return int(ret.(LNumber))
+			return int(LVAsNumber(ret))
 		}
 	} else if v1.Type() == LTTable {
 		return v1.(*LTable).Len()
@@ -2011,25 +2065,67 @@ func (ls *LState) Register(name string, fn LGFunction) {
 /* load and function call operations {{{ */
 
 func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
-	chunk, err := parse.Parse(reader, name)
+	popts := parse.Options{}
+	copts := CompileOptions{LanguageVersion: ls.Options.LanguageVersion}
+	if ls.lang55 {
+		popts.Version = parse.Lua55
+	}
+	chunk, err := parse.ParseWithOptions(reader, name, popts)
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
-	proto, err := Compile(chunk, name)
+	proto, err := CompileWithOptions(chunk, name, copts)
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
-	return newLFunctionL(proto, ls.currentEnv(), 0), nil
+	fn := newLFunctionL(proto, ls.currentEnv(), int(proto.NumUpvalues))
+	ls.initEnvUpvalue(fn, ls.currentEnv())
+	return fn, nil
 }
 
 func (ls *LState) Call(nargs, nret int) {
 	ls.callR(nargs, nret, -1)
 }
 
+// callMessageHandler runs the message handler of a protected call for
+// the error aerr and returns the error the protected call reports. A
+// handler that fails itself is reported instead of its result; the
+// caller unwinds the state in either case.
+func (ls *LState) callMessageHandler(errfunc *LFunction, aerr *ApiError, oldpanic func(*LState)) (err error) {
+	ls.Push(errfunc)
+	ls.Push(aerr.Object)
+	ls.Panic = panicWithoutTraceback
+	defer func() {
+		ls.Panic = oldpanic
+		rcv := recover()
+		if rcv == nil {
+			return
+		}
+		if _, ok := rcv.(*ApiError); !ok {
+			err = newApiErrorS(ApiErrorPanic, fmt.Sprint(rcv))
+			if ls.Options.IncludeGoStackTrace {
+				buf := make([]byte, 4096)
+				runtime.Stack(buf, false)
+				err.(*ApiError).StackTrace = strings.Trim(string(buf), "\000") + ls.stackTrace(0)
+			}
+			return
+		}
+		err = rcv.(*ApiError)
+		err.(*ApiError).StackTrace = ls.stackTrace(0)
+		if ls.lang55 {
+			err = newApiErrorS(ApiErrorError, "error in error handling")
+		}
+	}()
+	ls.Call(1, 1)
+	return newApiError(ApiErrorError, ls.Get(-1))
+}
+
 func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 	err = nil
 	sp := ls.stack.Sp()
 	base := ls.reg.Top() - nargs - 1
+	jitMark := ls.jitMark()
+	nny := ls.nny
 	oldpanic := ls.Panic
 	ls.Panic = panicWithoutTraceback
 	if errfunc != nil {
@@ -2051,37 +2147,41 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 				err = rcv.(*ApiError)
 			}
 			if errfunc != nil {
-				ls.Push(errfunc)
-				ls.Push(err.(*ApiError).Object)
-				ls.Panic = panicWithoutTraceback
-				defer func() {
-					ls.Panic = oldpanic
-					rcv := recover()
-					if rcv != nil {
-						if _, ok := rcv.(*ApiError); !ok {
-							err = newApiErrorS(ApiErrorPanic, fmt.Sprint(rcv))
-							if ls.Options.IncludeGoStackTrace {
-								buf := make([]byte, 4096)
-								runtime.Stack(buf, false)
-								err.(*ApiError).StackTrace = strings.Trim(string(buf), "\000") + ls.stackTrace(0)
-							}
-						} else {
-							err = rcv.(*ApiError)
-							err.(*ApiError).StackTrace = ls.stackTrace(0)
-						}
-						ls.stack.SetSp(sp)
-						ls.currentFrame = ls.stack.Last()
-						ls.reg.SetTop(base)
-					}
-				}()
-				ls.Call(1, 1)
-				err = newApiError(ApiErrorError, ls.Get(-1))
+				err = ls.callMessageHandler(errfunc, err.(*ApiError), oldpanic)
 			} else if len(err.(*ApiError).StackTrace) == 0 {
 				err.(*ApiError).StackTrace = ls.stackTrace(0)
+			}
+			// close the upvalues of the frames that are being unwound
+			// (and only those: frames below the protected call go on)
+			// this section is inlined by go-inline
+			// source function is 'func (ls *LState) closeUpvalues(idx int) ' in '_state.go'
+			{
+				idx := base
+				if ls.uvcache != nil {
+					var prev *Upvalue
+					for uv := ls.uvcache; uv != nil; uv = uv.next {
+						if uv.index >= idx {
+							if prev != nil {
+								prev.next = nil
+							} else {
+								ls.uvcache = nil
+							}
+							uv.Close()
+						}
+						prev = uv
+					}
+				}
 			}
 			ls.stack.SetSp(sp)
 			ls.currentFrame = ls.stack.Last()
 			ls.reg.SetTop(base)
+			ls.jitUnwind(jitMark)
+			ls.nny = nny
+			if n := len(ls.tbc); n > 0 && ls.tbc[n-1].idx >= base {
+				if aerr, ok := err.(*ApiError); ok {
+					err = ls.closeTBCOnError(base, aerr)
+				}
+			}
 		}
 		ls.stack.SetSp(sp)
 		if sp == 0 {
@@ -2259,7 +2359,7 @@ func (ls *LState) SetMx(mx int) {
 
 // SetContext set a context ctx to this LState. The provided ctx must be non-nil.
 func (ls *LState) SetContext(ctx context.Context) {
-	ls.mainLoop = mainLoopWithContext
+	ls.mainLoop = selectMainLoop(ls.jitOn, true)
 	ls.ctx = ctx
 }
 
@@ -2271,7 +2371,7 @@ func (ls *LState) Context() context.Context {
 // RemoveContext removes the context associated with this LState and returns this context.
 func (ls *LState) RemoveContext() context.Context {
 	oldctx := ls.ctx
-	ls.mainLoop = mainLoop
+	ls.mainLoop = selectMainLoop(ls.jitOn, false)
 	ls.ctx = nil
 	return oldctx
 }

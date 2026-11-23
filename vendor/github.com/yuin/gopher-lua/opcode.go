@@ -96,8 +96,23 @@ const (
 	OP_VARARG /*     A B     R(A) R(A+1) ... R(A+B-1) = vararg            */
 
 	OP_NOP /* NOP */
+
+	OP_IDIV /*      A B C   R(A) := RK(B) // RK(C)                          */
+	OP_BAND /*      A B C   R(A) := RK(B) & RK(C)                           */
+	OP_BOR  /*      A B C   R(A) := RK(B) | RK(C)                           */
+	OP_BXOR /*      A B C   R(A) := RK(B) ~ RK(C)                           */
+	OP_SHL  /*      A B C   R(A) := RK(B) << RK(C)                          */
+	OP_SHR  /*      A B C   R(A) := RK(B) >> RK(C)                          */
+	OP_BNOT /*      A B     R(A) := ~R(B)                                   */
+
+	OP_GETENV    /* A Bx    R(A) := _ENV[Kst(Bx)]  (_ENV is an upvalue)     */
+	OP_SETENV    /* A Bx    _ENV[Kst(Bx)] := R(A)  (_ENV is an upvalue)     */
+	OP_TBC       /* A       mark R(A) as a to-be-closed variable            */
+	OP_ERRNNIL   /* A Bx    if R(A) ~= nil then error (global Kst(Bx) already defined) */
+	OP_VARARGTAB /* A       R(A) := table of the vararg values (field n)    */
 )
-const opCodeMax = OP_NOP
+
+const opCodeMax = OP_VARARGTAB
 
 type opArgMode int
 
@@ -168,6 +183,18 @@ var opProps = []opProp{
 	opProp{"CLOSURE", false, true, opArgModeU, opArgModeN, opTypeABx},
 	opProp{"VARARG", false, true, opArgModeU, opArgModeN, opTypeABC},
 	opProp{"NOP", false, false, opArgModeR, opArgModeN, opTypeASbx},
+	opProp{"IDIV", false, true, opArgModeK, opArgModeK, opTypeABC},
+	opProp{"BAND", false, true, opArgModeK, opArgModeK, opTypeABC},
+	opProp{"BOR", false, true, opArgModeK, opArgModeK, opTypeABC},
+	opProp{"BXOR", false, true, opArgModeK, opArgModeK, opTypeABC},
+	opProp{"SHL", false, true, opArgModeK, opArgModeK, opTypeABC},
+	opProp{"SHR", false, true, opArgModeK, opArgModeK, opTypeABC},
+	opProp{"BNOT", false, true, opArgModeR, opArgModeN, opTypeABC},
+	opProp{"GETENV", false, true, opArgModeK, opArgModeN, opTypeABx},
+	opProp{"SETENV", false, false, opArgModeK, opArgModeN, opTypeABx},
+	opProp{"TBC", false, false, opArgModeN, opArgModeN, opTypeABC},
+	opProp{"ERRNNIL", false, false, opArgModeK, opArgModeN, opTypeABx},
+	opProp{"VARARGTAB", false, true, opArgModeN, opArgModeN, opTypeABC},
 }
 
 func opGetOpCode(inst uint32) int {
@@ -366,6 +393,30 @@ func opToString(inst uint32) string {
 		buf += fmt.Sprintf(";  R(%v) R(%v+1) ... R(%v+%v-1) = vararg", arga, arga, arga, argb)
 	case OP_NOP:
 		/* nothing to do */
+	case OP_IDIV:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) // RK(%v)", arga, argb, argc)
+	case OP_BAND:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) & RK(%v)", arga, argb, argc)
+	case OP_BOR:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) | RK(%v)", arga, argb, argc)
+	case OP_BXOR:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) ~ RK(%v)", arga, argb, argc)
+	case OP_SHL:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) << RK(%v)", arga, argb, argc)
+	case OP_SHR:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) >> RK(%v)", arga, argb, argc)
+	case OP_BNOT:
+		buf += fmt.Sprintf("; R(%v) := ~R(%v)", arga, argb)
+	case OP_GETENV:
+		buf += fmt.Sprintf("; R(%v) := _ENV[Kst(%v)]", arga, argbx)
+	case OP_SETENV:
+		buf += fmt.Sprintf("; _ENV[Kst(%v)] := R(%v)", argbx, arga)
+	case OP_TBC:
+		buf += fmt.Sprintf("; mark R(%v) to-be-closed", arga)
+	case OP_ERRNNIL:
+		buf += fmt.Sprintf("; if R(%v) ~= nil then error (global Kst(%v))", arga, argbx)
+	case OP_VARARGTAB:
+		buf += fmt.Sprintf("; R(%v) := {...}", arga)
 	}
 	return buf
 }

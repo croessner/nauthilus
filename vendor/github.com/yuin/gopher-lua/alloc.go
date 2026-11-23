@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"math"
 	"reflect"
 	"unsafe"
 )
@@ -18,9 +19,19 @@ var _uv uintptr
 
 var preloads [int(preloadLimit)]LValue
 
+const (
+	ipreloadMin = -128
+	ipreloadMax = 1023
+)
+
+var ipreloads [ipreloadMax - ipreloadMin + 1]LValue
+
 func init() {
 	for i := 0; i < int(preloadLimit); i++ {
 		preloads[i] = LNumber(i)
+	}
+	for i := range ipreloads {
+		ipreloads[i] = LInteger(i + ipreloadMin)
 	}
 }
 
@@ -32,6 +43,10 @@ type allocator struct {
 
 	scratchValue  LValue
 	scratchValueP *iface
+
+	iptrs          []int64
+	iscratchValue  LValue
+	iscratchValueP *iface
 }
 
 func newAllocator(size int) *allocator {
@@ -43,6 +58,9 @@ func newAllocator(size int) *allocator {
 	al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
 	al.scratchValue = LNumber(0)
 	al.scratchValueP = (*iface)(unsafe.Pointer(&al.scratchValue))
+	al.iptrs = make([]int64, 0, size)
+	al.iscratchValue = LInteger(1 << 40)
+	al.iscratchValueP = (*iface)(unsafe.Pointer(&al.iscratchValue))
 
 	return al
 }
@@ -56,7 +74,7 @@ func newAllocator(size int) *allocator {
 // as a whole can be gc-ed.
 func (al *allocator) LNumber2I(v LNumber) LValue {
 	// first check for shared preloaded numbers
-	if v >= 0 && v < preloadLimit && float64(v) == float64(int64(v)) {
+	if v >= 0 && v < preloadLimit && float64(v) == float64(int64(v)) && (v != 0 || !math.Signbit(float64(v))) {
 		return preloads[int(v)]
 	}
 
@@ -76,4 +94,19 @@ func (al *allocator) LNumber2I(v LNumber) LValue {
 	al.scratchValueP.word = unsafe.Pointer(fptr)
 
 	return al.scratchValue
+}
+
+// LInteger2I is the LInteger counterpart of LNumber2I: it boxes an integer
+// into an LValue using shared preloaded values for small integers and bulk
+// allocated pages for everything else.
+func (al *allocator) LInteger2I(v LInteger) LValue {
+	if v >= ipreloadMin && v <= ipreloadMax {
+		return ipreloads[int(v)-ipreloadMin]
+	}
+	if cap(al.iptrs) == len(al.iptrs) {
+		al.iptrs = make([]int64, 0, al.size)
+	}
+	al.iptrs = append(al.iptrs, int64(v))
+	al.iscratchValueP.word = unsafe.Pointer(&al.iptrs[len(al.iptrs)-1])
+	return al.iscratchValue
 }

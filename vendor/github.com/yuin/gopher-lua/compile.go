@@ -12,6 +12,10 @@ import (
 
 const maxRegisters = 200
 
+// maxUpvalues is the number of upvalues a function may have (their count
+// and the upvalue operands are stored in eight bits).
+const maxUpvalues = 255
+
 type expContextType int
 
 const (
@@ -42,6 +46,8 @@ type assigncontext struct {
 	valuerk  int
 	keyks    bool
 	needmove bool
+	// localreg is the register of a local variable target.
+	localreg int
 }
 
 type lblabels struct {
@@ -124,17 +130,90 @@ func isVarArgReturnExpr(expr ast.Expr) bool {
 	return false
 }
 
-func lnumberValue(expr ast.Expr) (LNumber, bool) {
-	if ex, ok := expr.(*ast.NumberExpr); ok {
-		lv, err := parseNumber(ex.Value)
-		if err != nil {
-			lv = LNumber(math.NaN())
+// numberLiteral converts the text of a numeric literal to a constant
+// value following the language profile of the function being compiled.
+func numberLiteral(context *funcContext, text string) LValue {
+	if context.lua55 {
+		if v, ok := str2Number55(text); ok {
+			return v
 		}
-		return lv, true
-	} else if ex, ok := expr.(*constLValueExpr); ok {
-		return ex.Value.(LNumber), true
+		return LNumber(math.NaN())
 	}
-	return 0, false
+	num, err := parseNumber(text)
+	if err != nil {
+		num = LNumber(math.NaN())
+	}
+	return num
+}
+
+// constNumber returns the numeric constant denoted by expr, if any.
+func constNumber(context *funcContext, expr ast.Expr) (LValue, bool) {
+	if ex, ok := expr.(*ast.NumberExpr); ok {
+		return numberLiteral(context, ex.Value), true
+	} else if ex, ok := expr.(*constLValueExpr); ok {
+		switch ex.Value.(type) {
+		case LNumber, LInteger:
+			return ex.Value, true
+		}
+	}
+	return nil, false
+}
+
+// constEqual reports whether two constants are identical (numbers are
+// compared by subtype and bit pattern so that 0.0, -0.0 and 0 stay
+// distinct).
+func constEqual(a, b LValue) bool {
+	switch av := a.(type) {
+	case LNumber:
+		bv, ok := b.(LNumber)
+		return ok && math.Float64bits(float64(av)) == math.Float64bits(float64(bv))
+	case LInteger:
+		bv, ok := b.(LInteger)
+		return ok && av == bv
+	}
+	switch b.(type) {
+	case LNumber, LInteger:
+		return false
+	}
+	return a == b
+}
+
+// foldArith evaluates a constant arithmetic or bitwise operation at
+// compile time. ok is false when the operation must be left to the
+// runtime (errors, or operands that are not foldable).
+func foldArith(context *funcContext, op string, lhs, rhs LValue) (LValue, bool) {
+	if !context.lua55 {
+		l, ok1 := lhs.(LNumber)
+		r, ok2 := rhs.(LNumber)
+		if !ok1 || !ok2 {
+			return nil, false
+		}
+		switch op {
+		case "+":
+			return l + r, true
+		case "-":
+			return l - r, true
+		case "*":
+			return l * r, true
+		case "/":
+			return l / r, true
+		case "%":
+			return luaModulo(l, r), true
+		case "^":
+			return LNumber(math.Pow(float64(l), float64(r))), true
+		}
+		return nil, false
+	}
+	opcode, ok := arithOpcodes[op]
+	if !ok {
+		return nil, false
+	}
+	return numberArith55(opcode, lhs, rhs)
+}
+
+var arithOpcodes = map[string]int{
+	"+": OP_ADD, "-": OP_SUB, "*": OP_MUL, "/": OP_DIV, "%": OP_MOD, "^": OP_POW,
+	"//": OP_IDIV, "&": OP_BAND, "|": OP_BOR, "~": OP_BXOR, "<<": OP_SHL, ">>": OP_SHR,
 }
 
 /* utilities }}} */
@@ -305,11 +384,36 @@ type varNamePoolValue struct {
 
 type varNamePool struct {
 	names  []string
+	attrs  []uint8
 	offset int
 }
 
+// Attributes of local variables (Lua 5.4+).
+const (
+	varAttrNone uint8 = iota
+	varAttrConst
+	varAttrClose
+)
+
+// Attr returns the attribute of the variable with the given index.
+func (vp *varNamePool) Attr(index int) uint8 {
+	if i := index - vp.offset; i >= 0 && i < len(vp.attrs) {
+		return vp.attrs[i]
+	}
+	return varAttrNone
+}
+
+// SetAttr sets the attribute of the variable with the given index.
+func (vp *varNamePool) SetAttr(index int, attr uint8) {
+	i := index - vp.offset
+	for len(vp.attrs) <= i {
+		vp.attrs = append(vp.attrs, varAttrNone)
+	}
+	vp.attrs[i] = attr
+}
+
 func newVarNamePool(offset int) *varNamePool {
-	return &varNamePool{make([]string, 0, 16), offset}
+	return &varNamePool{names: make([]string, 0, 16), offset: offset}
 }
 
 func (vp *varNamePool) Names() []string {
@@ -364,10 +468,152 @@ type codeBlock struct {
 	LastLine       int
 	labels         map[string]*gotoLabelDesc
 	firstGotoIndex int
+	// gdecls are the Lua 5.5 global declarations made in this block.
+	gdecls []globalDecl
+}
+
+// globalDecl is a Lua 5.5 global declaration. An empty name denotes the
+// collective form ("global *"). nlocals is the number of local variables
+// of the block that were declared before it.
+type globalDecl struct {
+	name    string
+	isConst bool
+	nlocals int
+}
+
+// nameKind classifies a resolved identifier.
+type nameKind int
+
+const (
+	nkLocal nameKind = iota
+	nkUpvalue
+	nkGlobal
+)
+
+// nameRef is the result of resolving an identifier.
+type nameRef struct {
+	kind    nameKind
+	reg     int
+	isConst bool
+	// declared is true for a global named in a global declaration.
+	declared bool
+}
+
+// resolveName resolves an identifier in the scope of context following
+// the Lua scoping rules (including Lua 5.5 global declarations).
+func resolveName(context *funcContext, name string, line int) nameRef {
+	collective := -1
+	namedSeen := false
+	for fc := context; fc != nil; fc = fc.Parent {
+		for block := fc.Block; block != nil; block = block.Parent {
+			lidx := block.LocalVars.Find(name)
+			lpos := lidx - block.LocalVars.offset
+			for i := len(block.gdecls) - 1; i >= 0; i-- {
+				gd := &block.gdecls[i]
+				if lidx >= 0 && gd.nlocals <= lpos {
+					break // the local variable was declared later
+				}
+				switch {
+				case gd.name == name:
+					return nameRef{kind: nkGlobal, isConst: gd.isConst, declared: true}
+				case gd.name == "":
+					if collective < 0 {
+						collective = 0
+						if gd.isConst {
+							collective = 1
+						}
+					}
+				default:
+					namedSeen = true
+				}
+			}
+			if lidx >= 0 {
+				ref := nameRef{kind: nkUpvalue, reg: lidx, isConst: block.LocalVars.Attr(lidx) != varAttrNone}
+				if fc == context {
+					ref.kind = nkLocal
+				}
+				return ref
+			}
+		}
+	}
+	if context.lua55 && name == "_ENV" {
+		// the environment upvalue of the enclosing chunk
+		return nameRef{kind: nkUpvalue}
+	}
+	if collective < 0 && namedSeen {
+		raiseCompileError(context, line, "variable '%s' not declared", name)
+	}
+	return nameRef{kind: nkGlobal, isConst: collective == 1}
+}
+
+// resolveEnv locates the _ENV variable used for global accesses of a
+// Lua 5.5 function. isLocal is true if it is a local of this function.
+func resolveEnv(context *funcContext) (reg int, isLocal bool) {
+	for fc := context; fc != nil; fc = fc.Parent {
+		if idx := fc.FindLocalVar("_ENV"); idx > -1 {
+			return idx, fc == context
+		}
+	}
+	return -1, false
+}
+
+// checkEnvForGlobal rejects a global access in a scope where _ENV itself
+// was declared global: there is no variable to index then.
+func checkEnvForGlobal(context *funcContext, name string, line int) {
+	if resolveName(context, "_ENV", line).declared {
+		raiseCompileError(context, line, "_ENV is global when accessing variable '%s'", name)
+	}
+}
+
+// emitGetGlobal emits code that loads the global name into register a.
+func emitGetGlobal(context *funcContext, a int, name string, line int) {
+	code := context.Code
+	kidx := context.ConstIndex(LString(name))
+	if !context.lua55 {
+		code.AddABx(OP_GETGLOBAL, a, kidx, line)
+		return
+	}
+	checkEnvForGlobal(context, name, line)
+
+	if envreg, isLocal := resolveEnv(context); isLocal {
+		if kidx <= opMaxIndexRk {
+			code.AddABC(OP_GETTABLEKS, a, envreg, opRkAsk(kidx), line)
+		} else {
+			code.AddABx(OP_LOADK, a, kidx, line)
+			code.AddABC(OP_GETTABLE, a, envreg, a, line)
+		}
+		return
+	}
+	context.Upvalues.RegisterUnique("_ENV")
+	code.AddABx(OP_GETENV, a, kidx, line)
+}
+
+// emitSetGlobal emits code that stores register a into the global name.
+// tmp is a free register.
+func emitSetGlobal(context *funcContext, a int, name string, tmp int, line int) {
+	code := context.Code
+	kidx := context.ConstIndex(LString(name))
+	if !context.lua55 {
+		code.AddABx(OP_SETGLOBAL, a, kidx, line)
+		return
+	}
+	checkEnvForGlobal(context, name, line)
+
+	if envreg, isLocal := resolveEnv(context); isLocal {
+		if kidx <= opMaxIndexRk {
+			code.AddABC(OP_SETTABLEKS, envreg, opRkAsk(kidx), a, line)
+		} else {
+			code.AddABx(OP_LOADK, tmp, kidx, line)
+			code.AddABC(OP_SETTABLE, envreg, tmp, a, line)
+		}
+		return
+	}
+	context.Upvalues.RegisterUnique("_ENV")
+	code.AddABx(OP_SETENV, a, kidx, line)
 }
 
 func newCodeBlock(localvars *varNamePool, blabel int, parent *codeBlock, pos ast.PositionHolder, firstGotoIndex int) *codeBlock {
-	bl := &codeBlock{localvars, blabel, parent, false, 0, 0, map[string]*gotoLabelDesc{}, firstGotoIndex}
+	bl := &codeBlock{localvars, blabel, parent, false, 0, 0, map[string]*gotoLabelDesc{}, firstGotoIndex, nil}
 	if pos != nil {
 		bl.LineStart = pos.Line()
 		bl.LastLine = pos.LastLine()
@@ -410,6 +656,13 @@ type funcContext struct {
 	labelPc         map[int]int
 	gotosCount      int
 	unresolvedGotos map[int]*gotoLabelDesc
+	// lua55 selects the Lua 5.5 language profile.
+	lua55 bool
+	// hasTBC is set once the function declared a to-be-closed variable.
+	hasTBC bool
+	// varargTable is the register of the named vararg table plus one, or
+	// zero if the function has none (Lua 5.5).
+	varargTable int
 }
 
 func newFuncContext(sourcename string, parent *funcContext) *funcContext {
@@ -426,6 +679,9 @@ func newFuncContext(sourcename string, parent *funcContext) *funcContext {
 		unresolvedGotos: map[int]*gotoLabelDesc{},
 	}
 	fc.Blocks = []*codeBlock{fc.Block}
+	if parent != nil {
+		fc.lua55 = parent.lua55
+	}
 	return fc
 }
 
@@ -445,6 +701,13 @@ func (fc *funcContext) AddUnresolvedGoto(label *gotoLabelDesc) {
 }
 
 func (fc *funcContext) AddNamedLabel(label *gotoLabelDesc) {
+	if fc.lua55 {
+		for b := fc.Block.Parent; b != nil; b = b.Parent {
+			if old := b.GetLabel(label.Name); old != nil {
+				raiseCompileError(fc, label.Line+1, "label '%s' already defined on line %d", label.Name, old.Line)
+			}
+		}
+	}
 	if old := fc.Block.AddLabel(label); old != nil {
 		raiseCompileError(fc, label.Line+1, "label '%s' already defined on line %d", label.Name, old.Line)
 	}
@@ -460,6 +723,9 @@ func (fc *funcContext) ResolveGoto(from, to *gotoLabelDesc, index int) {
 		varName := fc.Block.LocalVars.Names()[len(fc.Block.LocalVars.Names())-1]
 		raiseCompileError(fc, to.Line+1, "<goto %s> at line %d jumps into the scope of local '%s'", to.Name, from.Line, varName)
 	}
+	// the CLOSE in front of the jump ends the scopes the goto leaves:
+	// everything above the locals that are active at the label
+	fc.Code.SetA(from.Pc-1, to.NumActiveLocalVars)
 	fc.Code.SetSbx(from.Pc, to.Id)
 	delete(fc.unresolvedGotos, index)
 }
@@ -467,9 +733,6 @@ func (fc *funcContext) ResolveGoto(from, to *gotoLabelDesc, index int) {
 func (fc *funcContext) FindLabel(block *codeBlock, gotoLabel *gotoLabelDesc, i int) bool {
 	target := block.GetLabel(gotoLabel.Name)
 	if target != nil {
-		if gotoLabel.NumActiveLocalVars > target.NumActiveLocalVars && block.RefUpvalue {
-			fc.Code.SetA(gotoLabel.Pc-1, target.NumActiveLocalVars)
-		}
 		fc.ResolveGoto(gotoLabel, target, i)
 		return true
 	}
@@ -484,9 +747,6 @@ func (fc *funcContext) ResolveCurrentBlockGotosWithParentBlock() {
 			continue
 		}
 		if gotoLabel.NumActiveLocalVars > blockActiveLocalVars {
-			if fc.Block.RefUpvalue {
-				fc.Code.SetA(gotoLabel.Pc-1, blockActiveLocalVars)
-			}
 			gotoLabel.SetNumActiveLocalVars(blockActiveLocalVars)
 		}
 		fc.FindLabel(fc.Block.Parent, gotoLabel, i)
@@ -507,6 +767,11 @@ func (fc *funcContext) ResolveForwardGoto(target *gotoLabelDesc) {
 
 func (fc *funcContext) NewLabel() int {
 	ret := fc.labelId
+	if ret > opMaxArgSbx {
+		// label ids travel in the sBx operand of jumps until they are
+		// resolved
+		raiseCompileError(fc, fc.Proto.LineDefined, "function is too complex (too many jump labels)")
+	}
 	fc.labelId++
 	return ret
 }
@@ -522,7 +787,7 @@ func (fc *funcContext) GetLabelPc(label int) int {
 func (fc *funcContext) ConstIndex(value LValue) int {
 	ctype := value.Type()
 	for i, lv := range fc.Proto.Constants {
-		if lv.Type() == ctype && lv == value {
+		if lv.Type() == ctype && constEqual(lv, value) {
 			return i
 		}
 	}
@@ -683,6 +948,39 @@ func compileStmt(context *funcContext, stmt ast.Stmt, isLastStmt bool) { // {{{
 		compileLabelStmt(context, st, isLastStmt)
 	case *ast.GotoStmt:
 		compileGotoStmt(context, st)
+	case *ast.GlobalDeclStmt:
+		compileGlobalDeclStmt(context, st)
+	}
+} // }}}
+
+func compileGlobalDeclStmt(context *funcContext, stmt *ast.GlobalDeclStmt) { // {{{
+	block := context.Block
+	declare := func(name string, isConst bool) {
+		block.gdecls = append(block.gdecls, globalDecl{name, isConst, len(block.LocalVars.Names())})
+	}
+	if stmt.Wildcard {
+		declare("", stmt.WildcardAttrib == "const")
+		return
+	}
+	line := sline(stmt)
+	if stmt.IsFunc {
+		declare(stmt.Names[0], false)
+	}
+	if len(stmt.Exprs) > 0 {
+		reg := context.RegTop()
+		n := len(stmt.Names)
+		compileRegAssignment(context, stmt.Names, stmt.Exprs, reg, n, line)
+		tmp := reg + n
+		for i, name := range stmt.Names {
+			emitGetGlobal(context, tmp, name, line)
+			context.Code.AddABx(OP_ERRNNIL, tmp, context.ConstIndex(LString(name)), line)
+			emitSetGlobal(context, reg+i, name, tmp, line)
+		}
+	}
+	if !stmt.IsFunc {
+		for i, name := range stmt.Names {
+			declare(name, stmt.Attribs[i] == "const")
+		}
 	}
 } // }}}
 
@@ -692,7 +990,11 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 	for _, lhs := range stmt.Lhs {
 		switch st := lhs.(type) {
 		case *ast.IdentExpr:
-			identtype := getIdentRefType(context, context, st)
+			ref := resolveName(context, st.Value, sline(st))
+			if ref.isConst {
+				raiseCompileError(context, sline(st), "attempt to assign to const variable '%s'", st.Value)
+			}
+			identtype := ref.kind.ecType()
 			ec := &expcontext{identtype, regNotDefined, 0}
 			switch identtype {
 			case ecGlobal:
@@ -700,12 +1002,26 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 			case ecUpvalue:
 				context.Upvalues.RegisterUnique(st.Value)
 			case ecLocal:
-				ec.reg = context.FindLocalVar(st.Value)
+				// With several targets every right-hand side is evaluated
+				// into a temporary first: all expressions must see the
+				// values the variables had before the assignment.
+				// The same holds for a single target with surplus
+				// expressions, which run before the assignment.
+				if len(stmt.Lhs) == 1 && len(stmt.Rhs) == 1 {
+					ec.reg = ref.reg
+				}
 			}
-			acs = append(acs, &assigncontext{ec, 0, 0, false, false})
+			acs = append(acs, &assigncontext{ec: ec, localreg: ref.reg})
 		case *ast.AttrGetExpr:
-			ac := &assigncontext{&expcontext{ecTable, regNotDefined, 0}, 0, 0, false, false}
-			compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
+			ac := &assigncontext{ec: &expcontext{ecTable, regNotDefined, 0}}
+			if len(stmt.Lhs) > 1 {
+				// the table must be the one the expression denotes before
+				// any target of this statement is assigned
+				ac.ec.reg = reg
+				reg += compileExpr(context, reg, st.Object, ecnone(0))
+			} else {
+				compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
+			}
 			ac.keyrk = reg
 			reg += compileExpr(context, reg, st.Key, ecnone(0))
 			if _, ok := st.Key.(*ast.StringExpr); ok {
@@ -740,9 +1056,7 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 			reg += reginc
 			for i := namesassigned; i < namesassigned+int(reginc); i++ {
 				acs[i].needmove = true
-				if acs[i].ec.ctype == ecTable {
-					acs[i].valuerk = regstart + (i - namesassigned)
-				}
+				acs[i].valuerk = regstart + (i - namesassigned)
 			}
 			namesassigned = lennames
 			continue
@@ -754,7 +1068,7 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 		idx := reg
 		reginc := compileExpr(context, reg, expr, ec)
 		if ec.ctype == ecTable {
-			if _, ok := expr.(*ast.LogicalOpExpr); !ok {
+			if _, ok := expr.(*ast.LogicalOpExpr); !ok && lennames == 1 {
 				context.Code.PropagateKMV(context.RegTop(), &ac.valuerk, &reg, reginc)
 			} else {
 				ac.valuerk = idx
@@ -762,6 +1076,7 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 			}
 		} else {
 			ac.needmove = reginc != 0
+			ac.valuerk = idx
 			reg += reginc
 		}
 		namesassigned += 1
@@ -785,30 +1100,27 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 	lennames := len(stmt.Lhs)
 	reg, acs := compileAssignStmtLeft(context, stmt)
 	reg, acs = compileAssignStmtRight(context, stmt, reg, acs)
-
+	// every target knows the register (or constant) that holds its value;
+	// the assignments are performed from right to left
+	tmp := reg + 1
 	for i := lennames - 1; i >= 0; i-- {
 		ex := stmt.Lhs[i]
+		src := acs[i].valuerk
 		switch acs[i].ec.ctype {
 		case ecLocal:
 			if acs[i].needmove {
-				code.AddABC(OP_MOVE, context.FindLocalVar(ex.(*ast.IdentExpr).Value), reg, 0, sline(ex))
-				reg -= 1
+				code.AddABC(OP_MOVE, acs[i].localreg, src, 0, sline(ex))
 			}
 		case ecGlobal:
-			code.AddABx(OP_SETGLOBAL, reg, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
-			reg -= 1
+			emitSetGlobal(context, src, ex.(*ast.IdentExpr).Value, tmp, sline(ex))
 		case ecUpvalue:
-			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
-			reg -= 1
+			code.AddABC(OP_SETUPVAL, src, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
 		case ecTable:
 			opcode := OP_SETTABLE
 			if acs[i].keyks {
 				opcode = OP_SETTABLEKS
 			}
-			code.AddABC(opcode, acs[i].ec.reg, acs[i].keyrk, acs[i].valuerk, sline(ex))
-			if !opIsK(acs[i].valuerk) {
-				reg -= 1
-			}
+			code.AddABC(opcode, acs[i].ec.reg, acs[i].keyrk, src, sline(ex))
 		}
 	}
 } // }}}
@@ -855,17 +1167,33 @@ func compileRegAssignment(context *funcContext, names []string, exprs []ast.Expr
 
 func compileLocalAssignStmt(context *funcContext, stmt *ast.LocalAssignStmt) { // {{{
 	reg := context.RegTop()
-	if len(stmt.Names) == 1 && len(stmt.Exprs) == 1 {
-		if _, ok := stmt.Exprs[0].(*ast.FunctionExpr); ok {
-			context.RegisterLocalVar(stmt.Names[0])
-			compileRegAssignment(context, stmt.Names, stmt.Exprs, reg, len(stmt.Names), sline(stmt))
-			return
-		}
+	if stmt.IsFunction && len(stmt.Names) == 1 && len(stmt.Exprs) == 1 {
+		// "local function f": the function body can refer to itself
+		context.RegisterLocalVar(stmt.Names[0])
+		compileRegAssignment(context, stmt.Names, stmt.Exprs, reg, len(stmt.Names), sline(stmt))
+		return
 	}
 
 	compileRegAssignment(context, stmt.Names, stmt.Exprs, reg, len(stmt.Names), sline(stmt))
-	for _, name := range stmt.Names {
-		context.RegisterLocalVar(name)
+	for i, name := range stmt.Names {
+		idx := context.RegisterLocalVar(name)
+		if stmt.Attribs == nil {
+			continue
+		}
+		switch stmt.Attribs[i] {
+		case "const":
+			context.Block.LocalVars.SetAttr(idx, varAttrConst)
+		case "close":
+			for _, other := range stmt.Attribs[i+1:] {
+				if other == "close" {
+					raiseCompileError(context, sline(stmt), "multiple to-be-closed variables in local list")
+				}
+			}
+			context.Block.LocalVars.SetAttr(idx, varAttrClose)
+			context.Block.RefUpvalue = true
+			context.hasTBC = true
+			context.Code.AddABC(OP_TBC, idx, 0, 0, sline(stmt))
+		}
 	}
 } // }}}
 
@@ -879,8 +1207,8 @@ func compileReturnStmt(context *funcContext, stmt *ast.ReturnStmt) { // {{{
 	if lenexprs == 1 {
 		switch ex := stmt.Exprs[0].(type) {
 		case *ast.IdentExpr:
-			if idx := context.FindLocalVar(ex.Value); idx > -1 {
-				code.AddABC(OP_RETURN, idx, 2, 0, sline(stmt))
+			if ref := resolveName(context, ex.Value, sline(ex)); ref.kind == nkLocal {
+				code.AddABC(OP_RETURN, ref.reg, 2, 0, sline(stmt))
 				return
 			}
 		case *ast.FuncCallExpr:
@@ -888,7 +1216,9 @@ func compileReturnStmt(context *funcContext, stmt *ast.ReturnStmt) { // {{{
 				reg += compileExpr(context, reg, ex, ecnone(0))
 			} else {
 				reg += compileExpr(context, reg, ex, ecnone(-2))
-				code.SetOpCode(code.LastPC(), OP_TAILCALL)
+				if !context.hasTBC {
+					code.SetOpCode(code.LastPC(), OP_TAILCALL)
+				}
 			}
 			code.AddABC(OP_RETURN, a, 0, 0, sline(stmt))
 			return
@@ -1019,9 +1349,11 @@ func compileRepeatStmt(context *funcContext, stmt *ast.RepeatStmt) { // {{{
 } // }}}
 
 func compileBreakStmt(context *funcContext, stmt *ast.BreakStmt) { // {{{
+	refUpvalue := false
 	for block := context.Block; block != nil; block = block.Parent {
+		refUpvalue = refUpvalue || block.RefUpvalue
 		if label := block.BreakLabel; label != labelNoJump {
-			if block.RefUpvalue {
+			if refUpvalue {
 				context.Code.AddABC(OP_CLOSE, block.Parent.LocalVars.LastIndex(), 0, 0, sline(stmt))
 			}
 			context.Code.AddASbx(OP_JMP, 0, label, sline(stmt))
@@ -1072,9 +1404,14 @@ func compileNumberForStmt(context *funcContext, stmt *ast.NumberForStmt) { // {{
 	ecupdate(ec, ecLocal, rstep, 0)
 	compileExpr(context, reg, stmt.Step, ec)
 
+	// FORPREP validates the control values and either falls through into
+	// the loop body or jumps behind the FORLOOP instruction.
 	code.AddASbx(OP_FORPREP, rindex, 0, sline(stmt))
 
-	context.RegisterLocalVar(stmt.Name)
+	rvar := context.RegisterLocalVar(stmt.Name)
+	if context.lua55 {
+		context.Block.LocalVars.SetAttr(rvar, varAttrConst)
+	}
 
 	bodypc := code.LastPC()
 	compileChunk(context, stmt.Stmts, false)
@@ -1085,11 +1422,15 @@ func compileNumberForStmt(context *funcContext, stmt *ast.NumberForStmt) { // {{
 	code.AddASbx(OP_FORLOOP, rindex, bodypc-(flpc+1), sline(stmt))
 
 	context.SetLabelPc(endlabel, code.LastPC())
-	code.SetSbx(bodypc, flpc-bodypc)
+	code.SetSbx(bodypc, flpc-bodypc+1)
 
 } // }}}
 
 func compileGenericForStmt(context *funcContext, stmt *ast.GenericForStmt) { // {{{
+	if context.lua55 {
+		compileGenericForStmt55(context, stmt)
+		return
+	}
 	code := context.Code
 	endlabel := context.NewLabel()
 	bodylabel := context.NewLabel()
@@ -1101,8 +1442,8 @@ func compileGenericForStmt(context *funcContext, stmt *ast.GenericForStmt) { // 
 	context.RegisterLocalVar("(for state)")
 	context.RegisterLocalVar("(for control)")
 
-	compileRegAssignment(context, stmt.Names, stmt.Exprs, context.RegTop()-3, 3, sline(stmt))
-
+	// the three control values are assigned like "local g, s, c = explist"
+	compileRegAssignment(context, make([]string, 3), stmt.Exprs, context.RegTop()-3, 3, sline(stmt))
 	code.AddASbx(OP_JMP, 0, fllabel, sline(stmt))
 
 	for _, name := range stmt.Names {
@@ -1118,6 +1459,45 @@ func compileGenericForStmt(context *funcContext, stmt *ast.GenericForStmt) { // 
 	code.AddABC(OP_TFORLOOP, rgen, 0, nnames, sline(stmt))
 	code.AddASbx(OP_JMP, 0, bodylabel, sline(stmt))
 
+	context.SetLabelPc(endlabel, code.LastPC())
+} // }}}
+
+// compileGenericForStmt55 compiles a generic for loop with the Lua 5.4+
+// layout: four control values (generator, state, control, closing value)
+// in an outer block and the loop variables in an inner block.
+func compileGenericForStmt55(context *funcContext, stmt *ast.GenericForStmt) { // {{{
+	code := context.Code
+	endlabel := context.NewLabel()
+	bodylabel := context.NewLabel()
+	fllabel := context.NewLabel()
+	nnames := len(stmt.Names)
+
+	context.EnterBlock(endlabel, stmt)
+	rgen := context.RegisterLocalVar("(for generator)")
+	context.RegisterLocalVar("(for state)")
+	context.RegisterLocalVar("(for control)")
+	rclose := context.RegisterLocalVar("(for closing)")
+	compileRegAssignment(context, make([]string, 4), stmt.Exprs, context.RegTop()-4, 4, sline(stmt))
+	context.Block.RefUpvalue = true
+	context.hasTBC = true
+	code.AddABC(OP_TBC, rclose, 1, 0, sline(stmt))
+	code.AddASbx(OP_JMP, 0, fllabel, sline(stmt))
+
+	context.EnterBlock(labelNoJump, stmt)
+	for i, name := range stmt.Names {
+		idx := context.RegisterLocalVar(name)
+		if i == 0 {
+			context.Block.LocalVars.SetAttr(idx, varAttrConst)
+		}
+	}
+	context.SetLabelPc(bodylabel, code.LastPC())
+	compileChunk(context, stmt.Stmts, false)
+	context.LeaveBlock()
+
+	context.SetLabelPc(fllabel, code.LastPC())
+	code.AddABC(OP_TFORLOOP, rgen, 1, nnames, sline(stmt))
+	code.AddASbx(OP_JMP, 0, bodylabel, sline(stmt))
+	context.LeaveBlock()
 	context.SetLabelPc(endlabel, code.LastPC())
 } // }}}
 
@@ -1152,11 +1532,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		code.AddABx(OP_LOADK, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
 		return sused
 	case *ast.NumberExpr:
-		num, err := parseNumber(ex.Value)
-		if err != nil {
-			num = LNumber(math.NaN())
-		}
-		code.AddABx(OP_LOADK, sreg, context.ConstIndex(num), sline(ex))
+		code.AddABx(OP_LOADK, sreg, context.ConstIndex(numberLiteral(context, ex.Value)), sline(ex))
 		return sused
 	case *constLValueExpr:
 		code.AddABx(OP_LOADK, sreg, context.ConstIndex(ex.Value), sline(ex))
@@ -1171,14 +1547,14 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		code.AddABC(OP_LOADBOOL, sreg, 1, 0, sline(ex))
 		return sused
 	case *ast.IdentExpr:
-		switch getIdentRefType(context, context, ex) {
-		case ecGlobal:
-			code.AddABx(OP_GETGLOBAL, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
-		case ecUpvalue:
+		ref := resolveName(context, ex.Value, sline(ex))
+		switch ref.kind {
+		case nkGlobal:
+			emitGetGlobal(context, sreg, ex.Value, sline(ex))
+		case nkUpvalue:
 			code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
-		case ecLocal:
-			b := context.FindLocalVar(ex.Value)
-			code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
+		case nkLocal:
+			code.AddABC(OP_MOVE, sreg, ref.reg, 0, sline(ex))
 		}
 		return sused
 	case *ast.Comma3Expr:
@@ -1186,7 +1562,8 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 			raiseCompileError(context, sline(ex), "cannot use '...' outside a vararg function")
 		}
 		context.Proto.IsVarArg &= ^VarArgNeedsArg
-		code.AddABC(OP_VARARG, sreg, 2+ec.varargopt, 0, sline(ex))
+		// C != 0: the values come from the named vararg table in R(C-1)
+		code.AddABC(OP_VARARG, sreg, 2+ec.varargopt, context.varargTable, sline(ex))
 		if context.RegTop() > (sreg+2+ec.varargopt) || ec.varargopt < -1 {
 			return 0
 		}
@@ -1212,7 +1589,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.StringConcatOpExpr:
 		compileStringConcatOpExpr(context, reg, ex, ec)
 		return sused
-	case *ast.UnaryMinusOpExpr, *ast.UnaryNotOpExpr, *ast.UnaryLenOpExpr:
+	case *ast.UnaryMinusOpExpr, *ast.UnaryNotOpExpr, *ast.UnaryLenOpExpr, *ast.UnaryBNotOpExpr:
 		compileUnaryOpExpr(context, reg, ex, ec)
 		return sused
 	case *ast.RelationalOpExpr:
@@ -1267,39 +1644,29 @@ func compileExprWithMVPropagation(context *funcContext, expr ast.Expr, reg *int,
 	compileExprWithPropagation(context, expr, reg, save, context.Code.PropagateMV)
 } // }}}
 
-func constFold(exp ast.Expr) ast.Expr { // {{{
+func constFold(context *funcContext, exp ast.Expr) ast.Expr { // {{{
 	switch expr := exp.(type) {
 	case *ast.ArithmeticOpExpr:
-		lvalue, lisconst := lnumberValue(constFold(expr.Lhs))
-		rvalue, risconst := lnumberValue(constFold(expr.Rhs))
+		lvalue, lisconst := constNumber(context, constFold(context, expr.Lhs))
+		rvalue, risconst := constNumber(context, constFold(context, expr.Rhs))
 		if lisconst && risconst {
-			switch expr.Operator {
-			case "+":
-				return &constLValueExpr{Value: lvalue + rvalue}
-			case "-":
-				return &constLValueExpr{Value: lvalue - rvalue}
-			case "*":
-				return &constLValueExpr{Value: lvalue * rvalue}
-			case "/":
-				return &constLValueExpr{Value: lvalue / rvalue}
-			case "%":
-				return &constLValueExpr{Value: luaModulo(lvalue, rvalue)}
-			case "^":
-				return &constLValueExpr{Value: LNumber(math.Pow(float64(lvalue), float64(rvalue)))}
-			default:
-				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))
+			if v, ok := foldArith(context, expr.Operator, lvalue, rvalue); ok {
+				return &constLValueExpr{Value: v}
 			}
-		} else {
-			return expr
 		}
+		return expr
 	case *ast.UnaryMinusOpExpr:
-		expr.Expr = constFold(expr.Expr)
-		if value, ok := lnumberValue(expr.Expr); ok {
-			return &constLValueExpr{Value: LNumber(-value)}
+		expr.Expr = constFold(context, expr.Expr)
+		if value, ok := constNumber(context, expr.Expr); ok {
+			switch v := value.(type) {
+			case LNumber:
+				return &constLValueExpr{Value: LNumber(-v)}
+			case LInteger:
+				return &constLValueExpr{Value: LInteger(-v)}
+			}
 		}
 		return expr
 	default:
-
 		return exp
 	}
 } // }}}
@@ -1319,13 +1686,19 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 		context.RegisterLocalVar(name)
 	}
 	if funcexpr.ParList.HasVargs {
-		if CompatVarArg {
+		if CompatVarArg && !context.lua55 {
 			context.Proto.IsVarArg = VarArgHasArg | VarArgNeedsArg
 			if context.Parent != nil {
 				context.RegisterLocalVar("arg")
 			}
 		}
 		context.Proto.IsVarArg |= VarArgIsVarArg
+		if name := funcexpr.ParList.VarargName; name != "" && context.lua55 {
+			idx := context.RegisterLocalVar(name)
+			context.Block.LocalVars.SetAttr(idx, varAttrConst)
+			context.varargTable = idx + 1
+			context.Code.AddABC(OP_VARARGTAB, idx, 0, 0, sline(funcexpr))
+		}
 	}
 
 	compileChunk(context, funcexpr.Stmts, false)
@@ -1336,7 +1709,15 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 	context.Proto.Code = context.Code.List()
 	context.Proto.DbgSourcePositions = context.Code.PosList()
 	context.Proto.DbgUpvalues = context.Upvalues.Names()
+	if len(context.Proto.DbgUpvalues) > maxUpvalues {
+		raiseCompileError(context, context.Proto.LineDefined, "function has more than %d upvalues", maxUpvalues)
+	}
 	context.Proto.NumUpvalues = uint8(len(context.Proto.DbgUpvalues))
+	if context.lua55 {
+		// (in Lua 5.1 code _ENV is an ordinary variable name)
+		context.Proto.EnvUpvalue = int16(context.Upvalues.Find("_ENV"))
+		context.Proto.Version = Lua55
+	}
 	for _, clv := range context.Proto.Constants {
 		sv := ""
 		if slv, ok := clv.(LString); ok {
@@ -1395,19 +1776,21 @@ func compileTableExpr(context *funcContext, reg int, ex *ast.TableExpr, ec *expc
 			}
 			c := (arraycount-1)/FieldsPerFlush + 1
 			b := num
-			if islast && isVarArgReturnExpr(field.Value) {
+			if lastvararg {
 				b = 0
 			}
 			line := field.Value
 			if field.Key != nil {
 				line = field.Key
 			}
+			block := c
 			if c > 511 {
 				c = 0
 			}
 			code.AddABC(OP_SETLIST, tablereg, b, c, sline(line))
 			if c == 0 {
-				code.Add(uint32(c), sline(line))
+				// the block number follows in an extra word
+				code.Add(uint32(block), sline(line))
 			}
 		}
 	}
@@ -1419,7 +1802,7 @@ func compileTableExpr(context *funcContext, reg int, ex *ast.TableExpr, ec *expc
 } // }}}
 
 func compileArithmeticOpExpr(context *funcContext, reg int, expr *ast.ArithmeticOpExpr, ec *expcontext) { // {{{
-	exp := constFold(expr)
+	exp := constFold(context, expr)
 	if ex, ok := exp.(*constLValueExpr); ok {
 		exp.SetLine(sline(expr))
 		compileExpr(context, reg, ex, ec)
@@ -1432,20 +1815,9 @@ func compileArithmeticOpExpr(context *funcContext, reg int, expr *ast.Arithmetic
 	c := reg
 	compileExprWithKMVPropagation(context, expr.Rhs, &reg, &c)
 
-	op := 0
-	switch expr.Operator {
-	case "+":
-		op = OP_ADD
-	case "-":
-		op = OP_SUB
-	case "*":
-		op = OP_MUL
-	case "/":
-		op = OP_DIV
-	case "%":
-		op = OP_MOD
-	case "^":
-		op = OP_POW
+	op, ok := arithOpcodes[expr.Operator]
+	if !ok {
+		raiseCompileError(context, sline(expr), "unknown operator '%s'", expr.Operator)
 	}
 	context.Code.AddABC(op, a, b, c, sline(expr))
 } // }}}
@@ -1476,8 +1848,11 @@ func compileUnaryOpExpr(context *funcContext, reg int, expr ast.Expr, ec *expcon
 	code := context.Code
 	var operandexpr ast.Expr
 	switch ex := expr.(type) {
+	case *ast.UnaryBNotOpExpr:
+		opcode = OP_BNOT
+		operandexpr = ex.Expr
 	case *ast.UnaryMinusOpExpr:
-		exp := constFold(ex)
+		exp := constFold(context, ex)
 		if lvexpr, ok := exp.(*constLValueExpr); ok {
 			exp.SetLine(sline(expr))
 			compileExpr(context, reg, lvexpr, ec)
@@ -1543,6 +1918,14 @@ func compileRelationalOpExpr(context *funcContext, reg int, expr *ast.Relational
 } // }}}
 
 func compileLogicalOpExpr(context *funcContext, reg int, expr *ast.LogicalOpExpr, ec *expcontext) { // {{{
+	if shouldmove(ec, reg) {
+		// the target is an existing local: later operands may still read
+		// it, and a short-circuit has to store the deciding operand, so
+		// the expression is evaluated in a temporary first
+		compileLogicalOpExpr(context, reg, expr, ecnone(0))
+		context.Code.AddABC(OP_MOVE, ec.reg, reg, 0, sline(expr))
+		return
+	}
 	a := savereg(ec, reg)
 	code := context.Code
 	endlabel := context.NewLabel()
@@ -1651,8 +2034,8 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 	isLastAnd := elselabel == lb.e && thenlabel != elselabel
 	isLastOr := thenlabel == lb.e && hasnextcond
 
-	if ident, ok := expr.(*ast.IdentExpr); ok && (isLastAnd || isLastOr) && getIdentRefType(context, context, ident) == ecLocal {
-		b := context.FindLocalVar(ident.Value)
+	if ident, ok := expr.(*ast.IdentExpr); ok && (isLastAnd || isLastOr) && isLocalIdent(context, ident) {
+		b := resolveName(context, ident.Value, sline(ident)).reg
 		op := OP_TESTSET
 		if sreg == b {
 			op = OP_TEST
@@ -1678,11 +2061,10 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 } // }}}
 
 func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, ec *expcontext) int { // {{{
+	// (the call is always set up in temporaries: building it in the
+	// register of the target variable would destroy the variable before
+	// the arguments are evaluated and overwrite the locals behind it)
 	funcreg := reg
-	if ec.ctype == ecLocal && ec.reg == (int(context.Proto.NumParameters)-1) {
-		funcreg = ec.reg
-		reg = ec.reg
-	}
 	argc := len(expr.Args)
 	islastvararg := false
 	name := "(anonymous)"
@@ -1742,17 +2124,22 @@ func loadRk(context *funcContext, reg *int, expr ast.Expr, cnst LValue) int { //
 	}
 } // }}}
 
-func getIdentRefType(context *funcContext, current *funcContext, expr *ast.IdentExpr) expContextType { // {{{
-	if current == nil {
-		return ecGlobal
-	} else if current.FindLocalVar(expr.Value) > -1 {
-		if current == context {
-			return ecLocal
-		}
+// ecType maps a resolved name kind to the expression context type.
+func (k nameKind) ecType() expContextType {
+	switch k {
+	case nkLocal:
+		return ecLocal
+	case nkUpvalue:
 		return ecUpvalue
 	}
-	return getIdentRefType(context, current.Parent, expr)
-} // }}}
+	return ecGlobal
+}
+
+// isLocalIdent reports whether ident refers to a local variable of the
+// function being compiled.
+func isLocalIdent(context *funcContext, ident *ast.IdentExpr) bool {
+	return resolveName(context, ident.Value, sline(ident)).kind == nkLocal
+}
 
 func getExprName(context *funcContext, expr ast.Expr) string { // {{{
 	switch ex := expr.(type) {
@@ -1784,9 +2171,17 @@ func patchCode(context *funcContext) { // {{{
 			moven = 0
 			continue
 		case OP_SETGLOBAL, OP_SETUPVAL, OP_EQ, OP_LT, OP_LE, OP_TEST,
-			OP_TAILCALL, OP_RETURN, OP_FORPREP, OP_FORLOOP, OP_TFORLOOP,
-			OP_SETLIST, OP_CLOSE:
+			OP_TAILCALL, OP_RETURN, OP_SETLIST, OP_CLOSE, OP_SETENV,
+			OP_TBC, OP_ERRNNIL, OP_FORPREP, OP_FORLOOP:
 			/* nothing to do */
+		case OP_TFORLOOP:
+			// Lua 5.5 layout (B == 1): results live behind the four
+			// control values, plus scratch registers for the iterator call
+			if opGetArgB(inst) != 0 {
+				if reg := opGetArgA(inst) + 4 + intMax(opGetArgC(inst), 3); reg > maxreg {
+					maxreg = reg
+				}
+			}
 		case OP_CALL:
 			if reg := opGetArgA(inst) + opGetArgC(inst) - 2; reg > maxreg {
 				maxreg = reg
@@ -1838,6 +2233,10 @@ func patchCode(context *funcContext) { // {{{
 			}
 			moven = 0
 		}
+		if curop == OP_SETLIST && opGetArgC(inst) == 0 {
+			// the block number in the following word is not an instruction
+			pc++
+		}
 	}
 	maxreg++
 	if maxreg > maxRegisters {
@@ -1846,7 +2245,20 @@ func patchCode(context *funcContext) { // {{{
 	context.Proto.NumUsedRegisters = uint8(maxreg)
 } // }}}
 
-func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) { // {{{
+// CompileOptions configures the bytecode compiler.
+type CompileOptions struct {
+	// LanguageVersion selects the language profile (default Lua51).
+	LanguageVersion LanguageVersion
+}
+
+// Compile compiles a Lua 5.1 chunk (the GopherLua compatible profile).
+func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) {
+	return CompileWithOptions(chunk, name, CompileOptions{})
+}
+
+// CompileWithOptions compiles a chunk parsed with the matching parser
+// profile into a function prototype.
+func CompileWithOptions(chunk []ast.Stmt, name string, opts CompileOptions) (proto *FunctionProto, err error) { // {{{
 	defer func() {
 		if rcv := recover(); rcv != nil {
 			if _, ok := rcv.(*CompileError); ok {
@@ -1864,6 +2276,10 @@ func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) { 
 		funcexpr.SetLastLine(eline(chunk[len(chunk)-1]) + 1)
 	}
 	context := newFuncContext(name, nil)
+	if opts.LanguageVersion == Lua55 {
+		context.lua55 = true
+		context.Upvalues.RegisterUnique("_ENV")
+	}
 	compileFunctionExpr(context, funcexpr, ecnone(0))
 	proto = context.Proto
 	return

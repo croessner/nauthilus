@@ -185,3 +185,5 @@ require (
 	gopkg.in/xmlpath.v2 v2.0.0-20150820204837-860cbeca3ebc // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace github.com/yuin/gopher-lua => github.com/croessner/gopher-lua-jit v0.1.1-0.20261123075558-465d46e65580

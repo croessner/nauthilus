@@ -130,6 +130,12 @@ type UnaryLenOpExpr struct {
 	Expr Expr
 }
 
+// UnaryBNotOpExpr is the bitwise not operator (Lua 5.3+).
+type UnaryBNotOpExpr struct {
+	ExprBase
+	Expr Expr
+}
+
 type FunctionExpr struct {
 	ExprBase
 
