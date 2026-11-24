@@ -979,12 +979,13 @@ end
 		t.Fatalf("prepareConfiguredHostProvider() error = %v", err)
 	}
 
-	if !terminal || execution.preAuthResult != definitions.AuthResultLuaEnvironment {
-		t.Fatalf("captured provider terminal=%t result=%q, want true/%q", terminal, execution.preAuthResult, definitions.AuthResultLuaEnvironment)
+	if !terminal || execution.environmentTrigger != definitions.ControlLua {
+		t.Fatalf("captured provider terminal=%t trigger=%q, want true/%q", terminal, execution.environmentTrigger, definitions.ControlLua)
 	}
 
-	if !ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
-		t.Fatal("captured Lua environment trigger did not mark the request rejected")
+	// The trigger is only a fact; the request is marked rejected once the policy selects a pre-auth deny.
+	if ctx.GetBool(definitions.CtxEnvironmentRejectedKey) {
+		t.Fatal("captured Lua environment trigger marked the request rejected before the policy decided")
 	}
 
 	if auth.Runtime.StatusMessage != "captured environment status" {
@@ -1224,8 +1225,9 @@ type authnConfiguredLuaSource struct {
 }
 
 type authnCapturedNativeEnvironmentSource struct {
-	id    string
-	calls atomic.Int32
+	id        string
+	calls     atomic.Int32
+	triggered bool
 }
 
 type authnCapturedNativeSubjectSource struct {
@@ -1268,7 +1270,7 @@ func (s *authnCapturedNativeEnvironmentSource) EvaluateEnvironment(
 ) (pluginapi.EnvironmentResult, error) {
 	s.calls.Add(1)
 
-	return pluginapi.EnvironmentResult{}, nil
+	return pluginapi.EnvironmentResult{Triggered: s.triggered}, nil
 }
 
 // ID returns the exact generation-owned native subject provider identity.

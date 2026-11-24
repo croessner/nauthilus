@@ -366,9 +366,7 @@ func (e *authnCandidateExecution) prepareNativeEnvironmentSource(
 	}
 
 	if result.Triggered {
-		e.auth.Runtime.EnvironmentName = providerID
-		markEnvironmentRejected(e.ginCtx, true)
-		e.preAuthResult = definitions.AuthResultFail
+		e.noteEnvironmentTrigger(providerID)
 
 		return true, nil
 	}

@@ -75,18 +75,21 @@ type authnCandidateExecution struct {
 	backendPlan    backendExecutionPlan
 	providerFacts  decision.FactSet
 	backendAccount string
-	nativeFailure  nativeEffectFailure
-	operation      policy.Operation
-	mu             sync.Mutex
-	authResult     definitions.AuthResult
-	preAuthResult  definitions.AuthResult
-	preAuthReady   bool
-	finalReady     bool
-	bruteForceRun  bool
-	environmentRun bool
-	backendReady   bool
-	backendCached  bool
-	subjectReady   bool
+	// environmentTrigger names the first environment source that triggered; it stays a fact until the policy
+	// selects a pre-auth deny.
+	environmentTrigger string
+	nativeFailure      nativeEffectFailure
+	operation          policy.Operation
+	mu                 sync.Mutex
+	authResult         definitions.AuthResult
+	preAuthResult      definitions.AuthResult
+	preAuthReady       bool
+	finalReady         bool
+	bruteForceRun      bool
+	environmentRun     bool
+	backendReady       bool
+	backendCached      bool
+	subjectReady       bool
 
 	// projectionMu guards projections, the per-request cache of projected standard auth attributes, and
 	// standardFacts, the complete standard auth fact set per checkpoint.
@@ -453,9 +456,7 @@ func (e *authnCandidateExecution) prepareLuaEnvironmentSource(
 	}
 
 	if triggered {
-		e.auth.processEnvironmentAction(e.ginCtx, definitions.ControlLua)
-		markEnvironmentRejected(e.ginCtx, true)
-		e.preAuthResult = definitions.AuthResultLuaEnvironment
+		e.noteEnvironmentTrigger(definitions.ControlLua)
 
 		return true, nil
 	}
@@ -915,6 +916,7 @@ func (e *authnCandidateExecution) CaptureAuthnDecision(
 
 	e.selected[checkpoint] = report.CloneFinalDecision(final)
 	e.captureAuthnPolicyReport(checkpoint, final)
+	e.applyEnvironmentRejection(final)
 }
 
 // captureAuthnPolicyReport records catalog selections in the established diagnostic vocabulary.
