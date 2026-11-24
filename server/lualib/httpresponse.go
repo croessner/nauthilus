@@ -53,7 +53,13 @@ func (m *HTTPResponseManager) useHTTPResponseContext(L *lua.LState, action func(
 	return 0
 }
 
-// writeHTTPResponse runs an action and marks the Lua HTTP response as written.
+// prepareHTTPResponse applies status or header state without claiming the response body, so a hook's
+// returned Lua table is still rendered as JSON with that state.
+func (m *HTTPResponseManager) prepareHTTPResponse(L *lua.LState, action func(*gin.Context)) int {
+	return m.useHTTPResponseContext(L, action)
+}
+
+// writeHTTPResponse runs a body-writing action and marks the Lua HTTP response as written.
 func (m *HTTPResponseManager) writeHTTPResponse(L *lua.LState, action func(*gin.Context)) int {
 	return m.useHTTPResponseContext(L, func(ginCtx *gin.Context) {
 		action(ginCtx)
@@ -68,7 +74,7 @@ func (m *HTTPResponseManager) SetHTTPResponseHeader(L *lua.LState) int {
 	name := stack.CheckString(1)
 	value := stack.CheckString(2)
 
-	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+	return m.prepareHTTPResponse(L, func(ginCtx *gin.Context) {
 		ginCtx.Header(name, value)
 	})
 }
@@ -80,7 +86,7 @@ func (m *HTTPResponseManager) AddHTTPResponseHeader(L *lua.LState) int {
 	name := stack.CheckString(1)
 	value := stack.CheckString(2)
 
-	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+	return m.prepareHTTPResponse(L, func(ginCtx *gin.Context) {
 		ginCtx.Writer.Header().Add(name, value)
 	})
 }
@@ -91,7 +97,7 @@ func (m *HTTPResponseManager) RemoveHTTPResponseHeader(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	name := stack.CheckString(1)
 
-	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+	return m.prepareHTTPResponse(L, func(ginCtx *gin.Context) {
 		ginCtx.Writer.Header().Del(name)
 	})
 }
@@ -102,7 +108,7 @@ func (m *HTTPResponseManager) SetHTTPStatus(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	code := stack.CheckInt(1)
 
-	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+	return m.prepareHTTPResponse(L, func(ginCtx *gin.Context) {
 		ginCtx.Status(code)
 	})
 }
@@ -132,7 +138,7 @@ func (m *HTTPResponseManager) SetHTTPContentType(L *lua.LState) int {
 	stack := luastack.NewManager(L)
 	value := stack.CheckString(1)
 
-	return m.writeHTTPResponse(L, func(ginCtx *gin.Context) {
+	return m.prepareHTTPResponse(L, func(ginCtx *gin.Context) {
 		ginCtx.Header("Content-Type", value)
 	})
 }

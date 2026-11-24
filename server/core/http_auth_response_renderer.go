@@ -16,6 +16,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -119,11 +120,17 @@ func writeCBORList(ctx *gin.Context, accounts AccountList) {
 	ctx.Data(http.StatusOK, authMediaTypeCBOR, body)
 }
 
-// writeLineSeparated streams accounts as CRLF-separated entries.
+// writeLineSeparated writes accounts as CRLF-separated entries in one body, because ctx.Data fixes the
+// Content-Length on its first call.
 func writeLineSeparated(ctx *gin.Context, accounts AccountList, contentType string) {
+	var body bytes.Buffer
+
 	for _, account := range accounts {
-		ctx.Data(http.StatusOK, contentType, []byte(account+"\r\n"))
+		body.WriteString(account)
+		body.WriteString("\r\n")
 	}
+
+	ctx.Data(http.StatusOK, contentType, body.Bytes())
 }
 
 // renderSuccess writes common success headers and the selected surface payload.

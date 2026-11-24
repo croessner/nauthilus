@@ -763,7 +763,7 @@ func dbStatementMockMethods(runtime *dbMockRuntime) map[string]lua.LGFunction {
 	return map[string]lua.LGFunction{
 		luaTestMockMethodExec:  luaDBStatementOperation(runtime.mockData, luaTestMockMethodExec, runtime.execStmtSQL),
 		luaTestMockMethodQuery: luaDBStatementOperation(runtime.mockData, luaTestMockMethodQuery, runtime.queryStmtSQL),
-		luaTestMockMethodClose: dbStatementCloseMock(),
+		luaTestMockMethodClose: dbStatementCloseMock(runtime.mockData),
 	}
 }
 
@@ -1037,6 +1037,7 @@ func pushDBMockStatement(runtime *dbMockRuntime, conn *mockDBConn, query string)
 	stmtUD.Value = stmt
 	runtime.L.SetMetatable(stmtUD, runtime.stmtMetatable)
 	runtime.L.Push(stmtUD)
+	runtime.mockData.StatementOpened()
 
 	return 1
 }
@@ -1065,8 +1066,8 @@ func dbConnectionCloseMock(mockData *DBMock) lua.LGFunction {
 	}
 }
 
-// dbStatementCloseMock marks a mock prepared statement as closed.
-func dbStatementCloseMock() lua.LGFunction {
+// dbStatementCloseMock marks a mock prepared statement as closed and updates the open-statement count.
+func dbStatementCloseMock(mockData *DBMock) lua.LGFunction {
 	return func(L *lua.LState) int {
 		stmtUD := L.CheckUserData(1)
 
@@ -1075,6 +1076,10 @@ func dbStatementCloseMock() lua.LGFunction {
 			L.Push(lua.LString("invalid mock db statement"))
 
 			return 1
+		}
+
+		if !stmt.closed {
+			mockData.StatementClosed()
 		}
 
 		stmt.closed = true

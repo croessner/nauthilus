@@ -1696,7 +1696,8 @@ const (
 	// LuaFnSelectBackendServer represents the constant used as the key for the Lua function "select_backend_server".
 	LuaFnSelectBackendServer = "select_backend_server"
 
-	// LuaFnGetCurrentBackendResult returns the cumulative backend result visible to the current Lua subject source.
+	// LuaFnGetCurrentBackendResult returns the backend result that subject sources of earlier dependency levels
+	// applied; it is not seeded with the password backend result.
 	LuaFnGetCurrentBackendResult = "get_current_backend_result"
 
 	// LuaFnGetSelectedBackendServer returns the cumulative selected backend visible to the current Lua subject source.
@@ -2294,6 +2295,9 @@ const (
 
 	// LuaRequestSSLFingerprint is a constant that represents an SSL fingerprint identifier in a Lua request.
 	LuaRequestSSLFingerprint = "ssl_fingerprint"
+
+	// LuaRequestTOTPSecret represents the TOTP secret passed to nauthilus_backend_add_totp in a Lua request.
+	LuaRequestTOTPSecret = "totp_secret"
 
 	// LuaRequestWebAuthnCredential represents the serialized WebAuthn credential in a Lua request.
 	LuaRequestWebAuthnCredential = "webauthn_credential"

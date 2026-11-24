@@ -118,6 +118,9 @@ type CommonRequest struct {
 	// Password stores the user's password.
 	Password []byte
 
+	// TOTPSecret stores the TOTP secret that nauthilus_backend_add_totp must persist.
+	TOTPSecret string
+
 	// WebAuthnCredential stores a serialized WebAuthn credential (JSON).
 	WebAuthnCredential string
 
@@ -411,6 +414,7 @@ func (c *CommonRequest) setRequestAuthFields(L *lua.LState, request *lua.LTable)
 	}
 
 	request.RawSetString(definitions.LuaRequestPassword, lua.LString(string(c.Password)))
+	request.RawSetString(definitions.LuaRequestTOTPSecret, lua.LString(c.TOTPSecret))
 	request.RawSetString(definitions.LuaRequestWebAuthnCredential, lua.LString(c.WebAuthnCredential))
 	request.RawSetString(definitions.LuaRequestWebAuthnOldCredential, lua.LString(c.WebAuthnOldCredential))
 	request.RawSetString(definitions.LuaRequestProtocol, lua.LString(c.Protocol))

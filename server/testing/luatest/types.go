@@ -735,11 +735,15 @@ type DBMock struct {
 	OpenError       string           `json:"open_error"`
 	ExecError       string           `json:"exec_error"`
 	QueryError      string           `json:"query_error"`
-	DeclarativeMode bool             `json:"declarative_mode"`
 	ExpectedCalls   []DBExpectedCall `json:"expected_calls"`
+
+	// RequireClosedStatements fails the run when a prepared statement is still open at the end.
+	RequireClosedStatements bool `json:"require_closed_statements"`
+	DeclarativeMode         bool `json:"declarative_mode"`
 
 	callIndex        int    `json:"-"`
 	lastMatchedIndex int    `json:"-"`
+	openStatements   int    `json:"-"`
 	runtimeErr       string `json:"-"`
 }
 
@@ -761,7 +765,22 @@ func (m *DBMock) ResetRuntimeState() {
 
 	m.callIndex = 0
 	m.lastMatchedIndex = -1
+	m.openStatements = 0
 	m.runtimeErr = ""
+}
+
+// StatementOpened counts one prepared statement handed to Lua.
+func (m *DBMock) StatementOpened() {
+	if m != nil {
+		m.openStatements++
+	}
+}
+
+// StatementClosed counts one prepared statement closed by Lua.
+func (m *DBMock) StatementClosed() {
+	if m != nil {
+		m.openStatements--
+	}
 }
 
 // RecordCall validates one DB call against expected_calls in order.
@@ -835,6 +854,10 @@ func (m *DBMock) ValidateComplete() error {
 
 	if m.runtimeErr != "" {
 		return fmt.Errorf("%s", m.runtimeErr)
+	}
+
+	if m.RequireClosedStatements && m.openStatements > 0 {
+		return fmt.Errorf("%d prepared db statement(s) were not closed", m.openStatements)
 	}
 
 	if len(m.ExpectedCalls) == 0 {
