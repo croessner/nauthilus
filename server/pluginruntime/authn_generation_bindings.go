@@ -37,10 +37,9 @@ const (
 	authnNativeObligationExtension  = "obligation_target"
 	authnNativePostActionExtension  = "post_action_target"
 	authnEvaluateMethod             = "Evaluate"
-	authnStatusMessageDetail        = "status_message"
-	authnExecutionSuffixError       = "error"
-	authnExecutionSuffixRejected    = "rejected"
-	authnExecutionSuffixTriggered   = "triggered"
+	authnExecutionSuffixError       = policy.SourceResultError
+	authnExecutionSuffixRejected    = policy.SourceResultRejected
+	authnExecutionSuffixTriggered   = policy.SourceResultTriggered
 )
 
 // AuthenticationSourceKind identifies the two public native authn source families.
@@ -355,7 +354,7 @@ func (b *GenerationBindings) resolveAuthenticationComponent(
 func (b *AuthenticationBindings) addEnvironmentExecutionAttributes(input AuthenticationSourceBindingInput) {
 	b.addExecutionAttributes(input, authenticationExecutionAttributeSpec{
 		identity:       policy.PluginEnvironmentAttributeID,
-		suffixes:       []string{authnExecutionSuffixTriggered, "abort", authnExecutionSuffixError},
+		suffixes:       []string{authnExecutionSuffixTriggered, policy.SourceResultAbort, authnExecutionSuffixError},
 		detailedSuffix: authnExecutionSuffixTriggered,
 		producerType:   policy.CheckTypePluginEnvironment,
 		stage:          policy.StagePreAuth,
@@ -381,29 +380,15 @@ func (b *AuthenticationBindings) addExecutionAttributes(
 	spec authenticationExecutionAttributeSpec,
 ) {
 	for _, suffix := range spec.suffixes {
-		definition := policyregistry.AttributeDefinition{
-			ID:    spec.identity(input.ModuleName, input.ComponentName, suffix),
-			Stage: spec.stage, Operations: slices.Clone(input.Operations),
-			ProducerTypes: []string{spec.producerType},
-			ProducerCheck: input.InstanceNames[0],
-			ProducerOrder: input.Order, Category: spec.category,
-			Type: policyregistry.AttributeTypeBool, Source: policyregistry.SourceBuiltin,
-		}
-		if suffix == spec.detailedSuffix {
-			definition.Details = authenticationStatusDetails()
-		}
+		definition := policyregistry.NewExecutionAttribute(policyregistry.ExecutionAttributeInput{
+			ID:           spec.identity(input.ModuleName, input.ComponentName, suffix),
+			Stage:        spec.stage,
+			Operations:   input.Operations,
+			ProducerType: spec.producerType, ProducerCheck: input.InstanceNames[0], ProducerOrder: input.Order,
+			Category: spec.category, StatusMessage: suffix == spec.detailedSuffix,
+		})
 
 		b.policyAttributes[definition.ID] = definition
-	}
-}
-
-// authenticationStatusDetails returns detached public response-message metadata for one execution fact.
-func authenticationStatusDetails() map[string]policyregistry.DetailDefinition {
-	return map[string]policyregistry.DetailDefinition{
-		authnStatusMessageDetail: {
-			Type: policyregistry.AttributeTypeString, Sensitivity: policyregistry.DetailSensitivityPublic,
-			Purpose: policyregistry.DetailPurposeResponseMessage, MaxLength: 256,
-		},
 	}
 }
 

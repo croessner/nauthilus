@@ -319,14 +319,38 @@ func AuthnResponseDetailSelectedFactID(factID string, detail string) string {
 	return detailFactID + ".selected"
 }
 
+const (
+	// SourceResultTriggered names the fact of an environment source that asks for a rejection.
+	SourceResultTriggered = "triggered"
+
+	// SourceResultAbort names the fact of an environment source that ends the remaining pre-auth sources.
+	SourceResultAbort = "abort"
+
+	// SourceResultRejected names the fact of a subject source that rejects the subject.
+	SourceResultRejected = "rejected"
+
+	// SourceResultError names the fact of a source whose execution failed.
+	SourceResultError = "error"
+)
+
+// LuaEnvironmentAttributeID returns the attribute a named Lua environment source records for one result suffix.
+func LuaEnvironmentAttributeID(name string, suffix string) string {
+	return "auth.lua.environment." + name + "." + suffix
+}
+
+// LuaSubjectAttributeID returns the attribute a named Lua subject source records for one result suffix.
+func LuaSubjectAttributeID(name string, suffix string) string {
+	return "auth.lua.subject." + name + "." + suffix
+}
+
 // AuthnLuaEnvironmentFactID returns one catalog-owned Lua environment execution fact.
 func AuthnLuaEnvironmentFactID(name string, suffix string) string {
-	return "nauthilus.auth.lua.environment." + name + "." + suffix
+	return authnAuthorityNauthilus + "." + LuaEnvironmentAttributeID(name, suffix)
 }
 
 // AuthnLuaSubjectFactID returns one catalog-owned Lua subject execution fact.
 func AuthnLuaSubjectFactID(name string, suffix string) string {
-	return "nauthilus.auth.lua.subject." + name + "." + suffix
+	return authnAuthorityNauthilus + "." + LuaSubjectAttributeID(name, suffix)
 }
 
 // authnGeneratedExecutionFact maps selected host-owned and generated execution attributes.

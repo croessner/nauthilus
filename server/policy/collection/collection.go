@@ -622,5 +622,9 @@ func PublicMessageDetail(value string) DetailValue {
 
 // scriptAttributeID returns the stable callback observation identity.
 func scriptAttributeID(kind ScriptKind, name string, suffix string) string {
-	return fmt.Sprintf("auth.lua.%s.%s.%s", kind.policySegment(), name, suffix)
+	if kind == ScriptKindSubject {
+		return policy.LuaSubjectAttributeID(name, suffix)
+	}
+
+	return policy.LuaEnvironmentAttributeID(name, suffix)
 }

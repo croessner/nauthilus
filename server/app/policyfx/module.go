@@ -697,8 +697,15 @@ func (b *extensionCandidateBuilder) composeExtensions(
 	authn preparedAuthnExtensions,
 	generic preparedGenericExtensions,
 ) (policyruntime.ExtensionPreparation, error) {
+	// Scheduled Lua sources record their result facts in the request decision context, so the binding set carries
+	// their definitions next to the native ones.
+	policyAttributes := configinput.WithConfiguredAuthnLuaSourceAttributes(
+		b.prepared.Config(),
+		authn.native.PolicyAttributes(),
+	)
+
 	bindings, err := composeBindingSet(
-		b.supervisor, b.nativeModules, authn.hostProviders, authn.luaFacts, authn.native.PolicyAttributes(),
+		b.supervisor, b.nativeModules, authn.hostProviders, authn.luaFacts, policyAttributes,
 		authn.conditionSets, authn.timeWindows, authn.actions.Bindings, generic.lua.Bindings,
 		generic.nativeFacts.Bindings, generic.nativeEffects.Bindings, authn.nativeEffects,
 	)

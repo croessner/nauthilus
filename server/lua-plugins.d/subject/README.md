@@ -6,9 +6,11 @@ This directory contains Lua subject source plugins for the Nauthilus authenticat
 
 Configure a compatible custom script below `policy.namespaces.authn.providers.lua_subject_<name>` with `kind: lua_subject`. A provider
 instance below the `subject_analysis` checkpoint selects the exact `authn/lua_subject_<name>` identity with `use` and
-applies its `after` dependencies. The decision layer records `auth.lua.subject.<name>.rejected` and
-`auth.lua.subject.<name>.error`; a status message set by the script becomes the public `status_message` detail on the
-rejected attribute.
+applies its `after` dependencies. The decision layer records the facts `nauthilus.auth.lua.subject.<name>.rejected` and
+`nauthilus.auth.lua.subject.<name>.error`, where `<name>` is the provider key without the `lua_subject_` prefix; a
+status message set by the script becomes the public `status_message` detail on the rejected fact. The
+`authn/standard_auth` policy set denies a rejected subject and answers an error with a temporary failure. Configured
+rules may reference the same fact IDs.
 
 Subject sources may also emit Lua-owned attributes through `nauthilus_policy_facts`. The bundled subject-source attributes are
 registered by `../policy/registry.lua` and use IDs below `lua.plugin.*`, for example

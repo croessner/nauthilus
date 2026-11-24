@@ -30,7 +30,7 @@ const (
 	builtinStandardOutcomeDefaultDeny = "auth.outcome.default_deny"
 	builtinStandardOutcomePreAuthOK   = "auth.outcome.pre_auth_ok"
 	builtinOutcomeEmptyUsername       = "auth.outcome.empty_username"
-	builtinStatusMessageDetail        = "status_message"
+	builtinStatusMessageDetail        = DetailStatusMessage
 	builtinGeneratedFamilyLua         = "lua"
 	builtinGeneratedFamilyPlugin      = "plugin"
 	builtinGeneratedKindEnvironment   = "environment"

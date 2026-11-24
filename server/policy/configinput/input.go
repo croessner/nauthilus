@@ -300,6 +300,8 @@ func (i UnifiedPolicyInput) materialize(
 		return nil, normalizedMaterial{}, err
 	}
 
+	authnPolicyAttributes = WithConfiguredAuthnLuaSourceAttributes(document.Policy, authnPolicyAttributes)
+
 	builtin, err := configuredBuiltinAuthnContribution(ctx, document.Policy, acceptance, authnPolicyAttributes)
 	if err != nil {
 		return nil, normalizedMaterial{}, err
