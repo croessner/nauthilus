@@ -39,8 +39,7 @@ func (e *authnCandidateExecution) StandardAuthFacts(
 	target decision.Target,
 	checkpoint string,
 ) (decision.FactSet, error) {
-	if e == nil || e.auth == nil || target.Action() != string(e.operation) ||
-		(checkpoint != string(policy.StagePreAuth) && checkpoint != string(policy.StageAuthDecision)) {
+	if e == nil || e.auth == nil || target.Action() != string(e.operation) {
 		return decision.NewFactSet(nil)
 	}
 
@@ -217,7 +216,9 @@ func (e *authnCandidateExecution) storeAuthnProjection(attributeID string, entry
 	e.projections[attributeID] = entry
 }
 
-// authnAttributeApplies restricts projection to the active operation and reached semantic stages.
+// authnAttributeApplies restricts projection to the active operation and reached semantic stages. An attribute
+// applies from the checkpoint of its own stage onward, so a rule at that checkpoint sees what its sources emitted. An
+// attribute without a known stage applies only at the final auth_decision checkpoint.
 func authnAttributeApplies(
 	attribute report.AttributeValue,
 	definitionOperations []policy.Operation,
@@ -232,7 +233,11 @@ func authnAttributeApplies(
 		return false
 	}
 
-	return checkpoint != string(policy.StagePreAuth) || attribute.Stage == policy.StagePreAuth
+	if !policy.IsAuthnCheckpoint(string(attribute.Stage)) {
+		return checkpoint == string(policy.StageAuthDecision)
+	}
+
+	return policy.CompareAuthnCheckpoints(string(attribute.Stage), checkpoint) <= 0
 }
 
 // authnPolicyAttributeFacts projects one admitted attribute and its selected public response detail.

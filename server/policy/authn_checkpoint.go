@@ -37,6 +37,14 @@ func FinalAuthnCheckpoint(checkpoints []string) string {
 	return ordered[len(ordered)-1]
 }
 
+// IsAuthnCheckpoint reports whether a name is one of the authn checkpoints of the authentication work order.
+func IsAuthnCheckpoint(checkpoint string) bool {
+	return authnCheckpointRank(checkpoint) < authnCheckpointRankUnknown
+}
+
+// authnCheckpointRankUnknown is the rank of every name outside the authn work order.
+const authnCheckpointRankUnknown = 5
+
 // authnCheckpointRank returns the position of one checkpoint in the authentication work order.
 func authnCheckpointRank(checkpoint string) int {
 	switch Stage(checkpoint) {
@@ -51,7 +59,7 @@ func authnCheckpointRank(checkpoint string) int {
 	case StageAuthDecision:
 		return 4
 	default:
-		return 5
+		return authnCheckpointRankUnknown
 	}
 }
 
