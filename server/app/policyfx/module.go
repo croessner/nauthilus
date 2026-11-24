@@ -228,14 +228,9 @@ func NewCoordinator(
 		return nil, fmt.Errorf("%w: production Policy dependencies are incomplete", policyruntime.ErrInvalidGeneration)
 	}
 
-	native, err := pluginruntime.CaptureGenerationBindings(pluginState.Instances())
+	extensions, err := newExtensionPreparationSlot(pluginState, logger)
 	if err != nil {
 		return nil, err
-	}
-
-	extensions := extensionPreparationSlot{
-		native: native, pools: vmpool.NewManager(), logger: logger,
-		plugins: pluginruntime.NewReloadClassifier(pluginState.Instances()),
 	}
 
 	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
@@ -262,6 +257,67 @@ func NewCoordinator(
 	}
 
 	return result, nil
+}
+
+// newExtensionPreparationSlot captures the process plugin bindings that every candidate extension preparation uses.
+func newExtensionPreparationSlot(pluginState *pluginloader.State, logger *slog.Logger) (extensionPreparationSlot, error) {
+	native, err := pluginruntime.CaptureGenerationBindings(pluginState.Instances())
+	if err != nil {
+		return extensionPreparationSlot{}, err
+	}
+
+	return extensionPreparationSlot{
+		native: native, pools: vmpool.NewManager(), logger: logger,
+		plugins: pluginruntime.NewReloadClassifier(pluginState.Instances()),
+	}, nil
+}
+
+// CheckCatalog compiles the policy catalog of one configuration with the same policy, extension, and catalog
+// preparation slots as the startup generation and discards the result. Configuration checks use it so that a
+// configuration whose catalog cannot compile fails the check instead of the server start. Caller credentials,
+// admission, and settings are not prepared because they depend on live process services.
+func CheckCatalog(
+	ctx context.Context,
+	configured config.File,
+	pluginState *pluginloader.State,
+	logger *slog.Logger,
+) error {
+	if configured == nil || pluginState == nil {
+		return fmt.Errorf("%w: catalog check dependencies are incomplete", policyruntime.ErrInvalidGeneration)
+	}
+
+	extensions, err := newExtensionPreparationSlot(pluginState, logger)
+	if err != nil {
+		return err
+	}
+
+	coordinator, err := policyruntime.NewCoordinator(policyruntime.CoordinatorConfig{
+		Store:  policyruntime.NewGenerationStore(),
+		Logger: logger,
+		Slots: policyruntime.PreparationSlots{
+			Policy:               policyPreparationSlot{},
+			Extensions:           extensions,
+			Catalog:              catalogPreparationSlot{},
+			CallerAuthentication: callerAuthenticationPreparationSlot{},
+			Admission:            admissionPreparationSlot{},
+			Settings:             settingsPreparationSlot{},
+			Application:          decisionservice.NewRuntimeApplicationPreparationSlot(),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	ctx, resource, err := claimCandidateArtifactContext(ctx, configured)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = resource.Dispose(ctx)
+	}()
+
+	return coordinator.PrepareCatalog(ctx, policyruntime.PrepareInput{Config: configured, ID: 1})
 }
 
 // provideCoordinator publishes concrete and reload views of the same coordinator instance.

@@ -119,9 +119,7 @@ func handleEarlyExitModes() bool {
 
 	if bootfx.IsConfigCheckMode() {
 		os.Exit(runConfigCheck(func() error {
-			_, err := bootfx.SetupConfiguration()
-
-			return err
+			return checkConfiguration(bootfx.SetupConfiguration)
 		}, os.Stderr))
 	}
 
@@ -206,6 +204,29 @@ func registerRemoteBackendLifecycle(lc fx.Lifecycle) {
 			return remotebackend.CloseConnectionManagers()
 		},
 	})
+}
+
+// checkConfiguration loads the configuration like the server start and compiles its policy catalog with the
+// startup preparation, so a configuration the server would reject while starting also fails the check. The check
+// discards log output; the returned error names the rejected part.
+func checkConfiguration(prepare func() (config.File, error)) error {
+	configured, err := prepare()
+	if err != nil {
+		return err
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+
+	plugins, err := bootfx.SetupGoPlugins(configured, logger)
+	if err != nil {
+		return err
+	}
+
+	if err = policyfx.CheckCatalog(context.Background(), configured, plugins, logger); err != nil {
+		return fmt.Errorf("compile policy catalog: %w", err)
+	}
+
+	return nil
 }
 
 func runConfigCheck(setupConfiguration func() error, stderr io.Writer) int {

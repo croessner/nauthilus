@@ -545,6 +545,38 @@ func (c *Coordinator) Apply(ctx context.Context, input PrepareInput) (*Generatio
 func (c *Coordinator) Prepare(ctx context.Context, input PrepareInput) (*Candidate, error) {
 	ctx = normalizedGenerationContext(ctx)
 
+	builder, err := c.newPreparedCandidateBuilder(input)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = builder.prepare(ctx); err != nil {
+		return nil, err
+	}
+
+	return builder.candidate(), nil
+}
+
+// PrepareCatalog runs the policy, extension, and catalog steps of Prepare and then disposes every resource they
+// built. It proves that a configuration compiles to the startup catalog without publishing candidate state and
+// without preparing authorities, such as caller credentials and settings, that need live process services.
+func (c *Coordinator) PrepareCatalog(ctx context.Context, input PrepareInput) error {
+	ctx = normalizedGenerationContext(ctx)
+
+	builder, err := c.newPreparedCandidateBuilder(input)
+	if err != nil {
+		return err
+	}
+
+	if err = builder.runSteps(ctx, builder.catalogSteps()); err != nil {
+		return err
+	}
+
+	return builder.resources.dispose(ctx)
+}
+
+// newPreparedCandidateBuilder validates one candidate identity against the active generation and opens its builder.
+func (c *Coordinator) newPreparedCandidateBuilder(input PrepareInput) (*candidateBuilder, error) {
 	if c == nil || c.store == nil || nilInterface(input.Config) || input.ID == 0 {
 		return nil, fmt.Errorf("%w: candidate config and positive identity are required", ErrInvalidGeneration)
 	}
@@ -554,12 +586,7 @@ func (c *Coordinator) Prepare(ctx context.Context, input PrepareInput) (*Candida
 		return nil, fmt.Errorf("%w: candidate identity %d is not newer than %d", ErrInvalidGeneration, input.ID, previous.ID())
 	}
 
-	builder := newCandidateBuilder(c, input, previous)
-	if err := builder.prepare(ctx); err != nil {
-		return nil, err
-	}
-
-	return builder.candidate(), nil
+	return newCandidateBuilder(c, input, previous), nil
 }
 
 // newCandidateBuilder creates one stateful off-side assembly owner.
@@ -586,16 +613,28 @@ func newCandidateBuilder(
 
 // prepare runs the fixed dependency-ordered candidate preparation protocol.
 func (b *candidateBuilder) prepare(ctx context.Context) error {
-	steps := []func(context.Context) error{
-		b.preparePolicy,
-		b.prepareExtensions,
-		b.prepareCatalog,
+	steps := append(b.catalogSteps(),
 		b.prepareCallerAuthentication,
 		b.prepareAdmission,
 		b.prepareSettings,
 		b.prepareApplication,
-	}
+	)
 
+	return b.runSteps(ctx, steps)
+}
+
+// catalogSteps returns the leading preparation steps that end with the compiled catalog.
+func (b *candidateBuilder) catalogSteps() []func(context.Context) error {
+	return []func(context.Context) error{
+		b.preparePolicy,
+		b.prepareExtensions,
+		b.prepareCatalog,
+	}
+}
+
+// runSteps runs preparation steps in order and stops at the first failure, which already disposed the partial
+// candidate.
+func (b *candidateBuilder) runSteps(ctx context.Context, steps []func(context.Context) error) error {
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
 			return err
