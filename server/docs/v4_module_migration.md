@@ -75,6 +75,13 @@ It contains every fix of 4.1.3.
   `false` (default `true`; a change needs a restart). Short-lived states,
   such as generic `kind: lua` policy providers and registry scripts, keep
   the interpreter.
+- `pairs` visits the array part first, then string keys in insertion
+  order, then all other keys in insertion order. Scripts must still not
+  rely on a particular order.
+- Compiler defects of the previous engine are fixed: `goto` no longer
+  detaches closures from the local variables of the surrounding function,
+  and `v = t.x and y` assigns `nil` or `false` when `t.x` is falsy instead
+  of leaving `v` unchanged.
 - Every recipe of the website's Lua Cookbook gives the same results with
   the JIT on and off.
 
@@ -97,9 +104,11 @@ It contains every fix of 4.1.3.
 
 **Action:**
 
-- None for configurations. Set `jit: false` in
-  `auth.backends.lua.backend.default` to rule the compiler out when you
-  analyse a Lua problem, and report a difference between both modes.
+- None for configurations. If a Lua script behaves differently after the
+  upgrade, compare it with `jit: false` in
+  `auth.backends.lua.backend.default` and check whether it relied on the
+  order of `pairs` or on one of the fixed compiler defects; report a
+  difference between both modes.
 - Read the 4.1.3 notes below for the policy and Lua fixes.
 
 ## v4.1.3: Lua Policy Sources Decide Through Policy Again
