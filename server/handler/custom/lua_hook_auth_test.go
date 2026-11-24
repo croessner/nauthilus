@@ -78,6 +78,7 @@ func TestLuaHookAuthHandlerAllowsExplicitPublicHookWithoutBasicAuth(t *testing.T
 type luaHookAuthTestConfig struct {
 	location string
 	method   string
+	script   string
 	public   bool
 }
 
@@ -105,7 +106,7 @@ func newLuaHookAuthTestRouter(t *testing.T, testCfg luaHookAuthTestConfig) *gin.
 				{
 					Location:   testCfg.location,
 					Method:     testCfg.method,
-					ScriptPath: writeLuaHookAuthTestScript(t, testCfg.location),
+					ScriptPath: writeLuaHookAuthTestScript(t, testCfg),
 					Public:     testCfg.public,
 				},
 			},
@@ -155,15 +156,19 @@ func newLuaHookAuthTestRouter(t *testing.T, testCfg luaHookAuthTestConfig) *gin.
 	return router
 }
 
-// writeLuaHookAuthTestScript writes a deterministic Lua hook returning its executed marker.
-func writeLuaHookAuthTestScript(t *testing.T, location string) string {
+// writeLuaHookAuthTestScript writes the configured Lua hook or a default one returning its executed marker.
+func writeLuaHookAuthTestScript(t *testing.T, testCfg luaHookAuthTestConfig) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "hook.lua")
-	content := []byte(`function nauthilus_run_hook(request)
-	return { executed = "` + location[1:] + `" }
+	content := []byte(testCfg.script)
+
+	if testCfg.script == "" {
+		content = []byte(`function nauthilus_run_hook(request)
+	return { executed = "` + testCfg.location[1:] + `" }
 end
 `)
+	}
 
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("write Lua hook script: %v", err)

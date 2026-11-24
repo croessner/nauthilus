@@ -172,7 +172,7 @@ func (h customRequestHandler) runLuaHook(ctx *gin.Context, snap configfx.Snapsho
 	h.writeLuaHookResult(ctx, snap, guid, hookName, hookMethod, result)
 }
 
-// writeLuaHookResult writes the JSON response unless Lua already wrote one.
+// writeLuaHookResult writes the JSON response with the current status unless Lua already wrote a body.
 func (h customRequestHandler) writeLuaHookResult(ctx *gin.Context, snap configfx.Snapshot, guid string, hookName string, hookMethod string, result any) {
 	util.DebugModuleWithCfg(
 		ctx.Request.Context(),
@@ -188,6 +188,6 @@ func (h customRequestHandler) writeLuaHookResult(ctx *gin.Context, snap configfx
 	}
 
 	if ctx.Writer != nil {
-		ctx.JSON(http.StatusOK, result)
+		ctx.JSON(ctx.Writer.Status(), result)
 	}
 }
