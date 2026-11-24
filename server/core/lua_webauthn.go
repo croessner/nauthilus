@@ -56,7 +56,6 @@ func (lm *luaManagerImpl) GetWebAuthnCredentials(auth *AuthState) (credentials [
 	luaRequest := &bktype.LuaRequest{
 		Command:           definitions.LuaCommandGetWebAuthnCredentials,
 		BackendName:       lm.backendName,
-		Service:           auth.Request.Service,
 		Protocol:          auth.Request.Protocol,
 		Context:           auth.Runtime.Context,
 		Tolerate:          lm.deps.Tolerate,
@@ -137,6 +136,7 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 	defer lualib.PutCommonRequest(commonRequest)
 
 	lm.populateWebAuthnCommonRequest(commonRequest, auth)
+	commonRequest.WebAuthnCredential = string(credBytes)
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 
@@ -144,16 +144,14 @@ func (lm *luaManagerImpl) executeWebAuthnCredentialOp(
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{
-		Command:            command,
-		BackendName:        lm.backendName,
-		Service:            auth.Request.Service,
-		Protocol:           auth.Request.Protocol,
-		Context:            auth.Runtime.Context,
-		Tolerate:           lm.deps.Tolerate,
-		WebAuthnCredential: string(credBytes),
-		LuaReplyChan:       luaReplyChan,
-		HTTPClientContext:  ctxLua,
-		CommonRequest:      commonRequest,
+		Command:           command,
+		BackendName:       lm.backendName,
+		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
+		Tolerate:          lm.deps.Tolerate,
+		LuaReplyChan:      luaReplyChan,
+		HTTPClientContext: ctxLua,
+		CommonRequest:     commonRequest,
 	}
 
 	priorityqueue.LuaQueue.Push(luaRequest, webAuthnLuaPriority(auth, priorityqueue.PriorityMedium))
@@ -220,17 +218,14 @@ func (lm *luaManagerImpl) UpdateWebAuthnCredential(auth *AuthState, oldCredentia
 	defer cancelLua()
 
 	luaRequest := &bktype.LuaRequest{
-		Command:               definitions.LuaCommandUpdateWebAuthnCredential,
-		BackendName:           lm.backendName,
-		Service:               auth.Request.Service,
-		Protocol:              auth.Request.Protocol,
-		Context:               auth.Runtime.Context,
-		Tolerate:              lm.deps.Tolerate,
-		WebAuthnCredential:    string(newCredBytes),
-		WebAuthnOldCredential: string(oldCredBytes),
-		LuaReplyChan:          luaReplyChan,
-		HTTPClientContext:     ctxLua,
-		CommonRequest:         commonRequest,
+		Command:           definitions.LuaCommandUpdateWebAuthnCredential,
+		BackendName:       lm.backendName,
+		Protocol:          auth.Request.Protocol,
+		Context:           auth.Runtime.Context,
+		Tolerate:          lm.deps.Tolerate,
+		LuaReplyChan:      luaReplyChan,
+		HTTPClientContext: ctxLua,
+		CommonRequest:     commonRequest,
 	}
 
 	priorityqueue.LuaQueue.Push(luaRequest, webAuthnLuaPriority(auth, priorityqueue.PriorityMedium))

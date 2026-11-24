@@ -115,6 +115,7 @@ func (lm *luaManagerImpl) runLuaMFACommand(auth *AuthState, input luaMFACommandI
 	defer lualib.PutCommonRequest(commonRequest)
 
 	lm.fillLuaMFACommonRequest(commonRequest, auth)
+	commonRequest.TOTPSecret = input.totpSecret
 
 	dLua := lm.effectiveCfg().GetServer().GetTimeouts().GetLuaBackend()
 
@@ -127,7 +128,6 @@ func (lm *luaManagerImpl) runLuaMFACommand(auth *AuthState, input luaMFACommandI
 		Protocol:          auth.Request.Protocol,
 		Context:           auth.Runtime.Context,
 		Tolerate:          lm.deps.Tolerate,
-		TOTPSecret:        input.totpSecret,
 		HTTPClientRequest: auth.Request.HTTPClientRequest,
 		HTTPClientContext: ctxLua,
 		LuaReplyChan:      luaReplyChan,
@@ -324,7 +324,6 @@ func (lm *luaManagerImpl) newLuaPassDBRequest(auth *AuthState) luaRequestHandle 
 		request: &bktype.LuaRequest{
 			Command:           definitions.LuaCommandPassDB,
 			BackendName:       lm.backendName,
-			Service:           auth.Request.Service,
 			Protocol:          auth.Request.Protocol,
 			Context:           auth.Runtime.Context,
 			Tolerate:          lm.deps.Tolerate,
