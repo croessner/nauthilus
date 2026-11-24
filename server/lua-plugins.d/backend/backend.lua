@@ -59,22 +59,25 @@ local function open_mysql()
     return mysql
 end
 
-local function mysql_query(mysql, query, ...)
+-- Prepare, run and close one statement; closing it before raising keeps the server-side
+-- prepared statement count bounded (MariaDB/MySQL max_prepared_stmt_count).
+local function mysql_run_statement(mysql, method, query, ...)
     local stmt, err_stmt = mysql:stmt(query)
     nauthilus_util.if_error_raise(err_stmt)
 
-    local result, err_query = stmt:query(...)
-    nauthilus_util.if_error_raise(err_query)
+    local result, err_run = stmt[method](stmt, ...)
+    stmt:close()
+    nauthilus_util.if_error_raise(err_run)
 
     return result
 end
 
-local function mysql_exec(mysql, query, ...)
-    local result, err_exec = mysql:stmt(query)
-    nauthilus_util.if_error_raise(err_exec)
+local function mysql_query(mysql, query, ...)
+    return mysql_run_statement(mysql, "query", query, ...)
+end
 
-    local _, err_stmt_exec = result:exec(...)
-    nauthilus_util.if_error_raise(err_stmt_exec)
+local function mysql_exec(mysql, query, ...)
+    mysql_run_statement(mysql, "exec", query, ...)
 end
 
 function nauthilus_backend_verify_password(request)

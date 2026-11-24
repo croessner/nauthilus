@@ -34,6 +34,7 @@ func TestBundledLuaMySQLBackendUsesPreparedLookupForInjectionUsername(t *testing
     "no_auth": true
   },
   "db": {
+    "require_closed_statements": true,
     "expected_calls": [
       {"method": "open"},
       {"method": "stmt", "query_contains": "WHERE username = ? OR account = ?"},
@@ -115,6 +116,7 @@ func bundledMySQLMutationMock() string {
     "no_auth": true
   },
   "db": {
+    "require_closed_statements": true,
     "expected_calls": [
       {"method": "open"},
       {"method": "stmt", "query_contains": "WHERE username = ? OR account = ?"},
