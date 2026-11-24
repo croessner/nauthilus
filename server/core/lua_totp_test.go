@@ -27,6 +27,8 @@ import (
 	"github.com/croessner/nauthilus/v4/server/model/mfa"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 type mockLuaConfig struct {
@@ -110,7 +112,7 @@ func TestLuaAddTOTPSecret(t *testing.T) {
 
 	go func() {
 		assertLuaTOTPQueueRequest(t, definitions.LuaCommandAddMFAValue, func(req *bktype.LuaRequest) {
-			assert.Equal(t, "secret", req.TOTPSecret)
+			assert.Equal(t, "secret", luaVisibleRequestField(t, req, definitions.LuaRequestTOTPSecret))
 		})
 	}()
 
@@ -174,4 +176,20 @@ func assertLuaTOTPQueueRequest(t *testing.T, command definitions.LuaCommand, ass
 	if req.LuaReplyChan != nil {
 		req.LuaReplyChan <- &lualib.LuaBackendResult{}
 	}
+}
+
+// luaVisibleRequestField builds the request table a Lua backend script receives and returns one string field.
+func luaVisibleRequestField(t *testing.T, req *bktype.LuaRequest, key string) string {
+	t.Helper()
+
+	state := lua.NewState()
+	defer state.Close()
+
+	if req.CommonRequest == nil {
+		t.Fatal("Lua request has no common request")
+	}
+
+	request := req.SetupRequest(state, nil, state.NewTable())
+
+	return lua.LVAsString(request.RawGetString(key))
 }

@@ -35,24 +35,6 @@ type LuaRequest struct {
 	// BackendName is the logical Lua backend name this request must be processed by.
 	BackendName string
 
-	// TOTPSecret is the secret value used in time-based one-time password (TOTP) authentication.
-	TOTPSecret string
-
-	// OIDCCID is the OpenID Connect Client ID.
-	OIDCCID string
-
-	// SAMLEntityID is the SAML Entity ID.
-	SAMLEntityID string
-
-	// WebAuthnCredential is a serialized WebAuthn credential (JSON).
-	WebAuthnCredential string
-
-	// WebAuthnOldCredential is a serialized WebAuthn credential (JSON) used for updates.
-	WebAuthnOldCredential string
-
-	// Service is the specific service requested by the client.
-	Service string
-
 	// Protocol points to the protocol that was used by a client to make the request.
 	Protocol *config.Protocol
 

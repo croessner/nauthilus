@@ -143,11 +143,12 @@ func TestLuaSaveDeleteWebAuthnCredential(t *testing.T) {
 				req := priorityqueue.LuaQueue.Pop("test")
 				if req != nil {
 					assert.Equal(t, tt.command, req.Command)
-					assert.NotEmpty(t, req.WebAuthnCredential)
+					credential := luaVisibleRequestField(t, req, definitions.LuaRequestWebAuthnCredential)
+					assert.NotEmpty(t, credential)
 
 					var credPopped webauthn.Credential
 
-					_ = json.Unmarshal([]byte(req.WebAuthnCredential), &credPopped)
+					_ = json.Unmarshal([]byte(credential), &credPopped)
 					assert.True(t, bytes.Equal(cred.ID, credPopped.ID))
 
 					if req.LuaReplyChan != nil {
@@ -169,16 +170,19 @@ func TestLuaUpdateWebAuthnCredential(t *testing.T) {
 		req := priorityqueue.LuaQueue.Pop("test")
 		if req != nil {
 			assert.Equal(t, definitions.LuaCommandUpdateWebAuthnCredential, req.Command)
-			assert.NotEmpty(t, req.WebAuthnCredential)
-			assert.NotEmpty(t, req.WebAuthnOldCredential)
+			credential := luaVisibleRequestField(t, req, definitions.LuaRequestWebAuthnCredential)
+			oldCredential := luaVisibleRequestField(t, req, definitions.LuaRequestWebAuthnOldCredential)
+
+			assert.NotEmpty(t, credential)
+			assert.NotEmpty(t, oldCredential)
 
 			var (
 				oldCredPopped webauthn.Credential
 				newCredPopped webauthn.Credential
 			)
 
-			_ = json.Unmarshal([]byte(req.WebAuthnOldCredential), &oldCredPopped)
-			_ = json.Unmarshal([]byte(req.WebAuthnCredential), &newCredPopped)
+			_ = json.Unmarshal([]byte(oldCredential), &oldCredPopped)
+			_ = json.Unmarshal([]byte(credential), &newCredPopped)
 
 			assert.True(t, bytes.Equal(oldCred.ID, oldCredPopped.ID))
 			assert.True(t, bytes.Equal(newCred.ID, newCredPopped.ID))

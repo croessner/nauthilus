@@ -2295,6 +2295,9 @@ const (
 	// LuaRequestSSLFingerprint is a constant that represents an SSL fingerprint identifier in a Lua request.
 	LuaRequestSSLFingerprint = "ssl_fingerprint"
 
+	// LuaRequestTOTPSecret represents the TOTP secret passed to nauthilus_backend_add_totp in a Lua request.
+	LuaRequestTOTPSecret = "totp_secret"
+
 	// LuaRequestWebAuthnCredential represents the serialized WebAuthn credential in a Lua request.
 	LuaRequestWebAuthnCredential = "webauthn_credential"
 
