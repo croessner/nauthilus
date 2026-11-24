@@ -1696,7 +1696,8 @@ const (
 	// LuaFnSelectBackendServer represents the constant used as the key for the Lua function "select_backend_server".
 	LuaFnSelectBackendServer = "select_backend_server"
 
-	// LuaFnGetCurrentBackendResult returns the cumulative backend result visible to the current Lua subject source.
+	// LuaFnGetCurrentBackendResult returns the backend result that subject sources of earlier dependency levels
+	// applied; it is not seeded with the password backend result.
 	LuaFnGetCurrentBackendResult = "get_current_backend_result"
 
 	// LuaFnGetSelectedBackendServer returns the cumulative selected backend visible to the current Lua subject source.
