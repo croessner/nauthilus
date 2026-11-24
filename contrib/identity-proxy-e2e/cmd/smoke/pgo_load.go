@@ -168,7 +168,7 @@ func (l *pgoLoad) work(ctx context.Context, worker int, operations []pgoLoadOper
 		account := fmt.Sprintf(pgoLoadAccountFormat, request%pgoLoadAccounts)
 		err := operations[request%len(operations)](ctx, account)
 
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || workloadDeadlinePassed(ctx) {
 			return nil
 		}
 
@@ -178,6 +178,15 @@ func (l *pgoLoad) work(ctx context.Context, worker int, operations []pgoLoadOper
 
 		l.requests.Add(1)
 	}
+}
+
+// workloadDeadlinePassed reports whether the workload deadline lies behind the wall clock. A context sets Err only when
+// its timer fires; on a loaded host a server status for a request sent in the last milliseconds, such as gRPC
+// DeadlineExceeded, can arrive before that, and must still count as the end of the workload.
+func workloadDeadlinePassed(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+
+	return ok && !time.Now().Before(deadline)
 }
 
 // edgeAuthenticate sends one JSON authentication request through edge-a and requires an ok=true answer.

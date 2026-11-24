@@ -77,3 +77,51 @@ func TestPGOLoadReportsTheFirstFailure(t *testing.T) {
 		t.Fatalf("error=%v, want %v", err, refused)
 	}
 }
+
+// lateTimerContext models a context whose deadline has passed while its timer has not fired yet: Deadline is in the
+// past, but Err is still nil and Done is still open. On a loaded host a gRPC status can arrive in that window.
+type lateTimerContext struct {
+	context.Context
+	deadline time.Time
+}
+
+// Deadline reports the passed workload deadline.
+func (c lateTimerContext) Deadline() (time.Time, bool) {
+	return c.deadline, true
+}
+
+// TestPGOLoadTreatsAnErrorAfterTheDeadlineAsTheEnd pins that a request failing after the workload deadline passed is
+// the end of the workload, even before the context's timer has set Err. The release PGO refresh for v4.1.3 and v4.2.0
+// failed on such a DeadlineExceeded status that arrived 35 s after the profiles started, exactly at the workload end.
+func TestPGOLoadTreatsAnErrorAfterTheDeadlineAsTheEnd(t *testing.T) {
+	load := &pgoLoad{runner: &runner{opts: options{loadWorkers: 1}}}
+	ctx := lateTimerContext{Context: context.Background(), deadline: time.Now().Add(-time.Millisecond)}
+	deadlineStatus := errors.New("authenticate RPC failed: rpc error: code = DeadlineExceeded")
+
+	done := make(chan error, 1)
+
+	go func() {
+		done <- load.work(ctx, 0, []pgoLoadOperation{func(context.Context, string) error { return deadlineStatus }})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("error after the workload deadline reported as failure: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop after the workload deadline")
+	}
+}
+
+// TestPGOLoadStillReportsAFailureBeforeTheDeadline pins that the deadline check does not hide a real failure: an error
+// while the workload still has time left ends the workload with that error.
+func TestPGOLoadStillReportsAFailureBeforeTheDeadline(t *testing.T) {
+	load := &pgoLoad{runner: &runner{opts: options{loadWorkers: 1}}}
+	ctx := lateTimerContext{Context: context.Background(), deadline: time.Now().Add(time.Hour)}
+	stalled := errors.New("lookup identity RPC failed: rpc error: code = DeadlineExceeded")
+
+	if err := load.work(ctx, 0, []pgoLoadOperation{func(context.Context, string) error { return stalled }}); !errors.Is(err, stalled) {
+		t.Fatalf("error=%v, want %v", err, stalled)
+	}
+}
