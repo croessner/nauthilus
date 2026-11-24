@@ -53,6 +53,92 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.1.3: Lua Policy Sources Decide Through Policy Again
+
+Nauthilus 4.1.3 is a patch release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Private
+native plugins must be rebuilt against this source, as for every release.
+The defects were found with the tested recipes of the website's Lua Cookbook.
+
+### Security: Lua environment sources reject again
+
+- In 4.0.0 to 4.1.2 a configured `lua_environment` provider that returned
+  `ENVIRONMENT_TRIGGER_YES` did not reject the login. Nauthilus did not
+  register the result facts `nauthilus.auth.lua.environment.<name>.*` for
+  configured Lua sources, so `authn/standard_auth` generated no rule for them
+  and the login continued. Configured Lua sources now get these facts again:
+  with `authn/standard_auth` alone, a trigger is denied, a raised Lua error
+  answers with a temporary failure, and an abort ends the pre-auth checkpoint.
+- The trigger is a fact; the policy decides. A configured rule bound in the
+  target's `plans` runs before the `authn/standard_auth` fallback at the same
+  checkpoint and may deny, tempfail, or permit a triggered request. Such rules
+  can now reference the facts; before, they failed with `policy rule fact
+  mismatch`.
+- The side effects of a trigger follow the decision. Nauthilus records a
+  request as rejected by an environment source (environment name in the log,
+  brute-force learning, `environment_rejected` for Lua actions, plugin hooks,
+  and request snapshots) only after the policy selected a pre-auth deny. This
+  also applies to native environment sources.
+- Lua subject sources get the same facts and generated rules. A rejection is
+  still denied; the answer may now carry the script's status message.
+- Unchanged: a script that returns `ENVIRONMENT_RESULT_FAIL` is logged and does
+  not tempfail; only a raised Lua error does, as in Nauthilus 3.
+
+### Policy rules
+
+- A `tempfail` or `deny` rule keeps its `response_message`. Before, a Lua
+  attribute with a registered public response detail made its checkpoint fail
+  as `evaluation_failed`, and the answer was the generic temporary-failure
+  text.
+- `response_message` with `from: attribute_detail` on attributes of Lua
+  registry scripts compiles. Before, Nauthilus refused to start with `policy
+  rule fact mismatch`. The schema now declares every public response-message
+  detail, also for native plugin attributes.
+- Configured rules at `auth_backend`, `subject_analysis`, and
+  `account_provider` see the attributes emitted at or before their checkpoint.
+  Before, only `pre_auth` and `auth_decision` did. `run_if` and `skip_if`
+  guards at these checkpoints see them as well. **Rules that never fired at
+  these checkpoints can start firing after the upgrade; review them.**
+- `--config-check` compiles the policy catalog like the server start and loads
+  native plugins. Configurations that passed before can now fail the check,
+  for example with a fact mismatch or a missing or unverifiable plugin
+  artifact. The check still does not contact Redis, so caller credentials and
+  Lua init scripts are verified only at startup.
+- A domain plan references a generic `kind: lua` provider by its configured
+  key, for example `use: vpn/office_hours`; the documentation now says so.
+
+### Lua runtime
+
+- `nauthilus_backend_add_totp` receives `request.totp_secret` again; the value
+  had been missing since at least 3.1.0. The WebAuthn save and delete callbacks
+  now receive `request.webauthn_credential`; before it was always empty. Lua
+  backends that stored the empty value now store the real secret or credential.
+- Custom hooks: `set_http_status`, the header functions, and
+  `set_http_content_type` no longer mark the response as written. A hook that
+  calls them and returns a Lua table answers with that table as JSON and the
+  status it set. Before, the body was empty, and a JSON answer always had
+  status 200. Functions that write a body still own the response.
+- `mode=list-accounts` with `text/plain` or
+  `application/x-www-form-urlencoded` returns every account; before, only the
+  first one. Accounts of a Lua backend keep the order of the Lua list,
+  without duplicates. Nauthilus logs a warning when no Lua backend `search`
+  entry contains the protocol `account-provider`.
+- The bundled `lua-plugins.d/backend/backend.lua` closes its prepared
+  statements. Before, MariaDB kept one per call until
+  `max_prepared_stmt_count` was reached and then refused further logins.
+  Apply the same change to copies of this script.
+- `nauthilus_backend.get_current_backend_result()` in subject sources returns
+  the attributes that earlier subject sources applied, not those of the
+  password backend; the documentation now says so.
+
+**Action:**
+
+- Review configured rules at `auth_backend`, `subject_analysis`, and
+  `account_provider`, and run `--config-check` against your configuration.
+- Configurations with Lua environment sources that rely on a login passing
+  despite a trigger must add a rule that permits it.
+- Fix copies of the bundled MySQL backend script.
+
 ## v4.1.2: Lua Modules Compiled Once
 
 Nauthilus 4.1.2 is a patch release on the v4 line. The module path,
