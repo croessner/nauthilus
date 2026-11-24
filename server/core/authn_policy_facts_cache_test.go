@@ -22,6 +22,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/policy"
 	policycollection "github.com/croessner/nauthilus/v4/server/policy/collection"
 	"github.com/croessner/nauthilus/v4/server/policy/decision"
+	policyregistry "github.com/croessner/nauthilus/v4/server/policy/registry"
 	"github.com/gin-gonic/gin"
 )
 
@@ -192,5 +193,53 @@ func TestStandardAuthFactsDropsCachesWhenTheDecisionContextIsReplaced(t *testing
 
 	if factBool(t, facts, policy.AuthnFactBruteForceTriggered) {
 		t.Fatal("facts of the replaced decision context were reused")
+	}
+}
+
+// TestStandardAuthFactsProjectsSubjectSourceAttributesAtSubjectAnalysis reproduces a configured subject_analysis rule
+// that never fired: the checkpoint received no attribute facts, so a Lua subject source's attribute was invisible
+// until auth_decision. Attributes apply from their own stage onward and never at an earlier checkpoint.
+func TestStandardAuthFactsProjectsSubjectSourceAttributesAtSubjectAnalysis(t *testing.T) {
+	const attributeID = "lua.plugin.cookbook.protocol.denied"
+
+	execution, policyCtx, target := newStandardAuthFactsExecution(t)
+
+	declaration, err := policyregistry.NewAuthnLuaFactDeclaration(policyregistry.AuthnLuaFactDeclarationInput{
+		ID: attributeID, Description: "Protocol denial", Stage: string(policy.StageSubjectAnalysis),
+		Actions: []string{string(policy.OperationAuthenticate)}, Category: decision.FactCategorySubject,
+		Kind: decision.ValueKindBoolean,
+	})
+	if err != nil {
+		t.Fatalf("NewAuthnLuaFactDeclaration() error = %v", err)
+	}
+
+	if err = policyCtx.AddAuthnLuaFactDeclarations([]policyregistry.AuthnLuaFactDeclaration{declaration}); err != nil {
+		t.Fatalf("AddAuthnLuaFactDeclarations() error = %v", err)
+	}
+
+	policyCtx.RecordAttribute(policycollection.AttributeValue{
+		ID: attributeID, Stage: policy.StageSubjectAnalysis, Value: true,
+	})
+
+	tests := []struct {
+		checkpoint policy.Stage
+		want       bool
+	}{
+		{checkpoint: policy.StagePreAuth},
+		{checkpoint: policy.StageAuthBackend},
+		{checkpoint: policy.StageSubjectAnalysis, want: true},
+		{checkpoint: policy.StageAccountProvider, want: true},
+		{checkpoint: policy.StageAuthDecision, want: true},
+	}
+
+	for _, test := range tests {
+		facts, factsErr := execution.StandardAuthFacts(t.Context(), target, string(test.checkpoint))
+		if factsErr != nil {
+			t.Fatalf("StandardAuthFacts(%s) error = %v", test.checkpoint, factsErr)
+		}
+
+		if _, ok := facts.Get(attributeID); ok != test.want {
+			t.Fatalf("attribute projected at %s = %t, want %t", test.checkpoint, ok, test.want)
+		}
 	}
 }
