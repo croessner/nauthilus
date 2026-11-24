@@ -180,32 +180,49 @@ func builtinAuthnPolicyFactSchemaForAttribute(
 		return nil, err
 	}
 
-	result := []FactSchemaInput{input}
+	return append([]FactSchemaInput{input}, authnResponseDetailFactSchemaInputs(input, definition.Details)...), nil
+}
 
-	responseDetail, exists := definition.Details[builtinStatusMessageDetail]
-	if !exists || responseDetail.Sensitivity != DetailSensitivityPublic ||
-		responseDetail.Purpose != DetailPurposeResponseMessage {
-		return result, nil
+// authnResponseDetailFactSchemaInputs derives the text, truncation, and selection facts of every public
+// response-message detail of one attribute in deterministic name order. It mirrors the detail facts the host emits,
+// so a rule may select any such detail as attribute_detail response message.
+func authnResponseDetailFactSchemaInputs(
+	attribute FactSchemaInput,
+	details map[string]DetailDefinition,
+) []FactSchemaInput {
+	names := make([]string, 0, len(details))
+	for name, detail := range details {
+		if detail.PublicResponseMessage() {
+			names = append(names, name)
+		}
 	}
 
-	detailInput := input
-	detailInput.ID = policy.AuthnResponseDetailFactID(factID, builtinStatusMessageDetail)
-	detailInput.Kind = decision.ValueKindString
+	sort.Strings(names)
 
-	detailInput.MaxLength = responseDetail.MaxLength
-	if detailInput.MaxLength <= 0 {
-		detailInput.MaxLength = 256
+	result := make([]FactSchemaInput, 0, 3*len(names))
+	for _, name := range names {
+		detailInput := attribute
+		detailInput.ID = policy.AuthnResponseDetailFactID(attribute.ID, name)
+		detailInput.Kind = decision.ValueKindString
+		detailInput.MaxItems = 0
+
+		detailInput.MaxLength = details[name].MaxLength
+		if detailInput.MaxLength <= 0 {
+			detailInput.MaxLength = 256
+		}
+
+		truncatedInput := attribute
+		truncatedInput.ID = policy.AuthnResponseDetailTruncatedFactID(attribute.ID, name)
+		truncatedInput.Kind = decision.ValueKindBoolean
+		truncatedInput.MaxLength = 0
+		truncatedInput.MaxItems = 0
+		selectedInput := truncatedInput
+		selectedInput.ID = policy.AuthnResponseDetailSelectedFactID(attribute.ID, name)
+
+		result = append(result, detailInput, truncatedInput, selectedInput)
 	}
 
-	truncatedInput := input
-	truncatedInput.ID = policy.AuthnResponseDetailTruncatedFactID(factID, builtinStatusMessageDetail)
-	truncatedInput.Kind = decision.ValueKindBoolean
-	truncatedInput.MaxLength = 0
-	truncatedInput.MaxItems = 0
-	selectedInput := truncatedInput
-	selectedInput.ID = policy.AuthnResponseDetailSelectedFactID(factID, builtinStatusMessageDetail)
-
-	return append(result, detailInput, truncatedInput, selectedInput), nil
+	return result
 }
 
 // builtinStandardFixedFact reports whether the static schema already owns one mapped fact.
