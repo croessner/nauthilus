@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -498,6 +499,10 @@ func TestHTTPAuthResponseRendererPreservesListAccountsNegotiation(t *testing.T) 
 
 			if test.wantBody != "" && strings.TrimSpace(recorder.Body.String()) != strings.TrimSpace(test.wantBody) {
 				t.Fatalf("body = %q, want %q", recorder.Body.String(), test.wantBody)
+			}
+
+			if length := recorder.Header().Get("Content-Length"); length != "" && length != strconv.Itoa(recorder.Body.Len()) {
+				t.Fatalf("Content-Length = %s, want %d for body %q", length, recorder.Body.Len(), recorder.Body.String())
 			}
 
 			if test.accept == authMediaTypeCBOR {
