@@ -53,6 +53,55 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.2.0: Lua JIT Compiler And Faster Lua Requests
+
+Nauthilus 4.2.0 is a minor release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Private
+native plugins must be rebuilt against this source, as for every release.
+It contains every fix of 4.1.3.
+
+### Lua engine
+
+- Nauthilus resolves `github.com/yuin/gopher-lua` through a `replace`
+  directive to `github.com/croessner/gopher-lua-jit` v0.2.2, an API
+  compatible fork with a native JIT compiler for hot loops and a compact
+  table representation. Lua scripts keep the Lua 5.1 language profile, and
+  third-party Lua libraries build unchanged against the same import path.
+  The fork also fixes compiler defects inherited from GopherLua (goto with
+  upvalues, logical operators assigned to locals, multiple assignment).
+- The pooled Lua VMs of backends, hooks, actions, environment sources, and
+  subject sources compile hot loops to native code. The new switch
+  `auth.backends.lua.backend.default.jit` turns this off when set to
+  `false` (default `true`; a change needs a restart). Short-lived states,
+  such as generic `kind: lua` policy providers and registry scripts, keep
+  the interpreter.
+- Every recipe of the website's Lua Cookbook gives the same results with
+  the JIT on and off.
+
+### Faster Lua requests
+
+- Request modules and stateless host modules are built once per Lua VM,
+  request tables are created with room for their fields, the preload table
+  is copied only after a change, a single Lua source is planned without the
+  dependency graph, and no tracing spans are started while no tracer
+  provider is installed.
+- These changes and the compact tables of the fork reduced the benchmark
+  `BenchmarkCallEnvironmentLuaSourceWithSharedModules`, an environment
+  source request that loads four bundled shared modules, from about 1160
+  allocations and 97.9 KB to 451 allocations and 47.9 KB per request, and
+  from about 217 µs to about 140 µs on the development machine.
+
+### Build
+
+- Local guardrails and CI require golangci-lint 2.15.0.
+
+**Action:**
+
+- None for configurations. Set `jit: false` in
+  `auth.backends.lua.backend.default` to rule the compiler out when you
+  analyse a Lua problem, and report a difference between both modes.
+- Read the 4.1.3 notes below for the policy and Lua fixes.
+
 ## v4.1.3: Lua Policy Sources Decide Through Policy Again
 
 Nauthilus 4.1.3 is a patch release on the v4 line. The module path,
