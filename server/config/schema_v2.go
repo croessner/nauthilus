@@ -928,7 +928,7 @@ type IdentitySessionSection struct {
 // IdentityFrontendSection configures the interactive frontend.
 type IdentityFrontendSection struct {
 	Enabled          bool                         `mapstructure:"enabled"`
-	EncryptionSecret secret.Value                 `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min=16,alphanumsymbol,secret_excludesall= "`
+	EncryptionSecret secret.Value                 `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min_bytes=32,alphanumsymbol,secret_excludesall= "`
 	Assets           IdentityFrontendAssets       `mapstructure:"assets" validate:"omitempty"`
 	Localization     IdentityFrontendLocalization `mapstructure:"localization" validate:"omitempty"`
 	Links            IdentityFrontendLinks        `mapstructure:"links" validate:"omitempty"`

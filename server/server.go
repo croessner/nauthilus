@@ -320,6 +320,9 @@ type grpcAuthorityStarter func(context.Context, handlerauthority.ServerDeps) (<-
 type httpServerStartOptions struct {
 	grpcAuthorityStarter             grpcAuthorityStarter
 	continueHTTPOnGRPCAuthorityError bool
+	// continueHTTPOnIDPSetupError keeps serving the remaining routes when the IDP browser runtime or frontend
+	// cannot be built. Only the best-effort restart path sets it; a regular start fails instead.
+	continueHTTPOnIDPSetupError bool
 }
 
 func (o httpServerStartOptions) effectiveGRPCAuthorityStarter() grpcAuthorityStarter {
@@ -364,7 +367,11 @@ func startHTTPServerWithOptions(ctx context.Context, store *contextStore, option
 		return err
 	}
 
-	callbacks := buildHTTPSetupCallbacks(runtime)
+	callbacks, err := buildHTTPSetupCallbacks(runtime, options)
+	if err != nil {
+		return err
+	}
+
 	app := core.NewDefaultHTTPApp(core.HTTPDeps{
 		Cfg:            runtime.cfg,
 		Logger:         runtime.logger,
@@ -541,13 +548,25 @@ func logHTTPServerStart(logger *slog.Logger) {
 	)
 }
 
-func buildHTTPSetupCallbacks(runtime httpServerRuntime) httpSetupCallbacks {
+func buildHTTPSetupCallbacks(runtime httpServerRuntime, options httpServerStartOptions) (httpSetupCallbacks, error) {
+	idpCallback, err := buildIDPSetupCallback(runtime)
+	if err != nil {
+		if !options.continueHTTPOnIDPSetupError {
+			return httpSetupCallbacks{}, err
+		}
+
+		_ = level.Error(runtime.logger).Log(
+			definitions.LogKeyMsg, "IDP routes are not registered",
+			definitions.LogKeyError, err.Error(),
+		)
+	}
+
 	return httpSetupCallbacks{
 		health:      buildHealthSetupCallback(runtime),
 		metrics:     buildMetricsSetupCallback(runtime),
-		idp:         buildIDPSetupCallback(runtime),
+		idp:         idpCallback,
 		backchannel: buildBackchannelSetupCallback(runtime),
-	}
+	}, nil
 }
 
 func buildHealthSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
@@ -562,9 +581,11 @@ func buildMetricsSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 	}
 }
 
-func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
+// buildIDPSetupCallback composes the IDP browser runtime and frontend. An enabled frontend with an enabled OIDC or
+// SAML2 IDP that cannot be built is an error: serving without its login routes would hide a configuration fault.
+func buildIDPSetupCallback(runtime httpServerRuntime) (func(*gin.Engine), error) {
 	if !runtime.cfg.GetServer().Frontend.Enabled {
-		return nil
+		return nil, nil
 	}
 
 	deps := frontendHandlerDeps(runtime)
@@ -572,32 +593,22 @@ func buildIDPSetupCallback(runtime httpServerRuntime) func(*gin.Engine) {
 	if !runtime.cfg.GetIDP().OIDC.Enabled && !runtime.cfg.GetIDP().SAML2.Enabled {
 		logMissingInternalIDP(runtime)
 
-		return nil
+		return nil, nil
 	}
 
 	canonicalRuntime, err := handleridp.NewCanonicalBrowserRuntime(deps)
 	if err != nil {
-		_ = level.Error(runtime.logger).Log(
-			definitions.LogKeyMsg, "Canonical IDP browser runtime initialization failed",
-			definitions.LogKeyError, err.Error(),
-		)
-
-		return nil
+		return nil, fmt.Errorf("canonical IDP browser runtime initialization failed: %w", err)
 	}
 
 	frontendHandler, err := handleridp.NewCanonicalFrontendHandler(deps, canonicalRuntime)
 	if err != nil {
-		_ = level.Error(runtime.logger).Log(
-			definitions.LogKeyMsg, "Canonical IDP frontend initialization failed",
-			definitions.LogKeyError, err.Error(),
-		)
-
-		return nil
+		return nil, fmt.Errorf("canonical IDP frontend initialization failed: %w", err)
 	}
 
 	return func(e *gin.Engine) {
 		registerIDPRoutes(e, runtime, deps, canonicalRuntime, frontendHandler)
-	}
+	}, nil
 }
 
 func frontendHandlerDeps(runtime httpServerRuntime) *handlerdeps.Deps {

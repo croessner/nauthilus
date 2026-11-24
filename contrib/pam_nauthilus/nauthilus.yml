@@ -8,7 +8,7 @@ runtime:
 identity:
   frontend:
     enabled: true
-    encryption_secret: "demofrontendsecret123456"
+    encryption_secret: "demofrontendsecret1234567890abcdef"
 
     assets:
       html_static_content_path: "static/templates"

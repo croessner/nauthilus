@@ -2472,7 +2472,7 @@ func (m *MasterUser) GetUserFormat() string {
 // Frontend represents configuration options for the frontend of the application.
 type Frontend struct {
 	Enabled               bool                    `mapstructure:"enabled"`
-	EncryptionSecret      secret.Value            `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min=16,alphanumsymbol,secret_excludesall= "`
+	EncryptionSecret      secret.Value            `mapstructure:"encryption_secret" validate:"secret_required_if_enabled,secret_min_bytes=32,alphanumsymbol,secret_excludesall= "`
 	HTMLStaticContentPath string                  `mapstructure:"html_static_content_path" validate:"omitempty,dir"`
 	LanguageResources     string                  `mapstructure:"language_resources" validate:"omitempty,dir"`
 	Languages             []string                `mapstructure:"languages" validate:"omitempty"`
@@ -2805,6 +2805,22 @@ func secretMin(fl validator.FieldLevel) bool {
 	}
 
 	return utf8.RuneCountInString(value) >= int(minValue64)
+}
+
+// secretMinBytes checks the encoded length of a secret. Keys whose consumers need a byte count, such as the
+// browser envelope codec, use it instead of secretMin, which counts characters.
+func secretMinBytes(fl validator.FieldLevel) bool {
+	value := fieldStringValue(fl.Field())
+	if value == "" {
+		return true
+	}
+
+	minValue64, err := strconv.ParseInt(fl.Param(), 10, 0)
+	if err != nil {
+		return false
+	}
+
+	return len(value) >= int(minValue64)
 }
 
 func secretExcludesAll(fl validator.FieldLevel) bool {

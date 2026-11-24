@@ -4201,6 +4201,7 @@ func newConfigValidator() (*validator.Validate, error) {
 	}{
 		{"secret_required", secretRequired},
 		{"secret_min", secretMin},
+		{"secret_min_bytes", secretMinBytes},
 		{"secret_excludesall", secretExcludesAll},
 		{"secret_required_if_enabled", secretRequiredIfEnabled},
 		{"validateAuthPoolRequired", validateAuthPoolRequired},

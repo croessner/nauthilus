@@ -364,7 +364,10 @@ func (r *restartOrchestrator) restartHTTPAfterStop(stoppedHTTP bool) {
 
 	// Best-effort: ensure the process keeps serving HTTP even if the restart
 	// operation fails or times out.
-	if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{continueHTTPOnGRPCAuthorityError: true}); err != nil {
+	if err := startHTTPServerWithOptions(r.ctx, r.store, httpServerStartOptions{
+		continueHTTPOnGRPCAuthorityError: true,
+		continueHTTPOnIDPSetupError:      true,
+	}); err != nil {
 		level.Warn(getLogger(r.store)).Log(definitions.LogKeyMsg, "Unable to start HTTP server after restart", definitions.LogKeyError, err)
 	}
 }

@@ -736,6 +736,9 @@ To protect sensitive data in Redis, Nauthilus can encrypt all session-related da
       encryption_secret: "a-very-long-and-secure-random-string"
   ```
 - **What is encrypted?** All data in the categories mentioned above (Authorization Codes, Refresh Tokens, Session Data).
+- **Browser sessions**: `identity.frontend.encryption_secret` authenticates and encrypts the browser session cookie
+  and must be at least 32 bytes long. Configuration validation and `--config-check` reject a shorter value, and a
+  server whose enabled frontend and IdP cannot be built does not start.
 - **Signing Key**: All OIDC signing keys (static and dynamic) can be published via the JWKS endpoint. Dynamically
   rotated keys are stored encrypted in Redis. Static keys from the configuration are not stored in Redis.
 - **Keyed references**: Opaque tokens, refresh tokens, device codes, user codes, and authorization codes appear in Redis
