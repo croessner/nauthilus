@@ -163,7 +163,7 @@ func collectAuthnLuaFactDeclaration(
 		return err
 	}
 
-	fact, err := NewFactSchema(authnLuaFactSchemaInput(rebuilt.ID(), rebuilt.Category(), rebuilt.Kind()))
+	facts, err := authnLuaFactSchemas(rebuilt)
 	if err != nil {
 		return err
 	}
@@ -178,12 +178,33 @@ func collectAuthnLuaFactDeclaration(
 			additions[actionName] = make(map[string]FactSchema)
 		}
 
-		if err = addUniqueAuthnExtensionFact(actionName, additions[actionName], fact); err != nil {
-			return err
+		for _, fact := range facts {
+			if err = addUniqueAuthnExtensionFact(actionName, additions[actionName], fact); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
+}
+
+// authnLuaFactSchemas builds the attribute fact of one declaration plus the facts of its public response details,
+// which the host emits beside the attribute and configured rules may select as attribute_detail response messages.
+func authnLuaFactSchemas(declaration AuthnLuaFactDeclaration) ([]FactSchema, error) {
+	attribute := authnLuaFactSchemaInput(declaration.ID(), declaration.Category(), declaration.Kind())
+	inputs := append([]FactSchemaInput{attribute}, authnResponseDetailFactSchemaInputs(attribute, declaration.Details())...)
+	facts := make([]FactSchema, 0, len(inputs))
+
+	for _, input := range inputs {
+		fact, err := NewFactSchema(input)
+		if err != nil {
+			return nil, err
+		}
+
+		facts = append(facts, fact)
+	}
+
+	return facts, nil
 }
 
 // authnLuaFactSchemaInput applies finite code-owned bounds to registry-script facts.

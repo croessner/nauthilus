@@ -111,6 +111,14 @@ type DetailDefinition struct {
 	MaxLength   int
 }
 
+// PublicResponseMessage reports whether the detail may become a client-visible response message. Only such details
+// are projected into policy facts, so schema derivation and host emission share this predicate.
+func (d DetailDefinition) PublicResponseMessage() bool {
+	return d.Type == AttributeTypeString &&
+		d.Sensitivity == DetailSensitivityPublic &&
+		d.Purpose == DetailPurposeResponseMessage
+}
+
 // AttributeDefinition describes one registered policy attribute.
 type AttributeDefinition struct {
 	ID          string

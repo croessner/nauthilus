@@ -401,9 +401,7 @@ func authnPublicResponseDetail(
 	definition policyregistry.DetailDefinition,
 	detail report.DetailValue,
 ) bool {
-	return definition.Type == policyregistry.AttributeTypeString &&
-		definition.Sensitivity == policyregistry.DetailSensitivityPublic &&
-		definition.Purpose == policyregistry.DetailPurposeResponseMessage &&
+	return definition.PublicResponseMessage() &&
 		detail.Sensitivity == report.SensitivityPublic &&
 		detail.Purpose == report.PurposeResponseMessage
 }
