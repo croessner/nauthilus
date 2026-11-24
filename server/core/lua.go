@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/croessner/nauthilus/v4/server/backend/bktype"
 	"github.com/croessner/nauthilus/v4/server/backend/priorityqueue"
@@ -365,19 +366,38 @@ func (lm *luaManagerImpl) newLuaAccountRequest(auth *AuthState) luaRequestHandle
 	}
 }
 
-// accountsFromLuaBackendResult converts Lua account attributes into a stable account list.
+// accountsFromLuaBackendResult converts the Lua account array into an account list that keeps the array order
+// and drops duplicates and non-string entries.
 func accountsFromLuaBackendResult(luaBackendResult *lualib.LuaBackendResult) AccountList {
-	accountSet := config.NewStringSet()
+	attributes := luaBackendResult.Attributes
+	indexes := make([]int, 0, len(attributes))
 
-	if luaBackendResult.Attributes != nil {
-		for _, value := range luaBackendResult.Attributes {
-			if valueName, assertOk := value.(string); assertOk {
-				accountSet.Set(valueName)
-			}
+	for key := range attributes {
+		if index, ok := key.(int); ok {
+			indexes = append(indexes, index)
 		}
 	}
 
-	return accountSet.GetStringSlice()
+	slices.Sort(indexes)
+
+	accounts := make(AccountList, 0, len(indexes))
+	seen := make(map[string]struct{}, len(indexes))
+
+	for _, index := range indexes {
+		account, ok := attributes[index].(string)
+		if !ok {
+			continue
+		}
+
+		if _, duplicate := seen[account]; duplicate {
+			continue
+		}
+
+		seen[account] = struct{}{}
+		accounts = append(accounts, account)
+	}
+
+	return accounts
 }
 
 // PassDB implements the Lua password database backend.
@@ -480,6 +500,8 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	if protocol, err = lm.effectiveCfg().GetLuaSearchProtocol(auth.Request.Protocol.Get(), lm.backendName); protocol == nil || err != nil {
 		if err != nil {
 			asp.RecordError(err)
+		} else {
+			lm.logMissingAccountProviderProtocol(auth)
 		}
 
 		return
@@ -511,6 +533,16 @@ func (lm *luaManagerImpl) AccountDB(auth *AuthState) (accounts AccountList, err 
 	asp.SetAttributes(attribute.Int("accounts", len(accounts)))
 
 	return accounts, nil
+}
+
+// logMissingAccountProviderProtocol explains an empty list-accounts answer caused by a Lua backend search
+// configuration without the account-provider protocol.
+func (lm *luaManagerImpl) logMissingAccountProviderProtocol(auth *AuthState) {
+	level.Warn(lm.effectiveLogger()).Log(
+		definitions.LogKeyGUID, auth.Runtime.GUID,
+		definitions.LogKeyMsg, "Lua backend skipped for list-accounts: no search entry with protocol "+definitions.ProtoAccountProvider,
+		definitions.LogKeyBackendName, lm.backendName,
+	)
 }
 
 // AddTOTPSecret sends a newly generated TOTP secret to a Lua backend logic.
