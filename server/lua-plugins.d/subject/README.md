@@ -28,6 +28,14 @@ test-only. Subject sources run with the complete Lua API, including Redis and ca
 headers, and backend server selection through `nauthilus_backend`. The per-file status is in
 [`../POLICY_VM_COMPATIBILITY.md`](../POLICY_VM_COMPATIBILITY.md).
 
+## Backend result in subject sources
+
+`nauthilus_backend.get_current_backend_result()` returns the cumulative result that subject sources of earlier
+dependency levels applied with `nauthilus_backend.apply_backend_result()`. It is not seeded with the password backend
+result: in the first level, and for sources without dependencies, `attributes()` is empty even when the backend
+returned attributes. Sources in the same level do not see each other's changes, and attributes that earlier sources
+removed with `remove_from_backend_result()` are still listed.
+
 ## Available Plugins
 
 ### account_centric_monitoring.lua
