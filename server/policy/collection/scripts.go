@@ -105,14 +105,14 @@ func (r ScriptResult) checkResult(operation policy.Operation) CheckResult {
 func (r ScriptResult) environmentResult(operation policy.Operation) CheckResult {
 	attributes := []AttributeValue{
 		BoolAttribute(
-			scriptAttributeID(r.Kind, r.Name, "triggered"),
+			scriptAttributeID(r.Kind, r.Name, policy.SourceResultTriggered),
 			policy.StagePreAuth,
 			operation,
 			r.Triggered,
 			statusMessageDetails(r.StatusMessage),
 		),
 		BoolAttribute(
-			scriptAttributeID(r.Kind, r.Name, "abort"),
+			scriptAttributeID(r.Kind, r.Name, policy.SourceResultAbort),
 			policy.StagePreAuth,
 			operation,
 			r.Abort,
@@ -122,7 +122,7 @@ func (r ScriptResult) environmentResult(operation policy.Operation) CheckResult 
 
 	if r.Err != nil {
 		attributes = append(attributes, BoolAttribute(
-			scriptAttributeID(r.Kind, r.Name, "error"),
+			scriptAttributeID(r.Kind, r.Name, policy.SourceResultError),
 			policy.StagePreAuth,
 			operation,
 			true,
@@ -145,7 +145,7 @@ func (r ScriptResult) environmentResult(operation policy.Operation) CheckResult 
 func (r ScriptResult) subjectResult(operation policy.Operation) CheckResult {
 	attributes := []AttributeValue{
 		BoolAttribute(
-			scriptAttributeID(r.Kind, r.Name, "rejected"),
+			scriptAttributeID(r.Kind, r.Name, policy.SourceResultRejected),
 			policy.StageSubjectAnalysis,
 			operation,
 			r.Action,
@@ -155,7 +155,7 @@ func (r ScriptResult) subjectResult(operation policy.Operation) CheckResult {
 
 	if r.Err != nil {
 		attributes = append(attributes, BoolAttribute(
-			scriptAttributeID(r.Kind, r.Name, "error"),
+			scriptAttributeID(r.Kind, r.Name, policy.SourceResultError),
 			policy.StageSubjectAnalysis,
 			operation,
 			true,
@@ -172,15 +172,6 @@ func (r ScriptResult) subjectResult(operation policy.Operation) CheckResult {
 		Duration:     r.Duration,
 		Attributes:   attributes,
 	}
-}
-
-// policySegment returns the stable callback observation namespace.
-func (k ScriptKind) policySegment() string {
-	if k == ScriptKindSubject {
-		return "subject"
-	}
-
-	return "environment"
 }
 
 // statusMessageDetails converts a non-empty status message into public metadata.

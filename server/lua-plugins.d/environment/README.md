@@ -7,8 +7,11 @@ This directory contains Lua environment source plugins for the Nauthilus authent
 Configure a compatible custom script below `policy.namespaces.authn.providers.lua_environment_<name>` with
 `kind: lua_environment`. A provider instance below the owning domain plan selects the exact
 `authn/lua_environment_<name>` identity with `use`; its local `name` controls scheduling and its `after` dependencies.
-The decision layer records
-`auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, and `auth.lua.environment.<name>.error`.
+The decision layer records the facts `nauthilus.auth.lua.environment.<name>.triggered`,
+`nauthilus.auth.lua.environment.<name>.abort`, and `nauthilus.auth.lua.environment.<name>.error`, where `<name>` is the
+provider key without the `lua_environment_` prefix. The `authn/standard_auth` policy set denies a triggered source,
+answers an error with a temporary failure, and treats an abort as the end of the pre-auth checkpoint. Configured rules
+may reference the same fact IDs.
 
 Scripts that collect supporting signals can emit Lua-owned attributes through `nauthilus_policy_facts`. The bundled
 environment source attributes are registered by `../policy/registry.lua` and use IDs below `lua.plugin.*`, for example

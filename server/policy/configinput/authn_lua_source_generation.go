@@ -128,7 +128,23 @@ func activatedAuthnHostProviderIDs(
 	configured policyconfig.PolicyConfig,
 	authn policyconfig.NamespaceConfig,
 ) map[string]struct{} {
-	result := make(map[string]struct{})
+	activated := activatedAuthnHostProviderOperations(configured, authn)
+	result := make(map[string]struct{}, len(activated))
+
+	for id := range activated {
+		result[id] = struct{}{}
+	}
+
+	return result
+}
+
+// activatedAuthnHostProviderOperations maps every provider use of an activated authn plan to the target actions
+// that schedule it, in target order and without duplicates.
+func activatedAuthnHostProviderOperations(
+	configured policyconfig.PolicyConfig,
+	authn policyconfig.NamespaceConfig,
+) map[string][]policy.Operation {
+	result := make(map[string][]policy.Operation)
 
 	for _, target := range configured.Targets {
 		if target.Namespace != policy.AuthnNamespace || target.DomainPlan == "" {
@@ -145,10 +161,16 @@ func activatedAuthnHostProviderIDs(
 			continue
 		}
 
+		operation := policy.Operation(target.Action)
+
 		for _, checkpoint := range plan.Checkpoints {
 			for _, instance := range checkpoint.Providers {
-				if len(instance.Actions) == 0 || slices.Contains(instance.Actions, target.Action) {
-					result[instance.Use] = struct{}{}
+				if len(instance.Actions) > 0 && !slices.Contains(instance.Actions, target.Action) {
+					continue
+				}
+
+				if !slices.Contains(result[instance.Use], operation) {
+					result[instance.Use] = append(result[instance.Use], operation)
 				}
 			}
 		}

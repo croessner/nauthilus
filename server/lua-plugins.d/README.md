@@ -45,12 +45,23 @@ configuration, so a changed module file becomes active with the next configurati
 The policy decision layer owns the effective execution plan for Lua environment and subject attribute sources. Define
 `kind: lua_environment` or `kind: lua_subject` below `policy.namespaces.authn.providers`, then bind its exact qualified
 identity with `use` below the owning domain-plan checkpoint. Provider instances retain `after` scheduling dependencies
-and record script results as policy attributes:
+and record script results as host-owned policy facts. `<name>` is the provider key without its `lua_environment_` or
+`lua_subject_` prefix:
 
-- Lua environment sources: `auth.lua.environment.<name>.triggered`, `auth.lua.environment.<name>.abort`, and
-  `auth.lua.environment.<name>.error`
-- Lua subject sources: `auth.lua.subject.<name>.rejected` and `auth.lua.subject.<name>.error`
-- Public status messages are attached as the `status_message` detail on triggered or rejected script attributes.
+- Lua environment sources: `nauthilus.auth.lua.environment.<name>.triggered`,
+  `nauthilus.auth.lua.environment.<name>.abort`, and `nauthilus.auth.lua.environment.<name>.error`
+- Lua subject sources: `nauthilus.auth.lua.subject.<name>.rejected` and `nauthilus.auth.lua.subject.<name>.error`
+- Public status messages are attached as the `status_message` detail on the triggered or rejected fact.
+
+The facts exist only for providers that an activated domain plan schedules, and only for the actions that schedule
+them. The `authn/standard_auth` policy set turns them into decisions on its own: `triggered` and `rejected` deny,
+`error` answers with a temporary failure, and an environment `abort` ends the pre-auth checkpoint without a decision.
+Configured rules may reference the same fact IDs, for example
+`if: {attribute: nauthilus.auth.lua.environment.<name>.triggered, is: true}`. A script result is only a fact; the
+policy decides. Policy sets bound to a checkpoint in `policy.targets[].plans` run before the `authn/standard_auth`
+fallback, so an operator rule at the same checkpoint can answer a triggered source differently (for example with
+`decision: tempfail`) or ignore it (for example `decision: permit` when `backend.authenticated` is true). For the
+`authenticate` action the standard environment rules sit at `auth_decision`.
 
 The bundled policy-aware plugins use `share/nauthilus_policy_facts.lua` to emit custom Lua-owned attributes such as
 `lua.plugin.blocklist.matched` or `lua.plugin.geoip.rejected` into the request-local policy report. These attributes are
