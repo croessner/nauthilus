@@ -42,6 +42,10 @@ const (
 	statusSuccess = "success"
 	resultVector  = "vector"
 	resultMatrix  = "matrix"
+	resultStreams = "streams"
+
+	// directionBackward asks a log query for the newest entries first.
+	directionBackward = "backward"
 
 	// queryParam carries the query of instant and range requests.
 	queryParam = "query"
@@ -75,7 +79,10 @@ type ClientConfig struct {
 
 	// RangePath is the range query path; without it the client runs instant queries only.
 	RangePath string
-	Username  string
+
+	// SeriesPath is the stream listing path of a log endpoint; without it Series is rejected.
+	SeriesPath string
+	Username   string
 
 	MaxResponseBytes int64
 	MaxSeries        int
@@ -91,6 +98,7 @@ type Client struct {
 	password         secret.Value
 	queryPath        string
 	rangePath        string
+	seriesPath       string
 	username         string
 	maxResponseBytes int64
 	maxSeries        int
@@ -112,6 +120,30 @@ type Point struct {
 type Series struct {
 	Labels map[string]string
 	Points []Point
+}
+
+// LogEntry is one log line of a stream with its nanosecond timestamp.
+type LogEntry struct {
+	At   time.Time
+	Line string
+}
+
+// Stream is one log stream of a log query answer: its labels and its entries, newest first.
+type Stream struct {
+	Labels  map[string]string
+	Entries []LogEntry
+}
+
+// streamsResponse is the subset of a log query answer that is read; nothing else is decoded.
+type streamsResponse struct {
+	Data struct {
+		ResultType string `json:"resultType"`
+		Result     []struct {
+			Stream map[string]string `json:"stream"`
+			Values [][]string        `json:"values"`
+		} `json:"result"`
+	} `json:"data"`
+	Status string `json:"status"`
 }
 
 // matrixResponse is the subset of a range query answer that is read; nothing else is decoded.
@@ -154,7 +186,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	return &Client{http: httpClient, endpoint: cfg.Endpoint, headers: maps.Clone(cfg.Headers), timeParam: cfg.TimeParam,
-		bearerToken: cfg.BearerToken, password: cfg.Password, queryPath: cfg.QueryPath, rangePath: cfg.RangePath, username: cfg.Username,
+		bearerToken: cfg.BearerToken, password: cfg.Password, queryPath: cfg.QueryPath, rangePath: cfg.RangePath, seriesPath: cfg.SeriesPath, username: cfg.Username,
 		maxResponseBytes: cfg.MaxResponseBytes, maxSeries: cfg.MaxSeries}, nil
 }
 
@@ -176,13 +208,97 @@ func (c *Client) Range(ctx context.Context, query string, start time.Time, end t
 		return nil, false, ErrRejected
 	}
 
-	body, err := c.get(ctx, c.rangePath, url.Values{queryParam: {query}, "start": {c.timeParam(start)}, "end": {c.timeParam(end)},
-		"step": {strconv.FormatInt(int64(step/time.Second), 10)}})
+	values := c.rangeValues(query, start, end)
+	values.Set("step", strconv.FormatInt(int64(step/time.Second), 10))
+
+	body, err := c.get(ctx, c.rangePath, values)
 	if err != nil {
 		return nil, errors.Is(err, ErrTruncated), err
 	}
 
 	return c.decodeMatrix(body)
+}
+
+// Streams runs one log query from start to end that returns at most limit entries, newest first. A response above
+// the byte bound is ErrTruncated; no entry is dropped silently.
+func (c *Client) Streams(ctx context.Context, query string, start time.Time, end time.Time, limit int) ([]Stream, error) {
+	if c.rangePath == "" || limit <= 0 {
+		return nil, ErrRejected
+	}
+
+	values := c.rangeValues(query, start, end)
+	values.Set("limit", strconv.Itoa(limit))
+	values.Set("direction", directionBackward)
+
+	body, err := c.get(ctx, c.rangePath, values)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeStreams(body)
+}
+
+// seriesResponse is the subset of a stream listing that is read.
+type seriesResponse struct {
+	Status string              `json:"status"`
+	Data   []map[string]string `json:"data"`
+}
+
+// Series lists the label sets of the streams matching selector between start and end, ordered by StreamKey and
+// bounded by maxStreams; truncated reports a cut list.
+func (c *Client) Series(ctx context.Context, selector string, start time.Time, end time.Time, maxStreams int) ([]map[string]string, bool, error) {
+	if c.seriesPath == "" {
+		return nil, false, ErrRejected
+	}
+
+	values := c.spanValues(start, end)
+	values.Set("match[]", selector)
+
+	body, err := c.get(ctx, c.seriesPath, values)
+	if err != nil {
+		return nil, errors.Is(err, ErrTruncated), err
+	}
+
+	var answer seriesResponse
+	if err = json.Unmarshal(body, &answer); err != nil || answer.Status != statusSuccess {
+		return nil, false, ErrRejected
+	}
+
+	slices.SortFunc(answer.Data, func(left, right map[string]string) int {
+		return strings.Compare(StreamKey(left), StreamKey(right))
+	})
+
+	if len(answer.Data) > maxStreams {
+		return answer.Data[:maxStreams], true, nil
+	}
+
+	return answer.Data, false, nil
+}
+
+// StreamKey renders a label set as its canonical, injective key: the name and value pairs in name order as JSON.
+func StreamKey(labels map[string]string) string {
+	pairs := make([][2]string, 0, len(labels))
+
+	for _, name := range slices.Sorted(maps.Keys(labels)) {
+		pairs = append(pairs, [2]string{name, labels[name]})
+	}
+
+	rendered, _ := json.Marshal(pairs)
+
+	return string(rendered)
+}
+
+// rangeValues returns the query parameters every range and log query shares.
+func (c *Client) rangeValues(query string, start time.Time, end time.Time) url.Values {
+	values := c.spanValues(start, end)
+	values.Set(queryParam, query)
+
+	return values
+}
+
+// spanValues returns the start and end parameters of a time span.
+func (c *Client) spanValues(start time.Time, end time.Time) url.Values {
+	return url.Values{"start": {c.timeParam(start)}, "end": {c.timeParam(end)}}
 }
 
 // get sends one bounded GET request below path and returns the body of a 200 answer.
@@ -332,6 +448,42 @@ func (c *Client) decodeMatrix(body []byte) ([]Series, bool, error) {
 	}
 
 	return series, len(entries) > kept, nil
+}
+
+// decodeStreams reads a success streams answer; every entry carries a nanosecond timestamp string.
+func decodeStreams(body []byte) ([]Stream, error) {
+	var answer streamsResponse
+
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return nil, err
+	}
+
+	if answer.Status != statusSuccess || answer.Data.ResultType != resultStreams {
+		return nil, ErrRejected
+	}
+
+	streams := make([]Stream, 0, len(answer.Data.Result))
+
+	for _, raw := range answer.Data.Result {
+		stream := Stream{Labels: raw.Stream, Entries: make([]LogEntry, 0, len(raw.Values))}
+
+		for _, pair := range raw.Values {
+			if len(pair) != 2 {
+				return nil, ErrRejected
+			}
+
+			nanos, err := strconv.ParseInt(pair[0], 10, 64)
+			if err != nil || nanos < 0 {
+				return nil, ErrRejected
+			}
+
+			stream.Entries = append(stream.Entries, LogEntry{At: time.Unix(0, nanos).UTC(), Line: pair[1]})
+		}
+
+		streams = append(streams, stream)
+	}
+
+	return streams, nil
 }
 
 // cmpDescending orders larger values first.

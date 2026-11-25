@@ -64,19 +64,56 @@ func planHeader(schemaVersion string, auditReference string, requested *Window, 
 	return planWindow(requested, now)
 }
 
-// planLogOverview validates a log overview request and returns its window and levels in vocabulary order.
-func planLogOverview(request LogOverviewRequest, now time.Time) (Window, []string, *Error) {
-	window, err := planHeader(request.SchemaVersion, request.AuditReference, request.Window, now)
+// logOverviewPlan is a validated log overview request.
+type logOverviewPlan struct {
+	window Window
+	levels []string
+	page   pagePlan
+}
+
+// planLogOverview validates a log overview request: its window, its levels in vocabulary order (warnings and errors
+// when absent), and its page bound to the window and levels.
+func planLogOverview(request LogOverviewRequest, now time.Time) (logOverviewPlan, *Error) {
+	window, err := planHeader(request.SchemaVersion, request.AuditReference, pageWindow(request.Window, request.Page), now)
 	if err != nil {
-		return Window{}, nil, err
+		return logOverviewPlan{}, err
 	}
 
-	levels, ok := planSelection(request.Levels, LogLevels)
+	levels, ok := planLevels(request.Levels)
 	if !ok {
-		return Window{}, nil, newError(CodeInvalidRequest, nil)
+		return logOverviewPlan{}, newError(CodeInvalidRequest, nil)
 	}
 
-	return window, levels, nil
+	page, err := planPage(request.Page, DefaultLogGroupPageLimit, MaxLogGroupPageLimit, window,
+		append([]string{operationLogOverview}, levels...)...)
+	if err != nil {
+		return logOverviewPlan{}, err
+	}
+
+	return logOverviewPlan{window: window, levels: levels, page: page}, nil
+}
+
+// pageWindow returns the requested window, or for a request without one the window its cursor continues.
+func pageWindow(requested *Window, page *LogPage) *Window {
+	if requested != nil {
+		return requested
+	}
+
+	return cursorWindow(page)
+}
+
+// planLevels returns the requested levels in vocabulary order, or warnings and errors for an empty request.
+func planLevels(requested []string) ([]string, bool) {
+	if len(requested) == 0 {
+		return slices.Clone(DefaultLogLevels), true
+	}
+
+	return planSelection(requested, LogLevels)
+}
+
+// windowKey renders a window for a query digest.
+func windowKey(window Window) string {
+	return window.From.UTC().Format(time.RFC3339Nano) + "/" + window.Until.UTC().Format(time.RFC3339Nano)
 }
 
 // planWindow bounds the requested window: From before Until, Until not in the future beyond a small skew, and at

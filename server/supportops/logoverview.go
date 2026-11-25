@@ -22,16 +22,16 @@ import (
 	"math"
 	"slices"
 	"time"
+
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
 )
 
-// maxLogGroups bounds the message groups of one log overview answer.
-const maxLogGroups = 50
-
-// LogOverview answers one log overview request: the warning and error messages the log source counted inside the
-// window, grouped by level and normalized message. Every call is audited, including denied and invalid ones.
+// LogOverview answers one log overview request: the messages the log source counted inside the window at the
+// requested levels, one group per level and exact message, in pages. Every call is audited, including denied and
+// invalid ones.
 func (s *Service) LogOverview(ctx context.Context, caller Caller, request LogOverviewRequest) (*LogOverviewResult, error) {
 	return serve(ctx, s, caller, operationLogOverview, request.AuditReference, func(ctx context.Context, now time.Time) (*LogOverviewResult, int, *Error) {
-		window, levels, err := planLogOverview(request, now)
+		plan, err := planLogOverview(request, now)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -43,31 +43,39 @@ func (s *Service) LogOverview(ctx context.Context, caller Caller, request LogOve
 
 		defer done()
 
-		result := s.logOverview(ctx, window, levels, now)
+		result, err := s.logOverview(ctx, plan, now)
+		if err != nil {
+			return nil, 0, err
+		}
 
 		return result, len(result.Messages), nil
 	})
 }
 
-// logOverview asks the log source and assembles the bounded answer; a missing source is reported, never an error.
-func (s *Service) logOverview(ctx context.Context, window Window, levels []string, now time.Time) *LogOverviewResult {
+// logOverview asks the log source and assembles one page of the answer; a missing source is reported, never an
+// error. A cursor beyond the groups of the current answer is invalid.
+func (s *Service) logOverview(ctx context.Context, plan logOverviewPlan, now time.Time) (*LogOverviewResult, *Error) {
 	sourceResult := LogOverviewSourceResult{Report: SourceReport{Status: SourceStatusNotConfigured}}
 
 	if source, ok := s.sources[SourceLoki].(LogOverviewSource); ok {
-		sourceResult = source.LogOverview(ctx, LogOverviewQuery{Window: window, Now: now, Levels: levels})
+		sourceResult = source.LogOverview(ctx, LogOverviewQuery{Window: plan.window, Now: now, Levels: plan.levels})
 	}
 
 	sourceResult.Report.settle(ctx, SourceLoki, SourceKindHistorical)
 
 	groups := groupLogSeries(sourceResult.Series, sourceResult.Buckets)
+	if plan.page.offset > len(groups) {
+		return nil, newError(CodeInvalidCursor, nil)
+	}
+
 	result := &LogOverviewResult{SchemaVersion: SchemaVersion, Source: sourceResult.Report,
-		Scope:   ResultScope{Window: window, QueriedAt: now.UTC(), Deployment: s.deployment, Instance: s.instance},
+		Scope:   ResultScope{Window: plan.window, QueriedAt: now.UTC(), Deployment: s.deployment, Instance: s.instance},
 		Buckets: append([]Window{}, sourceResult.Buckets...), BucketSeconds: bucketSeconds(sourceResult.Buckets)}
 
-	result.Messages, result.Omitted = boundLogGroups(groups)
-	result.Notes = logOverviewNotes(result, groups)
+	result.Messages, result.Page = pageLogGroups(groups, plan.page)
+	result.Notes = logOverviewNotes(result)
 
-	return result
+	return result, nil
 }
 
 // bucketSeconds returns the width of the grid buckets, or 0 without a grid.
@@ -79,8 +87,8 @@ func bucketSeconds(buckets []Window) int64 {
 	return int64(buckets[0].Until.Sub(buckets[0].From) / time.Second)
 }
 
-// groupLogSeries normalizes every series message and merges series of the same level and normalized message.
-// A profiled symptom survives only when every merged series is the literal message of that symptom.
+// groupLogSeries merges the series of one level and one exact message across instances; different messages always
+// stay apart. The message leaves complete, with authentication secrets replaced.
 func groupLogSeries(series []LogSeries, buckets []Window) []LogMessageGroup {
 	type groupKey struct{ level, message string }
 
@@ -94,34 +102,29 @@ func groupLogSeries(series []LogSeries, buckets []Window) []LogMessageGroup {
 			continue
 		}
 
-		message, form := normalizeLogMessage(entry.Message)
-		key := groupKey{entry.Level, message}
+		key := groupKey{entry.Level, entry.Message}
 
 		position, seen := index[key]
 		if !seen {
 			position = len(groups)
 			index[key] = position
+			message, redacted := redactText(supportaccess.VerbatimText(entry.Message))
 
-			groups = append(groups, LogMessageGroup{Level: entry.Level, Message: message, MessageForm: form,
-				Status: StatusObserved, Counts: make([]int64, len(buckets)), Component: entry.Component, Symptom: entry.Symptom})
+			groups = append(groups, LogMessageGroup{Level: entry.Level, Message: message, SecretsRedacted: redacted,
+				MessageExact: message == entry.Message,
+				Status:       StatusObserved, Counts: make([]int64, len(buckets)), Component: entry.Component, Symptom: entry.Symptom})
 			instances = append(instances, map[string]int64{})
 		}
 
 		group := &groups[position]
-		if form != MessageFormLiteral {
-			group.MessageForm = MessageFormNormalized
-		}
-
-		if form != MessageFormLiteral || group.Symptom != entry.Symptom {
-			group.Component, group.Symptom = "", ""
-		}
 
 		for bucket, count := range entry.Counts {
 			group.Counts[bucket] = addCount(group.Counts[bucket], count)
 		}
 
 		group.Count = addCount(group.Count, total)
-		instances[position][entry.Instance] = addCount(instances[position][entry.Instance], total)
+		instance := supportaccess.VerbatimText(entry.Instance)
+		instances[position][instance] = addCount(instances[position][instance], total)
 	}
 
 	for position := range groups {
@@ -162,55 +165,73 @@ func finishLogGroup(group *LogMessageGroup, instances map[string]int64, buckets 
 	}
 }
 
-// boundLogGroups keeps the first maxLogGroups groups, numbers them, and states what was left out.
-func boundLogGroups(groups []LogMessageGroup) ([]LogMessageGroup, LogOmission) {
-	var omitted LogOmission
+// pageLogGroups returns the groups of one page, numbered by their position in the whole answer, and the page state.
+func pageLogGroups(groups []LogMessageGroup, page pagePlan) ([]LogMessageGroup, LogPageResult) {
+	end := min(page.offset+page.limit, len(groups))
+	paged := slices.Clone(groups[page.offset:end])
 
-	if len(groups) > maxLogGroups {
-		for _, group := range groups[maxLogGroups:] {
-			omitted.Groups++
-			omitted.Lines = addCount(omitted.Lines, group.Count)
-		}
-
-		groups = groups[:maxLogGroups]
+	for position := range paged {
+		paged[position].ID = fmt.Sprintf("L%d", page.offset+position+1)
 	}
 
-	for position := range groups {
-		groups[position].ID = fmt.Sprintf("L%d", position+1)
+	result := LogPageResult{Limit: page.limit, Offset: page.offset, Total: len(groups)}
+
+	if end < len(groups) {
+		next := page.encode(pageCursor{Offset: end})
+		result.NextCursor = &next
 	}
 
-	return groups, omitted
+	return paged, result
 }
 
-// logOverviewNotes explains how to read the overview: observations are not incidents, and every bound or gap of the
-// answer is named.
-func logOverviewNotes(result *LogOverviewResult, groups []LogMessageGroup) []string {
+// logOverviewNotes explains how to read the overview: observations are not incidents, and every bound, page, and gap
+// of the answer is named.
+func logOverviewNotes(result *LogOverviewResult) []string {
 	notes := []string{NoteValuesAreUntrusted, NoteLogMessagesAreNotIncidents}
 
-	if slices.ContainsFunc(groups, func(group LogMessageGroup) bool { return group.MessageForm == MessageFormNormalized }) {
-		notes = append(notes, NoteLogMessagesNormalized)
+	if slices.ContainsFunc(result.Messages, func(group LogMessageGroup) bool { return group.SecretsRedacted }) {
+		notes = append(notes, NoteLogSecretsRedacted)
 	}
 
-	if result.Omitted.Groups > 0 {
-		notes = append(notes, NoteLogGroupsOmitted)
-	}
-
-	switch {
-	case isInactive(result.Source):
-		notes = append(notes, NoteNoHistoricalSource)
-	case result.Source.Status != SourceStatusOK || result.Source.Truncated:
-		notes = append(notes, NoteHistoricalSourceIncomplete)
-	}
-
-	if !isInactive(result.Source) && len(result.Source.Coverage.Instances) == 0 {
-		notes = append(notes, NoteLogNoCoverage)
-	}
+	notes = append(notes, pageNotes(result.Page.NextCursor != nil, result.Page.Offset > 0)...)
+	notes = append(notes, logSourceNotes(result.Source)...)
 
 	if from := result.Source.Coverage.From; from != nil && from.Before(result.Scope.Window.From) {
 		notes = append(notes, NoteLogBucketsExceedWindow)
 	}
 
 	return notes
+}
+
+// pageNotes names a continued answer and the requery semantics of every paged answer.
+func pageNotes(more bool, continued bool) []string {
+	var notes []string
+
+	if more {
+		notes = append(notes, NoteLogMorePages)
+	}
+
+	if more || continued {
+		notes = append(notes, NoteLogPagesRequery)
+	}
+
+	return notes
+}
+
+// logSourceNotes names a missing, incomplete, or uncovered log source.
+func logSourceNotes(report SourceReport) []string {
+	switch {
+	case isInactive(report):
+		return []string{NoteNoHistoricalSource}
+	case len(report.Coverage.Instances) == 0 && (report.Status != SourceStatusOK || report.Truncated):
+		return []string{NoteHistoricalSourceIncomplete, NoteLogNoCoverage}
+	case len(report.Coverage.Instances) == 0:
+		return []string{NoteLogNoCoverage}
+	case report.Status != SourceStatusOK || report.Truncated:
+		return []string{NoteHistoricalSourceIncomplete}
+	default:
+		return nil
+	}
 }
 
 // sumCounts sums counts without overflowing.

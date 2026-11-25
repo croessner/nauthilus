@@ -50,6 +50,7 @@ const (
 
 	operationDiagnose    = "operations_diagnose"
 	operationLogOverview = "operations_log_overview"
+	operationLogEvents   = "operations_log_events"
 	auditService         = "operations"
 )
 

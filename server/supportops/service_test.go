@@ -212,7 +212,7 @@ func assertAssembledFindings(t *testing.T, result *DiagnosticsResult) {
 		t.Fatalf("findings = %+v", result.Findings)
 	}
 
-	if target := result.Findings[0].Labels["target"]; target != "ldap://dc1\uFFFD" {
+	if target := result.Findings[0].Labels["target"]; target != "ldap://dc1<U+202E>" {
 		t.Fatalf("label = %q, want a sanitized value", target)
 	}
 

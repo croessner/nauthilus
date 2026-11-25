@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	rangePath = "/loki/api/v1/query_range"
+	rangePath  = "/loki/api/v1/query_range"
+	seriesPath = "/loki/api/v1/series"
 
 	// overviewBuckets is the number of time buckets of one overview.
 	overviewBuckets = 12
@@ -41,7 +42,8 @@ const (
 )
 
 // slogLevels maps the overview level vocabulary to the slog level names of a log line.
-var slogLevels = map[string]string{supportops.LogLevelError: "ERROR", supportops.LogLevelWarn: "WARN"}
+var slogLevels = map[string]string{supportops.LogLevelError: "ERROR", supportops.LogLevelWarn: "WARN",
+	supportops.LogLevelNotice: "NOTICE", supportops.LogLevelInfo: "INFO", supportops.LogLevelDebug: "DEBUG"}
 
 // logFormat is one slog encoder: the line filter stages that keep only lines of the wanted levels, and the parser.
 type logFormat struct {
@@ -61,9 +63,8 @@ var logFormats = []logFormat{
 	}},
 }
 
-// LogOverview counts the warning and error lines of every message per instance and bucket inside the window. Only
-// level names of the fixed vocabulary reach a query; messages leave Loki as aggregated label values that the service
-// normalizes before they leave the host.
+// LogOverview counts the lines of every message at the requested levels per instance and bucket inside the window.
+// Only level names of the fixed vocabulary reach the query; messages leave Loki as aggregated label values.
 func (s *Source) LogOverview(ctx context.Context, query supportops.LogOverviewQuery) supportops.LogOverviewSourceResult {
 	alternation := levelAlternation(query.Levels)
 	builds := make([]func(int64) string, 0, len(logFormats))
@@ -143,12 +144,17 @@ func levelAlternation(levels []string) string {
 	return strings.Join(names, "|")
 }
 
-// overviewRangeQuery returns the range query that counts warning and error lines of one log format per instance, level,
-// and message over stepSeconds. The prefilter drops every other line before the parser runs, and the level matcher
-// after the parser keeps a level word inside another field from counting.
+// overviewRangeQuery returns the range query that counts the lines of one log format per instance, level, and message
+// over stepSeconds.
 func overviewRangeQuery(instanceLabel string, selector string, format logFormat, alternation string, stepSeconds int64) string {
-	return fmt.Sprintf(`sum by (%s, %s, %s) (count_over_time(%s%s | %s %s=%q, %s=%q | __error__="" | %s=~%q [%ds]))`,
-		instanceLabel, overviewLevelLabel, overviewMessageLabel, selector, format.prefilter(alternation),
-		format.parser, overviewLevelLabel, levelField, overviewMessageLabel, messageField, overviewLevelLabel, alternation,
-		stepSeconds)
+	return fmt.Sprintf(`sum by (%s, %s, %s) (count_over_time(%s%s [%ds]))`, instanceLabel, overviewLevelLabel,
+		overviewMessageLabel, selector, parserStages(format, alternation), stepSeconds)
+}
+
+// parserStages returns the pipeline of one log format shared by the overview and the events: the prefilter drops
+// every other line before the parser runs, the parser extracts level and message into dedicated labels, and the
+// level matcher after the parser keeps a level word inside another field from counting.
+func parserStages(format logFormat, alternation string) string {
+	return fmt.Sprintf(` %s| %s %s=%q, %s=%q | __error__="" | %s=~%q`, strings.TrimPrefix(format.prefilter(alternation), " ")+" ",
+		format.parser, overviewLevelLabel, levelField, overviewMessageLabel, messageField, overviewLevelLabel, alternation)
 }

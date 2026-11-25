@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -74,74 +73,17 @@ func overviewRequest(levels ...string) LogOverviewRequest {
 		Window: &Window{From: testNow.Add(-30 * time.Minute), Until: testNow}}
 }
 
-// TestNormalizeLogMessage pins which parts of an observed message leave the host: fixed words stay, and values such as
-// IPs, quoted names, mail addresses, error payloads, and values after sensitive keywords are replaced.
-func TestNormalizeLogMessage(t *testing.T) {
-	for raw, want := range map[string][2]string{
-		"WebAuthn sign count anomaly":                                      {"WebAuthn sign count anomaly", MessageFormLiteral},
-		"RBL check failed":                                                 {"RBL check failed", MessageFormLiteral},
-		"LDAP free/busy state is free":                                     {"LDAP free/busy state is free", MessageFormLiteral},
-		"Client IP '203.0.113.7' not matching [10.0.0.0/8]":                {"Client IP <quoted> not matching [<value>]", MessageFormNormalized},
-		"lookup 7.113.0.203.zen.spamhaus.org on 10.0.0.53:53: i/o timeout": {"lookup <value> on <value>: i/o timeout", MessageFormNormalized},
-		`Authentication failed for "alice"`:                                {"Authentication failed for <quoted>", MessageFormNormalized},
-		"Mail for bob@example.org rejected":                                {"Mail for <value> rejected", MessageFormNormalized},
-		"Lookup failed for user alice":                                     {"Lookup failed for user <value>", MessageFormNormalized},
-		"login: carol locked":                                              {"login: <value> locked", MessageFormNormalized},
-		"Fetch https://idp.example.org/x failed":                           {"Fetch <value> failed", MessageFormNormalized},
-		"Connection #12 closed":                                            {"Connection <value> closed", MessageFormNormalized},
-		"Session aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa expired":             {"Session <value> expired", MessageFormNormalized},
-		"Error \u202ehidden\n text":                                        {"Error hidden text", MessageFormNormalized},
-		// Bypasses found in review.
-		"user\talice\nfailed":                   {"user <value> failed", MessageFormNormalized},
-		"user:alice locked":                     {"user:<value> locked", MessageFormNormalized},
-		"unknown user-alice":                    {"unknown user-<value>", MessageFormNormalized},
-		"authentication failed for alice":       {"authentication failed for <value>", MessageFormNormalized},
-		"client alice.smith disconnected":       {"client <value> disconnected", MessageFormNormalized},
-		"request by alice,bob,carol":            {"request by <value>,<value>,<value>", MessageFormNormalized},
-		"cannot open /home/alice/Maildir":       {"cannot open <value>", MessageFormNormalized},
-		"Bearer QWxhZGRpbjpvcGVu rejected":      {"Bearer <value> rejected", MessageFormNormalized},
-		"session ABCDEFGH invalid":              {"session <value> invalid", MessageFormNormalized},
-		"peer dead:beef::cafe refused":          {"peer <value> refused", MessageFormNormalized},
-		"lookup mail.example.com: no such host": {"lookup <value>: no such host", MessageFormNormalized},
-		"login failed (alice)":                  {"login failed (<value>)", MessageFormNormalized},
-		"password is wrong for José":            {"password is wrong for <value>", MessageFormNormalized},
-		"user not found":                        {"user not found", MessageFormLiteral},
-		"account is locked":                     {"account is locked", MessageFormLiteral},
-		"token expired":                         {"token expired", MessageFormLiteral},
-		// Runtime-built warning and error messages of the code base (security review cases).
-		"Client IP '203.0.113.7' not matching [10.0.0.0/8 192.168.0.0/16]":                           {"Client IP <quoted> not matching [<value>]", MessageFormNormalized},
-		"Pipeline EXISTS ban-key failed: dial tcp 10.0.0.5:6379: i/o timeout":                        {"Pipeline EXISTS ban-key failed: dial tcp <value>: i/o timeout", MessageFormNormalized},
-		"Pipeline EVAL bucket counters failed: WRONGTYPE wrong kind of value nauthilus:bf:user:jdoe": {"Pipeline EVAL bucket counters failed: WRONGTYPE wrong kind of value <value>", MessageFormNormalized},
-		"Burst gate script error: ERR key nauthilus:pw_hist_ips:jdoe":                                {"Burst gate script error: ERR key <value>", MessageFormNormalized},
-		`LDAP Result Code 32 "No Such Object": uid=jdoe,ou=people,dc=example,dc=org`:                 {"LDAP Result Code <value>,<value>,<value>,<value>", MessageFormNormalized},
-		"Cipher suite TLS_FAKE_WITH_NOTHING not found":                                               {"Cipher suite TLS_FAKE_WITH_NOTHING not found", MessageFormLiteral},
-		"lookup 4.3.2.1.zen.spamhaus.org on 10.96.0.10:53: i/o timeout":                              {"lookup <value> on <value>: i/o timeout", MessageFormNormalized},
-		"Login of jdoe@example.org from fe80::1 via 2001:db8::5 rejected":                            {"Login of <value> from <value> via <value> rejected", MessageFormNormalized},
-		"Fetch https://user:pw@idp.example.org/metadata failed":                                      {"Fetch <value> failed", MessageFormNormalized},
-		"account jdoe locked": {"account <value> locked", MessageFormNormalized},
-		// Documented residual gap: a letter-only value that follows no keyword, quote, or bracket stays.
-		"jdoe locked out": {"jdoe locked out", MessageFormLiteral},
-		"  ":              {placeholderEmpty, MessageFormNormalized},
-	} {
-		text, form := normalizeLogMessage(raw)
-		if text != want[0] || form != want[1] {
-			t.Errorf("normalizeLogMessage(%q) = %q, %q; want %q, %q", raw, text, form, want[0], want[1])
-		}
-	}
-
-	if text, form := normalizeLogMessage(strings.Repeat("word ", 100)); len([]rune(text)) != maxMessageRunes+1 ||
-		!strings.HasSuffix(text, "…") || form != MessageFormNormalized {
-		t.Errorf("an over-long message must be cut and normalized: %d runes, %q", len([]rune(text)), form)
-	}
-}
-
-// TestLogOverviewGroupsAndBounds pins grouping by level and normalized message across instances, the bucket timeline,
-// the profiled symptom of a literal message, the observed status, the order, and the notes.
-func TestLogOverviewGroupsAndBounds(t *testing.T) {
+// TestLogOverviewKeepsEveryMessageComplete reproduces the masking gap: two resolver timeouts with different hosts used
+// to merge into one placeholder group. Every exact message must stay its own group with its complete text, identical
+// messages of different instances share a group, and errors sort before warnings at equal counts.
+func TestLogOverviewKeepsEveryMessageComplete(t *testing.T) {
+	first := "lookup 1.2.3.4.zen.example on 10.0.0.1:53: i/o timeout"
+	second := "lookup 5.6.7.8.zen.example on 10.0.0.1:53: i/o timeout"
 	source := newLogSource(
-		LogSeries{Instance: "mx-1", Level: LogLevelError, Message: "lookup 1.2.3.4.zen.example on 10.0.0.1:53: i/o timeout", Counts: []int64{0, 2, 0}},
-		LogSeries{Instance: "mx-2", Level: LogLevelError, Message: "lookup 5.6.7.8.zen.example on 10.0.0.1:53: i/o timeout", Counts: []int64{0, 0, 3}},
-		LogSeries{Instance: "mx-1", Level: LogLevelWarn, Message: "WebAuthn sign count anomaly", Counts: []int64{1, 0, 0}},
+		LogSeries{Instance: "mx-1", Level: LogLevelError, Message: first, Counts: []int64{0, 2, 0}},
+		LogSeries{Instance: "mx-2", Level: LogLevelError, Message: first, Counts: []int64{0, 0, 1}},
+		LogSeries{Instance: "mx-2", Level: LogLevelError, Message: second, Counts: []int64{0, 0, 3}},
+		LogSeries{Instance: "mx-1", Level: LogLevelWarn, Message: "Client IP '198.51.100.1' not matching [10.0.0.0/8]", Counts: []int64{1, 0, 0}},
 		LogSeries{Instance: "mx-2", Level: LogLevelError, Message: "LDAP connection error", Counts: []int64{0, 0, 1},
 			Component: ComponentLDAP, Symptom: SymptomLDAPConnectionError},
 		LogSeries{Instance: "mx-2", Level: LogLevelWarn, Message: "never counted", Counts: []int64{0, 0, 0}},
@@ -152,57 +94,115 @@ func TestLogOverviewGroupsAndBounds(t *testing.T) {
 		t.Fatalf("LogOverview() = %v", err)
 	}
 
-	if len(result.Messages) != 3 || result.BucketSeconds != 600 || len(result.Buckets) != 3 || result.Source.Name != SourceLoki {
+	if len(result.Messages) != 4 || result.BucketSeconds != 600 || len(result.Buckets) != 3 || result.Source.Name != SourceLoki ||
+		result.Page != (LogPageResult{Limit: DefaultLogGroupPageLimit, Total: 4}) {
 		t.Fatalf("result = %+v", result)
 	}
 
-	assertMergedResolverGroup(t, result.Messages[0])
+	assertExactGroups(t, result.Messages, first, second)
 
-	if ldap := result.Messages[1]; ldap.Symptom != SymptomLDAPConnectionError || ldap.Level != LogLevelError {
-		t.Fatalf("errors sort before warnings at equal counts and keep their symptom: %+v", ldap)
-	}
-
-	if !slices.Equal(result.Notes, []string{NoteValuesAreUntrusted, NoteLogMessagesAreNotIncidents, NoteLogMessagesNormalized}) {
+	if !slices.Equal(result.Notes, []string{NoteValuesAreUntrusted, NoteLogMessagesAreNotIncidents}) {
 		t.Fatalf("notes = %v", result.Notes)
 	}
 
-	if levels := source.asked[0].Levels; !slices.Equal(levels, LogLevels) {
+	if levels := source.asked[0].Levels; !slices.Equal(levels, DefaultLogLevels) {
 		t.Fatalf("levels = %v", levels)
 	}
 }
 
-// assertMergedResolverGroup checks the group that merges the resolver timeouts of two instances.
-func assertMergedResolverGroup(t *testing.T, dns LogMessageGroup) {
+// assertExactGroups checks that every exact message is its own group in count order, that identical messages of two
+// instances share one group, and that a profiled message keeps its symptom.
+func assertExactGroups(t *testing.T, groups []LogMessageGroup, first string, second string) {
 	t.Helper()
 
-	if dns.ID != "L1" || dns.Message != "lookup <value> on <value>: i/o timeout" || dns.Count != 5 ||
-		dns.Status != StatusObserved || dns.MessageForm != MessageFormNormalized || !slices.Equal(dns.Counts, []int64{0, 2, 3}) {
+	want := []struct {
+		message string
+		count   int64
+	}{{first, 3}, {second, 3}, {"LDAP connection error", 1}, {"Client IP '198.51.100.1' not matching [10.0.0.0/8]", 1}}
+
+	for index, group := range groups {
+		if group.Message != want[index].message || group.Count != want[index].count || group.ID != fmt.Sprintf("L%d", index+1) {
+			t.Errorf("group %d = %+v, want %+v", index, group, want[index])
+		}
+	}
+
+	if dns := groups[0]; !slices.Equal(dns.Instances, []LogInstanceCount{{"mx-1", 2}, {"mx-2", 1}}) ||
+		!dns.FirstBucket.Equal(testGrid()[1].From) || !dns.LastBucket.Equal(testNow) || !slices.Equal(dns.Counts, []int64{0, 2, 1}) {
 		t.Fatalf("dns group = %+v", dns)
 	}
 
-	if !slices.Equal(dns.Instances, []LogInstanceCount{{"mx-2", 3}, {"mx-1", 2}}) ||
-		!dns.FirstBucket.Equal(testGrid()[1].From) || !dns.LastBucket.Equal(testNow) {
-		t.Fatalf("dns group instances and buckets = %+v", dns)
+	if slices.ContainsFunc(groups, func(group LogMessageGroup) bool { return !group.MessageExact }) {
+		t.Fatalf("every message of the fixture is stored as shown: %+v", groups)
+	}
+
+	if ldap := groups[2]; ldap.Symptom != SymptomLDAPConnectionError || !ldap.MessageExact {
+		t.Fatalf("a profiled message keeps its symptom: %+v", ldap)
 	}
 }
 
-// TestLogOverviewOmitsGroupsBeyondTheBound pins the group cap and its omission statement.
-func TestLogOverviewOmitsGroupsBeyondTheBound(t *testing.T) {
-	series := make([]LogSeries, 0, maxLogGroups+2)
+// TestLogOverviewRedactsOnlySecrets pins that a message keeps users, addresses, and error text, and that only an
+// authentication secret is replaced and flagged.
+func TestLogOverviewRedactsOnlySecrets(t *testing.T) {
+	source := newLogSource(LogSeries{Instance: "mx-1", Level: LogLevelWarn, Counts: []int64{0, 0, 1},
+		Message: "token rejected for alice@example.org from 203.0.113.9: Bearer abcdefghijklmnop1234"})
 
-	for index := range maxLogGroups + 2 {
-		series = append(series, LogSeries{Instance: "mx-1", Level: LogLevelWarn, Message: fmt.Sprintf("warning %c", 'a'+rune(index%26)) +
-			strings.Repeat("x", index/26), Counts: []int64{0, 0, 1}})
+	result, err := newTestService(t, &auditLog{}, source).LogOverview(context.Background(), operator(), overviewRequest())
+	if err != nil || len(result.Messages) != 1 {
+		t.Fatalf("result = %+v, %v", result, err)
 	}
 
-	result, err := newTestService(t, &auditLog{}, newLogSource(series...)).LogOverview(context.Background(), operator(), overviewRequest(LogLevelWarn))
-	if err != nil {
-		t.Fatal(err)
+	if group := result.Messages[0]; group.Message != "token rejected for alice@example.org from 203.0.113.9: Bearer <redacted>" ||
+		!group.SecretsRedacted || group.MessageExact || !slices.Contains(result.Notes, NoteLogSecretsRedacted) {
+		t.Fatalf("group = %+v, notes = %v", group, result.Notes)
+	}
+}
+
+// TestLogOverviewPagesThroughEveryGroup pins that no group is omitted: pages continue with next_cursor until every
+// group was returned once, numbered by its position, and a cursor of another query is refused.
+func TestLogOverviewPagesThroughEveryGroup(t *testing.T) {
+	series := make([]LogSeries, 0, 7)
+
+	for index := range 7 {
+		series = append(series, LogSeries{Instance: "mx-1", Level: LogLevelWarn, Message: fmt.Sprintf("warning %d", index),
+			Counts: []int64{0, 0, int64(10 - index)}})
 	}
 
-	if len(result.Messages) != maxLogGroups || result.Omitted != (LogOmission{Groups: 2, Lines: 2}) ||
-		!slices.Contains(result.Notes, NoteLogGroupsOmitted) {
-		t.Fatalf("omission = %+v, notes = %v", result.Omitted, result.Notes)
+	service := newTestService(t, &auditLog{}, newLogSource(series...))
+	request := overviewRequest(LogLevelWarn)
+	request.Page = &LogPage{Limit: 3}
+
+	var seen []string
+
+	for page := 0; ; page++ {
+		result, err := service.LogOverview(context.Background(), operator(), request)
+		if err != nil || page > 3 {
+			t.Fatalf("page %d: %v", page, err)
+		}
+
+		for _, group := range result.Messages {
+			seen = append(seen, group.ID+"="+group.Message)
+		}
+
+		if result.Page.NextCursor == nil {
+			break
+		}
+
+		if !slices.Contains(result.Notes, NoteLogMorePages) {
+			t.Fatalf("notes = %v", result.Notes)
+		}
+
+		request.Page.Cursor = *result.Page.NextCursor
+	}
+
+	if len(seen) != 7 || seen[0] != "L1=warning 0" || seen[6] != "L7=warning 6" {
+		t.Fatalf("pages = %v", seen)
+	}
+
+	other := overviewRequest(LogLevelError)
+	other.Page = &LogPage{Cursor: request.Page.Cursor}
+
+	if _, err := service.LogOverview(context.Background(), operator(), other); AsError(err).Code != CodeInvalidCursor {
+		t.Fatalf("foreign cursor = %v", err)
 	}
 }
 
@@ -240,7 +240,9 @@ func TestLogOverviewAuthorizationAndAudit(t *testing.T) {
 	}{
 		"missing scope":  {historyOnly, overviewRequest(), CodeForbidden},
 		"bad schema":     {operator(), LogOverviewRequest{SchemaVersion: "2"}, CodeInvalidRequest},
-		"unknown level":  {operator(), overviewRequest("debug"), CodeInvalidRequest},
+		"unknown level":  {operator(), overviewRequest("trace"), CodeInvalidRequest},
+		"page too large": {operator(), LogOverviewRequest{SchemaVersion: SchemaVersion, Page: &LogPage{Limit: MaxLogGroupPageLimit + 1}}, CodeInvalidRequest},
+		"bad cursor":     {operator(), LogOverviewRequest{SchemaVersion: SchemaVersion, Page: &LogPage{Cursor: "not-a-cursor"}}, CodeInvalidCursor},
 		"repeated level": {operator(), overviewRequest(LogLevelWarn, LogLevelWarn), CodeInvalidRequest},
 		"too large":      {operator(), LogOverviewRequest{SchemaVersion: SchemaVersion, Window: &Window{From: testNow.Add(-25 * time.Hour), Until: testNow}}, CodeWindowTooLarge},
 	} {
@@ -257,7 +259,7 @@ func TestLogOverviewAuthorizationAndAudit(t *testing.T) {
 	}
 
 	last := audit.entries[len(audit.entries)-1]
-	if len(audit.entries) != 6 || last.Operation != operationLogOverview || !last.Allowed || last.ResultCode != "OK" ||
+	if len(audit.entries) != 8 || last.Operation != operationLogOverview || !last.Allowed || last.ResultCode != "OK" ||
 		!slices.ContainsFunc(audit.entries, func(entry supportaccess.AuditEntry) bool {
 			return !entry.Allowed && entry.ResultCode == string(CodeForbidden)
 		}) {
@@ -270,48 +272,13 @@ func TestLogOverviewAuthorizationAndAudit(t *testing.T) {
 	}
 }
 
-// TestLogOverviewCoverageAndMergedForms pins the note for a window without any covered instance and that a group is
-// normalized, without the profiled symptom, as soon as one merged series was normalized, whatever the series order.
-func TestLogOverviewCoverageAndMergedForms(t *testing.T) {
+// TestLogOverviewWithoutCoverage pins the note for a window without any covered instance.
+func TestLogOverviewWithoutCoverage(t *testing.T) {
 	empty := newLogSource()
 	empty.overview.Report.Coverage.Instances = nil
 
 	result, err := newTestService(t, &auditLog{}, empty).LogOverview(context.Background(), operator(), overviewRequest())
 	if err != nil || !slices.Contains(result.Notes, NoteLogNoCoverage) {
 		t.Fatalf("no coverage notes = %v, %v", result.Notes, err)
-	}
-
-	literal := LogSeries{Instance: "mx-1", Level: LogLevelError, Message: "LDAP connection error", Counts: []int64{0, 0, 1},
-		Component: ComponentLDAP, Symptom: SymptomLDAPConnectionError}
-	spaced := LogSeries{Instance: "mx-2", Level: LogLevelError, Message: "LDAP  connection error", Counts: []int64{0, 1, 0}}
-
-	for _, order := range [][]LogSeries{{literal, spaced}, {spaced, literal}} {
-		result, err = newTestService(t, &auditLog{}, newLogSource(order...)).LogOverview(context.Background(), operator(), overviewRequest())
-		if err != nil || len(result.Messages) != 1 {
-			t.Fatalf("merge = %+v, %v", result, err)
-		}
-
-		if group := result.Messages[0]; group.MessageForm != MessageFormNormalized || group.Symptom != "" || group.Count != 2 {
-			t.Fatalf("merged group = %+v", group)
-		}
-	}
-}
-
-// TestLogOverviewMergeNeverExposesRawValues pins that two raw messages which normalize to one text form a normalized
-// group whose message holds neither raw value.
-func TestLogOverviewMergeNeverExposesRawValues(t *testing.T) {
-	source := newLogSource(
-		LogSeries{Instance: "mx-1", Level: LogLevelWarn, Message: "Client IP '198.51.100.1' not matching [10.0.0.0/8]", Counts: []int64{1, 0, 0}},
-		LogSeries{Instance: "mx-2", Level: LogLevelWarn, Message: "Client IP '198.51.100.2' not matching [172.16.0.0/12]", Counts: []int64{0, 1, 0}},
-	)
-
-	result, err := newTestService(t, &auditLog{}, source).LogOverview(context.Background(), operator(), overviewRequest())
-	if err != nil || len(result.Messages) != 1 {
-		t.Fatalf("merge = %+v, %v", result, err)
-	}
-
-	group := result.Messages[0]
-	if group.MessageForm != MessageFormNormalized || group.Count != 2 || strings.ContainsAny(group.Message, "0123456789") {
-		t.Fatalf("merged group exposes a raw value: %+v", group)
 	}
 }

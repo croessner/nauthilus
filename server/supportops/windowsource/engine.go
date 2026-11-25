@@ -17,18 +17,16 @@ package windowsource
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"math"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/secret"
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
 	"github.com/croessner/nauthilus/v4/server/supportops"
 )
 
@@ -36,15 +34,9 @@ const (
 	// maxParallelQueries bounds the concurrent requests one diagnostics call sends to a source.
 	maxParallelQueries = 4
 
-	// InstanceDigestPrefix starts the digest that replaces an instance label value outside the plain pattern.
-	InstanceDigestPrefix = "sha256:"
-
 	// TenantHeader carries the tenant of Loki, Mimir, and Cortex.
 	TenantHeader = "X-Scope-OrgID"
 )
-
-// safeInstancePattern lets plain instance names through; anything else is replaced by a digest.
-var safeInstancePattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 // Connection is the fixed connection and query boundary of one historical source. Every field is set by the
 // operator; none comes from a request.
@@ -130,6 +122,9 @@ type Profile struct {
 	// RangePath is the range query path of an endpoint that answers bucketed overviews; empty disables them.
 	RangePath string
 
+	// SeriesPath is the stream listing path of a log endpoint; empty disables it.
+	SeriesPath string
+
 	// Basis and View state what the findings and the coverage of the source mean.
 	Basis       supportops.FreshnessBasis
 	View        string
@@ -148,7 +143,7 @@ func New(conn Connection, profile Profile) (*Engine, error) {
 	}
 
 	client, err := NewClient(ClientConfig{HTTP: conn.HTTPClient, Endpoint: conn.BaseURL, QueryPath: profile.QueryPath,
-		RangePath: profile.RangePath, Headers: headers, TimeParam: profile.TimeParam, BearerToken: conn.BearerToken, Password: conn.Password,
+		RangePath: profile.RangePath, SeriesPath: profile.SeriesPath, Headers: headers, TimeParam: profile.TimeParam, BearerToken: conn.BearerToken, Password: conn.Password,
 		Username: conn.Username, MaxResponseBytes: conn.MaxResponseBytes, MaxSeries: conn.MaxSeries})
 	if err != nil {
 		return nil, err
@@ -249,15 +244,9 @@ func (e *Engine) coveredWindow(requested supportops.Window) (supportops.Window, 
 	return supportops.Window{From: requested.Until.Add(-e.spec.MaxTimeWindow), Until: requested.Until}, true
 }
 
-// InstanceName returns a plain instance label value, or a digest for anything that is not a plain name.
+// InstanceName returns an instance label value complete, with invisible format characters made visible.
 func InstanceName(value string) string {
-	if safeInstancePattern.MatchString(value) {
-		return value
-	}
-
-	sum := sha256.Sum256([]byte(value))
-
-	return InstanceDigestPrefix + hex.EncodeToString(sum[:8])
+	return supportaccess.VerbatimText(value)
 }
 
 // collection gathers the state of one Collect call: the covered window, completeness, and truncation.

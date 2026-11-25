@@ -13,16 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package lokisource is the optional historical source of the operational diagnostics. It runs only compiled metric
-// LogQL queries below a selector and tenant fixed in the configuration: the nauthilus_diagnostics profile counts lines
-// with fixed message literals per instance, and the log overview counts warning and error lines per instance, level,
-// and message. No caller value reaches a query, no log line leaves Loki (only aggregated counts and message label
-// values), redirects are never followed, and every answer is bounded in bytes and series. The query mechanics are shared with
-// the other historical sources through package windowsource.
+// Package lokisource is the optional historical source of the operational diagnostics and the log answers. It runs
+// compiled LogQL queries below a selector and tenant fixed in the configuration: the nauthilus_diagnostics profile
+// counts lines with fixed message literals per instance, the log overview counts lines per instance, level, and
+// message, and the log events read stored lines. Only the log events take caller values (an instance and an exact
+// message), rendered as quoted LogQL strings. Redirects are never followed, and every answer is bounded in bytes and
+// series.
 package lokisource
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -54,8 +55,9 @@ type Config = windowsource.Connection
 type Source struct {
 	*windowsource.Engine
 
-	selector      string
-	instanceLabel string
+	selectorLabels map[string]string
+	selector       string
+	instanceLabel  string
 }
 
 // New validates the boundary and builds the source. The HTTP client never follows redirects.
@@ -67,13 +69,14 @@ func New(cfg Config) (*Source, error) {
 	}
 
 	engine, err := windowsource.New(cfg, windowsource.Profile{Name: supportops.SourceLoki, CodePrefix: codePrefix,
-		QueryPath: queryPath, RangePath: rangePath, TimeParam: lokiTime, Basis: supportops.BasisLogWindow, View: supportops.CoverageLogLabels,
+		QueryPath: queryPath, RangePath: rangePath, SeriesPath: seriesPath, TimeParam: lokiTime, Basis: supportops.BasisLogWindow, View: supportops.CoverageLogLabels,
 		MinCoverage: minCoverageLines, Coverage: count(""), Entries: profileQueries(count)})
 	if err != nil {
 		return nil, err
 	}
 
-	return &Source{Engine: engine, selector: streamSelector(cfg.Selector), instanceLabel: cfg.InstanceLabel}, nil
+	return &Source{Engine: engine, selectorLabels: maps.Clone(cfg.Selector), selector: streamSelector(cfg.Selector),
+		instanceLabel: cfg.InstanceLabel}, nil
 }
 
 // lokiTime renders the evaluation time as the Unix nanoseconds Loki expects.

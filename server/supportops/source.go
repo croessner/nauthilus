@@ -19,13 +19,6 @@ import (
 	"context"
 	"slices"
 	"time"
-
-	"github.com/croessner/nauthilus/v4/server/supportaccess"
-)
-
-const (
-	// maxLabelRunes bounds one label value that leaves the host.
-	maxLabelRunes = 160
 )
 
 // Source is one read-only observation source. Collect must not change any state, must honor ctx, and reports its own
@@ -61,17 +54,14 @@ func UnknownFinding(source string, component string, scope FindingScope, freshne
 		Observed: observed, Symptoms: []Symptom{}}
 }
 
-// SanitizeLabels bounds and cleans label values observed in infrastructure data before they leave the host.
+// SanitizeLabels returns label names and values observed in infrastructure data complete, with invisible format
+// characters made visible and authentication secrets replaced.
 func SanitizeLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return nil
 	}
 
-	cleaned := make(map[string]string, len(labels))
-
-	for name, value := range labels {
-		cleaned[supportaccess.SanitizeText(name, maxLabelRunes)] = supportaccess.SanitizeText(value, maxLabelRunes)
-	}
+	cleaned, _ := cleanLabels(labels, labelsFieldPrefix)
 
 	return cleaned
 }

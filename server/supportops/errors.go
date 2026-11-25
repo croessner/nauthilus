@@ -30,6 +30,9 @@ const (
 	// CodeWindowTooLarge marks a time window above the service maximum.
 	CodeWindowTooLarge ErrorCode = "WINDOW_TOO_LARGE"
 
+	// CodeInvalidCursor marks a page cursor that is malformed or belongs to another query.
+	CodeInvalidCursor ErrorCode = "INVALID_CURSOR"
+
 	// CodeForbidden marks a caller without the operations permission.
 	CodeForbidden ErrorCode = "FORBIDDEN"
 
@@ -47,6 +50,7 @@ const (
 var errorMessages = map[ErrorCode]string{
 	CodeInvalidRequest: "The request is malformed or inconsistent.",
 	CodeWindowTooLarge: "The time window exceeds the maximum of 24 hours.",
+	CodeInvalidCursor:  "The page cursor is malformed or belongs to another query.",
 	CodeForbidden:      "The caller lacks the required operations permission.",
 	CodeBusy:           "Too many diagnostics calls are running; retry later.",
 	CodeNotConfigured:  "Operational diagnostics are not configured on this instance.",

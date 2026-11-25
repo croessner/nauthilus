@@ -20,38 +20,58 @@ import (
 	"time"
 )
 
-// Log level vocabulary of the log overview. Requests may only name these levels.
+// Log level vocabulary of the log answers. Requests may only name these levels.
 const (
-	LogLevelError = "error"
-	LogLevelWarn  = "warn"
+	LogLevelError  = "error"
+	LogLevelWarn   = "warn"
+	LogLevelNotice = "notice"
+	LogLevelInfo   = "info"
+	LogLevelDebug  = "debug"
 )
 
-// LogLevels lists every overview level in response order.
-var LogLevels = []string{LogLevelError, LogLevelWarn}
+// LogLevels lists every level in response order, most severe first.
+var LogLevels = []string{LogLevelError, LogLevelWarn, LogLevelNotice, LogLevelInfo, LogLevelDebug}
 
-// Message forms tell how much of an observed log message left the host.
-const (
-	// MessageFormLiteral is the message exactly as logged; it held nothing that looked variable.
-	MessageFormLiteral = "literal"
+// DefaultLogLevels are the levels of a request that names none: warnings and errors.
+var DefaultLogLevels = []string{LogLevelError, LogLevelWarn}
 
-	// MessageFormNormalized is the message with every variable-looking part replaced by a placeholder.
-	MessageFormNormalized = "normalized"
-)
-
-// Note codes of the log overview.
+// Note codes of the log answers.
 const (
 	NoteLogMessagesAreNotIncidents = "LOG_MESSAGES_ARE_NOT_INCIDENTS"
-	NoteLogMessagesNormalized      = "LOG_MESSAGES_NORMALIZED"
-	NoteLogGroupsOmitted           = "LOG_GROUPS_OMITTED"
 	NoteLogBucketsExceedWindow     = "LOG_BUCKETS_EXCEED_WINDOW"
 
 	// NoteLogNoCoverage means no instance logged any line in the window: an empty message list proves nothing.
 	NoteLogNoCoverage = "LOG_NO_COVERAGE"
+
+	// NoteLogSecretsRedacted means authentication secrets were replaced by <redacted>; nothing else was changed.
+	NoteLogSecretsRedacted = "LOG_SECRETS_REDACTED"
+
+	// NoteLogMorePages means the answer is one page; next_cursor continues it.
+	NoteLogMorePages = "LOG_MORE_PAGES"
+
+	// NoteLogPagesRequery means every page runs the source query again, so a window that still receives lines can
+	// shift between pages; a window in the past is stable.
+	NoteLogPagesRequery = "LOG_PAGES_REQUERY_THE_SOURCE"
 )
 
-// LogOverviewRequest asks for the warning and error messages the deployment logged inside a window.
+// LogPage is the page part of a paginated log request: the cursor of the previous answer and the page size.
+type LogPage struct {
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// LogPageResult states the page of a paginated log answer. NextCursor is null on the last page.
+type LogPageResult struct {
+	NextCursor *string `json:"next_cursor"`
+	Limit      int     `json:"limit"`
+	Offset     int     `json:"offset"`
+	Total      int     `json:"total"`
+}
+
+// LogOverviewRequest asks for the messages the deployment logged inside a window at the requested levels.
 type LogOverviewRequest struct {
 	Window         *Window  `json:"window,omitempty"`
+	Page           *LogPage `json:"page,omitempty"`
 	Levels         []string `json:"levels,omitempty"`
 	SchemaVersion  string   `json:"schema_version"`
 	AuditReference string   `json:"audit_reference,omitempty"`
@@ -64,19 +84,13 @@ type LogOverviewResult struct {
 	Buckets       []Window          `json:"buckets"`
 	Source        SourceReport      `json:"source"`
 	Scope         ResultScope       `json:"scope"`
-	Omitted       LogOmission       `json:"omitted"`
+	Page          LogPageResult     `json:"page"`
 	SchemaVersion string            `json:"schema_version"`
 	BucketSeconds int64             `json:"bucket_seconds"`
 }
 
-// LogOmission states what the result left out after the source answered: groups beyond the response bound and the
-// lines they counted.
-type LogOmission struct {
-	Groups int   `json:"groups"`
-	Lines  int64 `json:"lines"`
-}
-
-// LogMessageGroup is one message at one level with its counts in the covered window.
+// LogMessageGroup is one exact message at one level with its counts in the covered window. Different messages are
+// never merged; only lines with the identical message text count into one group.
 type LogMessageGroup struct {
 	Instances []LogInstanceCount `json:"instances"`
 
@@ -87,8 +101,14 @@ type LogMessageGroup struct {
 	ID          string     `json:"id"`
 	Level       string     `json:"level"`
 	Message     string     `json:"message"`
-	MessageForm string     `json:"message_form"`
 	Status      Status     `json:"status"`
+
+	// SecretsRedacted tells that authentication secrets inside the message were replaced.
+	SecretsRedacted bool `json:"secrets_redacted,omitempty"`
+
+	// MessageExact tells that Message is the stored text unchanged, so it works as the message filter of the log
+	// events; a replaced secret or a visible format character makes it false.
+	MessageExact bool `json:"message_exact"`
 
 	// Component and Symptom name the diagnostics category of a profiled message.
 	Component string `json:"component,omitempty"`
@@ -102,7 +122,7 @@ type LogInstanceCount struct {
 	Count    int64  `json:"count"`
 }
 
-// LogOverviewSource is a historical source that can count warning and error messages per instance and bucket.
+// LogOverviewSource is a historical source that can count log messages per level, instance, and bucket.
 type LogOverviewSource interface {
 	LogOverview(ctx context.Context, query LogOverviewQuery) LogOverviewSourceResult
 }
@@ -115,7 +135,7 @@ type LogOverviewQuery struct {
 }
 
 // LogOverviewSourceResult is the source's raw contribution: its completeness report, the bucket grid, and one series
-// per instance, level, and message as logged. The service normalizes and groups it before it leaves the host.
+// per instance, level, and message as logged. The service groups identical messages and pages the groups.
 type LogOverviewSourceResult struct {
 	Series  []LogSeries
 	Buckets []Window
