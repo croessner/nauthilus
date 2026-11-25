@@ -89,8 +89,9 @@ native plugins must be rebuilt against this source, as for every release.
 
 - None for configurations. A log overview or long diagnostics call sends
   more, smaller Loki queries than before (25 instant queries for one hour,
-  at most four at a time); raise the call timeout only if a source reports
-  `timeout`.
+  at most four at a time). Every call keeps its fixed budget of 10 seconds;
+  the `timeout` of a source applies per part within it, and a source that
+  runs out of time reports `timeout`.
 
 ## v4.2.1: Complete Support Data And A Byte Check For The Frontend Secret
 

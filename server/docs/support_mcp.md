@@ -435,8 +435,8 @@ longer than the source's `max_time_window` (the longest span one query covers, d
 consecutive parts of at most `max_time_window` that end at the window end, and their counts are added; the log events
 read part by part. One window takes at most 24 parts, so with `max_time_window: 1h` every window up to the 24-hour
 maximum is answered completely. A longer window keeps its newest 24 parts and is stated as clipped
-(`LOKI_WINDOW_CLIPPED`, `PROMETHEUS_WINDOW_CLIPPED`, source `partial`). The source timeout applies per part, within
-the timeout of the call; a source that runs out of time reports `timeout`. A twelve-hour diagnostics call with eight profile
+(`LOKI_WINDOW_CLIPPED`, `PROMETHEUS_WINDOW_CLIPPED`, source `partial`). The source `timeout` applies per part, within
+the fixed budget of 10 seconds per call; a source that runs out of time reports `timeout`. A twelve-hour diagnostics call with eight profile
 queries sends 12 × 9 Loki queries, at most four at a time.
 
 ### `nauthilus_runtime` (instance-local, side-effect free)
@@ -496,7 +496,7 @@ a test:
 
 Complements the instance-local runtime view: it asks one Prometheus for every scraped instance and ties the counts to
 the requested window. Only the compiled `nauthilus_diagnostics` profile runs: instant queries of the form
-`sum by (<instance_label>) (increase(<series>{<selector>}[<window>s]))`, evaluated at the end of the window, over the
+`sum by (<instance_label>) (increase(<series>{<selector>}[<window>ms]))`, evaluated at the end of the window, over the
 same counter families and the same classification as the runtime source:
 
 | Component | Symptom | Series |
