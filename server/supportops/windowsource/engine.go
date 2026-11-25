@@ -127,6 +127,9 @@ type Profile struct {
 	CodePrefix string
 	QueryPath  string
 
+	// RangePath is the range query path of an endpoint that answers bucketed overviews; empty disables them.
+	RangePath string
+
 	// Basis and View state what the findings and the coverage of the source mean.
 	Basis       supportops.FreshnessBasis
 	View        string
@@ -145,7 +148,7 @@ func New(conn Connection, profile Profile) (*Engine, error) {
 	}
 
 	client, err := NewClient(ClientConfig{HTTP: conn.HTTPClient, Endpoint: conn.BaseURL, QueryPath: profile.QueryPath,
-		Headers: headers, TimeParam: profile.TimeParam, BearerToken: conn.BearerToken, Password: conn.Password,
+		RangePath: profile.RangePath, Headers: headers, TimeParam: profile.TimeParam, BearerToken: conn.BearerToken, Password: conn.Password,
 		Username: conn.Username, MaxResponseBytes: conn.MaxResponseBytes, MaxSeries: conn.MaxSeries})
 	if err != nil {
 		return nil, err
@@ -296,26 +299,16 @@ func (c *collection) run(ctx context.Context, build func(rangeSeconds int64) str
 
 	samples, truncated, err := c.engine.client.Instant(ctx, build(rangeSeconds), c.window.Until)
 	if truncated {
-		c.mu.Lock()
-		c.truncate = true
-		c.mu.Unlock()
-		c.degrade(supportops.SourceStatusPartial, c.engine.code("RESULT_TRUNCATED"))
+		c.markTruncated()
 	}
 
-	if err == nil {
-		return samples, true
+	if err != nil {
+		c.fail(ctx, err, coverage)
+
+		return nil, false
 	}
 
-	switch {
-	case ctx.Err() != nil:
-		c.degrade(supportops.SourceStatusTimeout, c.engine.code("TIMEOUT"))
-	case coverage:
-		c.degrade(supportops.SourceStatusUnavailable, c.failureCode(err))
-	default:
-		c.degrade(supportops.SourceStatusPartial, c.failureCode(err))
-	}
-
-	return nil, false
+	return samples, true
 }
 
 // failureCode maps a query failure to a stable code without publishing the cause.
@@ -330,7 +323,7 @@ func (c *collection) failureCode(err error) string {
 	}
 }
 
-// result assembles the source result with the coverage statement.
+// result assembles the source result with the coverage statement of the instances the findings name.
 func (c *collection) result(findings []supportops.Finding) supportops.SourceResult {
 	instances := []string{}
 
@@ -342,9 +335,41 @@ func (c *collection) result(findings []supportops.Finding) supportops.SourceResu
 
 	slices.Sort(instances)
 
-	return supportops.SourceResult{Findings: findings, Report: supportops.SourceReport{Status: c.status, Code: c.code,
-		Truncated: c.truncate, Coverage: supportops.Coverage{View: c.engine.spec.View, Instances: instances,
-			From: supportops.TimePointer(c.window.From), Until: supportops.TimePointer(c.window.Until)}}}
+	return supportops.SourceResult{Findings: findings, Report: c.report(instances, c.window)}
+}
+
+// report states the completeness of the collection, the covered instances, and the covered time span.
+func (c *collection) report(instances []string, covered supportops.Window) supportops.SourceReport {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if instances == nil {
+		instances = []string{}
+	}
+
+	return supportops.SourceReport{Status: c.status, Code: c.code, Truncated: c.truncate, Coverage: supportops.Coverage{
+		View: c.engine.spec.View, Instances: instances, From: supportops.TimePointer(covered.From),
+		Until: supportops.TimePointer(covered.Until)}}
+}
+
+// markTruncated records a truncated answer.
+func (c *collection) markTruncated() {
+	c.mu.Lock()
+	c.truncate = true
+	c.mu.Unlock()
+	c.degrade(supportops.SourceStatusPartial, c.engine.code("RESULT_TRUNCATED"))
+}
+
+// fail degrades the collection for a failed query: a coverage failure makes it unavailable, any other only partial.
+func (c *collection) fail(ctx context.Context, err error, coverage bool) {
+	switch {
+	case ctx.Err() != nil:
+		c.degrade(supportops.SourceStatusTimeout, c.engine.code("TIMEOUT"))
+	case coverage:
+		c.degrade(supportops.SourceStatusUnavailable, c.failureCode(err))
+	default:
+		c.degrade(supportops.SourceStatusPartial, c.failureCode(err))
+	}
 }
 
 // findings turns the coverage and profile counts into one finding per component and covered instance. Without

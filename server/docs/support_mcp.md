@@ -12,7 +12,7 @@ query (shell, SQL, Redis, log, or monitoring).
 
 | Layer | Package | Responsibility |
 |---|---|---|
-| Operation table | `server/supportapi` | The four operations, strict argument decoding, rendered result and error bytes, input schemas derived from the management OpenAPI document. Both transports use it, so they cannot drift apart. |
+| Operation table | `server/supportapi` | The five operations, strict argument decoding, rendered result and error bytes, input schemas derived from the management OpenAPI document. Both transports use it, so they cannot drift apart. |
 | Services | `server/supporthistory`, `server/supportops` | Authorization from verified scopes, validation, limits, concurrency gates, interpretation, coverage, audit. One process-owned instance each, shared by HTTP and MCP. |
 | Shared primitives | `server/supportaccess` | Verified credential and principal identity, concurrency gate, stable error type, audit entry, text sanitizer. |
 | HTTP adapter | `server/handler/support` | `POST /api/v1/support/...` with backchannel service tokens. |
@@ -25,6 +25,7 @@ query (shell, SQL, Redis, log, or monitoring).
 | `authentication_attempt_detail` | `POST /api/v1/support/authentication-attempts/detail` | `nauthilus:history_read`, `nauthilus:history_detail` |
 | `bruteforce_history` | `POST /api/v1/support/bruteforce-bans/search` | `nauthilus:history_read`, `nauthilus:history_detail` |
 | `operational_diagnostics` | `POST /api/v1/support/operations/diagnostics` | `nauthilus:operations_read` |
+| `operational_log_overview` | `POST /api/v1/support/operations/log-overview` | `nauthilus:operations_read` |
 
 `authentication_attempts_search` takes the same optional `response_mode` (`detailed`, `compact`) and
 `include_ban_context` arguments as the HTTP route; the tool input schema is generated from the same OpenAPI component,
@@ -141,7 +142,8 @@ The MCP listener is plain HTTP on its own address (default `127.0.0.1:9097`) beh
 Answers contain recorded or observed data: logins and accounts of the named subject, client IPs, protocols, client
 ids, internal instance names, LDAP pool and target names, Redis pool names, and Loki and Prometheus instance labels. Recorded free
 text is cleaned (control, format, and bidirectional characters replaced) and bounded; Loki and Prometheus instance labels outside a
-plain pattern are replaced by a digest. The tool descriptions and the server instructions tell the model to treat
+plain pattern are replaced by a digest. Log messages of the log overview leave the host only normalized (section 7.1).
+The tool descriptions and the server instructions tell the model to treat
 every string as untrusted data; this does not make natural-language content harmless, so operators should not expose
 the endpoint to clients they do not trust.
 
@@ -460,6 +462,81 @@ label reads better). Values outside a plain pattern are replaced by a digest. Co
 extrapolates, and a series that first appears inside the window counts only from its second sample, so a restart of the
 only instance can hide the first increments.
 
+### 7.1 Log overview (`operational_log_overview`)
+
+The diagnostics profile counts eight fixed messages; anything else, such as RBL resolver timeouts or WebAuthn warnings,
+stays invisible there. The log overview counts every `WARN` and `ERROR` line of the Loki source in a window, grouped by
+level and message, so messages nobody profiled become visible as well. It needs no configuration beyond the `loki`
+source and uses its selector, tenant, credentials, timeout, `max_time_window`, `max_series`, and `max_response_bytes`.
+
+Request: `schema_version`, optional `window` (default the last 15 minutes, at most 24 hours), optional `levels`
+(`error`, `warn`; both when absent), and `audit_reference`. Loki receives one coverage query and one range query per
+slog encoder, so the overview needs no knowledge of the log format:
+
+```text
+sum by (<instance_label>, nauthilus_level, nauthilus_msg) (count_over_time(<selector>
+  |~ "\"level\":\"(ERROR|WARN)\"" | json nauthilus_level="level", nauthilus_msg="msg"
+  | __error__="" | nauthilus_level=~"ERROR|WARN" [<bucket>s]))
+```
+
+and the same with the text filters `!~ "^\s*\{" |~ "(^|\s)level=(ERROR|WARN)(\s|$)"` and `| logfmt`. A text line
+fails the JSON parser and is dropped by `__error__=""`; the non-strict logfmt parser does not fail on a JSON line, so
+the text query excludes JSON lines first, and a `level=ERROR` typed into a JSON value never counts. The level matcher
+after the parser keeps a level word inside another field from counting. Only level names of the fixed vocabulary
+reach a query. The label extraction parameters of `json` and `logfmt` need Loki 2.9 or newer; an older Loki rejects
+both queries and the source reads `unavailable`.
+
+The answer holds:
+
+- `source`: the Loki report with status, code, truncation, and the coverage (instances that logged any line in the
+  window, covered time span). An instance in the coverage without a message group logged no warning or error.
+- `buckets` and `bucket_seconds`: up to 12 equal buckets that end at the window end. Their width is a whole number of
+  seconds, so the first bucket can start up to 11 seconds before the window (`LOG_BUCKETS_EXCEED_WINDOW`).
+- `messages`: at most 50 groups, most frequent first (errors before warnings at equal counts), each with `level`,
+  `message`, `message_form`, the total `count`, one count per bucket in `counts`, `first_bucket_from` and
+  `last_bucket_until` of the buckets with a count, and the per-instance counts. A message of the diagnostics profile
+  carries its `component` and `symptom`.
+- `omitted`: groups beyond the bound of 50 and the lines they counted (`LOG_GROUPS_OMITTED`).
+- `notes`: always `VALUES_ARE_UNTRUSTED_DATA` and `LOG_MESSAGES_ARE_NOT_INCIDENTS`; when they apply
+  `LOG_MESSAGES_NORMALIZED`, `LOG_GROUPS_OMITTED`, `LOG_BUCKETS_EXCEED_WINDOW`, `HISTORICAL_SOURCE_INCOMPLETE`
+  (partial, clipped, truncated, misaligned, or timed out), `NO_HISTORICAL_SOURCE`, and `LOG_NO_COVERAGE` (no instance
+  logged any line in the window, so an empty message list proves nothing: check the selector and retention).
+
+Every group has the status `observed`. A counted warning is evidence that a code path logged, not an outage: retries,
+fallbacks, and client errors log warnings during normal operation. The overview derives no hypotheses and never
+reports `failing` or `degraded`; use `operational_diagnostics` and the runtime source for component state.
+
+**Bounds.** `max_series` bounds the series per range query (instance × level × message); a truncated answer keeps the
+series with the largest counts and marks the source `partial`. A response above `max_response_bytes` is dropped as a
+whole for that encoder (`LOKI_RESULT_TRUNCATED`). When both range queries fail, the source is `unavailable`, never an
+empty `ok`. Windows above `max_time_window` are clipped to their newest part. Messages with variable content (counters,
+addresses) raise the series count; normalization merges them after the query, so the bound can be reached before 50
+groups, and a Loki `max_query_series` limit below the series count rejects the query. A point that is not within one
+second of a bucket end (a query frontend with `align_queries_with_step`) is dropped and the source reads `partial`
+with `LOKI_BUCKETS_MISALIGNED`.
+
+**Normalization.** Messages are Loki label values, and some Nauthilus messages embed values (an error text with a
+resolver address, a client IP in quotes, a counter). Before a message leaves the host it is normalized:
+
+- Control and format characters become spaces, so a tab or newline cannot join a value to a keyword; the text is then
+  cleaned like other free text.
+- Quoted spans become `<quoted>`; URLs and IPv6-like hex groups become `<value>`.
+- The message is split into words at whitespace and at `: , ; ( ) [ ] { } - ! ?`. A word becomes `<value>` when it
+  carries a digit, an invalid character, one of `` @ = % \ # & + $ < > " ' ` ~ * | ^ ``, an inner dot (host names, dotted
+  names), a path (`/` at either end or more than one `/`), more than one lower-to-upper case change (encoded tokens),
+  or more than 32 characters, or when it stands alone in parentheses or brackets.
+- The word after `user`, `username`, `login`, `account`, `subject`, `mailbox`, `email`, `mail`, `password`, `token`,
+  `secret`, `ip`, `for`, `from`, `by`, `client`, `host`, `peer`, `session`, `bearer`, `dn`, `uid`, `name`, or `key`
+  becomes `<value>` (and so does a comma list right after it), unless it is another keyword or a status word such as
+  `not`, `is`, `expired`, or `locked`, so `user not found` stays readable.
+- Placeholders separated only by spaces or colons collapse; the result is bounded to 160 characters.
+
+`message_form` is `literal` only for an unchanged message. Series that normalize to the same text merge; a group is
+`normalized` as soon as one merged series was, and only an all-literal group keeps a profiled symptom. The residual
+risk: a letter-only value that follows neither a keyword nor quotes nor brackets (for example the second word of
+`user: alice smith`, or a bare name in a Lua plugin message) cannot be told apart from a word and stays; grant
+`nauthilus:operations_read` only to support staff that may see such values.
+
 ## 8. Limits and known gaps
 
 - Only Nauthilus as the issuer is supported; external authorization servers are not.
@@ -468,7 +545,8 @@ only instance can hide the first increments.
 - A removed group membership takes effect at the next login, at the latest after `max_authentication_age`; removing a
   client from `static_clients` or a user-wide token revocation takes effect immediately.
 - No JSON-RPC batches, no server-to-client requests, no SSE streams (`JSONResponse` mode), no browser clients.
-- Loki evidence counts messages; it carries no first/last-seen times and depends on the configured retention.
+- Loki diagnostics evidence counts messages; it carries no first/last-seen times and depends on the configured
+  retention. The log overview resolves time only to its buckets.
 - Prometheus evidence is only as complete as the scrape: sampling gaps, a relabeling that drops core metrics (reported
   as `unknown`), and counter resets inside the window limit it. It carries no first/last-seen times either.
 - History stays bound to its contract (ClickHouse only, 31-day window).
@@ -479,7 +557,8 @@ only instance can hide the first increments.
   metadata, body inspection, all three protocol eras through the SDK client, response cap, byte-for-byte HTTP/MCP
   parity of every operation for results and errors), `server/supportops` and its sources (Loki hits, empty answers,
   outages, truncation, window clipping, query and tenant boundary, anchored message filter against forged fields,
-  label digest, literal binding to log calls; runtime rule table), timeouts in both MCP eras, request cancellation,
+  label digest, literal binding to log calls; log overview queries, buckets, truncation, normalization, grouping, and
+  notes; runtime rule table), timeouts in both MCP eras, request cancellation,
   shutdown drain,
   `server/supportapi`, `server/idp` (hosted resources, user right, login age, lifetime cap, both token formats),
   `server/handler/frontend/idp` (authorize refusals, RFC 8414, RFC 9207), `server/config` (validation and the example

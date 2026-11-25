@@ -80,8 +80,15 @@ func (f *fakeLoki) ServeHTTP(writer http.ResponseWriter, request *http.Request) 
 	_, _ = writer.Write([]byte(answer))
 }
 
-// queryLiteral returns the profile literal whose anchored message filter a count query carries, or "".
+// queryLiteral returns the profile literal whose anchored message filter a count query carries, the parser stage of
+// an overview query, or "" for the coverage query.
 func queryLiteral(query string) string {
+	for _, parser := range []string{"| json", "| logfmt"} {
+		if strings.Contains(query, parser+" ") {
+			return parser
+		}
+	}
+
 	for _, entry := range diagnosticsProfile {
 		if strings.Contains(query, strconv.Quote(messagePattern(entry.literal))) {
 			return entry.literal

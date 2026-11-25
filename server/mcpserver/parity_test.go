@@ -105,6 +105,8 @@ func parityCases(window, around string) map[string]parityCase {
 		"diagnostics":              {supportapi.OperationDiagnostics, `{"schema_version":"1","components":["ldap"]}`, "detail"},
 		"invalid window":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"a"},"filter":{"from":"2020-01-01T00:00:00Z","until":"2021-01-01T00:00:00Z"}}`, "detail"},
 		"unknown field":            {supportapi.OperationDiagnostics, `{"schema_version":"1","shell":"id"}`, "detail"},
+		"log overview":             {supportapi.OperationLogOverview, `{"schema_version":"1","levels":["error"]}`, "detail"},
+		"unknown log level":        {supportapi.OperationLogOverview, `{"schema_version":"1","levels":["debug"]}`, "detail"},
 	}
 }
 

@@ -48,8 +48,9 @@ const (
 	// defaultTimeout bounds one diagnostics call.
 	defaultTimeout = 10 * time.Second
 
-	operationDiagnose = "operations_diagnose"
-	auditService      = "operations"
+	operationDiagnose    = "operations_diagnose"
+	operationLogOverview = "operations_log_overview"
+	auditService         = "operations"
 )
 
 // Options configures a Service.
@@ -103,9 +104,32 @@ func NewService(options Options) (*Service, error) {
 	return service, nil
 }
 
-// Diagnose authorizes the caller, validates the request, asks the requested sources in parallel, and assembles
-// findings, hypotheses, completeness reports, and notes. A failing source never fails the call.
+// Diagnose answers one diagnostics request. Every call is audited, including denied and invalid ones.
 func (s *Service) Diagnose(ctx context.Context, caller Caller, request DiagnosticsRequest) (*DiagnosticsResult, error) {
+	return serve(ctx, s, caller, operationDiagnose, request.AuditReference, func(ctx context.Context, now time.Time) (*DiagnosticsResult, int, *Error) {
+		plan, err := newPlan(request, now)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		ctx, done, err := s.admit(ctx, caller)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		defer done()
+
+		query := Query{Window: plan.window, Now: now, Components: plan.components, Instance: s.instance}
+		result := s.assemble(plan, query, s.collect(ctx, plan, query))
+
+		return result, len(result.Findings), nil
+	})
+}
+
+// serve runs one audited support call: it answers a missing service, refuses a caller without the operations
+// permission, and records the outcome with the number of result entries.
+func serve[R any](ctx context.Context, s *Service, caller Caller, operation string, reference string,
+	call func(context.Context, time.Time) (*R, int, *Error)) (*R, error) {
 	if s == nil {
 		if !caller.allowed {
 			return nil, newError(CodeForbidden, nil)
@@ -115,11 +139,22 @@ func (s *Service) Diagnose(ctx context.Context, caller Caller, request Diagnosti
 	}
 
 	started := s.now()
-	entry := supportaccess.AuditEntry{Service: auditService, Operation: operationDiagnose, CallerIdentity: caller.Identity(),
-		CallerMethod: string(caller.Method()), AuditReference: supportaccess.BoundedAuditReference(request.AuditReference)}
+	entry := supportaccess.AuditEntry{Service: auditService, Operation: operation, CallerIdentity: caller.Identity(),
+		CallerMethod: string(caller.Method()), AuditReference: supportaccess.BoundedAuditReference(reference)}
 
-	result, err := s.diagnose(ctx, caller, request, started)
-	s.record(ctx, entry, started, result, err)
+	var (
+		result  *R
+		results int
+		err     *Error
+	)
+
+	if caller.allowed {
+		result, results, err = call(ctx, started)
+	} else {
+		err = newError(CodeForbidden, nil)
+	}
+
+	s.record(ctx, entry, started, results, err)
 
 	if err != nil {
 		return nil, err
@@ -128,30 +163,19 @@ func (s *Service) Diagnose(ctx context.Context, caller Caller, request Diagnosti
 	return result, nil
 }
 
-// diagnose runs one authorized call; nothing touches a source before authorization and validation.
-func (s *Service) diagnose(ctx context.Context, caller Caller, request DiagnosticsRequest, now time.Time) (*DiagnosticsResult, *Error) {
-	if !caller.allowed {
-		return nil, newError(CodeForbidden, nil)
-	}
-
-	plan, err := newPlan(request, now)
-	if err != nil {
-		return nil, err
-	}
-
+// admit takes a concurrency slot for the caller and bounds the call; done releases both.
+func (s *Service) admit(ctx context.Context, caller Caller) (context.Context, func(), *Error) {
 	release, acquired := s.gate.Acquire(ctx, caller.Identity())
 	if !acquired {
-		return nil, newError(CodeBusy, nil)
+		return nil, nil, newError(CodeBusy, nil)
 	}
 
-	defer release()
-
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
 
-	query := Query{Window: plan.window, Now: now, Components: plan.components, Instance: s.instance}
-
-	return s.assemble(plan, query, s.collect(ctx, plan, query)), nil
+	return ctx, func() {
+		cancel()
+		release()
+	}, nil
 }
 
 // collect asks every requested and configured source in parallel and keeps the response order fixed.
@@ -184,17 +208,23 @@ func (s *Service) collect(ctx context.Context, plan requestPlan, query Query) []
 
 // boundedResult marks a source that ran out of time and normalizes its report fields.
 func boundedResult(ctx context.Context, source Source, result SourceResult) SourceResult {
-	result.Report.Name, result.Report.Kind = source.Name(), source.Kind()
-
-	if result.Report.Coverage.Instances == nil {
-		result.Report.Coverage.Instances = []string{}
-	}
-
-	if ctx.Err() != nil && result.Report.Status == SourceStatusOK {
-		result.Report.Status = SourceStatusTimeout
-	}
+	result.Report.settle(ctx, source.Name(), source.Kind())
 
 	return result
+}
+
+// settle names the report, never leaves its instance list null, and marks an ok report of an expired call as timed
+// out.
+func (r *SourceReport) settle(ctx context.Context, name string, kind SourceKind) {
+	r.Name, r.Kind = name, kind
+
+	if r.Coverage.Instances == nil {
+		r.Coverage.Instances = []string{}
+	}
+
+	if ctx.Err() != nil && r.Status == SourceStatusOK {
+		r.Status = SourceStatusTimeout
+	}
 }
 
 // sourceKind returns the fixed kind of a known source name.
@@ -207,7 +237,7 @@ func sourceKind(name string) SourceKind {
 }
 
 // record writes the audit entry of one call exactly once.
-func (s *Service) record(ctx context.Context, entry supportaccess.AuditEntry, started time.Time, result *DiagnosticsResult, err *Error) {
+func (s *Service) record(ctx context.Context, entry supportaccess.AuditEntry, started time.Time, results int, err *Error) {
 	if s.audit == nil {
 		return
 	}
@@ -215,9 +245,7 @@ func (s *Service) record(ctx context.Context, entry supportaccess.AuditEntry, st
 	entry.At, entry.Duration = started, s.now().Sub(started)
 	entry.Allowed, entry.ResultCode = true, "OK"
 
-	if result != nil {
-		entry.Results = len(result.Findings)
-	}
+	entry.Results = results
 
 	if err != nil {
 		entry.Allowed = err.Code != CodeForbidden

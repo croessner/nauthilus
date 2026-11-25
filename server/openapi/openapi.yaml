@@ -1277,6 +1277,49 @@ paths:
           $ref: "#/components/responses/SupportOperationsInternal"
         "503":
           $ref: "#/components/responses/SupportOperationsUnavailable"
+  /api/v1/support/operations/log-overview:
+    post:
+      tags:
+        - SupportOperations
+      operationId: overviewOperationsLogs
+      summary: Count the warning and error messages the deployment logged in a window.
+      description: >-
+        Requires nauthilus:operations_read. Filters are accepted only in the JSON body; query parameters are refused.
+        HTTP 200 means the call was processed; `source` states the completeness of the log source. Every message group
+        is an observation counted in the log window, not an incident; use the diagnostics operation for component
+        state. Messages are normalized before they leave the host: quoted spans and variable-looking values are
+        replaced by placeholders. Nothing is changed.
+      security:
+        - backchannelBearer: []
+        - backchannelBasic: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportOperationsLogOverviewRequest"
+      responses:
+        "200":
+          description: Processed overview; the source may be partial, unavailable, or not configured.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/SupportHistoryNoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportOperationsLogOverviewResponse"
+        "400":
+          $ref: "#/components/responses/SupportOperationsBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SupportOperationsForbidden"
+        "429":
+          $ref: "#/components/responses/SupportOperationsBusy"
+        "500":
+          $ref: "#/components/responses/SupportOperationsInternal"
+        "503":
+          $ref: "#/components/responses/SupportOperationsUnavailable"
 components:
   headers:
     SupportHistoryNoStore:
@@ -1979,6 +2022,15 @@ components:
       properties:
         from: {type: string, format: date-time, description: Inclusive lower bound.}
         until: {type: string, format: date-time, description: Exclusive upper bound; not in the future.}
+    SupportOperationsScope:
+      type: object
+      additionalProperties: false
+      required: [window, queried_at, instance]
+      properties:
+        window: {$ref: "#/components/schemas/SupportOperationsWindow"}
+        queried_at: {type: string, format: date-time}
+        deployment: {type: string}
+        instance: {type: string}
     SupportOperationsDiagnosticsRequest:
       type: object
       additionalProperties: false
@@ -2078,18 +2130,74 @@ components:
       required: [schema_version, scope, sources, findings, hypotheses, notes]
       properties:
         schema_version: {type: string, pattern: "^1$"}
-        scope:
-          type: object
-          additionalProperties: false
-          required: [window, queried_at, instance]
-          properties:
-            window: {$ref: "#/components/schemas/SupportOperationsWindow"}
-            queried_at: {type: string, format: date-time}
-            deployment: {type: string}
-            instance: {type: string}
+        scope: {$ref: "#/components/schemas/SupportOperationsScope"}
         sources: {type: array, items: {$ref: "#/components/schemas/SupportOperationsSourceReport"}}
         findings: {type: array, items: {$ref: "#/components/schemas/SupportOperationsFinding"}}
         hypotheses: {type: array, items: {$ref: "#/components/schemas/SupportOperationsHypothesis"}}
+        notes: {type: array, items: {type: string}}
+    SupportOperationsLogOverviewRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        window:
+          $ref: "#/components/schemas/SupportOperationsWindow"
+          description: Defaults to the last 15 minutes; at most 24 hours. The log source may clip it to its configured maximum.
+        levels:
+          type: array
+          maxItems: 2
+          uniqueItems: true
+          description: Log levels to count; error and warn when absent.
+          items: {type: string, enum: [error, warn]}
+        audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
+    SupportOperationsLogMessageGroup:
+      type: object
+      additionalProperties: false
+      required: [id, level, message, message_form, status, count, counts, instances]
+      properties:
+        id: {type: string}
+        level: {type: string, enum: [error, warn]}
+        message: {type: string, description: Normalized log message; untrusted data.}
+        message_form:
+          type: string
+          enum: [literal, normalized]
+          description: literal is the message as logged; normalized had variable-looking parts replaced.
+        status: {type: string, enum: [observed], description: "A counted message is an observation, never an incident."}
+        component: {type: string, enum: [ldap, auth_backend, backend_monitoring, redis, clickhouse_export, auth_event_delivery, policy]}
+        symptom: {type: string, description: Diagnostics symptom code of a profiled literal message.}
+        count: {type: integer, minimum: 0}
+        counts: {type: array, items: {type: integer, minimum: 0}, description: One count per entry of buckets.}
+        first_bucket_from: {type: string, format: date-time}
+        last_bucket_until: {type: string, format: date-time}
+        instances:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [instance, count]
+            properties:
+              instance: {type: string}
+              count: {type: integer, minimum: 0}
+    SupportOperationsLogOverviewResponse:
+      type: object
+      additionalProperties: false
+      required: [schema_version, scope, source, buckets, bucket_seconds, messages, omitted, notes]
+      properties:
+        schema_version: {type: string, pattern: "^1$"}
+        scope: {$ref: "#/components/schemas/SupportOperationsScope"}
+        source: {$ref: "#/components/schemas/SupportOperationsSourceReport"}
+        buckets: {type: array, items: {$ref: "#/components/schemas/SupportOperationsWindow"}}
+        bucket_seconds: {type: integer, minimum: 0}
+        messages: {type: array, items: {$ref: "#/components/schemas/SupportOperationsLogMessageGroup"}}
+        omitted:
+          type: object
+          additionalProperties: false
+          required: [groups, lines]
+          description: Message groups beyond the response bound and the lines they counted.
+          properties:
+            groups: {type: integer, minimum: 0}
+            lines: {type: integer, minimum: 0}
         notes: {type: array, items: {type: string}}
     SupportOperationsError:
       type: object

@@ -452,7 +452,7 @@ func assertReadOnlyTools(t *testing.T, session *mcp.ClientSession) {
 	}
 
 	want := []string{supportapi.OperationAttemptSearch, supportapi.OperationAttemptDetail,
-		supportapi.OperationBanHistory, supportapi.OperationDiagnostics}
+		supportapi.OperationBanHistory, supportapi.OperationDiagnostics, supportapi.OperationLogOverview}
 	slices.Sort(want)
 
 	if !slices.Equal(names, want) {

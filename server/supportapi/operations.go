@@ -34,6 +34,7 @@ const (
 	OperationAttemptDetail = "authentication_attempt_detail"
 	OperationBanHistory    = "bruteforce_history"
 	OperationDiagnostics   = "operational_diagnostics"
+	OperationLogOverview   = "operational_log_overview"
 )
 
 // untrustedDataNotice is appended to every operation description for model-facing transports.
@@ -122,6 +123,24 @@ var operations = []Operation{
 			}
 
 			return services.Operations.Diagnose(ctx, supportops.NewCaller(credential), request)
+		},
+	},
+	{
+		Name: OperationLogOverview, Title: "Overview logged warnings and errors", HTTPPath: "/support/operations/log-overview",
+		RequestSchema: "SupportOperationsLogOverviewRequest", errors: operationsErrors,
+		Scopes: []string{definitions.ScopeOperationsRead},
+		Description: "Count every warning and error message the deployment logged in a window of at most 24 hours (the " +
+			"Loki source may clip it), grouped by level and message, with counts per time bucket and per instance and " +
+			"the source coverage, truncation, and omitted groups. A counted message is an observation, not an incident: " +
+			"use operational_diagnostics for component state. Messages are normalized; placeholders replace quoted and " +
+			"variable-looking values.",
+		execute: func(ctx context.Context, services Services, credential supportaccess.VerifiedCredential, raw []byte) (any, error) {
+			var request supportops.LogOverviewRequest
+			if !DecodeStrict(raw, &request) {
+				return nil, operationsErrors.invalid()
+			}
+
+			return services.Operations.LogOverview(ctx, supportops.NewCaller(credential), request)
 		},
 	},
 }

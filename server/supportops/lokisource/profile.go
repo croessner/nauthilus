@@ -50,3 +50,14 @@ func profileQueries(count func(literal string) func(int64) string) []windowsourc
 
 	return entries
 }
+
+// profileEntryOf returns the profile entry whose literal is exactly message.
+func profileEntryOf(message string) (profileEntry, bool) {
+	for _, entry := range diagnosticsProfile {
+		if entry.literal == message {
+			return entry, true
+		}
+	}
+
+	return profileEntry{}, false
+}

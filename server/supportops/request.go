@@ -37,11 +37,7 @@ func (p requestPlan) wantsSource(name string) bool {
 // newPlan validates a request against the fixed vocabularies and bounds. An absent window is the last 15 minutes;
 // an absent component or source list means all of them.
 func newPlan(request DiagnosticsRequest, now time.Time) (requestPlan, *Error) {
-	if request.SchemaVersion != SchemaVersion || !supportaccess.ValidAuditReference(request.AuditReference) {
-		return requestPlan{}, newError(CodeInvalidRequest, nil)
-	}
-
-	window, err := planWindow(request.Window, now)
+	window, err := planHeader(request.SchemaVersion, request.AuditReference, request.Window, now)
 	if err != nil {
 		return requestPlan{}, err
 	}
@@ -57,6 +53,30 @@ func newPlan(request DiagnosticsRequest, now time.Time) (requestPlan, *Error) {
 	}
 
 	return requestPlan{window: window, components: components, sources: sources}, nil
+}
+
+// planHeader validates the fields every operations request shares and returns its window.
+func planHeader(schemaVersion string, auditReference string, requested *Window, now time.Time) (Window, *Error) {
+	if schemaVersion != SchemaVersion || !supportaccess.ValidAuditReference(auditReference) {
+		return Window{}, newError(CodeInvalidRequest, nil)
+	}
+
+	return planWindow(requested, now)
+}
+
+// planLogOverview validates a log overview request and returns its window and levels in vocabulary order.
+func planLogOverview(request LogOverviewRequest, now time.Time) (Window, []string, *Error) {
+	window, err := planHeader(request.SchemaVersion, request.AuditReference, request.Window, now)
+	if err != nil {
+		return Window{}, nil, err
+	}
+
+	levels, ok := planSelection(request.Levels, LogLevels)
+	if !ok {
+		return Window{}, nil, newError(CodeInvalidRequest, nil)
+	}
+
+	return window, levels, nil
 }
 
 // planWindow bounds the requested window: From before Until, Until not in the future beyond a small skew, and at

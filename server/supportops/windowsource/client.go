@@ -41,14 +41,18 @@ const (
 	userAgent     = "nauthilus-operations-diagnostics"
 	statusSuccess = "success"
 	resultVector  = "vector"
+	resultMatrix  = "matrix"
+
+	// queryParam carries the query of instant and range requests.
+	queryParam = "query"
 )
 
 var (
 	// ErrTruncated reports a response above the byte or series bound.
-	ErrTruncated = errors.New("instant query response truncated")
+	ErrTruncated = errors.New("query response truncated")
 
 	// ErrRejected reports a non-success answer of the endpoint.
-	ErrRejected = errors.New("instant query rejected")
+	ErrRejected = errors.New("query rejected")
 )
 
 // ClientConfig is the fixed endpoint, credential, and bound set of one instant query client.
@@ -68,7 +72,10 @@ type ClientConfig struct {
 	BearerToken secret.Value
 	Password    secret.Value
 	QueryPath   string
-	Username    string
+
+	// RangePath is the range query path; without it the client runs instant queries only.
+	RangePath string
+	Username  string
 
 	MaxResponseBytes int64
 	MaxSeries        int
@@ -83,6 +90,7 @@ type Client struct {
 	bearerToken      secret.Value
 	password         secret.Value
 	queryPath        string
+	rangePath        string
 	username         string
 	maxResponseBytes int64
 	maxSeries        int
@@ -92,6 +100,30 @@ type Client struct {
 type Sample struct {
 	Labels map[string]string
 	Value  float64
+}
+
+// Point is one evaluation of a range series.
+type Point struct {
+	At    time.Time
+	Value float64
+}
+
+// Series is one series of a range matrix: its labels and its points in time order.
+type Series struct {
+	Labels map[string]string
+	Points []Point
+}
+
+// matrixResponse is the subset of a range query answer that is read; nothing else is decoded.
+type matrixResponse struct {
+	Data struct {
+		ResultType string `json:"resultType"`
+		Result     []struct {
+			Metric map[string]string   `json:"metric"`
+			Values [][]json.RawMessage `json:"values"`
+		} `json:"result"`
+	} `json:"data"`
+	Status string `json:"status"`
 }
 
 // vectorResponse is the subset of an instant query answer that is read; nothing else is decoded.
@@ -122,21 +154,47 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	return &Client{http: httpClient, endpoint: cfg.Endpoint, headers: maps.Clone(cfg.Headers), timeParam: cfg.TimeParam,
-		bearerToken: cfg.BearerToken, password: cfg.Password, queryPath: cfg.QueryPath, username: cfg.Username,
+		bearerToken: cfg.BearerToken, password: cfg.Password, queryPath: cfg.QueryPath, rangePath: cfg.RangePath, username: cfg.Username,
 		maxResponseBytes: cfg.MaxResponseBytes, maxSeries: cfg.MaxSeries}, nil
 }
 
 // Instant runs one instant query evaluated at at. It returns the samples, a truncation flag, and an error for a
 // failed or rejected request. A truncated answer keeps the first maxSeries samples in label order.
 func (c *Client) Instant(ctx context.Context, query string, at time.Time) ([]Sample, bool, error) {
-	request, err := c.newRequest(ctx, query, at)
+	body, err := c.get(ctx, c.queryPath, url.Values{queryParam: {query}, "time": {c.timeParam(at)}})
 	if err != nil {
-		return nil, false, err
+		return nil, errors.Is(err, ErrTruncated), err
+	}
+
+	return c.decode(body)
+}
+
+// Range runs one range query with evaluations from start to end every step. It returns the series, a truncation flag,
+// and an error for a failed or rejected request. A truncated answer keeps the maxSeries series with the largest sums.
+func (c *Client) Range(ctx context.Context, query string, start time.Time, end time.Time, step time.Duration) ([]Series, bool, error) {
+	if c.rangePath == "" || step < time.Second {
+		return nil, false, ErrRejected
+	}
+
+	body, err := c.get(ctx, c.rangePath, url.Values{queryParam: {query}, "start": {c.timeParam(start)}, "end": {c.timeParam(end)},
+		"step": {strconv.FormatInt(int64(step/time.Second), 10)}})
+	if err != nil {
+		return nil, errors.Is(err, ErrTruncated), err
+	}
+
+	return c.decodeMatrix(body)
+}
+
+// get sends one bounded GET request below path and returns the body of a 200 answer.
+func (c *Client) get(ctx context.Context, path string, values url.Values) ([]byte, error) {
+	request, err := c.newRequest(ctx, path, values)
+	if err != nil {
+		return nil, err
 	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	defer func() { _ = response.Body.Close() }()
@@ -144,26 +202,27 @@ func (c *Client) Instant(ctx context.Context, query string, at time.Time) ([]Sam
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, c.maxResponseBytes))
 
-		return nil, false, fmt.Errorf("%w: HTTP %d", ErrRejected, response.StatusCode)
+		return nil, fmt.Errorf("%w: HTTP %d", ErrRejected, response.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.maxResponseBytes+1))
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	if int64(len(body)) > c.maxResponseBytes {
-		return nil, true, ErrTruncated
+		return nil, ErrTruncated
 	}
 
-	return c.decode(body)
+	return body, nil
 }
 
-// newRequest builds the GET request with the fixed headers and credentials; the query is the only variable part.
-func (c *Client) newRequest(ctx context.Context, query string, at time.Time) (*http.Request, error) {
+// newRequest builds the GET request with the fixed headers and credentials; the query values are the only variable
+// part.
+func (c *Client) newRequest(ctx context.Context, path string, values url.Values) (*http.Request, error) {
 	target := *c.endpoint
-	target.Path = strings.TrimRight(target.Path, "/") + c.queryPath
-	target.RawQuery = url.Values{"query": {query}, "time": {c.timeParam(at)}}.Encode()
+	target.Path = strings.TrimRight(target.Path, "/") + path
+	target.RawQuery = values.Encode()
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
@@ -219,6 +278,89 @@ func (c *Client) decode(body []byte) ([]Sample, bool, error) {
 	}
 
 	return samples, false, nil
+}
+
+// decodeMatrix reads a success matrix answer and keeps the maxSeries series with the largest sums.
+func (c *Client) decodeMatrix(body []byte) ([]Series, bool, error) {
+	var answer matrixResponse
+
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return nil, false, err
+	}
+
+	if answer.Status != statusSuccess || answer.Data.ResultType != resultMatrix {
+		return nil, false, ErrRejected
+	}
+
+	type ranked struct {
+		key    string
+		series Series
+		sum    float64
+	}
+
+	entries := make([]ranked, 0, len(answer.Data.Result))
+
+	for _, raw := range answer.Data.Result {
+		entry := ranked{key: labelsKey(raw.Metric), series: Series{Labels: raw.Metric, Points: make([]Point, 0, len(raw.Values))}}
+
+		for _, pair := range raw.Values {
+			point, ok := matrixPoint(pair)
+			if !ok {
+				return nil, false, ErrRejected
+			}
+
+			entry.series.Points = append(entry.series.Points, point)
+			entry.sum += point.Value
+		}
+
+		entries = append(entries, entry)
+	}
+
+	slices.SortFunc(entries, func(left, right ranked) int {
+		if order := cmpDescending(left.sum, right.sum); order != 0 {
+			return order
+		}
+
+		return strings.Compare(left.key, right.key)
+	})
+
+	kept := min(len(entries), c.maxSeries)
+	series := make([]Series, 0, kept)
+
+	for _, entry := range entries[:kept] {
+		series = append(series, entry.series)
+	}
+
+	return series, len(entries) > kept, nil
+}
+
+// cmpDescending orders larger values first.
+func cmpDescending(left float64, right float64) int {
+	switch {
+	case left > right:
+		return -1
+	case left < right:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// matrixPoint reads the [timestamp, "value"] pair of a matrix point; the timestamp is in seconds.
+func matrixPoint(raw []json.RawMessage) (Point, bool) {
+	value, ok := sampleValue(raw)
+	if !ok {
+		return Point{}, false
+	}
+
+	var seconds float64
+	if err := json.Unmarshal(raw[0], &seconds); err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 {
+		return Point{}, false
+	}
+
+	whole, fraction := math.Modf(seconds)
+
+	return Point{At: time.Unix(int64(whole), int64(math.Round(fraction*1e9))).UTC(), Value: value}, true
 }
 
 // sampleValue reads the [timestamp, "value"] pair of a vector sample.
