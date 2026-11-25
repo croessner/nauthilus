@@ -12,7 +12,7 @@ query (shell, SQL, Redis, log, or monitoring).
 
 | Layer | Package | Responsibility |
 |---|---|---|
-| Operation table | `server/supportapi` | The five operations, strict argument decoding, rendered result and error bytes, input schemas derived from the management OpenAPI document. Both transports use it, so they cannot drift apart. |
+| Operation table | `server/supportapi` | The six operations and the segment operation, strict argument decoding, rendered result and error bytes, input schemas derived from the management OpenAPI document. Both transports use it, so they cannot drift apart. |
 | Services | `server/supporthistory`, `server/supportops` | Authorization from verified scopes, validation, limits, concurrency gates, interpretation, coverage, audit. One process-owned instance each, shared by HTTP and MCP. |
 | Shared primitives | `server/supportaccess` | Verified credential and principal identity, concurrency gate, stable error type, audit entry, text sanitizer. |
 | HTTP adapter | `server/handler/support` | `POST /api/v1/support/...` with backchannel service tokens. |
