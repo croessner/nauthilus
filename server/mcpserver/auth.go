@@ -34,6 +34,7 @@ import (
 const (
 	extraCredential     = "nauthilus.credential"
 	extraRequestContext = "nauthilus.request_context"
+	extraRequestIDBytes = "nauthilus.request_id_bytes"
 
 	errorInvalidToken      = "invalid_token"
 	errorInsufficientScope = "insufficient_scope"
@@ -90,12 +91,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 
 		defer release()
 
-		if !s.inspectBody(writer, request, credential) {
+		idBytes, inspected := s.inspectBody(writer, request, credential)
+		if !inspected {
 			return
 		}
 
 		info := &auth.TokenInfo{Scopes: credential.Scopes, Expiration: expiry, UserID: credential.Identity(),
-			Extra: map[string]any{extraCredential: credential, extraRequestContext: request.Context()}}
+			Extra: map[string]any{extraCredential: credential, extraRequestContext: request.Context(), extraRequestIDBytes: idBytes}}
 
 		next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), verifiedKey{}, info)))
 	})

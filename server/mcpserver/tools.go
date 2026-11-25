@@ -16,10 +16,12 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 
 	"github.com/croessner/nauthilus/v4/server/supportaccess"
 	"github.com/croessner/nauthilus/v4/server/supportapi"
@@ -73,16 +75,53 @@ func (s *Server) toolHandler(operation supportapi.Operation) mcp.ToolHandler {
 			arguments = []byte("{}")
 		}
 
-		response := s.deps.Services.Execute(ctx, operation, credential, arguments)
-		if int64(2*len(response.Body)) > s.maxResponse {
-			response = supportapi.ResponseTooLarge(operation)
-		}
+		bound := s.responseBound(request)
+		response := s.deps.Services.Execute(supportapi.WithResponseBound(ctx, bound), operation, credential, arguments)
+		response = s.deps.Services.Segments.Bound(response, operation, credential, bound)
 
 		s.recordTool(requestCtx, operation.Name, credential, response)
 
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(response.Body)}},
-			StructuredContent: json.RawMessage(response.Body), IsError: response.IsError()}, nil
+		return toolResult(response.Body, response.IsError()), nil
 	}
+}
+
+// envelopeOverhead is the JSON-RPC response envelope around a tool result without its id: {"jsonrpc":"2.0","id":,
+// "result":} and the trailing newline of the encoder.
+var envelopeOverhead = len(`{"jsonrpc":"2.0","id":,"result":}`) + 1
+
+// responseBound returns the size bound of this call's answer: the serialized JSON-RPC response with the request's own
+// id, the escaped text copy, and the structured copy must stay within max_response_bytes.
+func (s *Server) responseBound(request *mcp.CallToolRequest) supportapi.SizeBound {
+	idBytes := 0
+	if request != nil && request.Extra != nil && request.Extra.TokenInfo != nil {
+		idBytes, _ = request.Extra.TokenInfo.Extra[extraRequestIDBytes].(int)
+	}
+
+	return supportapi.SizeBound{Limit: int(s.maxResponse), Size: func(body []byte) int {
+		return envelopeOverhead + max(idBytes, 1) + serializedResultBytes(body)
+	}}
+}
+
+// serializedResultBytes returns the length of the tool result the endpoint sends for body, encoded like the SDK
+// encodes it (without HTML escapes) and counted with the error flag, so it bounds results and errors alike.
+func serializedResultBytes(body []byte) int {
+	var buffer bytes.Buffer
+
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+
+	if encoder.Encode(toolResult(body, true)) != nil {
+		return math.MaxInt32
+	}
+
+	return buffer.Len()
+}
+
+// toolResult renders an answer as the tool result: the text copy for clients without structured output and the
+// structured content.
+func toolResult(body []byte, isError bool) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}},
+		StructuredContent: json.RawMessage(body), IsError: isError}
 }
 
 // verifiedFacts returns the credential and the HTTP request context the bearer gate attached to the call.

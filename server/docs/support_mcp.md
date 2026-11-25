@@ -26,10 +26,15 @@ query (shell, SQL, Redis, log, or monitoring).
 | `bruteforce_history` | `POST /api/v1/support/bruteforce-bans/search` | `nauthilus:history_read`, `nauthilus:history_detail` |
 | `operational_diagnostics` | `POST /api/v1/support/operations/diagnostics` | `nauthilus:operations_read` |
 | `operational_log_overview` | `POST /api/v1/support/operations/log-overview` | `nauthilus:operations_read` |
+| `operational_log_events` | `POST /api/v1/support/operations/log-events` | `nauthilus:operations_read` |
+| `support_response_segment` | `POST /api/v1/support/responses/segment` | the scope of the operation that produced the answer |
+
+Both history scopes release the complete recorded data; `nauthilus:history_detail` is kept for existing grants and
+grants nothing beyond `nauthilus:history_read`.
 
 `authentication_attempts_search` takes the same optional `response_mode` (`detailed`, `compact`) and
 `include_ban_context` arguments as the HTTP route; the tool input schema is generated from the same OpenAPI component,
-and the answers are byte-identical. The mode only selects the presentation and never widens the projection
+and the answers are byte-identical. The mode only selects the presentation
 ([support_authentication_history.md](support_authentication_history.md), section 8.1).
 
 Every tool is listed to every authenticated caller. Each call is authorized by the service from the verified scopes;
@@ -124,8 +129,8 @@ The MCP listener is plain HTTP on its own address (default `127.0.0.1:9097`) beh
   Operation arguments are decoded with the same strict rules on HTTP and MCP (unknown fields and duplicate names are
   `INVALID_REQUEST`).
 - **Limits:** `timeout` per call, `max_concurrent` and `max_concurrent_per_principal` in-flight requests (`429`),
-  `max_response_bytes` per tool result counting the structured content and its text copy (larger results become
-  `RESPONSE_TOO_LARGE`), and `failed_auth_per_minute` failed bearer attempts per client (IPv4 address or IPv6 /64;
+  `max_response_bytes` per tool result counting the structured content and its text copy (a larger result arrives
+  in segments, see "Large answers" below), and `failed_auth_per_minute` failed bearer attempts per client (IPv4 address or IPv6 /64;
   `429`; a missing token is a discovery probe and is not counted). When the failure table is full, new clients are not
   tracked rather than refused, so a flood of rotating addresses cannot lock out valid tokens; above 10,000 distinct
   clients per minute, new clients are therefore not rate-limited. The services keep their own gates and bounds (history: 31-day window;
@@ -139,13 +144,59 @@ The MCP listener is plain HTTP on its own address (default `127.0.0.1:9097`) beh
 
 ### What leaves the host
 
-Answers contain recorded or observed data: logins and accounts of the named subject, client IPs, protocols, client
-ids, internal instance names, LDAP pool and target names, Redis pool names, and Loki and Prometheus instance labels. Recorded free
-text is cleaned (control, format, and bidirectional characters replaced) and bounded; Loki and Prometheus instance labels outside a
-plain pattern are replaced by a digest. Log messages of the log overview leave the host only normalized (section 7.1).
-The tool descriptions and the server instructions tell the model to treat
-every string as untrusted data; this does not make natural-language content harmless, so operators should not expose
-the endpoint to clients they do not trust.
+Answers carry the complete recorded and observed diagnostic data: logins and accounts of every identity in an attempt
+or ban (also those behind a shared address), client IPs, protocols, client ids, status texts, factor evidence, error
+codes and texts, internal instance and host names, LDAP pool and target names, Redis pool names, Loki and Prometheus
+labels, log messages, and every field of a stored log line. Nothing is cut, merged, or masked heuristically. Two
+transformations remain:
+
+- **Authentication secrets** are replaced by `<redacted>`. A name is a secret name when its last word (split at `_`,
+  `-`, `.`, space, `/`, `:`, brackets, and case changes; digits around a word and a plural `s` ignored) is `password`,
+  `passwd`, `passphrase`, `pwd`, `pass`, `pw`, `bindpw`, `passcode`, `passwort`, `kennwort`, `secret`, `token`,
+  `authorization`, `cookie`, `assertion`, `jwt`, `otp`, `totp`, `apikey`, or `credential`, or its last two words are
+  `api key`, `private key`, `secret key`, `signing key`, `access key`, `client key`, `recovery code`, `totp code`,
+  `otp code`, `password hash`, or `code verifier`. So `ldap_bind_password`, `userPassword`, `session_tokens`,
+  `password2`, `db:password`, and `X-API-Key` are secrets, while counters and ids such as `current_password_retries`,
+  `total_passwords_seen`, `tokens_issued`, or `credential_id` stay complete. `session` and `session_id` are request ids
+  in Nauthilus logs and stay. Log fields with a secret name are replaced and named in `redacted_fields`; in an array, the
+  item after a secret-named flag item (`["--password","..."]`) is replaced as well.
+- **The stored line** of an event gets the same replacements as its fields: a JSON or slog text line is read token by
+  token, names and values are decoded (so `"pass\u0077ord"` or an escaped value cannot hide a secret), a secret-named
+  value becomes `"<redacted>"`, every other string value passes the free-text rules below and is encoded again only
+  when they changed it. Everything else stays byte for byte, repeated names and their order included, so `line`
+  decodes to exactly the redacted `fields`. JSON objects and arrays embedded in a text value (a dumped request body) are
+  rewritten the same way, in fields, lines, and overview messages; an embedded JSON value that is the value of a
+  secret-named assignment (`password=[123456]`, `client_secret: {...}`, `--password ["..."]`) is replaced as a whole.
+- Inside free text (messages, error texts, raw lines) only unambiguous secret syntax is replaced:
+  signed JWTs, URL passwords, `code`, token, and secret query parameters in URLs, the credential of an `Authorization:
+  <scheme> ...` header, a `Bearer`/`Basic`/`Negotiate`/`Digest` word that looks like a credential (digits, base64
+  symbols, inner capitals, or 32 characters), the value of a secret-named command-line flag (`--password value`), and
+  the values of secret-named assignments in the forms `name=value`, `"name": value` (JSON with any key, also escaped
+  inside a string; an object or array value as a whole), `Name:value` without a space (struct dumps), LDIF `name::
+  value`, identifiers written `userPassword: value` or `bind_password: value`, and HTTP headers written `X-API-Key:
+  value` or `Authorization: value` (the scheme stays visible). Any other `name: reason` with a space is how Go wraps
+  errors, so `token: redis: connection pool timeout`, `parse token: illegal base64 data`, `cookie: invalid or tampered
+  cookie`, or `Authorization: header missing` stay complete. A quoted value ends at its quote, an unquoted value at
+  whitespace or `, ; &` (struct dumps also at a closing bracket, headers at the line end). The event or group then
+  carries `secrets_redacted` and the answer `LOG_SECRETS_REDACTED`. Quoted flag values (`--password 'a b'`), values after an escaped newline or
+  quote inside a stored JSON line, doubly escaped JSON, quoted values after `name: `, and keys with an annotation in
+  parentheses are covered. Not recognized: a password with spaces or those separators in an unquoted value (only its
+  first part is replaced; after `userPassword: ` an unquoted value of several words stays, so `userPassword: attribute
+  missing` stays readable); prose such as `config password: value` with a space; a value glued to a short flag (`-pvalue`); a short lower-case word after `Bearer` in prose; names outside the
+  vocabulary (for example `signature`); and OAuth codes in a `code=` assignment outside a URL (`code` also names error
+  codes). A rare `token:reason` without a space, or a placeholder in a usage text (`--password PROMPT`), is replaced
+  although it is no secret.
+- **Cookies and labels.** A `Cookie:` or `Set-Cookie:` header inside a text is replaced to the line end when its value
+  starts with a `name=value` pair or is a bracketed header dump such as `map[Cookie:[a=b; c=d]]` (`cookie: invalid or
+  tampered cookie` and `Set-Cookie: header too large` stay). A stream label with a secret name is
+  replaced and named as `labels.<name>` in `redacted_fields`; other label values pass the free-text rules.
+- **Invisible format characters** (Unicode category Cf, for example bidirectional overrides) are shown as `<U+XXXX>`,
+  and invalid UTF-8 bytes become U+FFFD, which JSON cannot carry otherwise. Newlines and tabs stay.
+
+The tool descriptions and the server instructions tell the model to treat every string as untrusted data; this does
+not make natural-language content harmless. The data is personal data: grant the support scopes only to staff
+entitled to it, and point a model client at the endpoint only if its operator may process that data (a local model
+keeps it on premises). Answers are audited per call with the principal, operation, and result count.
 
 ## 4. Configuration
 
@@ -337,8 +388,29 @@ Content-Type: application/json
 ```
 
 Diagnostics error codes: `INVALID_REQUEST`, `WINDOW_TOO_LARGE` (`400`), `FORBIDDEN` (`403`), `OPERATIONS_BUSY`
-(`429`), `OPERATIONS_NOT_CONFIGURED` (`503`), `INTERNAL_ERROR` (`500`); MCP adds `RESPONSE_TOO_LARGE`. The history
-operations keep their contract unchanged.
+(`429`), `OPERATIONS_NOT_CONFIGURED` (`503`), `INTERNAL_ERROR` (`500`). The segment operation adds `SEGMENT_UNKNOWN`
+(`404`) and, only for an answer larger than the segment store, `RESPONSE_TOO_LARGE`.
+
+### Large answers (`support_response_segment`)
+
+An answer above a transport bound is never discarded. Over MCP the bound is the serialized HTTP response itself:
+the JSON-RPC envelope with the request's own id, the text copy (the answer escaped once more as a JSON string), the
+structured copy, and the error flag. An answer whose serialized response exceeds `limits.max_response_bytes` is stored
+and returned as its first segment: `{"schema_version":"1","segment":{"operation":...,"offset":0,"total_bytes":...,"next_cursor":"..."},"data":"..."}`.
+`support_response_segment` with `next_cursor` returns the next segment; concatenating `data` of every segment in order
+yields the complete JSON answer byte for byte, so one large log event or a large attempt detail arrives complete.
+Segments are kept for ten minutes (64 MiB in total; the oldest go first), bound to the principal that received the
+answer (credential method and identity) and to the scopes of its operation, and work over HTTP as well
+(`POST /api/v1/support/responses/segment`). One answer can be at most 16 MiB (larger answers are `RESPONSE_TOO_LARGE`;
+narrow the request). Each principal holds at most 16 MiB; its own oldest answers go first, never
+another principal's. Every segment is rendered to the bound of the call that fetches it, measured the same way, as
+the longest part of the answer that fits (a binary search over the part's end that never splits a UTF-8 character),
+so every raw MCP response stays within `limits.max_response_bytes`, also for a long request id or an answer dense in
+quotes and backslashes. A bound too small for one character of a segment is `RESPONSE_TOO_LARGE`. The store lives in the
+instance that produced the answer: behind a load balancer, segment fetches must reach the same instance (sticky
+routing), otherwise they answer `SEGMENT_UNKNOWN`. HTTP itself has no answer bound. A segment fetch is a transport call
+(the MCP access record covers it); the answer was audited when it was produced. A panic inside any support operation
+answers `INTERNAL_ERROR` on both transports and never ends the process.
 
 ## 7. Operational diagnostics
 
@@ -390,7 +462,8 @@ the JSON or text handler: a shipper that wraps lines (for example unparsed Docke
 quotes) or the coloured console format makes every symptom query miss while the coverage query still counts lines,
 so the components would read `not_observed`. Check one known message with a manual query when connecting a new
 log pipeline. The selector, tenant (`X-Scope-OrgID`), credentials, and endpoint are fixed in the configuration; no
-caller value reaches a query, no log line leaves Loki, redirects are never followed, and answers are bounded by
+caller value reaches a diagnostics query (only the log events take a quoted instance and message, section 7.2),
+redirects are never followed, and answers are bounded by
 `max_response_bytes` and `max_series` (truncation marks the source `partial`). Windows above `max_time_window` are
 clipped to their newest part (`LOKI_WINDOW_CLIPPED`). The literals are bound to the log messages of the code base by
 a test:
@@ -458,20 +531,22 @@ metric_relabel_configs:
 ```
 
 The instance label is the series label that names an instance (`instance` is the scrape address; a relabeled `pod`
-label reads better). Values outside a plain pattern are replaced by a digest. Counts are rounded: `increase()`
+label reads better). Instance values are returned complete. Counts are rounded: `increase()`
 extrapolates, and a series that first appears inside the window counts only from its second sample, so a restart of the
 only instance can hide the first increments.
 
 ### 7.1 Log overview (`operational_log_overview`)
 
 The diagnostics profile counts eight fixed messages; anything else, such as RBL resolver timeouts or WebAuthn warnings,
-stays invisible there. The log overview counts every `WARN` and `ERROR` line of the Loki source in a window, grouped by
-level and message, so messages nobody profiled become visible as well. It needs no configuration beyond the `loki`
-source and uses its selector, tenant, credentials, timeout, `max_time_window`, `max_series`, and `max_response_bytes`.
+stays invisible there. The log overview counts every line of the Loki source at the requested levels in a window, one
+group per level and exact message text, so messages nobody profiled become visible as well. It needs no configuration
+beyond the `loki` source and uses its selector, tenant, credentials, timeout, `max_time_window`, `max_series`, and
+`max_response_bytes`.
 
 Request: `schema_version`, optional `window` (default the last 15 minutes, at most 24 hours), optional `levels`
-(`error`, `warn`; both when absent), and `audit_reference`. Loki receives one coverage query and one range query per
-slog encoder, so the overview needs no knowledge of the log format:
+(`error`, `warn`, `notice`, `info`, `debug`; `error` and `warn` when absent), optional `page` (`limit` default 50, at
+most 200; `cursor` from the previous answer), and `audit_reference`. Loki receives one coverage query and one range
+query per slog encoder, so the overview needs no knowledge of the log format:
 
 ```text
 sum by (<instance_label>, nauthilus_level, nauthilus_msg) (count_over_time(<selector>
@@ -481,64 +556,110 @@ sum by (<instance_label>, nauthilus_level, nauthilus_msg) (count_over_time(<sele
 
 and the same with the text filters `!~ "^\s*\{" |~ "(^|\s)level=(ERROR|WARN)(\s|$)"` and `| logfmt`. A text line
 fails the JSON parser and is dropped by `__error__=""`; the non-strict logfmt parser does not fail on a JSON line, so
-the text query excludes JSON lines first, and a `level=ERROR` typed into a JSON value never counts. The level matcher
-after the parser keeps a level word inside another field from counting. Only level names of the fixed vocabulary
-reach a query. The label extraction parameters of `json` and `logfmt` need Loki 2.9 or newer; an older Loki rejects
-both queries and the source reads `unavailable`.
+the text query excludes JSON lines first, and a `level=ERROR` typed into a JSON value never counts. Only level names of
+the fixed vocabulary reach the query. The label extraction parameters of `json` and `logfmt` need Loki 2.9 or newer;
+an older Loki rejects both queries and the source reads `unavailable`.
 
 The answer holds:
 
 - `source`: the Loki report with status, code, truncation, and the coverage (instances that logged any line in the
-  window, covered time span). An instance in the coverage without a message group logged no warning or error.
+  window, covered time span). An instance in the coverage without a message group logged nothing at these levels.
 - `buckets` and `bucket_seconds`: up to 12 equal buckets that end at the window end. Their width is a whole number of
   seconds, so the first bucket can start up to 11 seconds before the window (`LOG_BUCKETS_EXCEED_WINDOW`).
-- `messages`: at most 50 groups, most frequent first (errors before warnings at equal counts), each with `level`,
-  `message`, `message_form`, the total `count`, one count per bucket in `counts`, `first_bucket_from` and
-  `last_bucket_until` of the buckets with a count, and the per-instance counts. A message of the diagnostics profile
+- `messages`: one page of groups, most frequent first (more severe levels first at equal counts), each with `id` (its
+  position in the whole answer), `level`, the complete `message`, the total `count`, one count per bucket in `counts`,
+  `first_bucket_from` and `last_bucket_until` of the buckets with a count, and the per-instance counts. Identical
+  messages of several instances share a group; different messages never do. `message_exact` is true when the message
+  is the stored text unchanged; only then does it work as the `message` filter of `operational_log_events` (otherwise
+  filter by instance and the group's buckets). A message of the diagnostics profile
   carries its `component` and `symptom`.
-- `omitted`: groups beyond the bound of 50 and the lines they counted (`LOG_GROUPS_OMITTED`).
+- `page`: `limit`, `offset`, `total` (every group of the answer), and `next_cursor` (null on the last page).
 - `notes`: always `VALUES_ARE_UNTRUSTED_DATA` and `LOG_MESSAGES_ARE_NOT_INCIDENTS`; when they apply
-  `LOG_MESSAGES_NORMALIZED`, `LOG_GROUPS_OMITTED`, `LOG_BUCKETS_EXCEED_WINDOW`, `HISTORICAL_SOURCE_INCOMPLETE`
-  (partial, clipped, truncated, misaligned, or timed out), `NO_HISTORICAL_SOURCE`, and `LOG_NO_COVERAGE` (no instance
-  logged any line in the window, so an empty message list proves nothing: check the selector and retention).
+  `LOG_SECRETS_REDACTED`, `LOG_MORE_PAGES`, `LOG_PAGES_REQUERY_THE_SOURCE`, `LOG_BUCKETS_EXCEED_WINDOW`,
+  `HISTORICAL_SOURCE_INCOMPLETE` (partial, clipped, truncated, misaligned, or timed out), `NO_HISTORICAL_SOURCE`, and
+  `LOG_NO_COVERAGE` (no instance logged any line in the window: check the selector and retention).
 
 Every group has the status `observed`. A counted warning is evidence that a code path logged, not an outage: retries,
 fallbacks, and client errors log warnings during normal operation. The overview derives no hypotheses and never
-reports `failing` or `degraded`; use `operational_diagnostics` and the runtime source for component state.
+reports `failing` or `degraded`; use `operational_diagnostics` and the runtime source for component state, and
+`operational_log_events` with a group's `message` (and an instance) to read its stored lines.
+
+**Pages.** Every page runs the Loki queries again for the same window and returns the groups from the cursor offset.
+A cursor carries the window of the first page, so a follow-up may repeat the request without `window` (an explicit
+window must be the same); a cursor of another window or level set is `INVALID_CURSOR`. A window in the past is stable; a window that still
+receives lines can shift between pages (`LOG_PAGES_REQUERY_THE_SOURCE`).
 
 **Bounds.** `max_series` bounds the series per range query (instance × level × message); a truncated answer keeps the
-series with the largest counts and marks the source `partial`. A response above `max_response_bytes` is dropped as a
-whole for that encoder (`LOKI_RESULT_TRUNCATED`). When both range queries fail, the source is `unavailable`, never an
-empty `ok`. Windows above `max_time_window` are clipped to their newest part. Messages with variable content (counters,
-addresses) raise the series count; normalization merges them after the query, so the bound can be reached before 50
-groups, and a Loki `max_query_series` limit below the series count rejects the query. A point that is not within one
-second of a bucket end (a query frontend with `align_queries_with_step`) is dropped and the source reads `partial`
-with `LOKI_BUCKETS_MISALIGNED`.
+series with the largest counts and marks the source `partial` with `truncated: true`. A response above
+`max_response_bytes` is dropped as a whole for that encoder (`LOKI_RESULT_TRUNCATED`). When both range queries fail, the
+source is `unavailable`, never an empty `ok`. Windows above `max_time_window` are clipped to their newest part
+(`LOKI_WINDOW_CLIPPED`). Messages with variable content (counters, addresses) are separate groups and raise the series
+count; a Loki `max_query_series` limit below the series count rejects the query. A point that is not within one second
+of a bucket end (a query frontend with `align_queries_with_step`) is dropped and the source reads `partial` with
+`LOKI_BUCKETS_MISALIGNED`.
 
-**Normalization.** Messages are Loki label values, and some Nauthilus messages embed values (an error text with a
-resolver address, a client IP in quotes, a counter). Before a message leaves the host it is normalized:
+### 7.2 Log events (`operational_log_events`)
 
-- Control and format characters become spaces, so a tab or newline cannot join a value to a keyword; the text is then
-  cleaned like other free text.
-- Quoted spans become `<quoted>`; URLs (also with credentials), words of three or more colon-joined parts (Redis keys
-  such as `nauthilus:bf:user:jdoe` inside an error text), and IPv6-like hex groups become `<value>`.
-- The message is split into words at whitespace and at `: , ; ( ) [ ] { } - ! ?`. A word becomes `<value>` when it
-  carries a digit, an invalid character, one of `` @ = % \ # & + $ < > " ' ` ~ * | ^ ``, an inner dot (host names, dotted
-  names), a path (`/` at either end or more than one `/`), more than one lower-to-upper case change (encoded tokens),
-  or more than 32 characters, or when it stands alone in parentheses or brackets.
-- The word after `user`, `username`, `login`, `account`, `subject`, `mailbox`, `email`, `mail`, `password`, `token`,
-  `secret`, `ip`, `for`, `from`, `by`, `client`, `host`, `peer`, `session`, `bearer`, `dn`, `uid`, `name`, or `key`
-  becomes `<value>` (and so does a comma list right after it), unless it is another keyword or a status word such as
-  `not`, `is`, `expired`, or `locked`, so `user not found` stays readable.
-- Placeholders separated only by spaces or colons collapse; the result is bounded to 160 characters.
+The log events return the stored lines themselves, newest first: everything a group of the overview counted, with its
+timestamp (nanoseconds), instance, stream labels, and every field of the line.
 
-`message_form` is `literal` only for an unchanged message. Series that normalize to the same text merge; a group is
-`normalized` as soon as one merged series was, and only an all-literal group keeps a profiled symptom. The residual
-risk: a letter-only value that follows neither a keyword nor quotes nor brackets cannot be told apart from a word
-and stays. `account jdoe locked` becomes `account <value> locked`, but `jdoe locked out`, the second word of
-`user: alice smith`, or a bare name in a Lua plugin message stay verbatim. The tests pin this gap as a known case. Grant
-`nauthilus:operations_read` only to support staff that may see such values. Error texts logged as the message (Redis,
-LDAP, resolver errors) carry addresses, DNs, and keys; the rules above mask the forms these take today.
+Request: `schema_version`, optional `window` (as above), optional `levels` (as above), optional `instance` (exact
+instance label value, at most 256 characters), optional `message` (exact message, at most 4096 characters, for example
+the `message` of an overview group), optional `page` (`limit` default 100, at most 500; `cursor`), and
+`audit_reference`. Loki receives one log query per slog encoder:
+
+```text
+{<selector>} | <instance_label>="<instance>" |~ "\"level\":\"(ERROR|WARN)\""
+  | json nauthilus_level="level", nauthilus_msg="msg" | __error__="" | nauthilus_level=~"ERROR|WARN"
+  | nauthilus_msg="<message>"
+```
+
+with `direction=backward` and `limit`, and the same for the text encoder. The instance and the message are the only
+caller values that reach a query; both are rendered as quoted LogQL strings, so they can neither close the selector nor
+add a pipeline stage, and the instance is a label filter after the fixed selector, so it can only narrow it. The lines
+of both queries merge in one unique order: newest first, then by the complete stream label set, then by line, so pages
+are stable even when two streams hold the same line at the same time.
+
+Every event holds `at`, `instance`, `level`, `message`, `format` (`json`, `logfmt`, or `raw` for a line that is
+neither), `line` (the complete stored line), `labels` (stream labels without the parser labels), and `fields` with every
+field of the line, nested objects included and numbers as written. A name the line repeats keeps every value: its field
+is the list of all values in line order, and `repeated_fields` names it. Secrets are replaced as described in section 3,
+in `line`, `fields`, and `labels`, and named in `redacted_fields` (dotted paths) or flagged with `secrets_redacted`.
+
+**Pages.** `next_cursor` continues before the time of the last returned line and skips the lines already returned at
+exactly that time. Loki cuts a run of lines with one timestamp in its own order, so a page only uses lines that are
+newer than the oldest line of a full read; within that part every run is complete and sorted the same way on every
+page, and no line is repeated or skipped. When a run is larger than one read (the read grows up to 5000 lines, the
+usual Loki entry limit), the run is paged stream by stream: the streams with data at that time come from the Loki
+series listing in label-set order, each stream's lines at that time are read whole and sorted by line, and the cursor
+names the stream (index and digest) and the lines done from it on; done lines spill over into the following streams,
+so lines a normal page returned before the hand-over are never repeated. A page of a run reads at most 16 streams.
+The stream listing holds up to 5000 streams (it does not use the `max_series` bound of metric answers); streams beyond
+it are one gap `STREAMS_EXCEED_LISTING_BOUND` at that time, and a listing that fails is one gap `STREAMS_UNLISTED`
+(`LOKI_STREAMS_UNLISTED`); paging continues before that time in both cases. Inside a run the source reads it stream by stream
+directly; a read without line texts is only used to find the time of the next line, so a Loki that merges equal probe
+lines cannot shift a position. A single
+stream with more lines at one timestamp than one read returns is listed in `gaps` with its time, labels, and
+`STREAM_RUN_EXCEEDS_READ`, and paging continues with the next stream and the older lines; the lines of that run are
+not returned. They are not reachable by further splitting today: Loki cuts a run of one stream and one timestamp in
+its own order, a log query offers no position inside such a run, and identical lines cannot be told apart at all.
+Splitting by line content (regular-expression prefixes) would reach distinct lines but needs one query per prefix
+range and a cursor holding the prefix, and it still cannot separate identical lines; it is not implemented. Raise
+Loki's `max_entries_limit_per_query` only together with the read size of this source, which is fixed at 5000 lines. A page can hold fewer lines than `limit` and still
+carry `next_cursor`. A cursor carries the window and binds to the levels, instance, and message; a follow-up may omit
+`window`. Cursors are not signed, so they work on every instance of a deployment; every field is validated and
+bounded, and an edited cursor can only move its own pages. When the streams of a run change between pages (a window
+that still receives lines), the source reads `partial` with `LOKI_STREAMS_CHANGED`; when done lines meet a gap stream,
+they are dropped (`LOKI_RUN_POSITION_RESET`), so lines may repeat but never vanish.
+
+When a Loki answer exceeds `max_response_bytes`, the read halves down to one line: `page.limit_applied` is then below
+`page.limit` (`LOG_PAGE_REDUCED_BY_SOURCE_LIMIT`), and the cursor continues without a gap. A line larger than the
+bound itself is found by a read without line texts and read with its stream at its time; when that read still exceeds
+the bound, the stream's lines at that time are listed in `gaps` with `LINES_EXCEED_SOURCE_BYTE_BOUND` (raise the
+source's `max_response_bytes` to read them), and paging continues. Every page with a gap reads `partial` with
+`LOKI_GAPS`; nothing is skipped without a gap entry. `max_time_window` clips the window like the overview, and one
+failed encoder query makes the source `partial`, both `unavailable`. An answer above the MCP bound arrives in segments
+(section 6, "Large answers").
 
 ## 8. Limits and known gaps
 
@@ -549,7 +670,10 @@ LDAP, resolver errors) carry addresses, DNs, and keys; the rules above mask the 
   client from `static_clients` or a user-wide token revocation takes effect immediately.
 - No JSON-RPC batches, no server-to-client requests, no SSE streams (`JSONResponse` mode), no browser clients.
 - Loki diagnostics evidence counts messages; it carries no first/last-seen times and depends on the configured
-  retention. The log overview resolves time only to its buckets.
+  retention. The log overview resolves time only to its buckets; the log events carry the exact time of every line.
+- History pages hold at most 200 events of an attempt, 500 contributions, and 50 claimants of a ban; each list
+  continues with its cursor ([support_authentication_history.md](support_authentication_history.md), "Inner lists").
+  The lifecycle rows of one network are bounded (`LIFECYCLE_ROWS_TRUNCATED`, newest kept) without a continuation.
 - Prometheus evidence is only as complete as the scrape: sampling gaps, a relabeling that drops core metrics (reported
   as `unknown`), and counter resets inside the window limit it. It carries no first/last-seen times either.
 - History stays bound to its contract (ClickHouse only, 31-day window).
@@ -560,8 +684,9 @@ LDAP, resolver errors) carry addresses, DNs, and keys; the rules above mask the 
   metadata, body inspection, all three protocol eras through the SDK client, response cap, byte-for-byte HTTP/MCP
   parity of every operation for results and errors), `server/supportops` and its sources (Loki hits, empty answers,
   outages, truncation, window clipping, query and tenant boundary, anchored message filter against forged fields,
-  label digest, literal binding to log calls; log overview queries, buckets, truncation, normalization, grouping, and
-  notes; runtime rule table), timeouts in both MCP eras, request cancellation,
+  verbatim labels, literal binding to log calls; log overview queries, buckets, truncation, exact grouping, pages, and
+  notes; log events queries with quoted filters, format merge, equal-time pages, page shrinking, field parsing, and
+  secret replacement; runtime rule table), timeouts in both MCP eras, request cancellation,
   shutdown drain,
   `server/supportapi`, `server/idp` (hosted resources, user right, login age, lifetime cap, both token formats),
   `server/handler/frontend/idp` (authorize refusals, RFC 8414, RFC 9207), `server/config` (validation and the example

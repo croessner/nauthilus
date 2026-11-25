@@ -89,43 +89,53 @@ func hasCaseVariant(members map[string]json.RawMessage, names []string) bool {
 	return false
 }
 
+// requestIDBytes returns the length of the JSON-RPC id of a body as written, which the response repeats; 0 without one.
+func requestIDBytes(body []byte) int {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(body, &members) != nil {
+		return 0
+	}
+
+	return len(bytes.TrimSpace(members["id"]))
+}
+
 // inspectBody reads the bounded body once and refuses what the SDK must never see: oversized bodies, duplicate
 // member names, batches, headers that disagree with the body (2026-07-28 Mcp-Method/Mcp-Name), and a tool call whose
 // scopes the token lacks (403 insufficient_scope, so the client can step up). The service check stays authoritative.
-func (s *Server) inspectBody(writer http.ResponseWriter, request *http.Request, credential supportaccess.VerifiedCredential) bool {
+func (s *Server) inspectBody(writer http.ResponseWriter, request *http.Request, credential supportaccess.VerifiedCredential) (int, bool) {
 	if request.Method != http.MethodPost {
-		return true
+		return 0, true
 	}
 
 	body, err := io.ReadAll(io.LimitReader(request.Body, s.maxRequest+1))
 	if err != nil {
 		s.reject(writer, request, http.StatusBadRequest, resultRejected, "unreadable_body")
 
-		return false
+		return 0, false
 	}
 
 	if int64(len(body)) > s.maxRequest {
 		s.reject(writer, request, http.StatusRequestEntityTooLarge, resultRejected, "body_too_large")
 
-		return false
+		return 0, false
 	}
 
 	if reason := envelopeDefect(request, body); reason != "" {
 		s.reject(writer, request, http.StatusBadRequest, resultRejected, reason)
 
-		return false
+		return 0, false
 	}
 
 	if scopes, refused := missingToolScopes(body, credential); refused {
 		s.challenge(writer, request, http.StatusForbidden, errorInsufficientScope, scopes, "insufficient_scope")
 
-		return false
+		return 0, false
 	}
 
 	request.Body = io.NopCloser(bytes.NewReader(body))
 	request.ContentLength = int64(len(body))
 
-	return true
+	return requestIDBytes(body), true
 }
 
 // envelopeDefect returns why a body is refused before the SDK, or "". A body that is not a valid JSON object is left

@@ -18,6 +18,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -30,6 +31,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/definitions"
 	"github.com/croessner/nauthilus/v4/server/idp"
 	"github.com/croessner/nauthilus/v4/server/mcpserver/mcptest"
+	"github.com/croessner/nauthilus/v4/server/supportaccess"
 	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/supportops"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -452,7 +454,7 @@ func assertReadOnlyTools(t *testing.T, session *mcp.ClientSession) {
 	}
 
 	want := []string{supportapi.OperationAttemptSearch, supportapi.OperationAttemptDetail,
-		supportapi.OperationBanHistory, supportapi.OperationDiagnostics, supportapi.OperationLogOverview}
+		supportapi.OperationBanHistory, supportapi.OperationDiagnostics, supportapi.OperationLogOverview, supportapi.OperationLogEvents, supportapi.OperationSegment}
 	slices.Sort(want)
 
 	if !slices.Equal(names, want) {
@@ -500,5 +502,200 @@ func TestNewRequiresHostedResource(t *testing.T) {
 	_, err := New(Deps{Settings: &config.RuntimeMCPServerSection{HostedResource: "missing"}, Tokens: newAuthority()})
 	if err == nil {
 		t.Fatal("an unknown hosted resource must be rejected")
+	}
+}
+
+// labelledSource is an operations source whose one finding carries large labels, so its answer exceeds a small
+// transport bound.
+type labelledSource struct{ fixedSource }
+
+// Collect returns one LDAP finding with large labels.
+func (labelledSource) Collect(_ context.Context, query supportops.Query) supportops.SourceResult {
+	labels := map[string]string{}
+	for index := range 64 {
+		labels[fmt.Sprintf("target_%02d", index)] = strings.Repeat("ldap://dc.example.org/ä€ ", 20)
+	}
+
+	return supportops.SourceResult{Report: supportops.SourceReport{Status: supportops.SourceStatusOK},
+		Findings: []supportops.Finding{{Component: supportops.ComponentLDAP, Source: supportops.SourceRuntime, Status: supportops.StatusOK,
+			Scope: supportops.FindingScope{Kind: supportops.ScopeInstance, Instance: query.Instance}, Labels: labels,
+			Freshness: supportops.Freshness{Basis: supportops.BasisCurrentState, ObservedAt: query.Now}}}}
+}
+
+// TestLargeAnswersArriveInSegments reproduces the final review: over MCP an answer above the response bound was
+// discarded as RESPONSE_TOO_LARGE. It must arrive in segments whose data concatenate to the complete answer.
+func TestLargeAnswersArriveInSegments(t *testing.T) {
+	operations, err := supportops.NewService(supportops.Options{Sources: []supportops.Source{labelledSource{}}, Instance: "mx-1",
+		Now: func() time.Time { return time.Date(2026, time.November, 18, 8, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	services := supportapi.Services{Operations: operations, Segments: supportapi.NewSegmentStore(nil)}
+	settings := &config.RuntimeMCPServerSection{Enabled: true, HostedResource: "support-mcp",
+		TrustedProxies: []string{"127.0.0.1/32", "::1/128"}, Limits: config.MCPLimits{FailedAuthPerMinute: 3, MaxResponseBytes: 24 << 10}}
+
+	server, err := New(Deps{Settings: settings, Tokens: newAuthority(), Services: services, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session := connect(t, server, "good", "2025-06-18")
+	arguments := map[string]any{"schema_version": "1"}
+	data, calls := readSegmented(t, session, supportapi.OperationDiagnostics, arguments)
+
+	var answer supportops.DiagnosticsResult
+	if err = json.Unmarshal([]byte(data), &answer); err != nil || calls < 3 || len(answer.Findings[0].Labels) != 64 {
+		t.Fatalf("calls = %d, decode = %v, findings = %+v", calls, err, answer.Findings)
+	}
+}
+
+// readSegmented calls a tool and follows segment.next_cursor through the segment tool; it returns the reassembled
+// answer and the number of calls.
+func readSegmented(t *testing.T, session *mcp.ClientSession, tool string, arguments map[string]any) (string, int) {
+	t.Helper()
+
+	var data strings.Builder
+
+	for calls := 1; calls < 100; calls++ {
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: arguments})
+		if err != nil || result.IsError {
+			t.Fatalf("CallTool(%s) = %+v, %v", tool, result, err)
+		}
+
+		var segment struct {
+			Segment struct {
+				NextCursor *string `json:"next_cursor"`
+			} `json:"segment"`
+			Data string `json:"data"`
+		}
+
+		if err = json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &segment); err != nil {
+			t.Fatal(err)
+		}
+
+		data.WriteString(segment.Data)
+
+		if segment.Segment.NextCursor == nil {
+			return data.String(), calls
+		}
+
+		tool, arguments = supportapi.OperationSegment, map[string]any{"schema_version": "1", "cursor": *segment.Segment.NextCursor}
+	}
+
+	t.Fatal("segments never ended")
+
+	return "", 0
+}
+
+// escapingSource is an operations source whose finding labels are dense in characters JSON escapes twice over MCP
+// (quotes, backslashes, angle brackets), so the serialized tool result is much larger than the answer body.
+type escapingSource struct{ fixedSource }
+
+// Collect returns one LDAP finding with escape-heavy labels.
+func (escapingSource) Collect(_ context.Context, query supportops.Query) supportops.SourceResult {
+	labels := map[string]string{}
+	for index := range 48 {
+		labels[fmt.Sprintf("target_%02d", index)] = strings.Repeat(`"`, 400) + strings.Repeat(`\`, 200)
+	}
+
+	return supportops.SourceResult{Report: supportops.SourceReport{Status: supportops.SourceStatusOK},
+		Findings: []supportops.Finding{{Component: supportops.ComponentLDAP, Source: supportops.SourceRuntime, Status: supportops.StatusOK,
+			Scope: supportops.FindingScope{Kind: supportops.ScopeInstance, Instance: query.Instance}, Labels: labels,
+			Freshness: supportops.Freshness{Basis: supportops.BasisCurrentState, ObservedAt: query.Now}}}}
+}
+
+// rawToolCall posts one tools/call over HTTP and returns the raw response body and the decoded text content.
+func rawToolCall(t *testing.T, server *Server, id string, tool string, arguments string) (string, string) {
+	t.Helper()
+
+	request := proxied(http.MethodPost, "/mcp", `{"jsonrpc":"2.0","id":`+id+`,"method":"tools/call","params":{"name":"`+tool+
+		`","arguments":`+arguments+`}}`, "good")
+	request.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+
+	recorder := serve(server, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %.300s", recorder.Code, recorder.Body.String())
+	}
+
+	var envelope struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil || len(envelope.Result.Content) != 1 {
+		t.Fatalf("envelope = %.300s, %v", recorder.Body.String(), err)
+	}
+
+	return recorder.Body.String(), envelope.Result.Content[0].Text
+}
+
+// TestSerializedSegmentsStayWithinTheBound reproduces the review defect: the size check counted the answer twice,
+// but the serialized MCP response escapes the text copy again and adds the JSON-RPC envelope, so a segment could
+// exceed max_response_bytes. Every raw HTTP response must stay within the bound, for a long request id too, and the
+// segments must reassemble to the HTTP answer.
+func TestSerializedSegmentsStayWithinTheBound(t *testing.T) {
+	operations, err := supportops.NewService(supportops.Options{Sources: []supportops.Source{escapingSource{}}, Instance: "mx-1",
+		Now: func() time.Time { return time.Date(2026, time.November, 18, 8, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const bound = 24 << 10
+
+	services := supportapi.Services{Operations: operations, Segments: supportapi.NewSegmentStore(nil)}
+	settings := &config.RuntimeMCPServerSection{Enabled: true, HostedResource: "support-mcp", TrustedProxies: []string{testProxy + "/32"},
+		Limits: config.MCPLimits{FailedAuthPerMinute: 3, MaxResponseBytes: bound}}
+
+	server, err := New(Deps{Settings: settings, Tokens: newAuthority(), Services: services, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	operation, _ := supportapi.Lookup(supportapi.OperationDiagnostics)
+	want := services.Execute(context.Background(), operation, supportaccess.VerifiedCredential{Method: supportaccess.CredentialOAuthUser,
+		ClientID: staticClient, Subject: "operator", Scopes: []string{definitions.ScopeOperationsRead}}, []byte(`{"schema_version":"1"}`))
+
+	for _, id := range []string{`7`, `"` + strings.Repeat("i", 2048) + `"`} {
+		var data strings.Builder
+
+		tool, arguments := supportapi.OperationDiagnostics, `{"schema_version":"1"}`
+
+		for calls := 1; ; calls++ {
+			raw, text := rawToolCall(t, server, id, tool, arguments)
+			if len(raw) > bound {
+				t.Fatalf("id %.8s call %d: raw response %d bytes, bound %d", id, calls, len(raw), bound)
+			}
+
+			var segment struct {
+				Segment struct {
+					NextCursor *string `json:"next_cursor"`
+				} `json:"segment"`
+				Data string `json:"data"`
+			}
+
+			if err = json.Unmarshal([]byte(text), &segment); err != nil {
+				t.Fatal(err)
+			}
+
+			data.WriteString(segment.Data)
+
+			if segment.Segment.NextCursor == nil {
+				break
+			}
+
+			tool, arguments = supportapi.OperationSegment, `{"schema_version":"1","cursor":"`+*segment.Segment.NextCursor+`"}`
+
+			if calls > 200 {
+				t.Fatal("segments never ended")
+			}
+		}
+
+		if data.String() != string(want.Body) {
+			t.Fatalf("id %.8s: reassembled %d bytes, want the HTTP answer of %d bytes", id, data.Len(), len(want.Body))
+		}
 	}
 }

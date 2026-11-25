@@ -94,7 +94,7 @@ type parityCase struct {
 // parityCases returns every operation call, result and error, that both transports must answer identically.
 func parityCases(window, around string) map[string]parityCase {
 	return map[string]parityCase{
-		"forbidden without detail": {supportapi.OperationAttemptDetail, `{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, "read-only"},
+		"attempt detail read-only": {supportapi.OperationAttemptDetail, `{"schema_version":"1","attempt_id":"fl1.22222222222222222222222222222222","around":"` + around + `"}`, "read-only"},
 		"attempt search":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":5}}`, "detail"},
 		"compact ban context":      {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":20},"include_ban_context":true,"response_mode":"compact"}`, "detail"},
 		"compact ban context read": {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"anna@example.test"},"filter":{` + window + `},"page":{"limit":20},"include_ban_context":true,"response_mode":"compact"}`, "read-only"},
@@ -106,7 +106,10 @@ func parityCases(window, around string) map[string]parityCase {
 		"invalid window":           {supportapi.OperationAttemptSearch, `{"schema_version":"1","subject":{"login":"a"},"filter":{"from":"2020-01-01T00:00:00Z","until":"2021-01-01T00:00:00Z"}}`, "detail"},
 		"unknown field":            {supportapi.OperationDiagnostics, `{"schema_version":"1","shell":"id"}`, "detail"},
 		"log overview":             {supportapi.OperationLogOverview, `{"schema_version":"1","levels":["error"]}`, "detail"},
-		"unknown log level":        {supportapi.OperationLogOverview, `{"schema_version":"1","levels":["debug"]}`, "detail"},
+		"unknown log level":        {supportapi.OperationLogOverview, `{"schema_version":"1","levels":["trace"]}`, "detail"},
+		"log events":               {supportapi.OperationLogEvents, `{"schema_version":"1","levels":["error"],"instance":"mx-1"}`, "detail"},
+		"log events bad cursor":    {supportapi.OperationLogEvents, `{"schema_version":"1","page":{"cursor":"x"}}`, "detail"},
+		"segment bad cursor":       {supportapi.OperationSegment, `{"schema_version":"1","cursor":"x"}`, "detail"},
 	}
 }
 

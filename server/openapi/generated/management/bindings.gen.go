@@ -732,16 +732,13 @@ func (e SupportHistoryAttemptProgress) Valid() bool {
 
 // Defines values for SupportHistoryAttemptProjection.
 const (
-	SupportHistoryAttemptProjectionDetail  SupportHistoryAttemptProjection = "detail"
-	SupportHistoryAttemptProjectionSupport SupportHistoryAttemptProjection = "support"
+	SupportHistoryAttemptProjectionDetail SupportHistoryAttemptProjection = "detail"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryAttemptProjection enum.
 func (e SupportHistoryAttemptProjection) Valid() bool {
 	switch e {
 	case SupportHistoryAttemptProjectionDetail:
-		return true
-	case SupportHistoryAttemptProjectionSupport:
 		return true
 	default:
 		return false
@@ -816,7 +813,6 @@ const (
 	SupportHistorySecondFactorStepNotApplicable SupportHistoryAttemptStepsSecondFactor = "not_applicable"
 	SupportHistorySecondFactorStepNotRecorded   SupportHistoryAttemptStepsSecondFactor = "not_recorded"
 	SupportHistorySecondFactorStepRecorded      SupportHistoryAttemptStepsSecondFactor = "recorded"
-	SupportHistorySecondFactorStepWithheld      SupportHistoryAttemptStepsSecondFactor = "withheld"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryAttemptStepsSecondFactor enum.
@@ -827,8 +823,6 @@ func (e SupportHistoryAttemptStepsSecondFactor) Valid() bool {
 	case SupportHistorySecondFactorStepNotRecorded:
 		return true
 	case SupportHistorySecondFactorStepRecorded:
-		return true
-	case SupportHistorySecondFactorStepWithheld:
 		return true
 	default:
 		return false
@@ -1072,18 +1066,36 @@ func (e SupportHistoryBanEvidenceCompleteness) Valid() bool {
 	}
 }
 
+// Defines values for SupportHistoryBanSearchRequestInnerPageList.
+const (
+	Claimants       SupportHistoryBanSearchRequestInnerPageList = "claimants"
+	Contributions   SupportHistoryBanSearchRequestInnerPageList = "contributions"
+	OrphanClaimants SupportHistoryBanSearchRequestInnerPageList = "orphan_claimants"
+)
+
+// Valid indicates whether the value is a known member of the SupportHistoryBanSearchRequestInnerPageList enum.
+func (e SupportHistoryBanSearchRequestInnerPageList) Valid() bool {
+	switch e {
+	case Claimants:
+		return true
+	case Contributions:
+		return true
+	case OrphanClaimants:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SupportHistoryBanSearchResponseProjection.
 const (
-	SupportHistoryBanSearchResponseProjectionDetail  SupportHistoryBanSearchResponseProjection = "detail"
-	SupportHistoryBanSearchResponseProjectionSupport SupportHistoryBanSearchResponseProjection = "support"
+	SupportHistoryBanSearchResponseProjectionDetail SupportHistoryBanSearchResponseProjection = "detail"
 )
 
 // Valid indicates whether the value is a known member of the SupportHistoryBanSearchResponseProjection enum.
 func (e SupportHistoryBanSearchResponseProjection) Valid() bool {
 	switch e {
 	case SupportHistoryBanSearchResponseProjectionDetail:
-		return true
-	case SupportHistoryBanSearchResponseProjectionSupport:
 		return true
 	default:
 		return false
@@ -2335,9 +2347,19 @@ type SupportHistoryActivationKind string
 
 // SupportHistoryAttempt defines model for SupportHistoryAttempt.
 type SupportHistoryAttempt struct {
-	AttemptId            string                       `json:"attempt_id"`
-	Completion           *SupportHistoryCompletion    `json:"completion"`
-	Events               []SupportHistoryEvent        `json:"events"`
+	AttemptId  string                    `json:"attempt_id"`
+	Completion *SupportHistoryCompletion `json:"completion"`
+	Events     []SupportHistoryEvent     `json:"events"`
+
+	// EventsPage Present when more recorded events follow or the detail request selected an events page. Pass detail and next_cursor to authentication_attempt_detail (events_page.cursor) for the next events; recording.events_truncated is true exactly when next_cursor is set.
+	EventsPage *struct {
+		Detail struct {
+			Around    time.Time `json:"around"`
+			AttemptId string    `json:"attempt_id"`
+		} `json:"detail"`
+		Limit      int     `json:"limit"`
+		NextCursor *string `json:"next_cursor"`
+	} `json:"events_page,omitempty"`
 	FinalOutcomeObserved bool                         `json:"final_outcome_observed"`
 	Findings             []SupportHistoryFinding      `json:"findings"`
 	Kind                 SupportHistoryAttemptKind    `json:"kind"`
@@ -2347,10 +2369,12 @@ type SupportHistoryAttempt struct {
 	// OutcomeBasis The recorded evidence of the outcome. outcome never names a cause: oidc_code_redemption_rejected after a successful login is a rejected token request of the client, not a credential failure. Show outcome_basis and the findings together with outcome.
 	OutcomeBasis SupportHistoryAttemptOutcomeBasis `json:"outcome_basis"`
 	Progress     SupportHistoryAttemptProgress     `json:"progress"`
-	Projection   SupportHistoryAttemptProjection   `json:"projection"`
-	Recording    struct {
+
+	// Projection Always detail; every reader receives the complete data.
+	Projection SupportHistoryAttemptProjection `json:"projection"`
+	Recording  struct {
+		// EventsTruncated The attempt hit the per-attempt event limit of the store read.
 		EventsTruncated    bool     `json:"events_truncated"`
-		EventsWithheld     bool     `json:"events_withheld"`
 		KnownGaps          []string `json:"known_gaps"`
 		LegacyRows         int      `json:"legacy_rows"`
 		ReplayedRowsMerged int      `json:"replayed_rows_merged"`
@@ -2378,7 +2402,7 @@ type SupportHistoryAttemptOutcomeBasis string
 // SupportHistoryAttemptProgress defines model for SupportHistoryAttempt.Progress.
 type SupportHistoryAttemptProgress string
 
-// SupportHistoryAttemptProjection defines model for SupportHistoryAttempt.Projection.
+// SupportHistoryAttemptProjection Always detail; every reader receives the complete data.
 type SupportHistoryAttemptProjection string
 
 // SupportHistoryAttemptStepsCodeIssuance defines model for SupportHistoryAttempt.Steps.CodeIssuance.
@@ -2402,7 +2426,13 @@ type SupportHistoryAttemptDetailRequest struct {
 
 	// AuditReference Unverified ticket-like annotation recorded in the audit log only.
 	AuditReference *SupportHistoryAuditReference `json:"audit_reference,omitempty"`
-	SchemaVersion  string                        `json:"schema_version"`
+
+	// EventsPage One page of the attempt's events, default and at most 200. cursor is events_page.next_cursor of an earlier answer for the same attempt_id and around (also from a search answer).
+	EventsPage *struct {
+		Cursor *string `json:"cursor,omitempty"`
+		Limit  *int    `json:"limit,omitempty"`
+	} `json:"events_page,omitempty"`
+	SchemaVersion string `json:"schema_version"`
 
 	// Subject Login is a claim as typed; account is a canonical account. At least one is required.
 	Subject *SupportHistorySubject `json:"subject,omitempty"`
@@ -2479,7 +2509,7 @@ type SupportHistoryAttemptSearchResponse struct {
 	SubjectResolution SupportHistorySubjectResolution `json:"subject_resolution"`
 }
 
-// SupportHistoryAttemptSummary Compact form of one attempt, built from the same projection as the detailed attempt.
+// SupportHistoryAttemptSummary Compact form of one attempt, built from the same data as the detailed attempt.
 type SupportHistoryAttemptSummary struct {
 	AttemptId string `json:"attempt_id"`
 
@@ -2492,7 +2522,6 @@ type SupportHistoryAttemptSummary struct {
 		AttemptId string    `json:"attempt_id"`
 	} `json:"detail"`
 	EventsTruncated      bool                             `json:"events_truncated"`
-	EventsWithheld       bool                             `json:"events_withheld"`
 	FinalOutcomeObserved bool                             `json:"final_outcome_observed"`
 	FindingCodes         []string                         `json:"finding_codes"`
 	Kind                 SupportHistoryAttemptSummaryKind `json:"kind"`
@@ -2530,12 +2559,12 @@ type SupportHistoryBan struct {
 	Unknowns []string                 `json:"unknowns"`
 }
 
-// SupportHistoryBanAttribution Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are computed on unredacted rows, so hidden identities never make an answer look exclusive.
+// SupportHistoryBanAttribution Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are computed on every listed row.
 type SupportHistoryBanAttribution struct {
 	// Code SUBJECT_ACCOUNT: contributions recorded under the requested account (a recorded account, never only the same login name), exclusive only with other_contributors none_observed. MULTIPLE_ACCOUNTS: under the requested and another recorded account. OTHER_ACCOUNTS_ONLY: only other recorded accounts with complete evidence and no unresolved, account-less, or subject-name claim. Otherwise NOT_SUFFICIENTLY_ATTRIBUTABLE.
 	Code SupportHistoryBanAttributionCode `json:"code"`
 
-	// ContributingAccounts Distinct recorded accounts of the listed contributions; null unless the caller has history_detail.
+	// ContributingAccounts Distinct recorded accounts of the listed contributions.
 	ContributingAccounts *[]string `json:"contributing_accounts"`
 	Counts               struct {
 		CountedWhileBanned    int `json:"counted_while_banned"`
@@ -2551,7 +2580,6 @@ type SupportHistoryBanAttribution struct {
 		// Unresolved Claims whose account was not recorded; aliases of the subject can hide here.
 		Unresolved int `json:"unresolved"`
 	} `json:"counts"`
-	IdentitiesRedacted            bool                                          `json:"identities_redacted"`
 	OtherContributors             SupportHistoryBanAttributionOtherContributors `json:"other_contributors"`
 	PersonAttribution             SupportHistoryBanAttributionPersonAttribution `json:"person_attribution"`
 	SubjectContributions          []SupportHistorySubjectContribution           `json:"subject_contributions"`
@@ -2592,7 +2620,7 @@ type SupportHistoryBanContextBan struct {
 	ActivatedAt      time.Time                                   `json:"activated_at"`
 	ActivationReason SupportHistoryBanContextBanActivationReason `json:"activation_reason"`
 
-	// Attribution Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are computed on unredacted rows, so hidden identities never make an answer look exclusive.
+	// Attribution Under which accounts the listed contributions of one ban were recorded; never who caused the ban. Codes are computed on every listed row.
 	Attribution SupportHistoryBanAttribution `json:"attribution"`
 
 	// BanHistory Arguments of bruteforce_history that explain this ban instance.
@@ -2659,6 +2687,14 @@ type SupportHistoryBanSearchRequest struct {
 		From   time.Time `json:"from"`
 		Until  time.Time `json:"until"`
 	} `json:"filter"`
+
+	// InnerPage One page of an inner list instead of the ban page. contributions and claimants need the ban_ref of one ban, and the answer lists only that ban; orphan_claimants names no ban. cursor is contributions.next_cursor, hits.claimants_next_cursor, or orphan_hits.claimants_next_cursor of an earlier answer to the same target and window. Default and maximum limit: 500 contributions, 50 claimants. Never combined with page.cursor.
+	InnerPage *struct {
+		BanRef *string                                     `json:"ban_ref,omitempty"`
+		Cursor *string                                     `json:"cursor,omitempty"`
+		Limit  *int                                        `json:"limit,omitempty"`
+		List   SupportHistoryBanSearchRequestInnerPageList `json:"list"`
+	} `json:"inner_page,omitempty"`
 	Page *struct {
 		Cursor *string `json:"cursor,omitempty"`
 		Limit  *int    `json:"limit,omitempty"`
@@ -2675,6 +2711,9 @@ type SupportHistoryBanSearchRequest struct {
 	} `json:"target"`
 }
 
+// SupportHistoryBanSearchRequestInnerPageList defines model for SupportHistoryBanSearchRequest.InnerPage.List.
+type SupportHistoryBanSearchRequestInnerPageList string
+
 // SupportHistoryBanSearchResponse defines model for SupportHistoryBanSearchResponse.
 type SupportHistoryBanSearchResponse struct {
 	Bans          []SupportHistoryBan            `json:"bans"`
@@ -2685,6 +2724,8 @@ type SupportHistoryBanSearchResponse struct {
 		Limit      int     `json:"limit"`
 		NextCursor *string `json:"next_cursor"`
 	} `json:"page"`
+
+	// Projection Always detail; every reader receives the complete data.
 	Projection SupportHistoryBanSearchResponseProjection `json:"projection"`
 	QueriedAt  time.Time                                 `json:"queried_at"`
 	Releases   []SupportHistoryLifecycleEvent            `json:"releases"`
@@ -2704,7 +2745,7 @@ type SupportHistoryBanSearchResponse struct {
 	UnconfirmedActivations []SupportHistoryLifecycleEvent `json:"unconfirmed_activations"`
 }
 
-// SupportHistoryBanSearchResponseProjection defines model for SupportHistoryBanSearchResponse.Projection.
+// SupportHistoryBanSearchResponseProjection Always detail; every reader receives the complete data.
 type SupportHistoryBanSearchResponseProjection string
 
 // SupportHistoryBanSearchResponseThresholdToleratedEvidence defines model for SupportHistoryBanSearchResponse.ThresholdTolerated.Evidence.
@@ -2745,7 +2786,6 @@ type SupportHistoryContribution struct {
 	Crossed         *bool     `json:"crossed"`
 	EventId         string    `json:"event_id"`
 	Protocol        string    `json:"protocol"`
-	Redacted        bool      `json:"redacted"`
 	RequestId       string    `json:"request_id"`
 	SubjectMatch    *bool     `json:"subject_match"`
 	WindowCurrent   *int      `json:"window_current"`
@@ -2761,11 +2801,16 @@ type SupportHistoryContributions struct {
 		EventId       string                                            `json:"event_id"`
 		WindowCurrent *int                                              `json:"window_current"`
 	} `json:"crossing_candidate"`
-	DistinctClaimedNames *int                              `json:"distinct_claimed_names"`
-	Items                []SupportHistoryContribution      `json:"items"`
-	Status               SupportHistoryContributionsStatus `json:"status"`
-	Truncated            bool                              `json:"truncated"`
-	Windows              []SupportHistoryWindowStatus      `json:"windows"`
+	DistinctClaimedNames *int                         `json:"distinct_claimed_names"`
+	Items                []SupportHistoryContribution `json:"items"`
+
+	// NextCursor Continues items through inner_page {ban_ref, list: contributions, cursor}.
+	NextCursor *string                           `json:"next_cursor,omitempty"`
+	Status     SupportHistoryContributionsStatus `json:"status"`
+
+	// Truncated True exactly when next_cursor continues the items.
+	Truncated bool                         `json:"truncated"`
+	Windows   []SupportHistoryWindowStatus `json:"windows"`
 }
 
 // SupportHistoryContributionsCrossingCandidateBasis defines model for SupportHistoryContributions.CrossingCandidate.Basis.
@@ -2814,7 +2859,7 @@ type SupportHistoryDecision struct {
 	// AnsweredStatusCode Stored host status code selected for the sealed terminal decision (logins.http_status: the configured OK/Fail/InternalError code; 200 for nginx-style answers, also for rejections). It is not the committed transport status (context.transport_status) and never a result: read outcome. Null when no terminal decision was sealed.
 	AnsweredStatusCode *int `json:"answered_status_code"`
 
-	// AnsweredStatusMessage Stored status text the host answered the authentication caller with (logins.status_msg). IdP browser pages render their own localized text, so this is not necessarily what a user saw. Null when no terminal decision was sealed, and in the support projection on events whose identity is redacted.
+	// AnsweredStatusMessage Stored status text the host answered the authentication caller with (logins.status_msg). IdP browser pages render their own localized text, so this is not necessarily what a user saw. Null when no terminal decision was sealed.
 	AnsweredStatusMessage *string  `json:"answered_status_message"`
 	BruteForceBucket      *string  `json:"brute_force_bucket"`
 	BruteForceTolerated   *bool    `json:"brute_force_tolerated"`
@@ -2890,7 +2935,6 @@ type SupportHistoryEventIdentity struct {
 	AccountFoundAtCapture *bool   `json:"account_found_at_capture"`
 	CanonicalAccount      *string `json:"canonical_account"`
 	MatchedBy             *string `json:"matched_by"`
-	Redacted              bool    `json:"redacted"`
 	SubjectMatch          bool    `json:"subject_match"`
 	SuppliedLogin         *string `json:"supplied_login"`
 }
@@ -2920,12 +2964,20 @@ type SupportHistoryFindingCertainty string
 
 // SupportHistoryHitSummary defines model for SupportHistoryHitSummary.
 type SupportHistoryHitSummary struct {
-	BySource  map[string]int `json:"by_source"`
+	BySource map[string]int `json:"by_source"`
+
+	// Claimants Claimed names and accounts of the hits, most hits first, one page.
 	Claimants []struct {
 		Account         *string `json:"account"`
 		ClaimedUsername *string `json:"claimed_username"`
 		Hits            int     `json:"hits"`
 	} `json:"claimants"`
+
+	// ClaimantsNextCursor Continues claimants through inner_page {ban_ref, list: claimants, cursor} (orphan_claimants for orphan_hits).
+	ClaimantsNextCursor *string `json:"claimants_next_cursor,omitempty"`
+
+	// ClaimantsTruncated True exactly when claimants_next_cursor continues the claimants.
+	ClaimantsTruncated   bool                             `json:"claimants_truncated"`
 	Count                int                              `json:"count"`
 	CountIsUpperBound    bool                             `json:"count_is_upper_bound"`
 	DistinctClaimedNames *int                             `json:"distinct_claimed_names"`
@@ -2946,7 +2998,7 @@ type SupportHistoryLifecycleEvent struct {
 	Kind        SupportHistoryLifecycleEventKind `json:"kind"`
 	Network     string                           `json:"network"`
 
-	// OperatorClientId Released to the detail projection only.
+	// OperatorClientId Operator client that released the ban or reset the counters.
 	OperatorClientId *string `json:"operator_client_id"`
 	ReleaseSource    *string `json:"release_source"`
 	Rule             string  `json:"rule"`
@@ -4242,7 +4294,7 @@ type ClientInterface interface {
 
 	// GetAuthenticationAttemptWithBody Return every recorded event of one diagnostic attempt id.
 	//
-	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4251,7 +4303,7 @@ type ClientInterface interface {
 
 	// GetAuthenticationAttempt Return every recorded event of one diagnostic attempt id.
 	//
-	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4278,7 +4330,7 @@ type ClientInterface interface {
 
 	// SearchBruteForceBansWithBody Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 	//
-	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4287,7 +4339,7 @@ type ClientInterface interface {
 
 	// SearchBruteForceBans Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 	//
-	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4762,7 +4814,7 @@ func (c *Client) EvaluatePolicyDecision(ctx context.Context, body EvaluatePolicy
 
 // GetAuthenticationAttemptWithBody Return every recorded event of one diagnostic attempt id.
 //
-// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 //
 // Takes any type of body and a specified content type.
 //
@@ -4781,7 +4833,7 @@ func (c *Client) GetAuthenticationAttemptWithBody(ctx context.Context, contentTy
 
 // GetAuthenticationAttempt Return every recorded event of one diagnostic attempt id.
 //
-// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4838,7 +4890,7 @@ func (c *Client) SearchAuthenticationAttempts(ctx context.Context, body SearchAu
 
 // SearchBruteForceBansWithBody Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 //
-// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 //
 // Takes any type of body and a specified content type.
 //
@@ -4857,7 +4909,7 @@ func (c *Client) SearchBruteForceBansWithBody(ctx context.Context, contentType s
 
 // SearchBruteForceBans Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 //
-// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5951,7 +6003,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetAuthenticationAttemptWithBodyWithResponse Return every recorded event of one diagnostic attempt id.
 	//
-	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -5960,7 +6012,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetAuthenticationAttemptWithResponse Return every recorded event of one diagnostic attempt id.
 	//
-	// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+	// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -5987,7 +6039,7 @@ type ClientWithResponsesInterface interface {
 
 	// SearchBruteForceBansWithBodyWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 	//
-	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -5996,7 +6048,7 @@ type ClientWithResponsesInterface interface {
 
 	// SearchBruteForceBansWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 	//
-	// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+	// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7967,7 +8019,7 @@ func (c *ClientWithResponses) EvaluatePolicyDecisionWithResponse(ctx context.Con
 
 // GetAuthenticationAttemptWithBodyWithResponse Return every recorded event of one diagnostic attempt id.
 //
-// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7982,7 +8034,7 @@ func (c *ClientWithResponses) GetAuthenticationAttemptWithBodyWithResponse(ctx c
 
 // GetAuthenticationAttemptWithResponse Return every recorded event of one diagnostic attempt id.
 //
-// Requires nauthilus:history_read and a subject; with nauthilus:history_detail the subject is optional. The attempt is returned only when one of its rows belongs to the subject; a guessed or foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
+// Requires nauthilus:history_read or nauthilus:history_detail; the subject is optional. With a subject, the attempt is returned only when one of its rows belongs to it; a foreign id yields the same `attempt: null` as an unknown one. `around` is any instant of the attempt, for example its started_at.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -8027,7 +8079,7 @@ func (c *ClientWithResponses) SearchAuthenticationAttemptsWithResponse(ctx conte
 
 // SearchBruteForceBansWithBodyWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 //
-// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -8042,7 +8094,7 @@ func (c *ClientWithResponses) SearchBruteForceBansWithBodyWithResponse(ctx conte
 
 // SearchBruteForceBansWithResponse Explain the recorded brute-force bans of one IP or network in a window of at most 31 days.
 //
-// Requires nauthilus:history_read; a subject is accepted only with nauthilus:history_detail. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
+// Requires nauthilus:history_read or nauthilus:history_detail; a subject is optional. Candidate networks are computed from rule prefixes, never scanned; the latest activation before the window start is included. The activating request is never a culprit and `crossed` is a heuristic.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

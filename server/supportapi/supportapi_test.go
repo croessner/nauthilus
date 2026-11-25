@@ -54,11 +54,11 @@ func TestDecodeStrict(t *testing.T) {
 	}
 }
 
-// TestOperationTableAndSchemas pins the five operations, their self-contained object input schemas, and the
+// TestOperationTableAndSchemas pins the seven operations, their self-contained object input schemas, and the
 // untrusted-data notice of their model descriptions.
 func TestOperationTableAndSchemas(t *testing.T) {
 	names := []string{OperationAttemptSearch, OperationAttemptDetail, OperationBanHistory, OperationDiagnostics,
-		OperationLogOverview}
+		OperationLogOverview, OperationLogEvents, OperationSegment}
 
 	if len(Operations()) != len(names) {
 		t.Fatalf("operations = %d", len(Operations()))

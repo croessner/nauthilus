@@ -20,12 +20,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/croessner/nauthilus/v4/server/jsonstrict"
 	"github.com/croessner/nauthilus/v4/server/supportaccess"
 )
+
+// errOperationPanicked marks an operation that panicked; the answer is INTERNAL_ERROR and the process keeps running.
+var errOperationPanicked = errors.New("support operation panicked")
 
 // codeInvalidRequest is the invalid-request code shared by every support service.
 const codeInvalidRequest supportaccess.ErrorCode = "INVALID_REQUEST"
@@ -81,7 +85,17 @@ type errorDetail struct {
 
 // Execute decodes raw arguments, calls the operation with the verified credential, and renders the result or the
 // stable error. Authorization stays in the service: a credential without the operation's permission gets FORBIDDEN.
-func (s Services) Execute(ctx context.Context, operation Operation, credential supportaccess.VerifiedCredential, raw []byte) Response {
+func (s Services) Execute(ctx context.Context, operation Operation, credential supportaccess.VerifiedCredential, raw []byte) (response Response) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			response = renderError(operation.errors, operation.errors.asError(fmt.Errorf("%w: %v", errOperationPanicked, recovered)))
+		}
+	}()
+
+	if operation.respond != nil {
+		return operation.respond(ctx, s, credential, raw)
+	}
+
 	if operation.execute == nil {
 		return InvalidRequest(operation)
 	}

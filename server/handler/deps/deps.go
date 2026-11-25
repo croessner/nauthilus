@@ -33,6 +33,7 @@ import (
 	"github.com/croessner/nauthilus/v4/server/pluginruntime"
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
 	"github.com/croessner/nauthilus/v4/server/supportops"
 
@@ -131,4 +132,6 @@ type Deps struct {
 	SupportHistory *supporthistory.Service
 	// SupportOperations is the process-owned operational diagnostics service; nil when it is not enabled.
 	SupportOperations *supportops.Service
+	// SupportSegments keeps support answers above a transport bound; shared with the MCP endpoint.
+	SupportSegments *supportapi.SegmentStore
 }

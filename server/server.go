@@ -49,6 +49,7 @@ import (
 	decisionservice "github.com/croessner/nauthilus/v4/server/policy/decision/service"
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
 	"github.com/croessner/nauthilus/v4/server/supportops"
 	"github.com/croessner/nauthilus/v4/server/util"
@@ -105,6 +106,8 @@ type contextStore struct {
 	supportHistory *supporthistory.Service
 	// supportOperations is the process-owned operational diagnostics service; nil when it is not enabled.
 	supportOperations *supportops.Service
+	// supportSegments keeps support answers above a transport bound for every support transport.
+	supportSegments *supportapi.SegmentStore
 
 	// bruteForceTolerate is the explicitly constructed boot-lifetime tolerance owner.
 	bruteForceTolerate tolerate.Tolerate
@@ -691,6 +694,7 @@ func buildBackchannelSetupCallback(runtime httpServerRuntime) func(*gin.Engine) 
 			LDAPAuthQueue:     priorityqueue.LDAPAuthQueue,
 			SupportHistory:    runtime.store.supportHistory,
 			SupportOperations: runtime.store.supportOperations,
+			SupportSegments:   runtime.store.supportSegments,
 		}
 
 		if runtime.rateLimit != nil {

@@ -61,6 +61,7 @@ import (
 	policyruntime "github.com/croessner/nauthilus/v4/server/policy/runtime"
 	"github.com/croessner/nauthilus/v4/server/privilege"
 	"github.com/croessner/nauthilus/v4/server/rediscli"
+	"github.com/croessner/nauthilus/v4/server/supportapi"
 	"github.com/croessner/nauthilus/v4/server/util"
 
 	"go.uber.org/fx"
@@ -536,6 +537,8 @@ func newContextStoreForRuntime(
 		store.supportHistory = newSupportHistoryService(cfgProvider.Current().File, redisClient, logger)
 		store.supportOperations = newSupportOperationsService(cfgProvider.Current().File, logger)
 	}
+
+	store.supportSegments = supportapi.NewSegmentStore(nil)
 
 	return store
 }

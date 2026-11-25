@@ -43,8 +43,9 @@ func startMCPForHTTP(ctx context.Context, runtime httpServerRuntime, options htt
 	}
 
 	server, err := mcpserver.New(mcpserver.Deps{Settings: provider.GetMCPServer(), Logger: runtime.logger, Version: version,
-		Tokens:   idp.NewNauthilusIDP(frontendHandlerDeps(runtime)),
-		Services: supportapi.Services{History: runtime.store.supportHistory, Operations: runtime.store.supportOperations}})
+		Tokens: idp.NewNauthilusIDP(frontendHandlerDeps(runtime)),
+		Services: supportapi.Services{History: runtime.store.supportHistory, Operations: runtime.store.supportOperations,
+			Segments: runtime.store.supportSegments}})
 	if err == nil {
 		runtime.store.mcpDone, err = server.Start(ctx)
 	}

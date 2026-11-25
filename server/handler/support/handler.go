@@ -50,7 +50,8 @@ type Handler struct {
 // New creates the handler; a nil service answers NOT_CONFIGURED for its operations.
 func New(deps *handlerdeps.Deps) *Handler {
 	return &Handler{logger: deps.Logger,
-		services: supportapi.Services{History: deps.SupportHistory, Operations: deps.SupportOperations}}
+		services: supportapi.Services{History: deps.SupportHistory, Operations: deps.SupportOperations,
+			Segments: deps.SupportSegments}}
 }
 
 // Register mounts one POST route per support operation below the authenticated /api/v1 group.
