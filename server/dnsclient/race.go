@@ -22,7 +22,9 @@ import (
 	"time"
 )
 
-const errTextTimeout = "i/o timeout"
+// errTextContextEnded starts the text of a lookup that ended with its context, so it is never mistaken for a
+// resolver answer such as an i/o timeout.
+const errTextContextEnded = "DNS lookup context ended: "
 
 // lookupFunc performs one query through the given resolver.
 type lookupFunc[T any] func(ctx context.Context, resolver *net.Resolver) (T, error)
@@ -107,16 +109,22 @@ func (r *lookupRace[T]) start() bool {
 	return true
 }
 
-// contextError describes an expired or cancelled lookup budget in the same
-// shape the standard resolver uses.
+// contextError describes an expired or cancelled lookup budget as a DNS error. The text names the context end and,
+// when one was set, its cause; errors.Is reaches both the standard context error and the cause. Only an expired
+// deadline is a timeout, so the retry classification follows ctx.Err() and never a custom cause.
 func (r *lookupRace[T]) contextError() error {
-	cause := r.ctx.Err()
-	dnsErr := &net.DNSError{UnwrapErr: cause, Err: cause.Error(), Name: r.name}
+	err := r.ctx.Err()
+	cause := context.Cause(r.ctx)
+	message := errTextContextEnded + err.Error()
+	unwrapped := err
 
-	if errors.Is(cause, context.DeadlineExceeded) {
-		dnsErr.Err = errTextTimeout
-		dnsErr.IsTimeout = true
+	// errors.Is compares only comparable values, so an arbitrary cause type cannot panic here. Without a custom cause
+	// context.Cause returns ctx.Err() itself, which is not repeated.
+	if cause != nil && !errors.Is(err, cause) {
+		message += "; cause: " + cause.Error()
+		unwrapped = errors.Join(err, cause)
 	}
 
-	return dnsErr
+	return &net.DNSError{UnwrapErr: unwrapped, Err: message, Name: r.name,
+		IsTimeout: errors.Is(err, context.DeadlineExceeded)}
 }

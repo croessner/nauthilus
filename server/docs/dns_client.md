@@ -40,6 +40,12 @@ three stay unanswered until 300 ms. In the normal case exactly one query is sent
 
 Retries add load precisely when the resolver is slow or lossy: a lookup can send up to `attempts` queries.
 
+A lookup whose budget or caller context ends before any attempt answers fails with
+`lookup <name>: DNS lookup context ended: context deadline exceeded` (or `context canceled`), followed by
+`; cause: <cause>` when the context carries a custom cause. `errors.Is` matches both the standard context error and
+the cause, and only an expired deadline counts as a timeout. A resolver error returned by an attempt keeps its own
+text, such as `i/o timeout`.
+
 ## Socket Pool
 
 Without a pool every query opens its own UDP socket. Behind NAT or connection tracking each of them creates a
