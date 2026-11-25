@@ -53,6 +53,68 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.2.1: Complete Support Data And A Byte Check For The Frontend Secret
+
+Nauthilus 4.2.1 is a patch release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Private
+native plugins must be rebuilt against this source, as for every release.
+
+### Upgrade effects
+
+- `identity.frontend.encryption_secret` must hold at least 32 bytes. The
+  browser envelope codec needs 32 bytes, while the old rule counted 16
+  characters, so a shorter secret passed the check and the login routes
+  failed at run time. An enabled
+  frontend or IdP that cannot be built now fails the start instead of
+  serving without login routes; the best-effort restart path keeps serving
+  the other routes.
+- The support history answers stored values without personal masking, and
+  long event and contribution lists are paged (see below). Support clients
+  must follow the inner cursors instead of reading one answer as complete.
+
+### Support operations and MCP
+
+- `operational_log_overview` (MCP tool and
+  `POST /api/v1/support/operations/log-overview`, scope
+  `nauthilus:operations_read`) counts every WARN and ERROR message of the
+  Loki source per level, exact message, instance, and time bucket. Answers
+  state coverage, window clipping, and truncation; a counted message is an
+  observation, not an incident.
+- `operational_log_events` (MCP tool and
+  `POST /api/v1/support/operations/log-events`, same scope) pages the
+  stored Loki lines of a window completely: every event carries the stored
+  line and all its fields, repeated names included. Paging stays stable
+  across timestamp ties of one or many streams, and gaps are stated.
+- `authentication_attempt_detail` pages the events of one attempt
+  (`events_page`) and `bruteforce_history` the contributions of one ban
+  (`inner_page`). A cursor continues after the last event id, so events
+  stored more than once no longer end the paging early.
+- Only authentication secrets are replaced by `<redacted>`: values of
+  secret-named fields, labels, and assignments (JSON-shaped and escaped
+  values included), Authorization and Cookie headers, URL passwords and
+  token parameters, and signed tokens. Embedded JSON values are rewritten
+  structurally as separate segments. Error texts and all other diagnostic
+  data stay complete. No new scope is needed.
+- An answer larger than the MCP response bound comes in segments measured
+  on the serialized JSON-RPC response; `support_response_segment` (MCP tool
+  and `POST /api/v1/support/responses/segment`) returns the next one, with
+  a byte share per principal. HTTP and MCP return the same data.
+
+### Fixes
+
+- DNS lookup errors name the ended lookup context (deadline, cancellation,
+  or a custom cause) instead of reporting an expired budget as an i/o
+  timeout; retries and the lookup budget are unchanged.
+- The CI PGO refresh no longer fails on a request whose context timer
+  fires a few milliseconds after the workload deadline.
+
+**Action:**
+
+- Check that `identity.frontend.encryption_secret` holds at least 32
+  bytes, and run `--config-check` before the upgrade.
+- Let support clients follow `page`, `events_page`, `inner_page`, and
+  segment cursors.
+
 ## v4.2.0: Lua JIT Compiler And Faster Lua Requests
 
 Nauthilus 4.2.0 is a minor release on the v4 line. The module path,
