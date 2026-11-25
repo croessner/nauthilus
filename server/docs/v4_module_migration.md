@@ -53,6 +53,45 @@ against the stable release source and exact toolchain. Earlier prerelease
 plugin binaries must not be reused. Deploy the host image, plugin checksum
 and signature, and immutable plugin directory as one compatible release.
 
+## v4.2.2: Exact Support Log Windows And Long Windows In Parts
+
+Nauthilus 4.2.2 is a patch release on the v4 line. The module path,
+`pluginapi.APIVersion`, and the configuration roots are unchanged. Private
+native plugins must be rebuilt against this source, as for every release.
+
+### Support operations and MCP
+
+- `operational_log_overview` answered an empty group list with
+  `LOKI_BUCKETS_MISALIGNED` for every window whose end was not a multiple of
+  its bucket width, for example 15:38 to 16:38: Loki's query frontend
+  aligns range evaluations to the step (`align_queries_with_step`), so no
+  point met a bucket end. Every bucket is now counted by instant queries at
+  its exact end, so any valid window works without rounding.
+- Loki counts a range as `(t-range, t]`. Counts are now evaluated one
+  nanosecond before the exclusive window end, so diagnostics, the log
+  overview, and the log events cover exactly `[from, until)`: a line on the
+  window start counts, a line on the window end does not, and the overview
+  buckets add up to exactly the lines the events return for the same
+  filters. The buckets tile the window; only the first may be shorter than
+  `bucket_seconds`, and `LOG_BUCKETS_EXCEED_WINDOW` is gone.
+- A window longer than the `max_time_window` of the Loki or Prometheus
+  source was clipped to its newest part (`LOKI_WINDOW_CLIPPED`,
+  `PROMETHEUS_WINDOW_CLIPPED`). It is now answered by up to 24 parts of at
+  most `max_time_window` each, so with the default `1h` every window up to
+  the 24-hour maximum is complete; only a longer one is still clipped and
+  stated. The source timeout applies per part within the call timeout. The
+  log events read part by part, so a page can end before `limit` with a
+  cursor at a part start.
+- Window bounds are kept in whole milliseconds, the precision of a range
+  selector; finer digits are dropped and the answer states the window used.
+
+**Action:**
+
+- None for configurations. A log overview or long diagnostics call sends
+  more, smaller Loki queries than before (25 instant queries for one hour,
+  at most four at a time); raise the call timeout only if a source reports
+  `timeout`.
+
 ## v4.2.1: Complete Support Data And A Byte Check For The Frontend Secret
 
 Nauthilus 4.2.1 is a patch release on the v4 line. The module path,
