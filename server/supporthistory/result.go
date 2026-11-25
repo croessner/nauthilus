@@ -73,7 +73,6 @@ type EventIdentity struct {
 	AccountFound     *bool   `json:"account_found_at_capture"`
 	MatchedBy        *string `json:"matched_by"`
 	SubjectMatch     bool    `json:"subject_match"`
-	Redacted         bool    `json:"redacted"`
 }
 
 // EventContext holds the request context recorded with one event.
@@ -149,7 +148,7 @@ type Event struct {
 	RecordVersion int           `json:"record_version"`
 }
 
-// Steps states per step whether evidence was recorded, withheld, or does not apply. Primary is session_reused for
+// Steps states per step whether evidence was recorded or does not apply. Primary is session_reused for
 // an OIDC flow that /authorize started for an already authenticated session.
 type Steps struct {
 	Primary        string `json:"primary"`
@@ -169,20 +168,32 @@ type Completion struct {
 	Authentication       string     `json:"authentication"`
 }
 
-// Recording describes evidence limits of one attempt.
+// Recording describes evidence limits of one attempt. EventsTruncated is true exactly when more recorded events
+// follow the listed ones, that is when the attempt carries events_page.next_cursor.
 type Recording struct {
 	KnownGaps          []string `json:"known_gaps"`
 	ReplayedRowsMerged int      `json:"replayed_rows_merged"`
 	LegacyRows         int      `json:"legacy_rows"`
 	EventsTruncated    bool     `json:"events_truncated"`
-	EventsWithheld     bool     `json:"events_withheld"`
 }
 
-// Attempt is one diagnostic attempt: an IdP flow or a single authentication request.
+// EventsPage continues the events of one attempt. NextCursor is set while more recorded events follow the listed
+// ones; the next page is the attempt detail lookup with Detail's attempt_id and around and events_page.cursor set
+// to NextCursor. Limit is the events page size this answer applied.
+type EventsPage struct {
+	NextCursor *string          `json:"next_cursor"`
+	Detail     AttemptReference `json:"detail"`
+	Limit      int              `json:"limit"`
+}
+
+// Attempt is one diagnostic attempt: an IdP flow or a single authentication request. Events and Findings hold one
+// events page; every other member is derived from the attempt's interpretation read and is the same on every page.
+// EventsPage appears when more events follow or the detail request selected an events page.
 type Attempt struct {
 	StartedAt            time.Time   `json:"started_at"`
 	LastObservedAt       time.Time   `json:"last_observed_at"`
 	Completion           *Completion `json:"completion"`
+	EventsPage           *EventsPage `json:"events_page,omitempty"`
 	Findings             []Finding   `json:"findings"`
 	Events               []Event     `json:"events"`
 	Recording            Recording   `json:"recording"`

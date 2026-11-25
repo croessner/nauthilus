@@ -49,7 +49,7 @@ func eventKey(record AuthEventRecord) AttemptKey {
 
 // rowQuery renders the keys into a store row query.
 func rowQuery(keys []AttemptKey, read readRange, subject *SubjectMatch) RowQuery {
-	query := RowQuery{From: read.from, Until: read.until, Subject: subject, LimitPerGroup: MaxEventsPerAttempt + 1}
+	query := RowQuery{From: read.from, Until: read.until, Subject: subject, LimitPerGroup: attemptRowBound}
 
 	for _, key := range keys {
 		if key.Kind == AttemptFlow {
@@ -205,12 +205,41 @@ func (s *Service) collectAttempts(ctx context.Context, scope searchScope, page [
 			continue
 		}
 
-		attempts = append(attempts, buildAttempt(attemptInput{key: key, logins: rows.logins[key],
-			events: rows.events[key], matcher: scope.matcher, read: rows.ranges[key], projection: scope.projection,
-			eventsRead: eventsRead.failed == nil, queriedAt: scope.queriedAt, completionSince: scope.completion.since}))
+		attempt, next := buildAttempt(attemptInput{key: key, logins: rows.logins[key],
+			events: rows.events[key], matcher: scope.matcher, read: rows.ranges[key],
+			eventsRead: eventsRead.failed == nil, queriedAt: scope.queriedAt, completionSince: scope.completion.since,
+			listing: eventListing{limit: MaxEventsPerAttempt}})
+		attachEventsPage(&attempt, next, AttemptReference{AttemptID: attempt.AttemptID, Around: attempt.StartedAt},
+			scope.queriedAt, MaxEventsPerAttempt, false)
+		attempts = append(attempts, attempt)
 	}
 
 	return attempts, eventsRead, nil
+}
+
+// fetchEventsPage reads the rows of one attempt from a listed position, at most limit+ties+1 per source, from the
+// range its interpretation rows were read from. Unlike an interpretation read, a failed step-event read fails the
+// page, because a continuation must never skip events silently.
+func (s *Service) fetchEventsPage(ctx context.Context, key AttemptKey, read readRange, after eventPosition, limit int) (*pageRows, error) {
+	query := rowQuery([]AttemptKey{key}, read, nil)
+	query.LimitPerGroup = limit + after.ties + 1
+	query.LoginsAfter, query.EventsAfter = after.storePositions()
+
+	logins, err := s.attempts.LoginRows(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	events, err := s.attempts.AuthEvents(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	logins = slices.DeleteFunc(logins, func(record LoginRecord) bool { return loginKey(record) != key })
+	events = slices.DeleteFunc(events, func(record AuthEventRecord) bool { return eventKey(record) != key })
+	rows := newPageRows(logins, events, query.LimitPerGroup)
+
+	return &rows, nil
 }
 
 // alreadyServed reports whether an attempt had subject-matching activity inside the already scanned range

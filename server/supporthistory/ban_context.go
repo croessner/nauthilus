@@ -140,7 +140,7 @@ func (s *Service) banContexts(ctx context.Context, search searchScope, attempts 
 		partialIP: map[string]bool{}, hits: map[string][]HitRecord{}, explained: map[int]*explainedBan{},
 		failures: map[Source]error{}, compact: compact,
 		scope: banScope{window: Window{From: search.window.From, Until: search.window.Until}, queriedAt: search.queriedAt,
-			matcher: &search.matcher, projection: search.projection, trimmed: map[string]bool{}}}
+			matcher: &search.matcher, trimmed: map[string]bool{}}}
 
 	candidates = run.admit(ctx, candidates)
 	run.read(ctx, candidates)
@@ -534,8 +534,7 @@ func (r *banContextRun) contextBan(ctx context.Context, link banLink) (BanContex
 	explained, code := r.explain(ctx, link.instance)
 	if explained == nil {
 		item.Attribution = BanAttribution{SubjectContributions: []SubjectContribution{}, Code: AttributionInsufficient,
-			OtherContributors: othersUnknown, PersonAttribution: personNotEstablish,
-			IdentitiesRedacted: r.scope.projection != ProjectionDetail}
+			OtherContributors: othersUnknown, PersonAttribution: personNotEstablish}
 		item.Evidence = BanEvidence{Completeness: evidenceNotRead, Limitations: []string{code}}
 
 		return item, code
@@ -571,7 +570,7 @@ func (r *banContextRun) explain(ctx context.Context, index int) (*explainedBan, 
 	ban, items := r.service.explainInstance(ctx, scope, instance, !r.compact)
 	_, _, estimated := instanceEnd(instance)
 	attribution, evidence := attribute(attributionInput{activatedAt: instance.activation.At, queriedAt: r.scope.queriedAt,
-		attempts: r.attempts, matcher: r.search.matcher, items: items, ban: ban, projection: r.scope.projection,
+		attempts: r.attempts, matcher: r.search.matcher, items: items, ban: ban,
 		estimated: estimated})
 
 	explained := &explainedBan{ban: ban, attribution: attribution, evidence: evidence}

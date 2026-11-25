@@ -107,7 +107,7 @@ func (s *Service) begin(ctx context.Context, caller Caller, operation string, ne
 
 	call := &operationCall{started: s.now(), service: s, caller: caller, entry: AuditEntry{
 		Service: auditService, Operation: operation, CallerIdentity: caller.Identity(), CallerMethod: string(caller.Method()),
-		Projection: string(caller.projection()), SubjectDigest: subjectDigest(subject...), AuditReference: supportaccess.BoundedAuditReference(reference),
+		Projection: string(ProjectionDetail), SubjectDigest: subjectDigest(subject...), AuditReference: supportaccess.BoundedAuditReference(reference),
 	}}
 
 	if !caller.has(need) {

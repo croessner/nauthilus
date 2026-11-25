@@ -53,8 +53,9 @@ type bucketWindow struct {
 }
 
 // contributionsOf attributes counted increments to one activation by bucket, window counters, and the counter
-// resets before and after the activation, then states completeness per window. It also returns the listed counted
-// rows before projection, so attribution reads them once and never from the redacted items.
+// resets before and after the activation, then states completeness per window. Completeness, the crossing candidate,
+// and the distinct names derive from the interpretation read (at most MaxContributions items); Items lists one page.
+// It also returns the interpretation rows before projection, so attribution reads them once and never from the items.
 func (s *Service) contributionsOf(ctx context.Context, scope banScope, instance banInstance) (Contributions, []CountedRecord, error) {
 	row := instance.activation
 	result := Contributions{Status: statusNotApplicable, Windows: []WindowStatus{}, Items: []Contribution{},
@@ -70,32 +71,72 @@ func (s *Service) contributionsOf(ctx context.Context, scope banScope, instance 
 		result.Caveats = append(result.Caveats, caveatResetSkew)
 	}
 
-	items, partial, err := s.rawContributions(ctx, scope, row, windows, resetAfter, resetBefore)
+	scan := contributionScanOf(scope, row, windows, resetAfter, resetBefore)
+
+	read, err := s.readContributions(ctx, scan, nil, MaxContributions+1)
 	if err != nil {
 		return result, nil, err
 	}
 
-	// Replays share their event id and are no loss; the reader removes them, this keeps the rule in one place here.
-	items, _ = dedupeByID(items, countedEventID)
-
-	if partial {
+	if scan.partial {
 		result.Caveats = append(result.Caveats, caveatPartiallyRetained)
 	}
 
-	if len(items) > MaxContributions {
-		result.Truncated, result.Caveats = true, append(result.Caveats, caveatItemsTruncated)
-		items = items[:MaxContributions]
+	interpretation := contributionRead{items: read, bounded: len(read) > MaxContributions}
+	if interpretation.bounded {
+		result.Caveats = append(result.Caveats, caveatItemsTruncated)
+		interpretation.items = read[:MaxContributions]
 	}
 
 	if scope.matcher != nil {
-		extended := scope.matcher.withCountedAccounts(items)
+		extended := scope.matcher.withCountedAccounts(interpretation.items)
 		scope.matcher = &extended
 	}
 
-	s.assessWindows(ctx, scope, instance, windows, items, &result)
-	result.Items, result.CrossingCandidate, result.DistinctClaimedNames = projectContributions(scope, row, items)
+	s.assessWindows(ctx, scope, instance, windows, interpretation, &result)
+	result.CrossingCandidate, result.DistinctClaimedNames = crossingOf(row, interpretation.items)
 
-	return result, items, nil
+	if err = s.listContributions(ctx, scope, scan, read, &result); err != nil {
+		return result, nil, err
+	}
+
+	return result, interpretation.items, nil
+}
+
+// contributionRead is the bounded interpretation read of one activation's contributions; bounded tells that more
+// rows than MaxContributions exist, so completeness falls back to the summary.
+type contributionRead struct {
+	items   []CountedRecord
+	bounded bool
+}
+
+// listContributions lists one contribution page: the first page from the interpretation read, a continuation from
+// a read at the cursor position that steps over the ties already listed there. Truncated and NextCursor tell whether
+// more contributions follow.
+func (s *Service) listContributions(ctx context.Context, scope banScope, scan contributionScan, first []CountedRecord, result *Contributions) error {
+	page := scope.contributionPage(scan.banRef)
+	listed := first
+
+	if after := page.after; after != nil {
+		read, err := s.readContributions(ctx, scan, &after.position, page.limit+after.ties+1)
+		if err != nil {
+			return err
+		}
+
+		listed = skipListed(read, after.ties, page.continued)
+	}
+
+	if len(listed) > page.limit {
+		listed = listed[:page.limit]
+		result.Truncated, result.NextCursor = true, page.cursor(listed, scope.queriedAt)
+	}
+
+	result.Items = make([]Contribution, 0, len(listed))
+	for _, item := range listed {
+		result.Items = append(result.Items, projectContribution(scope, item))
+	}
+
+	return nil
 }
 
 // activationWindows returns the activation and previous bucket windows, or false when the activation carries no
@@ -115,10 +156,10 @@ func activationWindows(row LifecycleRecord) ([]bucketWindow, bool) {
 		{windowPrevious, *row.WindowIndex - 1, previous}}, true
 }
 
-// assessWindows states every window and folds the worst status into the result.
-func (s *Service) assessWindows(ctx context.Context, scope banScope, instance banInstance, windows []bucketWindow, items []CountedRecord, result *Contributions) {
+// assessWindows states every window from the interpretation read and folds the worst status into the result.
+func (s *Service) assessWindows(ctx context.Context, scope banScope, instance banInstance, windows []bucketWindow, read contributionRead, result *Contributions) {
 	for _, window := range windows {
-		status := s.windowStatus(ctx, scope, instance.activation, window, items, result.Truncated, instance.resets)
+		status := s.windowStatus(ctx, scope, instance.activation, window, read.items, read.bounded, instance.resets)
 		if status.CountsAreUpperBounds && !slices.Contains(result.Caveats, caveatSummaryCounts) {
 			result.Caveats = append(result.Caveats, caveatSummaryCounts)
 		}
@@ -167,10 +208,19 @@ func windowBounds(row LifecycleRecord, label string) (time.Time, time.Time) {
 	return row.At.Add(-period - skewSlack), row.At.Add(skewSlack)
 }
 
-// rawContributions reads the counted rows of both windows inside the intersection of their conservative bounds with
-// the raw retention. Rules whose windows reach beyond the retention keep their retained increments; partial reports
-// a read that covered only the retained part of the windows. Completeness stays with windowStatus.
-func (s *Service) rawContributions(ctx context.Context, scope banScope, row LifecycleRecord, windows []bucketWindow, resetAfter, resetBefore *time.Time) ([]CountedRecord, bool, error) {
+// contributionScan is the store read of one activation's contributions inside the intersection of the conservative
+// window bounds with the raw retention. Rules whose windows reach beyond the retention keep their retained increments;
+// partial reports a read that covers only the retained part of the windows, skip one that covers nothing.
+// Completeness stays with windowStatus.
+type contributionScan struct {
+	query   ContributionQuery
+	banRef  string
+	partial bool
+	skip    bool
+}
+
+// contributionScanOf derives the contribution read of one activation.
+func contributionScanOf(scope banScope, row LifecycleRecord, windows []bucketWindow, resetAfter, resetBefore *time.Time) contributionScan {
 	horizon := rawHorizon(scope.queriedAt)
 	activationFrom, until := windowBounds(row, windowActivation)
 	previousFrom, _ := windowBounds(row, windowPrevious)
@@ -180,16 +230,32 @@ func (s *Service) rawContributions(ctx context.Context, scope banScope, row Life
 		relevantFrom = previousFrom
 	}
 
-	if !until.After(horizon) {
-		return nil, false, nil
+	query := ContributionQuery{Network: row.Network, BucketID: row.BucketID, WindowIndex: windows[0].index,
+		Current: windows[0].expected, Previous: windows[1].expected, ResetAfter: resetAfter, ResetBefore: resetBefore,
+		From: maxTime(previousFrom, horizon), Until: until}
+
+	return contributionScan{query: query, banRef: row.EventID, partial: relevantFrom.Before(horizon),
+		skip: !until.After(horizon)}
+}
+
+// readContributions reads at most limit contributions of a scan from an optional position, replays removed.
+func (s *Service) readContributions(ctx context.Context, scan contributionScan, start *ContributionPosition, limit int) ([]CountedRecord, error) {
+	if scan.skip {
+		return nil, nil
 	}
 
-	items, err := s.bans.Contributions(ctx, ContributionQuery{Network: row.Network, BucketID: row.BucketID,
-		WindowIndex: windows[0].index, Current: windows[0].expected, Previous: windows[1].expected,
-		ResetAfter: resetAfter, ResetBefore: resetBefore, From: maxTime(previousFrom, horizon), Until: until,
-		Limit: MaxContributions + 1})
+	query := scan.query
+	query.Start, query.Limit = start, limit
 
-	return items, relevantFrom.Before(horizon), err
+	items, err := s.bans.Contributions(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	// Replays share their event id and are no loss; the reader removes them, this keeps the rule in one place here.
+	items, _ = dedupeByID(items, countedEventID)
+
+	return items, nil
 }
 
 // windowStatus states the completeness of one window from raw rows, or from the summary beyond raw retention.
@@ -269,9 +335,8 @@ func resetInWindow(resets []LifecycleRecord, row LifecycleRecord, window bucketW
 	})
 }
 
-// projectContributions redacts other people's claims for the support role and selects the crossing candidate.
-func projectContributions(scope banScope, row LifecycleRecord, items []CountedRecord) ([]Contribution, *CrossingCandidate, *int64) {
-	contributions := make([]Contribution, 0, len(items))
+// crossingOf selects the crossing candidate and counts the distinct claimed names of the interpretation items.
+func crossingOf(row LifecycleRecord, items []CountedRecord) (*CrossingCandidate, *int64) {
 	names := map[string]struct{}{}
 
 	var crossing *CrossingCandidate
@@ -280,8 +345,6 @@ func projectContributions(scope banScope, row LifecycleRecord, items []CountedRe
 		if item.ClaimedUsername != "" {
 			names[item.ClaimedUsername] = struct{}{}
 		}
-
-		contributions = append(contributions, projectContribution(scope, item))
 
 		if item.Crossed != nil && *item.Crossed && !item.At.After(row.At) &&
 			(crossing == nil || !item.At.Before(crossing.At)) {
@@ -295,23 +358,15 @@ func projectContributions(scope banScope, row LifecycleRecord, items []CountedRe
 		distinct = int64Pointer(int64(len(names)))
 	}
 
-	return contributions, crossing, distinct
+	return crossing, distinct
 }
 
-// projectContribution projects one counted increment for the caller.
+// projectContribution projects one counted increment with its recorded claims.
 func projectContribution(scope banScope, item CountedRecord) Contribution {
 	contribution := Contribution{At: item.At.UTC(), WindowIndex: item.WindowIndex, WindowCurrent: item.WindowCurrent,
 		Crossed: item.Crossed, AccountKnown: item.AccountKnown, EventID: item.EventID, RequestID: item.RequestID,
-		CountSource: item.CountSource, Protocol: item.Protocol}
-
-	if scope.projection != ProjectionDetail {
-		contribution.Redacted = true
-
-		return contribution
-	}
-
-	contribution.ClaimedUsername, contribution.Account = recorded(item.ClaimedUsername), recorded(item.Account)
-	contribution.ClientIP = recorded(item.ClientIP)
+		CountSource: item.CountSource, Protocol: item.Protocol, ClaimedUsername: recorded(item.ClaimedUsername),
+		Account: recorded(item.Account), ClientIP: recorded(item.ClientIP)}
 
 	if scope.matcher != nil {
 		_, byLogin := scope.matcher.logins[item.ClaimedUsername]

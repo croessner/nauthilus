@@ -151,9 +151,11 @@ const (
 	CodeStepUpExpired           = "STEP_UP_EXPIRED"
 	CodeFlowResumeConflict      = "FLOW_RESUME_CONFLICT"
 	CodeFactorUnclassified      = "SECOND_FACTOR_UNCLASSIFIED"
-	CodeFactorOnLatchedFlow     = "SECOND_FACTOR_ON_LATCHED_FLOW"
 	CodeUnsupportedEventVersion = "UNSUPPORTED_EVENT_VERSION"
+)
 
+// OIDC authorization-code completion codes. They are part of the same stable interface for UIs.
+const (
 	CodeAuthorizationCodeIssued     = "AUTHORIZATION_CODE_ISSUED"
 	CodeTokensIssued                = "TOKENS_ISSUED"
 	CodeRedemptionClientMismatch    = "CODE_REDEMPTION_CLIENT_MISMATCH"

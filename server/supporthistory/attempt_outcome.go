@@ -33,7 +33,7 @@ func attemptOutcome(input attemptInput, logins []LoginRecord, factor []AuthEvent
 	case latched && completed:
 		return outcomeUnknown, basisNone, false
 	case latched:
-		return latchedOutcome(input, factor)
+		return latchedOutcome(factor)
 	case final:
 		return outcome, basis, true
 	}
@@ -41,13 +41,13 @@ func attemptOutcome(input attemptInput, logins []LoginRecord, factor []AuthEvent
 	return outcomeNotObserved, basisNone, false
 }
 
-// latchedOutcome is the rejection of a flow whose primary step failed; the detail role sees whether the latched
-// step-up was consumed.
-func latchedOutcome(input attemptInput, factor []AuthEventRecord) (string, string, bool) {
+// latchedOutcome is the rejection of a flow whose primary step failed, stating whether the latched step-up was
+// consumed.
+func latchedOutcome(factor []AuthEventRecord) (string, string, bool) {
 	kept := slices.ContainsFunc(factor, func(record AuthEventRecord) bool {
 		return record.FlowEffect == flowEffectFailureKept
 	})
-	if kept && input.projection == ProjectionDetail {
+	if kept {
 		return outcomeRejected, basisFailureKept, true
 	}
 
@@ -161,10 +161,10 @@ func loginProgress(reading interpretation) string {
 	}
 }
 
-// attemptSteps states per step whether evidence was recorded, withheld, or does not apply. The second factor reads
-// only second-factor events; a reused session is no unrecorded primary step.
-func attemptSteps(input attemptInput, logins []LoginRecord, visibleFactor []AuthEventRecord, withheld bool,
-	evidence completionEvidence, completion []AuthEventRecord) Steps {
+// attemptSteps states per step whether evidence was recorded or does not apply. The second factor reads only
+// second-factor events; a reused session is no unrecorded primary step.
+func attemptSteps(input attemptInput, logins []LoginRecord, factor []AuthEventRecord, evidence completionEvidence,
+	completion []AuthEventRecord) Steps {
 	steps := Steps{Primary: stepNotRecorded, SecondFactor: stepNotRecorded,
 		CodeIssuance:   evidence.stepState(eventTypeCodeIssuance, completion),
 		CodeRedemption: evidence.stepState(eventTypeCodeRedemption, completion)}
@@ -177,9 +177,7 @@ func attemptSteps(input attemptInput, logins []LoginRecord, visibleFactor []Auth
 	}
 
 	switch {
-	case withheld:
-		steps.SecondFactor = stepWithheld
-	case len(visibleFactor) > 0:
+	case len(factor) > 0:
 		steps.SecondFactor = stepRecorded
 	case input.key.Kind == AttemptRequest:
 		steps.SecondFactor = stepNotApplicable

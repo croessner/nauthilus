@@ -21,12 +21,30 @@ import (
 	"time"
 )
 
-// GetAttempt returns every recorded event of one attempt. Support callers must name the subject, and the attempt is
-// returned only when one of its rows belongs to that subject; a guessed id yields the same null answer as an unknown
-// one.
+// attemptLookup is the validated input of one attempt detail lookup.
+type attemptLookup struct {
+	around  time.Time
+	subject Subject
+	key     AttemptKey
+	events  eventsSelection
+	bound   bool
+}
+
+// queriedAt returns the query time of a lookup: the frozen time of an events cursor, else now.
+func (l attemptLookup) queriedAt(now time.Time) time.Time {
+	if l.events.queriedAt != nil {
+		return *l.events.queriedAt
+	}
+
+	return now
+}
+
+// GetAttempt returns one attempt with one page of its recorded events; events_page continues the events. When the
+// caller names a subject, the attempt is returned only when one of its rows belongs to that subject; a guessed id
+// yields the same null answer as an unknown one.
 func (s *Service) GetAttempt(ctx context.Context, caller Caller, request AttemptDetailRequest) (*AttemptDetailResult, error) {
 	var (
-		key     AttemptKey
+		lookup  attemptLookup
 		subject Subject
 	)
 
@@ -40,22 +58,31 @@ func (s *Service) GetAttempt(ctx context.Context, caller Caller, request Attempt
 			return keyErr
 		}
 
-		key = parsed
+		lookup.key = parsed
 
-		return request.validate(caller)
+		if err := request.validate(); err != nil {
+			return err
+		}
+
+		selection, err := request.eventsSelection()
+		lookup.events = selection
+
+		return err
 	}
 
-	ctx, call, err := s.begin(ctx, caller, operationAttemptDetail, permissionAttemptsRead,
+	ctx, call, err := s.begin(ctx, caller, operationAttemptDetail, permissionHistoryRead,
 		[]string{subject.Login, subject.Account}, request.AuditReference, validate)
 	if err != nil {
 		return nil, err
 	}
 
 	if request.Subject != nil {
-		subject = *request.Subject
+		lookup.subject = *request.Subject
 	}
 
-	result, detailErr := s.getAttempt(ctx, caller, key, subject, request.Around.UTC(), request.Subject != nil)
+	lookup.around, lookup.bound = request.Around.UTC(), request.Subject != nil
+
+	result, detailErr := s.getAttempt(ctx, lookup)
 	if detailErr != nil {
 		call.finish(ctx, 0, detailErr)
 
@@ -72,24 +99,25 @@ func (s *Service) GetAttempt(ctx context.Context, caller Caller, request Attempt
 	return result, nil
 }
 
-// getAttempt reads, binds, and builds one attempt.
-func (s *Service) getAttempt(ctx context.Context, caller Caller, key AttemptKey, subject Subject, around time.Time, bound bool) (*AttemptDetailResult, *Error) {
-	queriedAt := s.now().UTC()
+// getAttempt reads, binds, and builds one attempt. A continuation keeps the query time of its cursor, so every page
+// reads the same range and derives the same attempt-level members.
+func (s *Service) getAttempt(ctx context.Context, lookup attemptLookup) (*AttemptDetailResult, *Error) {
+	queriedAt, around, key := lookup.queriedAt(s.now().UTC()), lookup.around, lookup.key
 	window := Window{From: around.Add(-widenedAttemptMargin), Until: minTime(around.Add(widenedAttemptMargin), queriedAt)}
 
 	result := &AttemptDetailResult{SchemaVersion: SchemaVersion, QueriedAt: queriedAt}
 
 	var matcher subjectMatcher
 
-	if bound {
-		resolution, accounts, err := subjectResolver{identity: s.identity, attempts: s.attempts}.resolve(ctx, subject,
-			window, false)
+	if lookup.bound {
+		resolution, accounts, err := subjectResolver{identity: s.identity, attempts: s.attempts}.resolve(ctx,
+			lookup.subject, window, false)
 		if err != nil {
 			return nil, mapStoreError(ctx, err)
 		}
 
 		result.SubjectResolution = &resolution
-		matcher = newSubjectMatcher(subject.Login, accounts, AttemptFilter{})
+		matcher = newSubjectMatcher(lookup.subject.Login, accounts, AttemptFilter{})
 	}
 
 	rows, err := s.fetchWithWidening(ctx, []AttemptKey{key}, around, around, queriedAt, nil)
@@ -103,17 +131,22 @@ func (s *Service) getAttempt(ctx context.Context, caller Caller, key AttemptKey,
 		queried: rows.eventSource.queried, failed: rows.eventSource.failed}
 	logins, events := rows.logins[key], rows.events[key]
 
-	if bound {
-		matcher = matcher.withRecordedAccounts(subject.Login, logins)
+	if lookup.bound {
+		matcher = matcher.withRecordedAccounts(lookup.subject.Login, logins)
 	}
 
 	cutover := s.completionCutoverAt(ctx, window.Until)
 
-	if (len(logins) > 0 || len(events) > 0) && (!bound || belongsToSubject(matcher, logins, events)) {
-		attempt := buildAttempt(attemptInput{key: key, logins: logins, events: events, matcher: matcher,
-			read: rows.ranges[key], projection: caller.projection(), eventsRead: eventsRead.failed == nil,
-			queriedAt: queriedAt, completionSince: cutover.since})
-		result.Attempt = &attempt
+	if (len(logins) > 0 || len(events) > 0) && (!lookup.bound || belongsToSubject(matcher, logins, events)) {
+		input := attemptInput{key: key, logins: logins, events: events, matcher: matcher, read: rows.ranges[key],
+			eventsRead: eventsRead.failed == nil, queriedAt: queriedAt, completionSince: cutover.since}
+
+		attempt, buildErr := s.detailAttempt(ctx, input, lookup)
+		if buildErr != nil {
+			return nil, mapStoreError(ctx, buildErr)
+		}
+
+		result.Attempt = attempt
 	}
 
 	var attempts []Attempt
@@ -125,6 +158,27 @@ func (s *Service) getAttempt(ctx context.Context, caller Caller, key AttemptKey,
 	result.ResultBasis = resultBasis(result.Attempt != nil, result.History, SourceLogins, false)
 
 	return result, nil
+}
+
+// detailAttempt builds the attempt of a detail lookup with its selected events page; a continuation reads the page
+// rows after the cursor position separately from the interpretation rows.
+func (s *Service) detailAttempt(ctx context.Context, input attemptInput, lookup attemptLookup) (*Attempt, error) {
+	input.listing = eventListing{after: lookup.events.after, limit: lookup.events.limit}
+
+	if after := lookup.events.after; after != nil {
+		rows, err := s.fetchEventsPage(ctx, input.key, input.read, *after, lookup.events.limit)
+		if err != nil {
+			return nil, err
+		}
+
+		input.listing.rows = rows
+	}
+
+	attempt, next := buildAttempt(input)
+	attachEventsPage(&attempt, next, AttemptReference{AttemptID: attempt.AttemptID, Around: lookup.around},
+		input.queriedAt, lookup.events.limit, lookup.events.requested)
+
+	return &attempt, nil
 }
 
 // belongsToSubject binds an attempt to the named subject through any of its rows.

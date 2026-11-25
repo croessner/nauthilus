@@ -17,7 +17,6 @@ package supporthistory_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -111,7 +110,7 @@ func findingCodes(attempt supporthistory.Attempt) []string {
 	return codes
 }
 
-// TestSearchInterpretsEveryRecordedPath pins the evaluation matrix for the support projection.
+// TestSearchInterpretsEveryRecordedPath pins the evaluation matrix of the recorded paths.
 func TestSearchInterpretsEveryRecordedPath(t *testing.T) {
 	attempts, result := attemptsByID(t, newService(t, fixtureStore(t)), caller(definitions.ScopeHistoryRead))
 	flow := func(digit string) string { return "fl1." + strings.Repeat(digit, 32) }
@@ -135,9 +134,11 @@ func TestSearchInterpretsEveryRecordedPath(t *testing.T) {
 			[]string{supporthistory.CodePrimarySucceeded, supporthistory.CodeCredentialsRejected,
 				supporthistory.CodeFactorRejected, supporthistory.CodeFactorAccepted},
 			[]string{supporthistory.CodeCredentialsRejected, supporthistory.CodeFactorRejected}},
-		{flow("2"), "rejected", "primary_failure_latched", "primary_failure_latched", true,
-			[]string{supporthistory.CodeCredentialsRejected},
-			[]string{supporthistory.CodeCredentialsRejected, supporthistory.CodeFactorOnLatchedFlow}},
+		{flow("2"), "rejected", "primary_failure_kept", "primary_failure_latched", true,
+			[]string{supporthistory.CodeCredentialsRejected, supporthistory.CodeFactorRejected,
+				supporthistory.CodeFactorAttemptLimit, supporthistory.CodeFactorVerifiedKept},
+			[]string{supporthistory.CodeCredentialsRejected, supporthistory.CodeFactorRejected,
+				supporthistory.CodeFactorAttemptLimit, supporthistory.CodeFactorVerifiedKept}},
 		{flow("3"), "not_observed", "none", "primary_succeeded", false,
 			[]string{supporthistory.CodePrimarySucceeded, supporthistory.CodeFactorRejected,
 				supporthistory.CodeFactorChallengeMissing, supporthistory.CodeStepUpExpired},
@@ -230,48 +231,14 @@ func TestSearchKeepsRecordingLimitsVisible(t *testing.T) {
 	}
 }
 
-// TestSupportProjectionWithholdsLatchedFactorResults pins that support sees the rejection, never the factor result.
-func TestSupportProjectionWithholdsLatchedFactorResults(t *testing.T) {
-	support, _ := attemptsByID(t, newService(t, fixtureStore(t)), caller(definitions.ScopeHistoryRead))
-	detail, _ := attemptsByID(t, newService(t, fixtureStore(t)), caller(definitions.ScopeHistoryDetail))
-	latched := "fl1." + strings.Repeat("2", 32)
+// TestLatchedFlowKeepsTheRejection pins that a verified factor on a latched flow never becomes a primary success.
+func TestLatchedFlowKeepsTheRejection(t *testing.T) {
+	attempts, _ := attemptsByID(t, newService(t, fixtureStore(t)), caller(definitions.ScopeHistoryRead))
 
-	raw, _ := json.Marshal(support[latched])
-	for _, forbidden := range []string{"rate_limited", "primary_failure_kept", "verified", "e-f2-"} {
-		if strings.Contains(string(raw), forbidden) {
-			t.Fatalf("support projection leaks %q: %s", forbidden, raw)
-		}
-	}
-
-	if support[latched].Steps.SecondFactor != "withheld" || support[latched].StartedAt != support[latched].LastObservedAt {
-		t.Fatalf("support latched attempt = %+v, want withheld factor step and visible-only span", support[latched])
-	}
-
-	kept := detail[latched]
-	if kept.OutcomeBasis != "primary_failure_kept" || len(kept.Events) != 4 || kept.Projection != "detail" {
-		t.Fatalf("detail latched attempt = %+v, want kept failure and all events", kept)
-	}
-
-	for _, event := range kept.Events {
+	for _, event := range attempts["fl1."+strings.Repeat("2", 32)].Events {
 		if event.Stage == "primary_authentication" && event.Result == "succeeded" {
 			t.Fatal("a verified factor on a latched flow must never become a primary success")
 		}
-	}
-}
-
-// TestSupportProjectionRedactsOtherIdentitiesInAFlow pins that another login typed in the same flow is redacted.
-func TestSupportProjectionRedactsOtherIdentitiesInAFlow(t *testing.T) {
-	support, _ := attemptsByID(t, newService(t, fixtureStore(t)), caller(definitions.ScopeHistoryRead))
-	detail, _ := attemptsByID(t, newService(t, fixtureStore(t)), caller(definitions.ScopeHistoryDetail))
-	id := "fl1." + strings.Repeat("1", 32)
-
-	other := support[id].Events[1]
-	if !other.Identity.Redacted || other.Identity.SuppliedLogin != nil || other.Identity.SubjectMatch {
-		t.Fatalf("support event = %+v, want redacted foreign identity", other.Identity)
-	}
-
-	if login := detail[id].Events[1].Identity.SuppliedLogin; login == nil || *login != "mallory@example.test" {
-		t.Fatalf("detail event identity = %+v, want released foreign login", detail[id].Events[1].Identity)
 	}
 }
 
@@ -375,16 +342,14 @@ func TestDetailBindsTheAttemptToTheSubject(t *testing.T) {
 	}
 
 	if result := detail("rq1.req-bob", nil, definitions.ScopeHistoryDetail); result.Attempt == nil {
-		t.Fatal("detail role must reach an attempt without subject")
+		t.Fatal("the detail scope must reach an attempt without subject")
+	}
+
+	if result := detail("rq1.req-bob", nil, definitions.ScopeHistoryRead); result.Attempt == nil {
+		t.Fatal("the read scope must reach an attempt without subject")
 	}
 
 	_, err := service.GetAttempt(context.Background(), caller(definitions.ScopeHistoryRead), supporthistory.AttemptDetailRequest{
-		SchemaVersion: "1", AttemptID: "rq1.req-bob", Around: scenarioBase})
-	if !hasCode(err, supporthistory.CodeInvalidRequest) {
-		t.Fatalf("support detail without subject error = %v, want INVALID_REQUEST", err)
-	}
-
-	_, err = service.GetAttempt(context.Background(), caller(definitions.ScopeHistoryRead), supporthistory.AttemptDetailRequest{
 		SchemaVersion: "1", AttemptID: "session-token-value", Around: scenarioBase, Subject: anna})
 	if !hasCode(err, supporthistory.CodeInvalidAttemptID) {
 		t.Fatalf("malformed id error = %v, want INVALID_ATTEMPT_ID", err)

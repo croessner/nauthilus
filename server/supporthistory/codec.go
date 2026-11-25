@@ -30,6 +30,8 @@ const (
 	requestAttemptPrefix = "rq1."
 	cursorVersion        = 1
 	maxCursorLength      = 512
+	maxCursorKeyLength   = 128
+	maxCursorMarks       = 4
 	cursorDigestDomain   = "nauthilus.support_history.cursor.v1\x00"
 )
 
@@ -69,10 +71,10 @@ type cursorState struct {
 	Version   int    `json:"v"`
 }
 
-// queryDigest binds a cursor to the operation, the caller projection, and the normalized query.
-func queryDigest(operation string, projection Projection, parts ...string) string {
+// queryDigest binds a cursor to the operation, the projection, and the normalized query.
+func queryDigest(operation string, parts ...string) string {
 	hash := sha256.New()
-	hash.Write([]byte(cursorDigestDomain + operation + "\x00" + string(projection)))
+	hash.Write([]byte(cursorDigestDomain + operation + "\x00" + string(ProjectionDetail)))
 
 	for _, part := range parts {
 		hash.Write([]byte{0})
@@ -82,14 +84,40 @@ func queryDigest(operation string, projection Projection, parts ...string) strin
 	return hex.EncodeToString(hash.Sum(nil))[:32]
 }
 
-// encodeCursor renders a cursor for the next page.
-func encodeCursor(position AnchorPosition, queriedAt time.Time, digest string) string {
-	state := cursorState{Version: cursorVersion, AtMillis: position.At.UnixMilli(), Key: position.Key,
-		QueriedAt: queriedAt.UnixMilli(), Digest: digest}
+// listCursorState is the opaque paging state of an inner list: the events of one attempt, or the contributions or
+// hit claimants of one ban. Like cursorState it carries a position, the frozen query time, and the digest of the list
+// and query it belongs to, never any authority. Marks hold the list-specific integer parts of the position.
+type listCursorState struct {
+	Digest    string  `json:"fp"`
+	Key       string  `json:"key,omitempty"`
+	Marks     []int64 `json:"m,omitempty"`
+	AtMillis  int64   `json:"at,omitempty"`
+	QueriedAt int64   `json:"q"`
+	Version   int     `json:"v"`
+}
 
+// encodeState renders a cursor state as opaque URL-safe text.
+func encodeState(state any) string {
 	raw, _ := json.Marshal(state)
 
 	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// decodeState parses opaque cursor text into a state; false means the text is no cursor of this service.
+func decodeState(value string, state any) bool {
+	if len(value) > maxCursorLength {
+		return false
+	}
+
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+
+	return err == nil && json.Unmarshal(raw, state) == nil
+}
+
+// encodeCursor renders a cursor for the next page.
+func encodeCursor(position AnchorPosition, queriedAt time.Time, digest string) string {
+	return encodeState(cursorState{Version: cursorVersion, AtMillis: position.At.UnixMilli(), Key: position.Key,
+		QueriedAt: queriedAt.UnixMilli(), Digest: digest})
 }
 
 // decodeCursor parses a cursor and checks that it belongs to the same query.
@@ -98,22 +126,47 @@ func decodeCursor(value, digest string) (*cursorState, *Error) {
 		return nil, nil
 	}
 
-	if len(value) > maxCursorLength {
-		return nil, invalid(CodeInvalidCursor)
-	}
-
-	raw, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil {
-		return nil, invalid(CodeInvalidCursor)
-	}
-
 	var state cursorState
-	if err = json.Unmarshal(raw, &state); err != nil || state.Version != cursorVersion || state.Digest != digest ||
-		state.AtMillis <= 0 || state.QueriedAt <= 0 || len(state.Key) > 128 {
+	if !decodeState(value, &state) || state.Version != cursorVersion || state.Digest != digest ||
+		state.AtMillis <= 0 || state.QueriedAt <= 0 || len(state.Key) > maxCursorKeyLength {
 		return nil, invalid(CodeInvalidCursor)
 	}
 
 	return &state, nil
+}
+
+// encodeListCursor renders the cursor of the next inner-list page.
+func encodeListCursor(state listCursorState) string {
+	state.Version = cursorVersion
+
+	return encodeState(state)
+}
+
+// decodeListCursor parses an inner-list cursor and checks that it belongs to the same list and query and carries
+// exactly the expected number of marks; list-specific value checks stay with the list.
+func decodeListCursor(value, digest string, marks int) (*listCursorState, *Error) {
+	if value == "" {
+		return nil, nil
+	}
+
+	var state listCursorState
+	if !decodeState(value, &state) || state.Version != cursorVersion || state.Digest != digest ||
+		state.AtMillis < 0 || state.QueriedAt <= 0 || len(state.Key) > maxCursorKeyLength ||
+		len(state.Marks) != marks || marks > maxCursorMarks {
+		return nil, invalid(CodeInvalidCursor)
+	}
+
+	return &state, nil
+}
+
+// at returns the position instant of an inner-list cursor.
+func (c *listCursorState) at() time.Time {
+	return time.UnixMilli(c.AtMillis).UTC()
+}
+
+// queriedAt returns the frozen upper read bound of the paged list.
+func (c *listCursorState) queriedAt() time.Time {
+	return time.UnixMilli(c.QueriedAt).UTC()
 }
 
 // position returns the exclusive paging position of a cursor.

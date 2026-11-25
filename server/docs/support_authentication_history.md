@@ -30,8 +30,13 @@ client-supplied headers. The zero `Caller` has no permission, so an internal cal
 
 | Scope | Projection | Grants |
 |---|---|---|
-| `nauthilus:history_read` | `support` | Attempt search and detail of a **named** subject, ban search with counts and distinct-name counts. |
-| `nauthilus:history_detail` | `detail` | Everything above, plus other people's claimed names, accounts, and client IPs behind shared addresses, operator ids of ban releases, the individual factor events of fail-latched flows, and detail lookups without a subject. Implies `history_read`. |
+| `nauthilus:history_read` | `detail` | The complete recorded data: attempt search and detail (with or without a subject), ban search, every identity, account, and client IP of an attempt or ban (also behind shared addresses), status texts, operator ids of ban releases, and every factor event of fail-latched flows. |
+| `nauthilus:history_detail` | `detail` | The same as `history_read`; kept so existing grants keep working. |
+
+Recorded values are returned complete: nothing is cut, and only invisible format characters (Unicode category Cf,
+such as bidirectional overrides) are shown as `<U+XXXX>`. Data the API never reads stays out of every answer:
+password hashes, OTPs, recovery codes, tokens, session or flow handles, WebAuthn payloads, client ports, and user
+agents.
 
 `nauthilus:admin`, `nauthilus:security`, and the unrestricted Basic credential grant **no** history access (403
 `FORBIDDEN`). The support routes ask for no other scope: a caller needs neither `nauthilus:authenticate` nor any
@@ -58,7 +63,7 @@ auth:
 ```
 
 A Basic password is a static secret: it has no lifetime, and it is not bound to a fresh login or a second factor the
-way a user token of the MCP endpoint is. Grant `nauthilus:history_detail` to a Basic credential only where that is
+way a user token of the MCP endpoint is. Grant a history scope to a Basic credential only where that is
 acceptable, and prefer one credential per person so the audit record names who asked.
 
 Authorization is checked before any data access (including Redis identity mappings and the reader self-check) and
@@ -121,7 +126,7 @@ Optional `audit_reference` (`^[A-Za-z0-9._:/-]{1,64}$`) is an unverified ticket 
 | Status | Code | Meaning |
 |---|---|---|
 | 200 | – | Processed. Read `history` and `result_basis`; evidence may be partial or empty. A failed login in the data is **not** an error. |
-| 400 | `INVALID_REQUEST`, `WINDOW_TOO_LARGE`, `INVALID_CURSOR`, `INVALID_ATTEMPT_ID` | Fix the request. A cursor is bound to the same query and projection. |
+| 400 | `INVALID_REQUEST`, `WINDOW_TOO_LARGE`, `INVALID_CURSOR`, `INVALID_ATTEMPT_ID` | Fix the request. A cursor is bound to the same query. |
 | 401 | – | Missing or invalid backchannel token (middleware body `{"error": …}`). |
 | 403 | `FORBIDDEN` | Missing history scope, unrestricted Basic or admin-only credential, or a ban-search subject without the detail role. |
 | 422 | `QUERY_TOO_BROAD` | Read or response-size budget exceeded even with the smallest scan slice; narrow the window, add filters, or lower `page.limit`. |
@@ -182,10 +187,10 @@ IP; parallel tabs are separate flows, and every factor retry is its own event.
 | `outcome_basis` | `request_terminal_answer` (sealed answer of a request), `primary_failure_latched` (a fail-latched flow cannot succeed), `primary_failure_kept` (detail role: the latched step-up was consumed), `oidc_tokens_issued` (the flow's code was redeemed), `oidc_code_redemption_rejected` (the token request for the code was rejected; a client error, not a credential failure), `oidc_code_redemption_failed` (technical failure after the code was consumed), `none`, `legacy` |
 | `final_outcome_observed` | true only with one of the recorded bases above |
 | `progress` | furthest recorded step: `none`, `technical_error`, `pre_credential_rejected`, `primary_rejected`, `primary_succeeded`, `second_factor_completed`, `primary_failure_latched`, `authorization_code_issued`, `tokens_issued` |
-| `steps` | `primary`: `recorded`/`not_recorded`/`session_reused`; `second_factor`: `recorded`, `not_recorded`, `withheld`, `not_applicable`; `code_issuance`, `code_redemption`: `recorded`, `not_recorded`, `not_applicable` |
+| `steps` | `primary`: `recorded`/`not_recorded`/`session_reused`; `second_factor`: `recorded`, `not_recorded`, `not_applicable`; `code_issuance`, `code_redemption`: `recorded`, `not_recorded`, `not_applicable` |
 | `completion` | OIDC authorization-code flows only (null otherwise), see below |
 | `findings[]` | every observed failure with `code`, `category`, `certainty` (`observed`/`uncertain`), `uncertainty[]`, `event_id`; there is no single invented "main cause" |
-| `recording` | `known_gaps[]` (`CONFLICTING_TERMINAL_RECORDS`, `PRIMARY_ROW_NOT_RECORDED`, `AUTH_EVENTS_NOT_READ`, `ATTEMPT_MAY_EXTEND_BEYOND_READ_WINDOW`, `FLOW_COMPLETION_NEVER_RECORDED`, `FLOW_COMPLETION_NOT_OBSERVED`, `FLOW_COMPLETION_SCOPE_UNDETERMINED`, `LEGACY_ROWS_UNINTERPRETED`), `replayed_rows_merged`, `legacy_rows`, `events_truncated`, `events_withheld` |
+| `recording` | `known_gaps[]` (`CONFLICTING_TERMINAL_RECORDS`, `PRIMARY_ROW_NOT_RECORDED`, `AUTH_EVENTS_NOT_READ`, `ATTEMPT_MAY_EXTEND_BEYOND_READ_WINDOW`, `FLOW_COMPLETION_NEVER_RECORDED`, `FLOW_COMPLETION_NOT_OBSERVED`, `FLOW_COMPLETION_SCOPE_UNDETERMINED`, `LEGACY_ROWS_UNINTERPRETED`), `replayed_rows_merged`, `legacy_rows`, `events_truncated` (true exactly when `events_page.next_cursor` continues the events) |
 
 `outcome` never names a cause: always show `outcome_basis` and `findings` with it. An IdP password row with `ok` means
 only "primary step succeeded"; a request row with `ok` means the authentication request of that protocol was accepted.
@@ -234,7 +239,7 @@ session flow without password row is found; redemption events carry no client IP
 Events (`events[]`, at most 200 per attempt, ordered by recorded time; `sequence` is presentation order only, there is
 no global order across instances) carry `stage`, `result`, `code`, `category`, `identity` (`supplied_login` is the
 claim as typed, `canonical_account` the account recorded at event time, `account_found_at_capture` is a weak
-capture-time flag, `matched_by`, `subject_match`, `redacted`), `context`, the recorded Policy `decision`
+capture-time flag, `matched_by`, `subject_match`), `context`, the recorded Policy `decision`
 (`outcome_marker`, `response_marker`, `tempfail_reason`, `decision_sources`, `answered_status_code`,
 `answered_status_message`, …), `factor` for second-factor events only, and structured `reputation` (`state: none_recorded` is never a neutral rating; an early rejection can end before any
 reputation check).
@@ -255,7 +260,6 @@ reputation check).
 | `SECOND_FACTOR_CHALLENGE_UNAVAILABLE`, `STEP_UP_EXPIRED`, `STEP_UP_CONFLICT`, `FLOW_RESUME_CONFLICT` | Challenge or flow state missing, expired, or conflicting. |
 | `SECOND_FACTOR_ATTEMPT_LIMIT` | Attempt budget exhausted. |
 | `SECOND_FACTOR_TECHNICAL_ERROR`, `FLOW_STATE_ERROR` | Verifier, attempt store, or state failure. |
-| `SECOND_FACTOR_ON_LATCHED_FLOW` | Support role: factor attempts on a flow whose primary step failed; results withheld. |
 | `SECOND_FACTOR_VERIFIED_PRIMARY_FAILURE_KEPT` | Detail role: the factor was right, the earlier primary failure stays. Never a password success. |
 | `AUTHORIZATION_CODE_ISSUED` | The browser was redirected to the client with a code (stage `authorization`); the client has not been observed redeeming it. |
 | `TOKENS_ISSUED` | The code was redeemed and tokens issued (stage `token_exchange`); Nauthilus's part is complete. |
@@ -286,8 +290,7 @@ rejections, and an IdP browser login answers its page with 200 or 302. IdP pages
 the message is not necessarily what a user saw. Both are null when no terminal decision was sealed (contract
 `outcome = 'unknown'`), and legacy rows have no `decision` at all, so an unknown value never reads as success. The
 message is the text the authentication caller received (configured texts, Lua `status_message_set`, tempfail default),
-never a host backend error; in the support projection it is null on events whose identity is redacted, because free
-text can name that identity.
+never a host backend error.
 
 Example (production pattern of an OIDC password row): `{"outcome": "ok", "response_marker": "auth.response.ok",
 "answered_status_code": 200, "answered_status_message": "OK"}` with `context.transport_status: 302` – the decision
@@ -303,10 +306,9 @@ re-labelled. An unresolved login is never shown as a verified account.
 
 ### Projection
 
-Support: other identities in a flow are `redacted`; on fail-latched flows every factor event is withheld and
-replaced by `SECOND_FACTOR_ON_LATCHED_FLOW`, and `started_at`/`last_observed_at`/counts are computed over visible
-events only. Detail: everything recorded except data the API never reads (password hashes, OTPs, recovery codes,
-tokens, session or flow handles, WebAuthn payloads, client ports, user agents).
+Every reader gets the `detail` projection: other identities in a flow, every factor event of a fail-latched flow with
+its real finding (for example `SECOND_FACTOR_REJECTED` or `SECOND_FACTOR_VERIFIED_PRIMARY_FAILURE_KEPT`), and
+everything else recorded except data the API never reads (section 2).
 
 ### Paging and consistency
 
@@ -314,6 +316,41 @@ Attempts are ordered by latest subject-matching activity, newest first. The wind
 shrinking to 1 h before 422); `page.scanned_until` states the fully covered part `(scanned_until, until)` (attempts
 anchored exactly at `scanned_until` may follow on the next page). A page may be short while `next_cursor` is set. There is no snapshot isolation: rows exported late (login flush 60 s, event flush
 10 s) can repeat an attempt on a later page – deduplicate by `attempt_id`, and re-run a search that ends near "now".
+
+### Inner lists
+
+No inner list ends without a continuation:
+
+- **Attempt events** (200 per page): an attempt with more events carries `events_page` with `next_cursor` and the
+  `detail` arguments (`attempt_id`, `around`). `authentication_attempt_detail` with those arguments and
+  `events_page: {cursor, limit}` returns the next events; the store continues strictly after the last event (time,
+  source, event id), and event `sequence` numbers continue across pages. Outcome, basis, progress, steps, completion,
+  gaps, and the observed span come from the same interpretation read on every page; `findings` belong to the listed
+  events.
+- **Ban contributions** (500 per page) and **hit claimants** (50 per page): a ban with more carries
+  `contributions.next_cursor` or `hits.claimants_next_cursor`, orphan hits `orphan_hits.claimants_next_cursor`.
+  `bruteforce_history` with the same target and window and `inner_page: {ban_ref, list, cursor, limit}` (`list`:
+  `contributions`, `claimants`, `orphan_claimants`) returns the next items of that one ban. Contributions continue in
+  their order (window index, window counter, time, event id); claimants (most hits first, then name and account) use an
+  offset bound to the hit total, so a changed aggregate answers `INVALID_CURSOR` instead of shifting. Window statuses,
+  the crossing candidate, caveats, and the attribution are computed from the first 500 contributions as before; counts,
+  sources, distinct names, and subject hits over all rows.
+- Ban contexts of an attempt search keep their flags; their continuation is the `ban_history` reference with
+  `bruteforce_history`.
+
+Every cursor is bound to its list and query by a digest and carries the frozen `queried_at`, so every page reads the
+same range; another cursor is `INVALID_CURSOR`, a limit above the maximum `INVALID_REQUEST`.
+
+An event id names one event, so stored replays of an event (the same event id written more than once) are one event:
+the events continuation reads strictly after the event id of the last listed event, and a read full of replays can
+never end the paging before the distinct events that follow. Events and contributions without an event id continue
+from the position of the last listed item inclusively and skip the items already
+listed at exactly that position, so groups of equal keys (legacy rows without an event id at one instant) are never
+split or lost across pages or read bounds; ClickHouse breaks remaining ties deterministically over all row columns. A
+single group of more than 10,000 equal-position rows cannot be continued and answers `QUERY_TOO_BROAD`. Two limits
+come from the stores, not from paging: the contribution read keeps the contract's one row per `event_id`, so
+contribution rows without an event id collapse into one per read, and a background merge of the ReplacingMergeTree
+tables between two pages can collapse equal rows without an event id.
 
 ## 8. Brute-force bans
 
@@ -370,7 +407,7 @@ the hits of other requests. `ban_history` is omitted when no rejected request co
 not today's Redis state.
 
 Every ban carries `attribution`, `evidence`, and `ban_history` (arguments of `bruteforce_history` for this instance).
-Attribution classifies the listed contributions on unredacted rows, de-duplicated by event id:
+Attribution classifies the listed contributions, de-duplicated by event id:
 
 - `subject_by_account`: the recorded account is the subject's (supplied, recorded at event time, or recorded on a
   counted row that claims a subject login – so aliases of the same account are the same account);
@@ -394,13 +431,13 @@ Attribution classifies the listed contributions on unredacted rows, de-duplicate
 `evidence.completeness` is the contribution status (or `not_read`) and describes coverage only, never a responsible
 person, NAT, or VPN; `limitations[]` adds the ban unknowns and caveats. `subject_contributions[]` (at most 50) lists the
 subject's own increments with request id, attempt id when on the page, window counters, and `ban_active`; it is the
-subject's own data and visible to both roles. `contributing_accounts` (all recorded accounts) needs the detail role;
-support gets `null` and `identities_redacted: true`, so hidden identities never shrink to a misleading single account.
+subject's own data. `contributing_accounts` lists every recorded account of the listed contributions, and every
+contribution carries its claimed username, account, and client IP.
 
 `response_mode` only chooses the presentation: `detailed` (default) keeps full `attempts` and adds the full ban
 explanation as `bans[].detail`; `compact` returns `attempts: []`, `attempt_summaries[]` (outcome, decisive `reason`,
 finding codes, client addresses, protocols, request ids, gaps, and the `detail` arguments of the attempt lookup), and
-`bans[].detail: null`. Neither mode grants rights; the projection always follows the scopes. Without the two
+`bans[].detail: null`. Neither mode changes the data released. Without the two
 parameters the answer is unchanged; `ban_history` reports the coverage of the brute-force sources. Bounds per page: 20
 rejected requests, 8 client addresses, 32 candidate networks, 10 explained bans; beyond them entries say
 `BAN_CONTEXT_LIMIT_REACHED`, and a low time budget says `BAN_CONTEXT_BUDGET_EXHAUSTED`.
@@ -426,7 +463,7 @@ Abridged compact answer (support role; envelope, paging, and coverage as in ever
      "end": {"reason": "planned_end_passed_unconfirmed", "at": "2026-11-18T08:25:00Z", "release_source": null},
      "subject_relation": "HIT_EXISTING_BAN",
      "attribution": {"code": "OTHER_ACCOUNTS_ONLY", "other_contributors": "observed",
-       "person_attribution": "NOT_ESTABLISHED", "contributing_accounts": null, "identities_redacted": true,
+       "person_attribution": "NOT_ESTABLISHED", "contributing_accounts": ["bob"],
        "counts": {"listed": 2, "subject_by_account": 0, "subject_by_login_claim": 0, "other_accounts": 2,
                   "distinct_other_accounts": 1, "no_account": 0, "unresolved": 0, "counted_while_banned": 0},
        "subject_contributions": [], "subject_contributions_truncated": false},

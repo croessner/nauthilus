@@ -100,32 +100,29 @@ func assertAnsweredStatus(t *testing.T, id string, decision *supporthistory.Deci
 	}
 }
 
-// TestSupportProjectionRedactsTheAnsweredMessageOfOtherIdentities pins that a free-text status message of another
-// identity in the same flow is withheld from the support role, while its status code stays and the detail role sees
-// both.
-func TestSupportProjectionRedactsTheAnsweredMessageOfOtherIdentities(t *testing.T) {
+// TestAnsweredMessageOfOtherIdentitiesIsReleased pins that the free-text status message of another identity in the
+// same flow reaches every history scope together with its status code.
+func TestAnsweredMessageOfOtherIdentitiesIsReleased(t *testing.T) {
 	flow := strings.Repeat("6", 32)
 	at := scenarioBase.Add(-4 * time.Minute)
 	foreign := answeredLogin(at.Add(time.Second), "flow6-b", flow, "fail", 403, "Account mallory@example.test locked")
 	foreign.Username, foreign.Account = "mallory@example.test", ""
-	build := func() []supporthistory.LoginRecord {
-		return []supporthistory.LoginRecord{answeredLogin(at, "flow6-a", flow, "fail", 403, "Invalid login or password"),
-			foreign}
-	}
-
-	supportStore, detailStore := fixtureStore(t), fixtureStore(t)
-	supportStore.Logins = append(supportStore.Logins, build()...)
-	detailStore.Logins = append(detailStore.Logins, build()...)
-	support, _ := attemptsByID(t, newService(t, supportStore), caller(definitions.ScopeHistoryRead))
-	detail, _ := attemptsByID(t, newService(t, detailStore), caller(definitions.ScopeHistoryDetail))
 	id := "fl1." + flow
 
-	if events := support[id].Events; len(events) != 2 || !events[1].Identity.Redacted {
-		t.Fatalf("support events = %+v, want the second identity redacted", events)
-	}
+	for _, scope := range historyScopes {
+		t.Run(scope, func(t *testing.T) {
+			store := fixtureStore(t)
+			store.Logins = append(store.Logins,
+				answeredLogin(at, "flow6-a", flow, "fail", 403, "Invalid login or password"), foreign)
+			attempts, _ := attemptsByID(t, newService(t, store), caller(scope))
 
-	assertAnsweredStatus(t, id+" own", support[id].Events[0].Decision, 403, "Invalid login or password")
-	assertAnsweredStatus(t, id+" foreign/support", support[id].Events[1].Decision, 403, "")
-	assertAnsweredStatus(t, id+" foreign/detail", detail[id].Events[1].Decision, 403,
-		"Account mallory@example.test locked")
+			events := attempts[id].Events
+			if len(events) != 2 || stringValue(events[1].Identity.SuppliedLogin) != "mallory@example.test" {
+				t.Fatalf("events = %+v, want both identities released", events)
+			}
+
+			assertAnsweredStatus(t, id+" own", events[0].Decision, 403, "Invalid login or password")
+			assertAnsweredStatus(t, id+" foreign", events[1].Decision, 403, "Account mallory@example.test locked")
+		})
+	}
 }

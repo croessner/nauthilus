@@ -377,7 +377,7 @@ func TestCompletionProbeFailureStaysConservative(t *testing.T) {
 }
 
 // TestSessionReusedFlowsAnchorFilteredSearches pins that a flow without login row is found through its events, also
-// with protocol and client filters, and that its identity is released to the support role.
+// with protocol and client filters, and that its identity is released.
 func TestSessionReusedFlowsAnchorFilteredSearches(t *testing.T) {
 	request := searchRequest()
 	request.Filter.Until = completionNow
@@ -395,7 +395,7 @@ func TestSessionReusedFlowsAnchorFilteredSearches(t *testing.T) {
 	}
 
 	for _, event := range result.Attempts[index].Events {
-		if event.Identity.Redacted || stringValue(event.Identity.CanonicalAccount) != "acc-anna" {
+		if stringValue(event.Identity.CanonicalAccount) != "acc-anna" {
 			t.Fatalf("support event identity = %+v, want the subject released", event.Identity)
 		}
 	}

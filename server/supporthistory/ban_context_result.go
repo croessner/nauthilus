@@ -17,8 +17,7 @@ package supporthistory
 
 import "time"
 
-// Response modes of an attempt search. The mode selects only the presentation; the caller's projection still comes
-// from its verified scopes, so "detailed" never releases more than the caller may see.
+// Response modes of an attempt search. The mode selects only the presentation of the same complete data.
 const (
 	// ResponseModeDetailed is the full attempt answer (the default).
 	ResponseModeDetailed = "detailed"
@@ -51,10 +50,9 @@ type AttemptSummary struct {
 	Progress       string           `json:"progress"`
 	FinalObserved  bool             `json:"final_outcome_observed"`
 	Truncated      bool             `json:"events_truncated"`
-	Withheld       bool             `json:"events_withheld"`
 }
 
-// SubjectContribution is one counted increment recorded under the subject (its own data, both projections).
+// SubjectContribution is one counted increment recorded under the subject (its own data).
 type SubjectContribution struct {
 	At            time.Time `json:"at"`
 	WindowIndex   *int64    `json:"window_index"`
@@ -89,7 +87,6 @@ type BanAttribution struct {
 	Code                          string                `json:"code"`
 	OtherContributors             string                `json:"other_contributors"`
 	PersonAttribution             string                `json:"person_attribution"`
-	IdentitiesRedacted            bool                  `json:"identities_redacted"`
 	SubjectContributionsTruncated bool                  `json:"subject_contributions_truncated"`
 }
 

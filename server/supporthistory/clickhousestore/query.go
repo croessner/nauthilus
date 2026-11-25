@@ -159,3 +159,26 @@ func anyOf(alternatives ...string) string {
 
 	return "(" + strings.Join(kept, " OR ") + ")"
 }
+
+// lexicographicAfter renders "columns strictly after values" in lexicographic order like lexicographicFrom.
+func lexicographicAfter(columns, values []string) string {
+	return lexicographic(columns, values, " > ")
+}
+
+// lexicographicFrom renders "columns at or after values" in lexicographic order as nested comparisons, so nullable
+// columns never match and every comparison can use the sort key; placeholders are passed in as values.
+func lexicographicFrom(columns, values []string) string {
+	return lexicographic(columns, values, " >= ")
+}
+
+// lexicographic renders the nested comparison of columns with values; last compares the final column.
+func lexicographic(columns, values []string, last string) string {
+	condition := columns[len(columns)-1] + last + values[len(values)-1]
+
+	for index := len(columns) - 2; index >= 0; index-- {
+		condition = columns[index] + " > " + values[index] + " OR (" + columns[index] + " = " + values[index] +
+			" AND (" + condition + "))"
+	}
+
+	return "(" + condition + ")"
+}

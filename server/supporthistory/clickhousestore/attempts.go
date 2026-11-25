@@ -31,6 +31,15 @@ const (
 	attemptKeyLogin = "if(flow_ref != '', flow_ref, session)"
 	attemptKeyEvent = "if(flow_ref != '', flow_ref, request_id)"
 	keyKindExpr     = "if(flow_ref != '', 'flow', 'request')"
+
+	// tsColumn and eventIDColumn are the time and event-id columns of every keyset continuation.
+	tsColumn      = "ts"
+	eventIDColumn = "event_id"
+
+	// rowTieBreak orders rows that share their whole keyset position (legacy rows without event id at one instant)
+	// deterministically over all row columns, so a continuation that steps over the listed ties of a position skips
+	// exactly the rows an earlier read listed; rows equal in every column are interchangeable.
+	rowTieBreak = "cityHash64(*)"
 )
 
 // loginColumns are the only logins columns the reader selects (no password hash, port, user agent, host, HIBP).
@@ -173,6 +182,26 @@ func groupCondition(stmt *statement, query supporthistory.RowQuery, requestColum
 	return anyOf(flows, requests)
 }
 
+// positionCondition restricts a (ts, event_id) ordered read to the rows a listed position continues with.
+func positionCondition(stmt *statement, position *supporthistory.RowPosition) {
+	if position == nil {
+		return
+	}
+
+	at := stmt.instant(position.At)
+
+	switch position.Bound {
+	case supporthistory.RowAfterInstant:
+		stmt.where("ts > " + at)
+	case supporthistory.RowFromInstant:
+		stmt.where("ts >= " + at)
+	case supporthistory.RowAfterEventID:
+		stmt.where(lexicographicAfter([]string{tsColumn, eventIDColumn}, []string{at, stmt.text(position.EventID)}))
+	default:
+		stmt.where(lexicographicFrom([]string{tsColumn, eventIDColumn}, []string{at, stmt.text(position.EventID)}))
+	}
+}
+
 // groupLimit renders the per-attempt and total bounds of a row query.
 func groupLimit(query supporthistory.RowQuery, key string) string {
 	perGroup := max(1, query.LimitPerGroup)
@@ -197,9 +226,10 @@ func (s *Store) LoginRows(ctx context.Context, query supporthistory.RowQuery) ([
 	}
 
 	stmt.where(groupCondition(stmt, query, "session", subject))
+	positionCondition(stmt, query.LoginsAfter)
 
 	sql := "SELECT " + loginColumns + " FROM " + s.client.table("logins") + stmt.whereClause() +
-		" ORDER BY ts, event_id" + groupLimit(query, attemptKeyLogin)
+		" ORDER BY ts, event_id, " + rowTieBreak + groupLimit(query, attemptKeyLogin)
 
 	var records []supporthistory.LoginRecord
 
@@ -233,9 +263,10 @@ func (s *Store) AuthEvents(ctx context.Context, query supporthistory.RowQuery) (
 	}
 
 	stmt.where(groupCondition(stmt, query, "request_id", subject))
+	positionCondition(stmt, query.EventsAfter)
 
 	sql := "SELECT " + eventColumns + " FROM " + s.client.table("auth_events") + stmt.whereClause() +
-		" ORDER BY ts, event_id" + groupLimit(query, attemptKeyEvent)
+		" ORDER BY ts, event_id, " + rowTieBreak + groupLimit(query, attemptKeyEvent)
 
 	var records []supporthistory.AuthEventRecord
 

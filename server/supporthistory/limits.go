@@ -40,8 +40,13 @@ const (
 	// MaxContributions bounds the listed counted contributions of one ban.
 	MaxContributions = 500
 
-	// MaxClaimants bounds the named hit claimants of one ban in the detail projection.
+	// MaxClaimants bounds the named hit claimants of one ban.
 	MaxClaimants = 50
+
+	// MaxEqualPositionRows bounds the listed items that one continuation may step over at the whole keyset position
+	// of its cursor (rows without event id that share their instant and, for contributions, their window counters).
+	// A longer group of equal positions is refused as QUERY_TOO_BROAD instead of being skipped.
+	MaxEqualPositionRows = 10000
 
 	// MaxLifecycleRows bounds the lifecycle rows read for the candidate networks of one ban search.
 	MaxLifecycleRows = 2000

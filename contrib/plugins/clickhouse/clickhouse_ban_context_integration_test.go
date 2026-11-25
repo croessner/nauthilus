@@ -276,7 +276,7 @@ func (b banContextTransports) assertForbiddenWithoutHistoryScope(t *testing.T, a
 	}
 }
 
-// assertCompactBanContext checks the support projection of the shared-IP ban behind the subject's rejected request.
+// assertCompactBanContext checks the shared-IP ban behind the subject's rejected request, with every contributing account.
 func assertCompactBanContext(t *testing.T, answer map[string]any) {
 	t.Helper()
 
@@ -294,7 +294,7 @@ func assertCompactBanContext(t *testing.T, answer map[string]any) {
 		counts["other_accounts"], counts["unresolved"], attribution["contributing_accounts"])
 
 	// alice and bob are other recorded accounts; ceo@foreign.test has no recorded account, so exclusivity stays open.
-	if got != "matched/198.51.100.0/24/HIT_EXISTING_BAN/released/NOT_SUFFICIENTLY_ATTRIBUTABLE/observed/3/2/1/<nil>" {
+	if got != "matched/198.51.100.0/24/HIT_EXISTING_BAN/released/NOT_SUFFICIENTLY_ATTRIBUTABLE/observed/3/2/1/[alice bob]" {
 		t.Fatalf("ban context = %s", got)
 	}
 

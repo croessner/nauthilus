@@ -71,7 +71,7 @@ func (s *Store) KindCounts(ctx context.Context, query supporthistory.KindQuery) 
 		return aggregate, err
 	}
 
-	aggregate.Claimants, err = s.claimants(ctx, inner, stmt, query.Claimants)
+	aggregate.Claimants, err = s.claimants(ctx, inner, stmt, query.ClaimantOffset, query.Claimants)
 
 	return aggregate, err
 }
@@ -119,10 +119,11 @@ func decodeSourceMap(raw [2]json.RawMessage, target map[string]int64) error {
 	return nil
 }
 
-// claimants returns the most frequent claimed names behind the networks (detail projection only).
-func (s *Store) claimants(ctx context.Context, inner string, stmt *statement, limit int) ([]supporthistory.ClaimantRecord, error) {
+// claimants returns the claimed names behind the networks, most frequent first, after skipping offset of them; the
+// group key (claimed name, account) is the unique tie-break that keeps the order stable across pages.
+func (s *Store) claimants(ctx context.Context, inner string, stmt *statement, offset, limit int) ([]supporthistory.ClaimantRecord, error) {
 	sql := "SELECT claimed_username, account, count() AS hits FROM (" + inner + ") GROUP BY claimed_username, account " +
-		"ORDER BY hits DESC, claimed_username, account LIMIT " + strconv.Itoa(limit)
+		"ORDER BY hits DESC, claimed_username, account LIMIT " + strconv.Itoa(max(0, offset)) + ", " + strconv.Itoa(limit)
 
 	var claimants []supporthistory.ClaimantRecord
 

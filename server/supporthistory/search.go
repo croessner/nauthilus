@@ -39,13 +39,13 @@ func (s *Service) SearchAttempts(ctx context.Context, caller Caller, request Att
 		operation = operationAttemptSearchBans
 	}
 
-	ctx, call, err := s.begin(ctx, caller, operation, permissionAttemptsRead,
+	ctx, call, err := s.begin(ctx, caller, operation, permissionHistoryRead,
 		[]string{request.Subject.Login, request.Subject.Account}, request.AuditReference, request.validate)
 	if err != nil {
 		return nil, err
 	}
 
-	result, searchErr := s.searchAttempts(ctx, caller, request)
+	result, searchErr := s.searchAttempts(ctx, request)
 	if searchErr != nil {
 		call.finish(ctx, 0, searchErr)
 
@@ -64,14 +64,13 @@ type searchScope struct {
 	cursor     *cursorState
 	completion completionCutover
 	matcher    subjectMatcher
-	projection Projection
 	digest     string
 	limit      int
 }
 
 // searchAttempts runs one authorized search page.
-func (s *Service) searchAttempts(ctx context.Context, caller Caller, request AttemptSearchRequest) (*AttemptSearchResult, *Error) {
-	scope, resolution, scopeErr := s.searchScope(ctx, caller, request)
+func (s *Service) searchAttempts(ctx context.Context, request AttemptSearchRequest) (*AttemptSearchResult, *Error) {
+	scope, resolution, scopeErr := s.searchScope(ctx, request)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}
@@ -128,11 +127,11 @@ func (s *Service) presentAttempts(ctx context.Context, scope searchScope, reques
 }
 
 // searchScope validates paging, freezes the query time, and resolves the subject.
-func (s *Service) searchScope(ctx context.Context, caller Caller, request AttemptSearchRequest) (searchScope, SubjectResolution, *Error) {
+func (s *Service) searchScope(ctx context.Context, request AttemptSearchRequest) (searchScope, SubjectResolution, *Error) {
 	scope := searchScope{window: Window{From: request.Filter.From.UTC(), Until: request.Filter.Until.UTC()},
-		queriedAt: s.now().UTC(), projection: caller.projection()}
+		queriedAt: s.now().UTC()}
 	filter := request.Filter.anchorFilter()
-	scope.digest = queryDigest(operationAttemptSearch, scope.projection, request.Subject.Login, request.Subject.Account,
+	scope.digest = queryDigest(operationAttemptSearch, request.Subject.Login, request.Subject.Account,
 		filter.ClientIP, filter.Protocol, filter.OIDCClientID, filter.SAMLEntityID,
 		scope.window.From.Format(time.RFC3339Nano), scope.window.Until.Format(time.RFC3339Nano))
 

@@ -30,14 +30,39 @@ type BanSearchFilter struct {
 	BanRef string    `json:"ban_ref,omitempty"`
 }
 
-// BanSearchRequest explains recorded bans of one IP or network. Subject is accepted only for the detail role.
+// BanSearchRequest explains recorded bans of one IP or network. Subject optionally names the person to attribute.
 type BanSearchRequest struct {
-	Subject        *Subject        `json:"subject,omitempty"`
-	Target         BanTarget       `json:"target"`
-	Filter         BanSearchFilter `json:"filter"`
-	Page           PageRequest     `json:"page"`
-	SchemaVersion  string          `json:"schema_version"`
-	AuditReference string          `json:"audit_reference,omitempty"`
+	Subject        *Subject             `json:"subject,omitempty"`
+	InnerPage      *BanInnerPageRequest `json:"inner_page,omitempty"`
+	Target         BanTarget            `json:"target"`
+	Filter         BanSearchFilter      `json:"filter"`
+	Page           PageRequest          `json:"page"`
+	SchemaVersion  string               `json:"schema_version"`
+	AuditReference string               `json:"audit_reference,omitempty"`
+}
+
+// Inner lists a ban search can page.
+const (
+	// InnerListContributions pages the counted contributions of one ban (default and maximum MaxContributions).
+	InnerListContributions = "contributions"
+
+	// InnerListClaimants pages the hit claimants of one ban (default and maximum MaxClaimants).
+	InnerListClaimants = "claimants"
+
+	// InnerListOrphanClaimants pages the claimants of hits outside every ban instance (default and maximum
+	// MaxClaimants); it names no ban.
+	InnerListOrphanClaimants = "orphan_claimants"
+)
+
+// BanInnerPageRequest selects one page of an inner list. For contributions and claimants, BanRef names the ban and
+// the answer lists only that ban; Cursor is the contributions.next_cursor or hits.claimants_next_cursor of an earlier
+// answer to the same target and window. Orphan claimants name no ban and continue orphan_hits.claimants_next_cursor.
+// An inner page is never combined with page.cursor.
+type BanInnerPageRequest struct {
+	BanRef string `json:"ban_ref,omitempty"`
+	List   string `json:"list"`
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // ResolvedTarget echoes the canonical target and the computed candidate networks.
@@ -101,7 +126,6 @@ type Contribution struct {
 	RequestID       string    `json:"request_id"`
 	CountSource     string    `json:"count_source"`
 	Protocol        string    `json:"protocol"`
-	Redacted        bool      `json:"redacted"`
 }
 
 // CrossingCandidate is the latest crossed increment before activation; a heuristic, never a unique cause.
@@ -118,12 +142,15 @@ type Contributions struct {
 	DistinctClaimedNames *int64             `json:"distinct_claimed_names"`
 	Windows              []WindowStatus     `json:"windows"`
 	Items                []Contribution     `json:"items"`
-	Caveats              []string           `json:"caveats"`
-	Status               string             `json:"status"`
-	Truncated            bool               `json:"truncated"`
+	// NextCursor continues Items through inner_page {ban_ref, list: contributions, cursor}; Truncated is true exactly
+	// when it is set.
+	NextCursor *string  `json:"next_cursor,omitempty"`
+	Caveats    []string `json:"caveats"`
+	Status     string   `json:"status"`
+	Truncated  bool     `json:"truncated"`
 }
 
-// Claimant is one claimed login name behind a network with its hit count (detail role only).
+// Claimant is one claimed login name behind a network with its hit count.
 type Claimant struct {
 	ClaimedUsername *string `json:"claimed_username"`
 	Account         *string `json:"account"`
@@ -140,6 +167,14 @@ type HitSummary struct {
 	Count                int64            `json:"count"`
 	CountIsUpperBound    bool             `json:"count_is_upper_bound"`
 	IntervalApproximate  bool             `json:"interval_approximate"`
+
+	// ClaimantsNextCursor continues Claimants through inner_page {ban_ref, list: claimants, cursor}, or list
+	// orphan_claimants for orphan hits. Answers that are no ban search (ban contexts) never carry it; their
+	// ban_history reference reads the ban whose answer does.
+	ClaimantsNextCursor *string `json:"claimants_next_cursor,omitempty"`
+
+	// ClaimantsTruncated tells that more claimants than listed hit the ban; the most frequent are listed first.
+	ClaimantsTruncated bool `json:"claimants_truncated"`
 }
 
 // Ban is one recorded ban instance with its attributed evidence.

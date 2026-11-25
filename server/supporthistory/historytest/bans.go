@@ -16,8 +16,10 @@
 package historytest
 
 import (
+	"cmp"
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/croessner/nauthilus/v4/server/supporthistory"
@@ -81,8 +83,9 @@ func (b *BanStore) Lifecycle(_ context.Context, query supporthistory.LifecycleQu
 	}), nil
 }
 
-// Contributions mirrors the §13.4 reference predicate over the configured counted rows of a bucket, including the
-// replay removal by event id (LIMIT 1 BY event_id).
+// Contributions mirrors the §13.4 reference predicate over the configured counted rows of a bucket in the order
+// window_index, window_current, ts, event_id, including the replay removal by event id (LIMIT 1 BY event_id), the
+// continuation position, and the row limit.
 func (b *BanStore) Contributions(_ context.Context, query supporthistory.ContributionQuery) ([]supporthistory.CountedRecord, error) {
 	if err := b.record("Contributions"); err != nil {
 		return nil, err
@@ -90,20 +93,46 @@ func (b *BanStore) Contributions(_ context.Context, query supporthistory.Contrib
 
 	var rows []supporthistory.CountedRecord
 
-	seen := map[string]struct{}{}
-
 	for _, row := range b.Contribs[query.BucketID] {
-		if _, replay := seen[row.EventID]; replay && row.EventID != "" {
-			continue
-		}
-
-		if contributionMatch(query, row) {
-			seen[row.EventID] = struct{}{}
+		if contributionMatch(query, row) && contributionFrom(row, query.Start) {
 			rows = append(rows, row)
 		}
 	}
 
+	slices.SortStableFunc(rows, compareContributions)
+
+	seen := map[string]struct{}{}
+	rows = slices.DeleteFunc(rows, func(row supporthistory.CountedRecord) bool {
+		_, replay := seen[row.EventID]
+		seen[row.EventID] = struct{}{}
+
+		return replay && row.EventID != ""
+	})
+
+	if query.Limit > 0 && len(rows) > query.Limit {
+		rows = rows[:query.Limit]
+	}
+
 	return rows, nil
+}
+
+// compareContributions orders counted rows by window_index, window_current, ts, and event_id; the predicate keeps
+// only rows whose window values are set.
+func compareContributions(a, b supporthistory.CountedRecord) int {
+	return cmp.Or(cmp.Compare(*a.WindowIndex, *b.WindowIndex), cmp.Compare(*a.WindowCurrent, *b.WindowCurrent),
+		a.At.Compare(b.At), cmp.Compare(a.EventID, b.EventID))
+}
+
+// contributionFrom mirrors the inclusive keyset condition of a contribution continuation.
+func contributionFrom(row supporthistory.CountedRecord, position *supporthistory.ContributionPosition) bool {
+	if position == nil {
+		return true
+	}
+
+	key := supporthistory.CountedRecord{WindowIndex: &position.WindowIndex, WindowCurrent: &position.WindowCurrent,
+		At: position.At, EventID: position.EventID}
+
+	return compareContributions(row, key) >= 0
 }
 
 // contributionMatch mirrors the reference predicate for one counted row.
@@ -145,6 +174,7 @@ func (b *BanStore) KindCounts(_ context.Context, query supporthistory.KindQuery)
 	}
 
 	names := map[string]struct{}{}
+	claimants := map[[2]string]int64{}
 
 	for _, row := range b.Volume {
 		if row.Kind != query.Kind || !slices.Contains(query.Networks, row.Network) || !inRange(row.At, query.From, query.Until) ||
@@ -154,6 +184,7 @@ func (b *BanStore) KindCounts(_ context.Context, query supporthistory.KindQuery)
 
 		aggregate.Total++
 		aggregate.BySource[row.HitSource]++
+		claimants[[2]string{row.ClaimedUsername, row.Account}]++
 
 		if row.ClaimedUsername != "" {
 			names[row.ClaimedUsername] = struct{}{}
@@ -162,8 +193,32 @@ func (b *BanStore) KindCounts(_ context.Context, query supporthistory.KindQuery)
 
 	distinct := int64(len(names))
 	aggregate.DistinctNames = &distinct
+	aggregate.Claimants = topClaimants(claimants, query.ClaimantOffset, query.Claimants)
 
 	return aggregate, nil
+}
+
+// topClaimants mirrors the claimant read: claimed name and account with their hits, most hits first, at most limit
+// after skipping offset.
+func topClaimants(counts map[[2]string]int64, offset, limit int) []supporthistory.ClaimantRecord {
+	if limit <= 0 {
+		return nil
+	}
+
+	claimants := make([]supporthistory.ClaimantRecord, 0, len(counts))
+
+	for key, hits := range counts {
+		claimants = append(claimants, supporthistory.ClaimantRecord{ClaimedUsername: key[0], Account: key[1], Hits: hits})
+	}
+
+	slices.SortFunc(claimants, func(left, right supporthistory.ClaimantRecord) int {
+		return cmp.Or(cmp.Compare(right.Hits, left.Hits), strings.Compare(left.ClaimedUsername, right.ClaimedUsername),
+			strings.Compare(left.Account, right.Account))
+	})
+
+	start := min(max(0, offset), len(claimants))
+
+	return claimants[start:min(start+limit, len(claimants))]
 }
 
 // RequestHits mirrors the request-hit read: ban_hit rows of the requests on the networks, replays removed by event

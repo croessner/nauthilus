@@ -370,10 +370,12 @@ func (s *Store) LoginRows(_ context.Context, query supporthistory.RowQuery) ([]s
 		request := row.FlowRef == "" && slices.Contains(query.Requests, row.Session) &&
 			(query.Subject == nil || subjectLogin(*query.Subject, row))
 
-		if flow || request {
+		if (flow || request) && afterPosition(row.At, row.EventID, query.LoginsAfter) {
 			rows = append(rows, row)
 		}
 	}
+
+	sortRows(rows, func(row supporthistory.LoginRecord) (time.Time, string) { return row.At, row.EventID })
 
 	return limitGroups(rows, query.LimitPerGroup, loginKey), nil
 }
@@ -395,12 +397,45 @@ func (s *Store) AuthEvents(_ context.Context, query supporthistory.RowQuery) ([]
 		request := row.FlowRef == "" && slices.Contains(query.Requests, row.RequestID) &&
 			(query.Subject == nil || len(query.Subject.Accounts) == 0 || slices.Contains(query.Subject.Accounts, row.Account))
 
-		if flow || request {
+		if (flow || request) && afterPosition(row.At, row.EventID, query.EventsAfter) {
 			rows = append(rows, row)
 		}
 	}
 
+	sortRows(rows, func(row supporthistory.AuthEventRecord) (time.Time, string) { return row.At, row.EventID })
+
 	return limitGroups(rows, query.LimitPerGroup, eventKey), nil
+}
+
+// afterPosition mirrors the keyset condition of a continuation read in (ts, event_id) order; the own source
+// continues from its position inclusively.
+func afterPosition(at time.Time, eventID string, position *supporthistory.RowPosition) bool {
+	if position == nil {
+		return true
+	}
+
+	switch order := at.Compare(position.At); {
+	case order != 0:
+		return order > 0
+	case position.Bound == supporthistory.RowAfterInstant:
+		return false
+	case position.Bound == supporthistory.RowFromInstant:
+		return true
+	case position.Bound == supporthistory.RowAfterEventID:
+		return eventID > position.EventID
+	default:
+		return eventID >= position.EventID
+	}
+}
+
+// sortRows mirrors ORDER BY ts, event_id of the row reads.
+func sortRows[T any](rows []T, key func(T) (time.Time, string)) {
+	slices.SortStableFunc(rows, func(a, b T) int {
+		atA, idA := key(a)
+		atB, idB := key(b)
+
+		return cmp.Or(atA.Compare(atB), cmp.Compare(idA, idB))
+	})
 }
 
 // limitGroups orders by time and keeps at most limit rows per attempt key.

@@ -120,17 +120,15 @@ type attributionInput struct {
 	matcher     subjectMatcher
 	items       []CountedRecord
 	ban         Ban
-	projection  Projection
 	estimated   bool
 }
 
 // attribute classifies the listed contributions of one ban and derives the attribution code, the other-contributor
-// state, and the evidence block. Every code is computed on unredacted rows; only the projection decides what is shown.
+// state, and the evidence block.
 func attribute(input attributionInput) (BanAttribution, BanEvidence) {
 	items := input.items
 	classifier := newContributorClassifier(input.matcher, items)
-	attribution := BanAttribution{SubjectContributions: []SubjectContribution{}, PersonAttribution: personNotEstablish,
-		IdentitiesRedacted: input.projection != ProjectionDetail}
+	attribution := BanAttribution{SubjectContributions: []SubjectContribution{}, PersonAttribution: personNotEstablish}
 	others, accounts := map[string]struct{}{}, map[string]struct{}{}
 	countedAfter := false
 
@@ -156,9 +154,7 @@ func attribute(input attributionInput) (BanAttribution, BanEvidence) {
 	evidence := banEvidence(input, attribution.Counts, classifier.trusted, countedAfter)
 	attribution.Code, attribution.OtherContributors = attributionCode(attribution.Counts, sufficient(evidence))
 
-	if input.projection == ProjectionDetail {
-		attribution.ContributingAccounts = sortedKeys(accounts)
-	}
+	attribution.ContributingAccounts = sortedKeys(accounts)
 
 	return attribution, evidence
 }

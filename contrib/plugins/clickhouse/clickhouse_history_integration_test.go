@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"slices"
@@ -352,7 +353,7 @@ func searchAll(t *testing.T, env historyEnv, service *supporthistory.Service, ca
 }
 
 // TestClickHouseHistoryAnswersWhatTheWriterRecorded reads the plugin-written scenario through the provisioned
-// read-only account and checks the support projection of every path.
+// read-only account and checks the complete data a history_read caller receives on every path.
 func TestClickHouseHistoryAnswersWhatTheWriterRecorded(t *testing.T) {
 	env := startHistoryEnv(t)
 	service := historyService(t, env, provisionReader(t, env.db, "2", clickhousestore.BudgetQuerySettings))
@@ -429,7 +430,7 @@ func assertCompletionFlows(t *testing.T, attempts map[string]supporthistory.Atte
 	}
 }
 
-// assertSupportFlows checks the TOTP retry flow and the withheld fail-latched flow of the support projection.
+// assertSupportFlows checks the TOTP retry flow and the fail-latched flow with every factor event.
 func assertSupportFlows(t *testing.T, attempts map[string]supporthistory.Attempt) {
 	t.Helper()
 
@@ -455,26 +456,25 @@ func assertRetryFlow(t *testing.T, retry supporthistory.Attempt) {
 	rejected := slices.ContainsFunc(retry.Events, func(event supporthistory.Event) bool {
 		return event.Code == supporthistory.CodeFactorRejected
 	})
-	redacted := slices.ContainsFunc(retry.Events, func(event supporthistory.Event) bool {
-		return event.Identity.Redacted && event.Identity.SuppliedLogin == nil
+	foreign := slices.ContainsFunc(retry.Events, func(event supporthistory.Event) bool {
+		return !event.Identity.SubjectMatch && event.Identity.SuppliedLogin != nil
 	})
 
-	if !rejected || !redacted {
-		t.Fatalf("retry flow events = %+v, want the earlier TOTP rejection kept and the other login redacted", retry.Events)
+	if !rejected || !foreign {
+		t.Fatalf("retry flow events = %+v, want the earlier TOTP rejection kept and the other login shown", retry.Events)
 	}
 }
 
-// assertLatchedFlow checks that the support projection reports the latched rejection without factor results.
+// assertLatchedFlow checks that a history_read caller sees the latched rejection with every factor event.
 func assertLatchedFlow(t *testing.T, latched supporthistory.Attempt) {
 	t.Helper()
 
-	if latched.Outcome != "rejected" || latched.OutcomeBasis != "primary_failure_latched" ||
-		latched.Steps.SecondFactor != "withheld" || !latched.Recording.EventsWithheld {
-		t.Fatalf("latched flow = %+v, want rejection without factor results", latched)
+	if latched.Outcome != "rejected" || latched.OutcomeBasis != "primary_failure_kept" || latched.Steps.SecondFactor != "recorded" {
+		t.Fatalf("latched flow = %+v, want the kept primary failure with recorded factor events", latched)
 	}
 
-	if slices.ContainsFunc(latched.Events, func(event supporthistory.Event) bool { return event.Source == "auth_events" }) {
-		t.Fatalf("support projection leaked latched factor events: %+v", latched.Events)
+	if !slices.ContainsFunc(latched.Events, func(event supporthistory.Event) bool { return event.Source == "auth_events" }) {
+		t.Fatalf("latched flow events = %+v, want the factor events", latched.Events)
 	}
 }
 
@@ -517,7 +517,7 @@ func TestClickHouseHistoryRefusesUnsafeReaders(t *testing.T) {
 	}
 }
 
-// assertSupportBan checks the support projection of the shared-IP ban.
+// assertSupportBan checks the shared-IP ban a history_read caller receives, with every claimed name and operator id.
 func assertSupportBan(t *testing.T, support *supporthistory.BanSearchResult) {
 	t.Helper()
 
@@ -528,13 +528,13 @@ func assertSupportBan(t *testing.T, support *supporthistory.BanSearchResult) {
 	}
 
 	if slices.ContainsFunc(ban.Contributions.Items, func(item supporthistory.Contribution) bool {
-		return !item.Redacted || item.ClaimedUsername != nil
+		return item.ClaimedUsername == nil || item.ClientIP == nil
 	}) {
-		t.Fatalf("support contributions %+v expose a claimed name", ban.Contributions.Items)
+		t.Fatalf("contributions %+v lack a claimed name or client IP", ban.Contributions.Items)
 	}
 
-	if len(support.Releases) != 1 || len(support.CounterResets) != 1 || support.Releases[0].OperatorClientID != nil {
-		t.Fatalf("lifecycle lists = %+v / %+v, want release and reset without operator id", support.Releases, support.CounterResets)
+	if len(support.Releases) != 1 || len(support.CounterResets) != 1 || support.Releases[0].OperatorClientID == nil {
+		t.Fatalf("lifecycle lists = %+v / %+v, want release and reset with operator id", support.Releases, support.CounterResets)
 	}
 }
 
@@ -557,13 +557,71 @@ func TestClickHouseHistoryExplainsTheSharedIPBan(t *testing.T) {
 	assertSupportBan(t, support)
 
 	request.Subject = &supporthistory.Subject{Login: "bob@example.test"}
-	if _, err = service.SearchBans(t.Context(), historyCaller(definitions.ScopeHistoryRead), request); err == nil {
-		t.Fatal("support ban search with subject succeeded, want FORBIDDEN")
-	}
 
-	detail, err := service.SearchBans(t.Context(), historyCaller(definitions.ScopeHistoryDetail), request)
-	if err != nil || detail.Bans[0].Contributions.Items[2].ClaimedUsername == nil ||
-		*detail.Bans[0].Contributions.Items[2].ClaimedUsername != "bob@example.test" {
-		t.Fatalf("detail ban search = %+v, %v, want named contributions", detail, err)
+	for _, scope := range []string{definitions.ScopeHistoryRead, definitions.ScopeHistoryDetail} {
+		named, err := service.SearchBans(t.Context(), historyCaller(scope), request)
+		if err != nil || named.Bans[0].Contributions.Items[2].ClaimedUsername == nil ||
+			*named.Bans[0].Contributions.Items[2].ClaimedUsername != "bob@example.test" {
+			t.Fatalf("%s ban search with subject = %+v, %v, want named contributions", scope, named, err)
+		}
+	}
+}
+
+// legacyBurstRows is the number of legacy login rows without event id that one request attempt records at one
+// millisecond; it exceeds two event pages so continuations cross the group twice.
+const legacyBurstRows = 420
+
+// insertLegacyBurst writes the legacy rows of one request attempt at one instant in several inserts, so they land in
+// separate parts and only the reader's tie-break keeps their order deterministic.
+func insertLegacyBurst(env historyEnv, session string, at time.Time) {
+	const inserts = 3
+
+	for part := range inserts {
+		env.db.exec(env.db.scoped(fmt.Sprintf("INSERT INTO nauthilus.logins (ts, session, instance, service, deployment, "+
+			"username, account, client_ip, proto, http_status, status_msg, latency) SELECT toDateTime64('%s', 3, 'UTC'), "+
+			"'%s', concat('legacy-', leftPad(toString(number), 4, '0')), 'nginx', 'it', 'anna@example.test', "+
+			"'account-4711', '192.0.2.10', 'imap', 403, 'Invalid login or password', 1 FROM numbers(%d, %d)",
+			at.Format("2006-01-02 15:04:05.000"), session, part*legacyBurstRows/inserts, legacyBurstRows/inserts)))
+	}
+}
+
+// TestClickHouseHistoryLegacyEventGroupsAreReachable pins the lossless events continuation on the real reader: legacy
+// rows that share their whole position are listed exactly once across pages that end inside the group.
+func TestClickHouseHistoryLegacyEventGroupsAreReachable(t *testing.T) {
+	env := newHistoryEnv(t)
+	at := env.now.Add(-10 * time.Minute).Truncate(time.Millisecond)
+	insertLegacyBurst(env, "req-legacy-burst", at)
+
+	service := historyService(t, env, provisionReader(t, env.db, "1", clickhousestore.BudgetProfile))
+
+	for _, limit := range []int{0, 7} {
+		seen := map[string]struct{}{}
+		events := &supporthistory.PageRequest{Limit: limit}
+
+		for pages := 0; events != nil; pages++ {
+			result, err := service.GetAttempt(t.Context(), historyCaller(definitions.ScopeHistoryDetail),
+				supporthistory.AttemptDetailRequest{SchemaVersion: "1", AttemptID: "rq1.req-legacy-burst", Around: at,
+					EventsPage: events})
+			if err != nil || result.Attempt == nil || pages > legacyBurstRows {
+				t.Fatalf("GetAttempt(limit %d, page %d) = %+v, %v", limit, pages, result, err)
+			}
+
+			for _, event := range result.Attempt.Events {
+				if _, repeated := seen[event.Instance]; repeated {
+					t.Fatalf("limit %d: legacy event %s listed twice", limit, event.Instance)
+				}
+
+				seen[event.Instance] = struct{}{}
+			}
+
+			events = nil
+			if page := result.Attempt.EventsPage; page != nil && page.NextCursor != nil {
+				events = &supporthistory.PageRequest{Cursor: *page.NextCursor, Limit: limit}
+			}
+		}
+
+		if len(seen) != legacyBurstRows {
+			t.Fatalf("limit %d reached %d legacy events, want all %d", limit, len(seen), legacyBurstRows)
+		}
 	}
 }

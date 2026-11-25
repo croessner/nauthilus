@@ -29,7 +29,7 @@ const (
 )
 
 // subjectMatcher evaluates in Go the same identity predicate the store renders into SQL. It decides subject
-// binding, matched_by labels, redaction, and already-served attempts.
+// binding, matched_by labels, subject_match flags, and already-served attempts.
 type subjectMatcher struct {
 	logins   map[string]struct{}
 	accounts map[string]string
@@ -107,12 +107,7 @@ func (m subjectMatcher) anchorsLogin(record LoginRecord) bool {
 		return false
 	}
 
-	filter := m.filter
-
-	return (filter.ClientIP == "" || record.ClientIP == filter.ClientIP) &&
-		(filter.Protocol == "" || record.Protocol == filter.Protocol) &&
-		(filter.OIDCClientID == "" || record.OIDCClientID == filter.OIDCClientID) &&
-		(filter.SAMLEntityID == "" || record.SAMLEntityID == filter.SAMLEntityID)
+	return m.filter.admits(record.ClientIP, record.Protocol, record.OIDCClientID, record.SAMLEntityID)
 }
 
 // anchorsEvent mirrors the store anchor predicate for step events: identity plus every set filter on the event
@@ -122,10 +117,12 @@ func (m subjectMatcher) anchorsEvent(record AuthEventRecord) bool {
 		return false
 	}
 
-	filter := m.filter
+	return m.filter.admits(record.ClientIP, record.Protocol, record.ClientID, record.SAMLEntityID)
+}
 
-	return (filter.ClientIP == "" || record.ClientIP == filter.ClientIP) &&
-		(filter.Protocol == "" || record.Protocol == filter.Protocol) &&
-		(filter.OIDCClientID == "" || record.ClientID == filter.OIDCClientID) &&
-		(filter.SAMLEntityID == "" || record.SAMLEntityID == filter.SAMLEntityID)
+// admits reports whether recorded request columns satisfy every set anchor filter; an empty filter admits all.
+func (f AttemptFilter) admits(clientIP, protocol, oidcClientID, samlEntityID string) bool {
+	return (f.ClientIP == "" || clientIP == f.ClientIP) && (f.Protocol == "" || protocol == f.Protocol) &&
+		(f.OIDCClientID == "" || oidcClientID == f.OIDCClientID) &&
+		(f.SAMLEntityID == "" || samlEntityID == f.SAMLEntityID)
 }

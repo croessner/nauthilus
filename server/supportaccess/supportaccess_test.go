@@ -18,6 +18,7 @@ package supportaccess
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -138,5 +139,24 @@ func TestSharedErrorAndReference(t *testing.T) {
 	if !ValidAuditReference("") || !ValidAuditReference("INC-42/a") || ValidAuditReference("a b") ||
 		BoundedAuditReference("a\nb") != "" || BoundedAuditReference("INC-1") != "INC-1" {
 		t.Fatal("audit reference bound mismatch")
+	}
+}
+
+// TestVerbatimTextKeepsContent pins that recorded values leave complete: no cut, newlines kept, format characters
+// visible, and invalid bytes replaced.
+func TestVerbatimTextKeepsContent(t *testing.T) {
+	long := strings.Repeat("ä", 5000)
+
+	for input, want := range map[string]string{
+		"plain user@example.org 203.0.113.7": "plain user@example.org 203.0.113.7",
+		"line one\nline two\ttab":            "line one\nline two\ttab",
+		"admin\u202egnp.exe":                 "admin<U+202E>gnp.exe",
+		"zero\u200bwidth":                    "zero<U+200B>width",
+		"bad\xffbyte":                        "bad�byte",
+		long:                                 long,
+	} {
+		if got := VerbatimText(input); got != want {
+			t.Errorf("VerbatimText(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

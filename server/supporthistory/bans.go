@@ -116,6 +116,12 @@ func (r *BanSearchRequest) validate() *Error {
 		return err
 	}
 
+	if r.InnerPage != nil {
+		if err = r.InnerPage.validate(r.Filter.BanRef, r.Page.Cursor); err != nil {
+			return err
+		}
+	}
+
 	return validateAuditReference(r.AuditReference)
 }
 
@@ -137,17 +143,16 @@ func banNetwork(addr netip.Addr, bits int) string {
 func (s *Service) SearchBans(ctx context.Context, caller Caller, request BanSearchRequest) (*BanSearchResult, error) {
 	var subject []string
 
-	need := permissionAttemptsRead
 	if request.Subject != nil {
-		subject, need = []string{request.Subject.Login, request.Subject.Account}, need|permissionDetailRead
+		subject = []string{request.Subject.Login, request.Subject.Account}
 	}
 
-	ctx, call, err := s.begin(ctx, caller, operationBanSearch, need, subject, request.AuditReference, request.validate)
+	ctx, call, err := s.begin(ctx, caller, operationBanSearch, permissionHistoryRead, subject, request.AuditReference, request.validate)
 	if err != nil {
 		return nil, err
 	}
 
-	result, searchErr := s.searchBans(ctx, caller, request)
+	result, searchErr := s.searchBans(ctx, request)
 	if searchErr != nil {
 		call.finish(ctx, 0, searchErr)
 
@@ -161,25 +166,28 @@ func (s *Service) SearchBans(ctx context.Context, caller Caller, request BanSear
 
 // banScope is the validated state of one ban search page.
 type banScope struct {
-	window     Window
-	queriedAt  time.Time
-	cursor     *cursorState
-	matcher    *subjectMatcher
-	projection Projection
-	digest     string
-	trimmed    map[string]bool
-	networks   []string
-	limit      int
-	partial    bool
+	window    Window
+	queriedAt time.Time
+	cursor    *cursorState
+	matcher   *subjectMatcher
+	inner     *innerSelection
+	trimmed   map[string]bool
+	target    BanTarget
+	digest    string
+	networks  []string
+	limit     int
+	partial   bool
+	// lists issues inner-list cursors; only a ban search can continue them.
+	lists bool
 }
 
 // searchBans runs one authorized ban search page.
-func (s *Service) searchBans(ctx context.Context, caller Caller, request BanSearchRequest) (*BanSearchResult, *Error) {
+func (s *Service) searchBans(ctx context.Context, request BanSearchRequest) (*BanSearchResult, *Error) {
 	if s.bans == nil {
 		return nil, newError(CodeNotConfigured, nil)
 	}
 
-	scope, err := s.banScope(ctx, caller, request)
+	scope, err := s.banScope(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +201,7 @@ func (s *Service) searchBans(ctx context.Context, caller Caller, request BanSear
 	scope.trimmed = trimmedNetworks(lifecycle)
 	instances := assembleInstances(lifecycle, scope.window, scope.queriedAt)
 	result := s.newBanResult(scope, request.Target, lifecycle)
-	page, next := pageInstances(instances, scope, request.Filter.BanRef)
+	page, next := pageInstances(instances, scope, pagedBanRef(request))
 
 	for _, instance := range page {
 		result.Bans = append(result.Bans, s.explainBan(ctx, scope, instance))
@@ -201,6 +209,11 @@ func (s *Service) searchBans(ctx context.Context, caller Caller, request BanSear
 
 	result.Page.NextCursor = next
 	result.OrphanHits = s.orphanHits(ctx, scope, instances)
+
+	if scope.inner != nil && scope.inner.mismatch {
+		return nil, invalid(CodeInvalidCursor)
+	}
+
 	result.ThresholdTolerated = s.toleratedCount(ctx, scope)
 	result.History = s.banCoverage(ctx, scope, nil)
 	result.ResultBasis = resultBasis(len(result.Bans) > 0, result.History, SourceBanLifecycle, false)
@@ -209,10 +222,10 @@ func (s *Service) searchBans(ctx context.Context, caller Caller, request BanSear
 }
 
 // banScope validates paging and computes the candidate networks.
-func (s *Service) banScope(ctx context.Context, caller Caller, request BanSearchRequest) (banScope, *Error) {
+func (s *Service) banScope(ctx context.Context, request BanSearchRequest) (banScope, *Error) {
 	scope := banScope{window: Window{From: request.Filter.From.UTC(), Until: request.Filter.Until.UTC()},
-		queriedAt: s.now().UTC(), projection: caller.projection()}
-	scope.digest = queryDigest(operationBanSearch, scope.projection, request.Target.IP, request.Target.Network,
+		queriedAt: s.now().UTC(), target: request.Target, lists: true}
+	scope.digest = queryDigest(operationBanSearch, request.Target.IP, request.Target.Network,
 		request.Filter.BanRef, scope.window.From.Format(time.RFC3339Nano), scope.window.Until.Format(time.RFC3339Nano))
 
 	limit, err := pageLimit(request.Page.Limit, DefaultBanPageLimit, MaxBanPageLimit)
@@ -227,6 +240,10 @@ func (s *Service) banScope(ctx context.Context, caller Caller, request BanSearch
 
 	if scope.cursor != nil {
 		scope.queriedAt = scope.cursor.queriedAt()
+	}
+
+	if err = scope.selectInner(request.InnerPage); err != nil {
+		return scope, err
 	}
 
 	if request.Subject != nil {
@@ -288,6 +305,15 @@ func (s *Service) candidateNetworks(ctx context.Context, addr netip.Addr) ([]str
 	}
 
 	return networks, partial
+}
+
+// pagedBanRef returns the ban a search lists: the filter's ban, or the ban whose inner list is paged.
+func pagedBanRef(request BanSearchRequest) string {
+	if inner := request.InnerPage; inner != nil && inner.BanRef != "" {
+		return inner.BanRef
+	}
+
+	return request.Filter.BanRef
 }
 
 // trimmedNetworks reports the networks whose newest lifecycle rows filled the per-network bound, so older rows of
@@ -461,7 +487,7 @@ func beforePosition(at time.Time, key string, position AnchorPosition) bool {
 
 // newBanResult creates the result with the lifecycle lists of the window.
 func (s *Service) newBanResult(scope banScope, target BanTarget, rows []LifecycleRecord) *BanSearchResult {
-	result := &BanSearchResult{SchemaVersion: SchemaVersion, QueriedAt: scope.queriedAt, Projection: string(scope.projection),
+	result := &BanSearchResult{SchemaVersion: SchemaVersion, QueriedAt: scope.queriedAt, Projection: string(ProjectionDetail),
 		Target: ResolvedTarget{IP: optional(target.IP), CandidateNetworks: append([]string{}, scope.networks...)},
 		Bans:   []Ban{}, UnconfirmedActivations: []LifecycleEvent{}, Releases: []LifecycleEvent{},
 		CounterResets: []LifecycleEvent{}, Page: BanPage{Limit: scope.limit}, ResultBasis: basisNoMatches}
@@ -471,7 +497,7 @@ func (s *Service) newBanResult(scope banScope, target BanTarget, rows []Lifecycl
 			continue
 		}
 
-		event := lifecycleEvent(row, scope.projection)
+		event := lifecycleEvent(row)
 
 		switch row.Kind {
 		case kindUnconfirmed:
@@ -486,14 +512,9 @@ func (s *Service) newBanResult(scope banScope, target BanTarget, rows []Lifecycl
 	return result
 }
 
-// lifecycleEvent projects one lifecycle row; operator identities are released to the detail role only.
-func lifecycleEvent(row LifecycleRecord, projection Projection) LifecycleEvent {
-	event := LifecycleEvent{At: row.At.UTC(), EventID: row.EventID, Kind: row.Kind, Network: row.Network, Rule: row.Rule,
-		BucketID: optional(row.BucketID), ReleaseSource: optional(row.ReleaseSource), KeysRemoved: row.KeysRemoved}
-
-	if projection == ProjectionDetail {
-		event.OperatorClientID = recorded(row.OperatorClientID)
-	}
-
-	return event
+// lifecycleEvent projects one lifecycle row including the recorded operator identity.
+func lifecycleEvent(row LifecycleRecord) LifecycleEvent {
+	return LifecycleEvent{At: row.At.UTC(), EventID: row.EventID, Kind: row.Kind, Network: row.Network, Rule: row.Rule,
+		BucketID: optional(row.BucketID), ReleaseSource: optional(row.ReleaseSource), KeysRemoved: row.KeysRemoved,
+		OperatorClientID: recorded(row.OperatorClientID)}
 }

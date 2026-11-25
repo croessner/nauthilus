@@ -186,39 +186,28 @@ func attributionCases() map[string]attributionCase {
 	}
 }
 
-// TestBanContextAttribution pins the attribution codes on the same evidence for both projections.
+// TestBanContextAttribution pins the attribution codes and the released accounts for every history scope.
 func TestBanContextAttribution(t *testing.T) {
 	for name, tc := range attributionCases() {
-		t.Run(name, func(t *testing.T) {
-			store := ctxStore(ctxNow.Add(-time.Hour), tc.contributors...)
-			if name != "same login name without account" {
-				withRecordedSubject(store)
-			}
+		for _, scope := range historyScopes {
+			t.Run(name+"/"+scope, func(t *testing.T) {
+				store := ctxStore(ctxNow.Add(-time.Hour), tc.contributors...)
+				if name != "same login name without account" {
+					withRecordedSubject(store)
+				}
 
-			detail := onlyContext(t, ctxService(t, store, nil), definitions.ScopeHistoryDetail, "compact")
-			support := onlyContext(t, ctxService(t, store, nil), definitions.ScopeHistoryRead, "compact")
-
-			for _, entry := range []supporthistory.BanContext{detail, support} {
+				entry := onlyContext(t, ctxService(t, store, nil), scope, "compact")
 				if entry.Status != "matched" || len(entry.Bans) != 1 || entry.Bans[0].SubjectRelation != "HIT_EXISTING_BAN" {
 					t.Fatalf("context = %+v, want the recorded hit on the host ban", entry)
 				}
 
 				assertAttribution(t, entry.Bans[0], tc.code, tc.others, tc.counts, tc.limitation)
-			}
 
-			if accounts := detail.Bans[0].Attribution.ContributingAccounts; !slices.Equal(accounts, tc.accounts) {
-				t.Fatalf("detail accounts = %v, want %v", accounts, tc.accounts)
-			}
-
-			if redacted := support.Bans[0].Attribution; redacted.ContributingAccounts != nil || !redacted.IdentitiesRedacted {
-				t.Fatalf("support attribution = %+v, want hidden foreign identities", redacted)
-			}
-
-			if !slices.EqualFunc(detail.Bans[0].Attribution.SubjectContributions, support.Bans[0].Attribution.SubjectContributions,
-				func(a, b supporthistory.SubjectContribution) bool { return a.EventID == b.EventID }) {
-				t.Fatal("own contributions differ between projections")
-			}
-		})
+				if accounts := entry.Bans[0].Attribution.ContributingAccounts; !slices.Equal(accounts, tc.accounts) {
+					t.Fatalf("accounts = %v, want %v", accounts, tc.accounts)
+				}
+			})
+		}
 	}
 }
 

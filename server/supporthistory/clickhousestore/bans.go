@@ -168,8 +168,15 @@ func (s *Store) Contributions(ctx context.Context, query supporthistory.Contribu
 		stmt.where("ts < " + stmt.instant(*query.ResetBefore))
 	}
 
+	if start := query.Start; start != nil {
+		stmt.where(lexicographicFrom([]string{"window_index", "window_current", tsColumn, eventIDColumn},
+			[]string{stmt.integer(start.WindowIndex), stmt.integer(start.WindowCurrent), stmt.instant(start.At),
+				stmt.text(start.EventID)}))
+	}
+
 	sql := "SELECT " + countedColumns + " FROM " + s.client.table("bruteforce_attempts") + stmt.whereClause() +
-		" ORDER BY window_index, window_current, ts, event_id LIMIT 1 BY event_id LIMIT " + strconv.Itoa(max(1, query.Limit))
+		" ORDER BY window_index, window_current, ts, event_id, " + rowTieBreak + " LIMIT 1 BY event_id LIMIT " +
+		strconv.Itoa(max(1, query.Limit))
 
 	var records []supporthistory.CountedRecord
 

@@ -21,9 +21,6 @@ import (
 	"github.com/croessner/nauthilus/v4/server/supportaccess"
 )
 
-// maxRecordedRunes bounds one recorded free-text value in a support answer.
-const maxRecordedRunes = 256
-
 // Reputation evidence states.
 const (
 	reputationRecorded     = "recorded"
@@ -40,15 +37,15 @@ func optional(value string) *string {
 	return &value
 }
 
-// recorded returns a recorded free-text value bounded and cleaned for a support answer, or nil when it is empty.
-// Recorded values can carry text a client typed; they leave the host as data only (see supportaccess.SanitizeText).
+// recorded returns a recorded free-text value complete for a support answer, or nil when it is empty. Recorded values
+// can carry text a client typed; they leave the host verbatim as data (see supportaccess.VerbatimText).
 func recorded(value string) *string {
 	return optional(recordedText(value))
 }
 
-// recordedText bounds and cleans a recorded free-text value for a support answer.
+// recordedText returns a recorded free-text value complete, with invisible format characters made visible.
 func recordedText(value string) string {
-	return supportaccess.SanitizeText(value, maxRecordedRunes)
+	return supportaccess.VerbatimText(value)
 }
 
 // stringValue dereferences an optional string.
@@ -60,18 +57,10 @@ func stringValue(value *string) string {
 	return *value
 }
 
-// identityProjection decides whether recorded identity claims of an event may be shown to the caller.
-func identityProjection(input attemptInput, matched bool, by string, login, account string, found *bool) EventIdentity {
-	identity := EventIdentity{SubjectMatch: matched, MatchedBy: optional(by)}
-	if !matched && input.projection == ProjectionSupport {
-		identity.Redacted = true
-
-		return identity
-	}
-
-	identity.SuppliedLogin, identity.CanonicalAccount, identity.AccountFound = recorded(login), recorded(account), found
-
-	return identity
+// eventIdentity projects the recorded identity claims of an event and whether they match the subject.
+func eventIdentity(matched bool, by string, login, account string, found *bool) EventIdentity {
+	return EventIdentity{SubjectMatch: matched, MatchedBy: optional(by), SuppliedLogin: recorded(login),
+		CanonicalAccount: recorded(account), AccountFound: found}
 }
 
 // projectLogin interprets and projects one login row.
@@ -84,7 +73,7 @@ func projectLogin(record LoginRecord, input attemptInput) projectedEvent {
 		RequestID: recordedText(record.Session), Instance: recordedText(record.Instance), Stage: reading.stage, Result: reading.result,
 		Code: reading.code, Category: reading.category, RecordVersion: record.ContractVersion,
 		Method:   recorded(record.Method),
-		Identity: identityProjection(input, matched, by, record.Username, record.Account, record.UserFound),
+		Identity: eventIdentity(matched, by, record.Username, record.Account, record.UserFound),
 		Context: EventContext{ClientIP: recorded(record.ClientIP), Protocol: recorded(record.Protocol),
 			Service: recorded(record.Service), OIDCClientID: recorded(record.OIDCClientID),
 			SAMLEntityID: recorded(record.SAMLEntityID), GrantType: recorded(record.GrantType),
@@ -92,23 +81,18 @@ func projectLogin(record LoginRecord, input attemptInput) projectedEvent {
 	}
 
 	if record.ContractVersion >= 1 {
-		event.Decision = decisionOf(record, !event.Identity.Redacted)
+		event.Decision = decisionOf(record)
 	}
 
 	event.Reputation = reputationOf(record)
 
-	return projectedEvent{event: event, reading: reading}
+	return projectedEvent{event: event, reading: reading, key: loginPosition(record)}
 }
 
-// decisionOf copies the recorded Policy result of a contract row. The answered status text is free text that can
-// name the identity it was answered to, so it is released only together with that identity.
-func decisionOf(record LoginRecord, identityReleased bool) *Decision {
+// decisionOf copies the recorded Policy result of a contract row including its answered status.
+func decisionOf(record LoginRecord) *Decision {
 	sources := append([]string{}, record.DecisionSources...)
 	code, message := answeredStatusOf(record)
-
-	if !identityReleased {
-		message = nil
-	}
 
 	return &Decision{
 		Operation: record.Operation, Outcome: record.Outcome, OutcomeStage: record.OutcomeStage,
@@ -155,7 +139,7 @@ func reputationOf(record LoginRecord) *Reputation {
 		Assessments: append([]ReputationAssessment{}, record.Reputation...)}
 }
 
-// projectAuthEvent interprets and projects one visible step event; only second-factor events carry a factor block.
+// projectAuthEvent interprets and projects one step event; only second-factor events carry a factor block.
 func projectAuthEvent(record AuthEventRecord, input attemptInput) projectedEvent {
 	reading := interpretAuthEvent(record)
 	matched, by := input.matcher.identityOfEvent(record)
@@ -166,7 +150,7 @@ func projectAuthEvent(record AuthEventRecord, input attemptInput) projectedEvent
 		RequestID: recordedText(record.RequestID), Instance: recordedText(record.Instance), Stage: reading.stage, Result: reading.result,
 		Code: reading.code, Category: reading.category, RecordVersion: record.EventVersion,
 		FactorRole: optional(role), Method: recorded(record.Method),
-		Identity: identityProjection(input, matched, by, "", record.Account, nil),
+		Identity: eventIdentity(matched, by, "", record.Account, nil),
 		Context: EventContext{ClientIP: recorded(record.ClientIP), Protocol: recorded(record.Protocol),
 			OIDCClientID: recorded(record.ClientID), SAMLEntityID: recorded(record.SAMLEntityID)},
 	}
@@ -176,7 +160,7 @@ func projectAuthEvent(record AuthEventRecord, input attemptInput) projectedEvent
 			FailLatched: record.FailLatched}
 	}
 
-	return projectedEvent{event: event, reading: reading}
+	return projectedEvent{event: event, reading: reading, key: authEventPosition(record)}
 }
 
 // timePointer returns a pointer to a copy of a time value.

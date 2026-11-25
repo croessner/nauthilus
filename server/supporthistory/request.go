@@ -66,12 +66,15 @@ type AttemptSearchRequest struct {
 }
 
 // AttemptDetailRequest returns one attempt; Around is any instant of the attempt, for example its started_at.
+// EventsPage selects one page of the attempt's events (default and maximum MaxEventsPerAttempt); its cursor is the
+// events_page.next_cursor of an earlier answer for the same attempt_id and around.
 type AttemptDetailRequest struct {
-	Around         time.Time `json:"around"`
-	Subject        *Subject  `json:"subject,omitempty"`
-	SchemaVersion  string    `json:"schema_version"`
-	AttemptID      string    `json:"attempt_id"`
-	AuditReference string    `json:"audit_reference,omitempty"`
+	Around         time.Time    `json:"around"`
+	Subject        *Subject     `json:"subject,omitempty"`
+	EventsPage     *PageRequest `json:"events_page,omitempty"`
+	SchemaVersion  string       `json:"schema_version"`
+	AttemptID      string       `json:"attempt_id"`
+	AuditReference string       `json:"audit_reference,omitempty"`
 }
 
 // invalid builds a request validation error.
@@ -205,8 +208,8 @@ func (r *AttemptSearchRequest) validate() *Error {
 	return validateAuditReference(r.AuditReference)
 }
 
-// validate normalizes and checks an attempt detail request; support callers must name a subject.
-func (r *AttemptDetailRequest) validate(caller Caller) *Error {
+// validate normalizes and checks an attempt detail request; the subject is optional.
+func (r *AttemptDetailRequest) validate() *Error {
 	if err := validateSchemaVersion(r.SchemaVersion); err != nil {
 		return err
 	}
@@ -222,8 +225,6 @@ func (r *AttemptDetailRequest) validate(caller Caller) *Error {
 		}
 
 		r.Subject = &subject
-	} else if !caller.has(permissionDetailRead) {
-		return invalid(CodeInvalidRequest)
 	}
 
 	return validateAuditReference(r.AuditReference)

@@ -16,6 +16,7 @@
 package supportaccess
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -57,4 +58,35 @@ func SanitizeText(value string, maxRunes int) string {
 	}
 
 	return builder.String()
+}
+
+// VerbatimText returns a recorded or observed value complete for a support answer. Nothing is cut or masked: invalid
+// UTF-8 bytes become U+FFFD (JSON cannot carry them), and Unicode format characters such as bidirectional overrides
+// are rendered visibly as <U+XXXX>, so they can neither reorder the displayed text nor disappear. Every other
+// character, including newlines and tabs, is kept. Values stay data: callers must still present them as untrusted.
+func VerbatimText(value string) string {
+	if utf8.ValidString(value) && !strings.ContainsFunc(value, isFormatRune) {
+		return value
+	}
+
+	var builder strings.Builder
+
+	builder.Grow(len(value))
+
+	for _, char := range value {
+		if isFormatRune(char) {
+			_, _ = fmt.Fprintf(&builder, "<U+%04X>", char)
+
+			continue
+		}
+
+		builder.WriteRune(char)
+	}
+
+	return builder.String()
+}
+
+// isFormatRune reports whether char is an invisible Unicode format character (category Cf).
+func isFormatRune(char rune) bool {
+	return unicode.Is(unicode.Cf, char)
 }

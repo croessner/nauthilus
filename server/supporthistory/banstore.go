@@ -108,12 +108,23 @@ type LifecycleQuery struct {
 	PerNetwork int
 }
 
-// ContributionQuery selects the counted rows of one activation per contract §13.4.
+// ContributionPosition is an inclusive keyset position in the contribution order (window_index, window_current, ts,
+// event_id); rows that share the whole position keep the deterministic order of the first read.
+type ContributionPosition struct {
+	At            time.Time
+	EventID       string
+	WindowIndex   int64
+	WindowCurrent int64
+}
+
+// ContributionQuery selects the counted rows of one activation per contract §13.4, ordered by window_index,
+// window_current, ts, and event_id, replays removed; Start continues a listing at a position, inclusively.
 type ContributionQuery struct {
 	From        time.Time
 	Until       time.Time
 	ResetAfter  *time.Time
 	ResetBefore *time.Time
+	Start       *ContributionPosition
 	Network     string
 	BucketID    string
 	WindowIndex int64
@@ -130,16 +141,18 @@ type SummaryQuery struct {
 	WindowIndexes []int64
 }
 
-// KindQuery aggregates volume-lane rows of one kind over networks and a range, minus excluded intervals.
+// KindQuery aggregates volume-lane rows of one kind over networks and a range, minus excluded intervals. Claimants
+// bounds the listed claimants, ordered by hits descending, claimed name, and account, after skipping ClaimantOffset.
 type KindQuery struct {
-	From      time.Time
-	Until     time.Time
-	Subject   *SubjectMatch
-	Kind      string
-	Networks  []string
-	Exclude   []NetworkInterval
-	Claimants int
-	Summary   bool
+	From           time.Time
+	Until          time.Time
+	Subject        *SubjectMatch
+	Kind           string
+	Networks       []string
+	Exclude        []NetworkInterval
+	Claimants      int
+	ClaimantOffset int
+	Summary        bool
 }
 
 // KindAggregate is the deduplicated count of one kind; Summary counts are upper bounds under replay.

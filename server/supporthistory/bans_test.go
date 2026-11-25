@@ -124,13 +124,14 @@ func TestBanContributionsStopAtCounterReset(t *testing.T) {
 
 	assertSharedIPBan(t, result.Bans[0])
 
-	if result.OrphanHits.Count != 1 || result.Releases[0].OperatorClientID != nil || len(result.CounterResets) != 1 {
-		t.Fatalf("orphans = %+v lifecycle = %+v / %+v, want one orphan and no operator id",
+	if result.OrphanHits.Count != 1 || stringValue(result.Releases[0].OperatorClientID) != "ops-client" ||
+		len(result.CounterResets) != 1 {
+		t.Fatalf("orphans = %+v lifecycle = %+v / %+v, want one orphan and the operator id",
 			result.OrphanHits, result.Releases, result.CounterResets)
 	}
 }
 
-// assertSharedIPBan checks contributions, the crossing heuristic, hits, and the support redaction of one ban.
+// assertSharedIPBan checks contributions, the crossing heuristic, hits, and the released claims of one ban.
 func assertSharedIPBan(t *testing.T, ban supporthistory.Ban) {
 	t.Helper()
 
@@ -145,10 +146,14 @@ func assertSharedIPBan(t *testing.T, ban supporthistory.Ban) {
 		t.Fatalf("crossing candidate = %+v, want the heuristic c3", candidate)
 	}
 
+	claims := make([]string, 0, len(ban.Contributions.Items))
 	for _, item := range ban.Contributions.Items {
-		if !item.Redacted || item.ClaimedUsername != nil || item.ClientIP != nil {
-			t.Fatalf("support contribution %+v exposes claimed identities behind the shared IP", item)
-		}
+		claims = append(claims, stringValue(item.ClaimedUsername)+"@"+stringValue(item.ClientIP))
+	}
+
+	if want := []string{"alice@example.test@198.51.100.17", "ceo@foreign.test@198.51.100.17",
+		"bob@example.test@198.51.100.17"}; !slices.Equal(claims, want) {
+		t.Fatalf("contribution claims = %v, want %v", claims, want)
 	}
 }
 
@@ -309,5 +314,28 @@ func TestLongRuleListsRetainedContributions(t *testing.T) {
 
 	if candidate := contributions.CrossingCandidate; candidate == nil || candidate.EventID != "c5" {
 		t.Fatalf("crossing candidate = %+v, want c5", candidate)
+	}
+}
+
+// TestBanClaimantsStateTheirLimit reproduces the silent claimant cap: a ban hit by more claimed names than
+// MaxClaimants listed the first ones without saying that more exist.
+func TestBanClaimantsStateTheirLimit(t *testing.T) {
+	activatedAt := banNow.Add(-2 * time.Hour)
+	store := sharedIPStore(activatedAt)
+
+	for index := range supporthistory.MaxClaimants + 2 {
+		store.Volume = append(store.Volume, historytest.VolumeRow{CountedRecord: supporthistory.CountedRecord{
+			At: activatedAt.Add(2 * time.Second), ClaimedUsername: fmt.Sprintf("user%02d@example.test", index)},
+			Network: banNetwork, Kind: "ban_hit", HitSource: "redis"})
+	}
+
+	hits := searchBans(t, store, definitions.ScopeHistoryRead).Bans[0].Hits
+	if len(hits.Claimants) != supporthistory.MaxClaimants || !hits.ClaimantsTruncated {
+		t.Fatalf("claimants = %d, truncated = %v, want %d and true", len(hits.Claimants), hits.ClaimantsTruncated,
+			supporthistory.MaxClaimants)
+	}
+
+	if few := searchBans(t, sharedIPStore(activatedAt), definitions.ScopeHistoryRead).Bans[0].Hits; few.ClaimantsTruncated {
+		t.Fatalf("a short claimant list is complete: %+v", few)
 	}
 }

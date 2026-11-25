@@ -85,7 +85,8 @@ func (s *Service) explainInstance(ctx context.Context, scope banScope, instance 
 
 	from := maxTime(row.At.Add(-hitAttributionGrace), scope.window.From)
 	until := minTime(instance.until.Add(hitAttributionGrace), scope.window.Until)
-	ban.Hits = s.hitSummary(ctx, scope, kindHit, []string{row.Network}, from, until, nil)
+	ban.Hits = s.hitSummary(ctx, scope, KindQuery{Kind: kindHit, Networks: []string{row.Network}, From: from, Until: until},
+		scope.claimantPage(InnerListClaimants, row.EventID))
 
 	if ban.Hits.Evidence == evidenceNotRead {
 		ban.Unknowns = append(ban.Unknowns, unknownHitsNotRead)
@@ -94,16 +95,17 @@ func (s *Service) explainInstance(ctx context.Context, scope banScope, instance 
 	return ban, items
 }
 
-// hitSummary aggregates one volume kind from raw rows inside raw retention or from the hourly summary beyond it.
-func (s *Service) hitSummary(ctx context.Context, scope banScope, kind string, networks []string, from, until time.Time, exclude []NetworkInterval) HitSummary {
+// hitSummary aggregates one kind over networks and a range: raw rows inside the raw retention, else the hourly
+// summary. The aggregates cover every row; Claimants lists one page of the claimants, most hits first, and
+// ClaimantsNextCursor continues them when the page selects a ban-search list.
+func (s *Service) hitSummary(ctx context.Context, scope banScope, query KindQuery, page claimantPage) HitSummary {
 	summary := HitSummary{BySource: map[string]int64{}, Claimants: []Claimant{}, Evidence: evidenceRaw}
-	if !from.Before(until) {
+	if !query.From.Before(query.Until) {
 		return summary
 	}
 
-	query := KindQuery{Kind: kind, Networks: networks, From: from, Until: until, Exclude: exclude}
-	if from.Before(rawHorizon(scope.queriedAt)) {
-		if len(exclude) > 0 {
+	if query.From.Before(rawHorizon(scope.queriedAt)) {
+		if len(query.Exclude) > 0 {
 			summary.Evidence = evidenceNotAssessed
 
 			return summary
@@ -113,8 +115,10 @@ func (s *Service) hitSummary(ctx context.Context, scope banScope, kind string, n
 		summary.Evidence, summary.CountIsUpperBound, summary.IntervalApproximate = evidenceSummary, true, true
 	}
 
-	if scope.projection == ProjectionDetail && !query.Summary {
-		query.Claimants = MaxClaimants
+	if !query.Summary {
+		if page.limit > 0 {
+			query.Claimants, query.ClaimantOffset = page.limit+1, page.offset()
+		}
 
 		if scope.matcher != nil {
 			match := scope.matcher.subjectMatch()
@@ -132,6 +136,13 @@ func (s *Service) hitSummary(ctx context.Context, scope banScope, kind string, n
 	summary.Count, summary.DistinctClaimedNames, summary.SubjectHits = aggregate.Total, aggregate.DistinctNames, aggregate.SubjectHits
 	for source, count := range aggregate.BySource {
 		summary.BySource[source] = count
+	}
+
+	page.bind(aggregate.Total)
+
+	if len(aggregate.Claimants) > page.limit {
+		aggregate.Claimants, summary.ClaimantsTruncated = aggregate.Claimants[:page.limit], true
+		summary.ClaimantsNextCursor = page.cursor(page.limit, aggregate.Total, scope.queriedAt)
 	}
 
 	for _, claimant := range aggregate.Claimants {
@@ -156,14 +167,15 @@ func (s *Service) orphanHits(ctx context.Context, scope banScope, instances []ba
 		return HitSummary{BySource: map[string]int64{}, Claimants: []Claimant{}, Evidence: evidenceNotAssessed}
 	}
 
-	return s.hitSummary(ctx, scope, kindHit, scope.networks, scope.window.From, minTime(scope.window.Until,
-		scope.queriedAt), exclude)
+	return s.hitSummary(ctx, scope, KindQuery{Kind: kindHit, Networks: scope.networks, From: scope.window.From,
+		Until: minTime(scope.window.Until, scope.queriedAt), Exclude: exclude},
+		scope.claimantPage(InnerListOrphanClaimants, ""))
 }
 
 // toleratedCount counts suppressed bans of the candidate networks in the window.
 func (s *Service) toleratedCount(ctx context.Context, scope banScope) ToleratedSummary {
-	summary := s.hitSummary(ctx, scope, kindTolerated, scope.networks, scope.window.From,
-		minTime(scope.window.Until, scope.queriedAt), nil)
+	summary := s.hitSummary(ctx, scope, KindQuery{Kind: kindTolerated, Networks: scope.networks,
+		From: scope.window.From, Until: minTime(scope.window.Until, scope.queriedAt)}, claimantPage{})
 
 	return ToleratedSummary{Count: summary.Count, CountIsUpperBound: summary.CountIsUpperBound, Evidence: summary.Evidence}
 }

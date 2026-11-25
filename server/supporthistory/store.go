@@ -217,12 +217,42 @@ type AccountQuery struct {
 	Limit  int
 }
 
-// RowQuery selects every row of the given attempts inside a read range. Request rows are additionally restricted
-// by Subject (when set) to keep the scan targeted.
+// RowBound states how the rows at the instant of a RowPosition compare with it.
+type RowBound int
+
+const (
+	// RowFromEventID continues with the rows of the instant whose event id sorts at or after the position's event
+	// id; rows that share the whole position keep the deterministic order of the first read.
+	RowFromEventID RowBound = iota
+
+	// RowAfterInstant continues after every row of the instant.
+	RowAfterInstant
+
+	// RowFromInstant continues with every row of the instant.
+	RowFromInstant
+
+	// RowAfterEventID continues with the rows of the instant whose event id sorts after the position's event id. An
+	// event id names one event, so every stored replay of the listed event is passed at once.
+	RowAfterEventID
+)
+
+// RowPosition is a keyset position in the (ts, event_id) order of one source; Bound states which rows of its instant
+// a continuation read returns.
+type RowPosition struct {
+	At      time.Time
+	EventID string
+	Bound   RowBound
+}
+
+// RowQuery selects every row of the given attempts inside a read range, oldest first in (ts, event_id) order and at
+// most LimitPerGroup rows per attempt and source. Request rows are additionally restricted by Subject (when set) to
+// keep the scan targeted. LoginsAfter and EventsAfter continue a listing after a position of the respective source.
 type RowQuery struct {
 	From          time.Time
 	Until         time.Time
 	Subject       *SubjectMatch
+	LoginsAfter   *RowPosition
+	EventsAfter   *RowPosition
 	Flows         []string
 	Requests      []string
 	LimitPerGroup int

@@ -36,8 +36,7 @@ func summarizeAttempt(attempt Attempt) AttemptSummary {
 		FindingCodes: []string{}, ClientIPs: []string{}, Protocols: []string{}, RequestIDs: []string{},
 		KnownGaps: append([]string{}, attempt.Recording.KnownGaps...), AttemptID: attempt.AttemptID,
 		Kind: attempt.Kind, Outcome: attempt.Outcome, OutcomeBasis: attempt.OutcomeBasis, Progress: attempt.Progress,
-		FinalObserved: attempt.FinalOutcomeObserved, Truncated: attempt.Recording.EventsTruncated,
-		Withheld: attempt.Recording.EventsWithheld}
+		FinalObserved: attempt.FinalOutcomeObserved, Truncated: attempt.Recording.EventsTruncated}
 
 	for _, finding := range attempt.Findings {
 		summary.FindingCodes = appendDistinct(summary.FindingCodes, finding.Code)

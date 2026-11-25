@@ -44,24 +44,15 @@ type VerifiedCredential = supportaccess.VerifiedCredential
 // permission is the internal capability set derived from verified credential facts.
 type permission uint8
 
-const (
-	// permissionAttemptsRead is the support projection: named subject, own data, counts.
-	permissionAttemptsRead permission = 1 << iota
-
-	// permissionDetailRead releases other identities behind shared addresses and operator-only factor results.
-	permissionDetailRead
-)
+// permissionHistoryRead reads the complete recorded attempts and bans. Every history scope grants it: authorized
+// support sees the complete diagnostic data.
+const permissionHistoryRead permission = 1
 
 // Projection names the data projection a response was built with.
 type Projection string
 
-const (
-	// ProjectionSupport is the support role projection.
-	ProjectionSupport Projection = "support"
-
-	// ProjectionDetail is the released detail role projection.
-	ProjectionDetail Projection = "detail"
-)
+// ProjectionDetail is the only projection: every authorized caller receives the complete recorded data.
+const ProjectionDetail Projection = "detail"
 
 // Caller is an authorized principal of the history service. The zero value has no permission. Permissions are
 // derived only here, from verified scopes; administrative scopes and Basic credentials grant nothing.
@@ -79,12 +70,8 @@ func NewCaller(credential VerifiedCredential) Caller {
 		return caller
 	}
 
-	if credential.HasScope(definitions.ScopeHistoryRead) {
-		caller.permissions |= permissionAttemptsRead
-	}
-
-	if credential.HasScope(definitions.ScopeHistoryDetail) {
-		caller.permissions |= permissionAttemptsRead | permissionDetailRead
+	if credential.HasScope(definitions.ScopeHistoryRead) || credential.HasScope(definitions.ScopeHistoryDetail) {
+		caller.permissions |= permissionHistoryRead
 	}
 
 	return caller
@@ -103,13 +90,4 @@ func (c Caller) Method() CredentialMethod {
 // has reports whether the caller holds every bit of the wanted permission.
 func (c Caller) has(wanted permission) bool {
 	return wanted != 0 && c.permissions&wanted == wanted
-}
-
-// projection returns the widest projection the caller may receive.
-func (c Caller) projection() Projection {
-	if c.has(permissionDetailRead) {
-		return ProjectionDetail
-	}
-
-	return ProjectionSupport
 }

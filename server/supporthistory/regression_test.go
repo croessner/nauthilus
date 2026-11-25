@@ -85,8 +85,9 @@ func TestDisagreeingRowsOfOneRequestStayUnknown(t *testing.T) {
 	}
 }
 
-// TestLatchedFlowOverTheEventCapLeaksNothing pins that withheld factor events never show up as truncation.
-func TestLatchedFlowOverTheEventCapLeaksNothing(t *testing.T) {
+// TestLatchedFlowOverTheEventCapReportsTruncation pins that a latched flow whose events hit the per-attempt bound
+// reports the truncation like every other attempt.
+func TestLatchedFlowOverTheEventCapReportsTruncation(t *testing.T) {
 	store := fixtureStore(t)
 	latched := strings.Repeat("2", 32)
 
@@ -98,21 +99,8 @@ func TestLatchedFlowOverTheEventCapLeaksNothing(t *testing.T) {
 	}
 
 	attempts, _ := attemptsByID(t, newService(t, store), caller(definitions.ScopeHistoryRead))
-	if attempt := attempts["fl1."+latched]; attempt.Recording.EventsTruncated || attempt.Recording.ReplayedRowsMerged != 0 {
-		t.Fatalf("support recording = %+v, want no trace of withheld events", attempt.Recording)
-	}
-}
-
-// TestBanSubjectNeedsTheDetailRoleBeforeAnyRead pins that a support caller naming a subject never reaches a store.
-func TestBanSubjectNeedsTheDetailRoleBeforeAnyRead(t *testing.T) {
-	store := sharedIPStore(banNow.Add(-2 * time.Hour))
-
-	_, err := banService(t, store).SearchBans(context.Background(), caller(definitions.ScopeHistoryRead),
-		supporthistory.BanSearchRequest{SchemaVersion: "1", Target: supporthistory.BanTarget{IP: "198.51.100.17"},
-			Subject: &supporthistory.Subject{Login: "bob@example.test"},
-			Filter:  supporthistory.BanSearchFilter{From: banNow.Add(-3 * time.Hour), Until: banNow}})
-	if !hasCode(err, supporthistory.CodeForbidden) || store.TotalCalls() != 0 {
-		t.Fatalf("error = %v, store calls = %v, want FORBIDDEN before any read", err, store.Calls)
+	if attempt := attempts["fl1."+latched]; !attempt.Recording.EventsTruncated || len(attempt.Events) != supporthistory.MaxEventsPerAttempt {
+		t.Fatalf("recording = %+v with %d events, want the bound reported", attempt.Recording, len(attempt.Events))
 	}
 }
 

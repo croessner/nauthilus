@@ -16,7 +16,6 @@
 package supporthistory
 
 import (
-	"cmp"
 	"slices"
 	"time"
 )
@@ -36,7 +35,6 @@ const (
 	basisLegacy          = "legacy"
 	stepRecorded         = "recorded"
 	stepNotRecorded      = "not_recorded"
-	stepWithheld         = "withheld"
 	stepNotApplicable    = "not_applicable"
 	certaintyObserved    = "observed"
 	certaintyUncertain   = "uncertain"
@@ -88,64 +86,62 @@ type attemptInput struct {
 	logins          []LoginRecord
 	events          []AuthEventRecord
 	matcher         subjectMatcher
+	listing         eventListing
 	read            readRange
-	projection      Projection
 	eventsRead      bool
 }
 
-// projectedEvent is one interpreted, projected event before sequencing.
+// projectedEvent is one interpreted, projected event before sequencing, with its position in the merged order.
 type projectedEvent struct {
 	event   Event
 	reading interpretation
+	key     eventPosition
 }
 
-// buildAttempt correlates, interprets, and projects the rows of one attempt.
-func buildAttempt(input attemptInput) Attempt {
+// buildAttempt correlates, interprets, and projects the rows of one attempt. Every attempt-level member is derived
+// from the interpretation rows; Events and Findings hold the selected events page. It returns the position to
+// continue the events after, or nil when the listed page ends the attempt.
+func buildAttempt(input attemptInput) (Attempt, *eventPosition) {
 	logins, loginReplays := dedupeByID(input.logins, loginEventID)
-	events, _ := dedupeByID(input.events, authEventID)
+	events, eventReplays := dedupeByID(input.events, authEventID)
 	factor, completion := splitStepEvents(events)
 	latched := slices.ContainsFunc(factor, func(record AuthEventRecord) bool {
 		return record.FailLatched || record.FlowEffect == flowEffectFailureKept
 	})
-	withhold := latched && input.projection == ProjectionSupport
-	visible, visibleReplays := dedupeByID(visibleEvents(input.events, withhold), authEventID)
-	visibleFactor, _ := splitStepEvents(visible)
 	evidence := evaluateCompletion(input, logins, factor, completion, latched)
+	projected := projectRows(input, logins, events)
 
-	projected := make([]projectedEvent, 0, len(logins)+len(visible))
+	var next *eventPosition
+
+	attempt := Attempt{AttemptID: attemptID(input.key), Kind: string(input.key.Kind), Projection: string(ProjectionDetail)}
+	attempt.Recording = recordingOf(logins, loginReplays+eventReplays)
+	attempt.Events, attempt.Findings, next = listEvents(input, projected)
+	attempt.Recording.EventsTruncated = next != nil
+	attempt.StartedAt, attempt.LastObservedAt = observedSpan(projected)
+	attempt.Outcome, attempt.OutcomeBasis, attempt.FinalOutcomeObserved = attemptOutcome(input, logins, factor,
+		latched, evidence, len(completion) > 0)
+	attempt.Progress = attemptProgress(logins, factor, completion, input.key.Kind, latched)
+	attempt.Steps = attemptSteps(input, logins, factor, evidence, completion)
+	attempt.Completion = evidence.block
+	attempt.Recording.KnownGaps = attemptGaps(input, logins, events, attempt, evidence, latched && len(completion) > 0)
+
+	return attempt, next
+}
+
+// projectRows interprets and projects deduplicated rows of one attempt in the merged event order.
+func projectRows(input attemptInput, logins []LoginRecord, events []AuthEventRecord) []projectedEvent {
+	projected := make([]projectedEvent, 0, len(logins)+len(events))
 	for _, record := range logins {
 		projected = append(projected, projectLogin(record, input))
 	}
 
-	for _, record := range visible {
+	for _, record := range events {
 		projected = append(projected, projectAuthEvent(record, input))
 	}
 
 	sortProjected(projected)
 
-	attempt := Attempt{AttemptID: attemptID(input.key), Kind: string(input.key.Kind), Projection: string(input.projection)}
-	attempt.Recording = recordingOf(input, logins, loginReplays+visibleReplays, withhold, projected)
-	attempt.Events, attempt.Findings = sequence(projected, withhold, &attempt.Recording)
-	attempt.StartedAt, attempt.LastObservedAt = observedSpan(projected, events)
-	attempt.Outcome, attempt.OutcomeBasis, attempt.FinalOutcomeObserved = attemptOutcome(input, logins, factor,
-		latched, evidence, len(completion) > 0)
-	attempt.Progress = attemptProgress(logins, factor, completion, input.key.Kind, latched)
-	attempt.Steps = attemptSteps(input, logins, visibleFactor, withhold, evidence, completion)
-	attempt.Completion = evidence.block
-	attempt.Recording.KnownGaps = attemptGaps(input, logins, visible, attempt, evidence, latched && len(completion) > 0)
-
-	return attempt
-}
-
-// visibleEvents removes fail-latched factor events from the support projection (contract §7.2, §11).
-func visibleEvents(records []AuthEventRecord, withhold bool) []AuthEventRecord {
-	if !withhold {
-		return records
-	}
-
-	return slices.DeleteFunc(slices.Clone(records), func(record AuthEventRecord) bool {
-		return record.FailLatched || record.FlowEffect == flowEffectFailureKept
-	})
+	return projected
 }
 
 // dedupeByID merges replays of the same non-empty event id; rows without id (legacy) are never merged. It returns
@@ -179,43 +175,26 @@ func authEventID(record AuthEventRecord) string {
 	return record.EventID
 }
 
-// sortProjected orders events by time, logins before step events at the same instant, then by event id.
+// sortProjected orders events by time, logins before step events at the same instant, then by the stored event id,
+// which is the order continuation reads use.
 func sortProjected(events []projectedEvent) {
 	slices.SortStableFunc(events, func(a, b projectedEvent) int {
-		if order := a.event.OccurredAt.Compare(b.event.OccurredAt); order != 0 {
-			return order
-		}
-
-		if order := cmp.Compare(a.event.Source, b.event.Source); order != 0 {
-			return -order
-		}
-
-		return cmp.Compare(stringValue(a.event.EventID), stringValue(b.event.EventID))
+		return a.key.compare(b.key)
 	})
 }
 
-// sequence numbers the visible events, applies the per-attempt bound, and collects findings.
-func sequence(projected []projectedEvent, withheld bool, recording *Recording) ([]Event, []Finding) {
-	if len(projected) > MaxEventsPerAttempt {
-		projected = projected[:MaxEventsPerAttempt]
-		recording.EventsTruncated = true
-	}
-
+// sequence numbers the events of one page after the served earlier events and collects their findings.
+func sequence(projected []projectedEvent, served int) ([]Event, []Finding) {
 	events := make([]Event, 0, len(projected))
 	findings := []Finding{}
 
 	for index, item := range projected {
-		item.event.Sequence = index + 1
+		item.event.Sequence = served + index + 1
 		events = append(events, item.event)
 
 		if item.reading.finding {
 			findings = append(findings, findingOf(item))
 		}
-	}
-
-	if withheld {
-		findings = append(findings, Finding{Code: CodeFactorOnLatchedFlow, Category: categorySecondFactor,
-			Certainty: certaintyObserved, Uncertainty: []string{}})
 	}
 
 	return events, findings
@@ -234,28 +213,17 @@ func findingOf(item projectedEvent) Finding {
 		Certainty: certainty, Uncertainty: uncertainty}
 }
 
-// observedSpan computes start and last observation over visible events only, so withheld retries leak nothing.
-// An attempt whose only evidence is withheld gets one minute-truncated instant.
-func observedSpan(projected []projectedEvent, events []AuthEventRecord) (time.Time, time.Time) {
-	if len(projected) > 0 {
-		return projected[0].event.OccurredAt, projected[len(projected)-1].event.OccurredAt
+// observedSpan computes start and last observation over the sorted events of an attempt.
+func observedSpan(projected []projectedEvent) (time.Time, time.Time) {
+	if len(projected) == 0 {
+		return time.Time{}, time.Time{}
 	}
 
-	var earliest time.Time
-
-	for _, record := range events {
-		if earliest.IsZero() || record.At.Before(earliest) {
-			earliest = record.At
-		}
-	}
-
-	earliest = earliest.Truncate(time.Minute)
-
-	return earliest, earliest
+	return projected[0].event.OccurredAt, projected[len(projected)-1].event.OccurredAt
 }
 
-// recordingOf counts merged replays and legacy rows of the visible evidence and flags the store bound.
-func recordingOf(input attemptInput, logins []LoginRecord, replays int, withheld bool, projected []projectedEvent) Recording {
+// recordingOf counts merged replays and legacy rows; the events flag is set from the listed page.
+func recordingOf(logins []LoginRecord, replays int) Recording {
 	legacy := 0
 
 	for _, record := range logins {
@@ -264,7 +232,5 @@ func recordingOf(input attemptInput, logins []LoginRecord, replays int, withheld
 		}
 	}
 
-	// The store bound of a latched flow can be filled by withheld factor events; reporting it would leak them.
-	return Recording{ReplayedRowsMerged: replays, LegacyRows: legacy, EventsWithheld: withheld,
-		EventsTruncated: input.read.limitHit && len(projected) > 0 && !withheld, KnownGaps: []string{}}
+	return Recording{ReplayedRowsMerged: replays, LegacyRows: legacy, KnownGaps: []string{}}
 }
