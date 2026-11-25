@@ -206,7 +206,7 @@ func TestLogOverviewPagesThroughEveryGroup(t *testing.T) {
 	}
 }
 
-// TestLogOverviewSourceStates pins the not-configured, incomplete, and grid-extension notes.
+// TestLogOverviewSourceStates pins the not-configured and incomplete notes.
 func TestLogOverviewSourceStates(t *testing.T) {
 	runtime := &fakeSource{name: SourceRuntime, kind: SourceKindLocalCurrent}
 
@@ -218,10 +218,9 @@ func TestLogOverviewSourceStates(t *testing.T) {
 
 	partial := newLogSource()
 	partial.overview.Report.Status, partial.overview.Report.Truncated = SourceStatusPartial, true
-	partial.overview.Report.Coverage.From = TimePointer(testNow.Add(-31 * time.Minute))
 
 	result, err = newTestService(t, &auditLog{}, partial).LogOverview(context.Background(), operator(), overviewRequest())
-	if err != nil || !slices.Contains(result.Notes, NoteHistoricalSourceIncomplete) || !slices.Contains(result.Notes, NoteLogBucketsExceedWindow) {
+	if err != nil || !slices.Contains(result.Notes, NoteHistoricalSourceIncomplete) {
 		t.Fatalf("partial notes = %v, %v", result.Notes, err)
 	}
 }
@@ -280,5 +279,22 @@ func TestLogOverviewWithoutCoverage(t *testing.T) {
 	result, err := newTestService(t, &auditLog{}, empty).LogOverview(context.Background(), operator(), overviewRequest())
 	if err != nil || !slices.Contains(result.Notes, NoteLogNoCoverage) {
 		t.Fatalf("no coverage notes = %v, %v", result.Notes, err)
+	}
+}
+
+// TestWindowsKeepWholeMilliseconds pins the planned window precision: a range selector counts whole milliseconds, so
+// finer digits of a requested window are dropped for every operation, and the default window ends at the current
+// millisecond.
+func TestWindowsKeepWholeMilliseconds(t *testing.T) {
+	requested := &Window{From: testNow.Add(-time.Hour + 1_234_567), Until: testNow.Add(-999)}
+
+	window, err := planWindow(requested, testNow)
+	if err != nil || !window.From.Equal(testNow.Add(-time.Hour+time.Millisecond)) || !window.Until.Equal(testNow.Add(-time.Millisecond)) {
+		t.Fatalf("window = %+v, %v", window, err)
+	}
+
+	window, err = planWindow(nil, testNow.Add(456_789))
+	if err != nil || !window.Until.Equal(testNow) || !window.From.Equal(testNow.Add(-DefaultWindow)) {
+		t.Fatalf("default window = %+v, %v", window, err)
 	}
 }

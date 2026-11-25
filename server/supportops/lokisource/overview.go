@@ -64,58 +64,49 @@ var logFormats = []logFormat{
 }
 
 // LogOverview counts the lines of every message at the requested levels per instance and bucket inside the window.
-// Only level names of the fixed vocabulary reach the query; messages leave Loki as aggregated label values.
+// Every bucket is counted by instant queries at its exact end, so the counts cover exactly [from, until) of every
+// bucket, whatever the window and however Loki aligns range evaluations. Only level names of the fixed vocabulary
+// reach the query; messages leave Loki as aggregated label values.
 func (s *Source) LogOverview(ctx context.Context, query supportops.LogOverviewQuery) supportops.LogOverviewSourceResult {
 	alternation := levelAlternation(query.Levels)
 	builds := make([]func(int64) string, 0, len(logFormats))
 
 	for _, format := range logFormats {
-		builds = append(builds, func(stepSeconds int64) string {
-			return overviewRangeQuery(s.instanceLabel, s.selector, format, alternation, stepSeconds)
+		builds = append(builds, func(rangeMillis int64) string {
+			return overviewCountQuery(s.instanceLabel, s.selector, format, alternation, rangeMillis)
 		})
 	}
 
-	ranged := s.CollectRange(ctx, supportops.Query{Window: query.Window, Now: query.Now}, overviewBuckets, builds)
-	result := supportops.LogOverviewSourceResult{Buckets: ranged.Buckets, Report: ranged.Report, Series: []supportops.LogSeries{}}
+	counted := s.CollectBuckets(ctx, supportops.Query{Window: query.Window, Now: query.Now}, overviewBuckets, builds)
+	result := supportops.LogOverviewSourceResult{Buckets: counted.Buckets, Report: counted.Report, Series: []supportops.LogSeries{}}
 
-	misaligned := false
-
-	for _, series := range ranged.Series {
+	for _, series := range counted.Series {
 		for _, entry := range series {
-			converted, ok, dropped := s.logSeries(entry, ranged.Buckets)
-			misaligned = misaligned || dropped
-
-			if ok {
+			if converted, ok := s.logSeries(entry); ok {
 				result.Series = append(result.Series, converted)
 			}
 		}
 	}
 
-	if misaligned && result.Report.Status == supportops.SourceStatusOK {
-		result.Report.Status, result.Report.Code = supportops.SourceStatusPartial, codePrefix+"_BUCKETS_MISALIGNED"
-	}
-
 	return result
 }
 
-// logSeries converts one range series into a log series; a level outside the vocabulary is dropped. The last result
-// reports points that fell off the bucket grid.
-func (s *Source) logSeries(series windowsource.Series, grid []supportops.Window) (supportops.LogSeries, bool, bool) {
+// logSeries converts one counted series into a log series; a level outside the vocabulary is dropped.
+func (s *Source) logSeries(series windowsource.BucketSeries) (supportops.LogSeries, bool) {
 	level, ok := overviewLevel(series.Labels[overviewLevelLabel])
 	if !ok {
-		return supportops.LogSeries{}, false, false
+		return supportops.LogSeries{}, false
 	}
 
-	counts, misaligned := windowsource.BucketCounts(series, grid)
 	message := series.Labels[overviewMessageLabel]
 	converted := supportops.LogSeries{Instance: windowsource.InstanceName(series.Labels[s.instanceLabel]), Level: level,
-		Message: message, Counts: counts}
+		Message: message, Counts: series.Counts}
 
 	if entry, profiled := profileEntryOf(message); profiled {
 		converted.Component, converted.Symptom = entry.component, entry.symptom
 	}
 
-	return converted, true, misaligned
+	return converted, true
 }
 
 // overviewLevel maps a slog level name back to the overview vocabulary.
@@ -144,11 +135,11 @@ func levelAlternation(levels []string) string {
 	return strings.Join(names, "|")
 }
 
-// overviewRangeQuery returns the range query that counts the lines of one log format per instance, level, and message
-// over stepSeconds.
-func overviewRangeQuery(instanceLabel string, selector string, format logFormat, alternation string, stepSeconds int64) string {
-	return fmt.Sprintf(`sum by (%s, %s, %s) (count_over_time(%s%s [%ds]))`, instanceLabel, overviewLevelLabel,
-		overviewMessageLabel, selector, parserStages(format, alternation), stepSeconds)
+// overviewCountQuery returns the instant query that counts the lines of one log format per instance, level, and
+// message over rangeMillis milliseconds.
+func overviewCountQuery(instanceLabel string, selector string, format logFormat, alternation string, rangeMillis int64) string {
+	return fmt.Sprintf(`sum by (%s, %s, %s) (count_over_time(%s%s [%dms]))`, instanceLabel, overviewLevelLabel,
+		overviewMessageLabel, selector, parserStages(format, alternation), rangeMillis)
 }
 
 // parserStages returns the pipeline of one log format shared by the overview and the events: the prefilter drops

@@ -43,6 +43,9 @@ type storeEntry struct {
 type storeLoki struct {
 	entries    []storeEntry
 	dedupProbe bool
+
+	// reject, when set, rejects every query that contains it.
+	reject string
 }
 
 // storeStream is one stream of a fake read answer.
@@ -89,11 +92,20 @@ func storeKey(labels map[string]string) string {
 func (b *storeLoki) fake() *fakeLoki {
 	return &fakeLoki{respond: func(request *http.Request) string {
 		parameters := request.URL.Query()
+
+		if b.reject != "" && strings.Contains(parameters.Get("query"), b.reject) {
+			return `{"status":"error"}`
+		}
+
 		start, _ := strconv.ParseInt(parameters.Get("start"), 10, 64)
 		end, _ := strconv.ParseInt(parameters.Get("end"), 10, 64)
 
 		if strings.HasSuffix(request.URL.Path, "/series") {
 			return b.series(storeSelector(parameters.Get("match[]")), start, end)
+		}
+
+		if strings.Contains(parameters.Get("query"), "count_over_time(") {
+			return b.metric(request)
 		}
 
 		limit, _ := strconv.Atoi(parameters.Get("limit"))

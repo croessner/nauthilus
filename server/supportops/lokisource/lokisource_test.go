@@ -200,7 +200,9 @@ func TestLokiHitsAndCoverage(t *testing.T) {
 	}
 }
 
-// TestLokiQueryAndTenantBoundary pins the exact LogQL, the fixed tenant and credentials, and the fixed endpoint.
+// TestLokiQueryAndTenantBoundary pins the exact LogQL, the fixed tenant and credentials, and the fixed endpoint. A
+// count covers exactly the window: its range is the window length in milliseconds, and it is evaluated one
+// nanosecond before the exclusive window end, because Loki counts (t-range, t].
 func TestLokiQueryAndTenantBoundary(t *testing.T) {
 	fake := &fakeLoki{answers: map[string]string{"": vector("mx-1", "1")}}
 	newTestSource(t, fake, nil).Collect(context.Background(), testQuery(supportops.ComponentClickHouseExport))
@@ -210,8 +212,8 @@ func TestLokiQueryAndTenantBoundary(t *testing.T) {
 	}
 
 	want := []string{
-		`sum by (pod) (count_over_time(` + testSelector + ` [1800s]))`,
-		`sum by (pod) (count_over_time(` + testSelector + ` |= "clickhouse pending batch flush failed" |~ "\"msg\":\"clickhouse pending batch flush failed\"|(^|\\s)msg=\"clickhouse pending batch flush failed\"" [1800s]))`,
+		`sum by (pod) (count_over_time(` + testSelector + ` [1800000ms]))`,
+		`sum by (pod) (count_over_time(` + testSelector + ` |= "clickhouse pending batch flush failed" |~ "\"msg\":\"clickhouse pending batch flush failed\"|(^|\\s)msg=\"clickhouse pending batch flush failed\"" [1800000ms]))`,
 	}
 
 	for index, request := range fake.requests {
@@ -227,7 +229,7 @@ func TestLokiQueryAndTenantBoundary(t *testing.T) {
 			t.Fatalf("request %d headers = %v", index, request.Header)
 		}
 
-		if request.URL.Query().Get("time") != strconv.FormatInt(testQuery().Window.Until.UnixNano(), 10) {
+		if request.URL.Query().Get("time") != strconv.FormatInt(testQuery().Window.Until.UnixNano()-1, 10) {
 			t.Fatalf("request %d time = %q", index, request.URL.Query().Get("time"))
 		}
 	}
@@ -260,13 +262,13 @@ func TestMessagePatternMatchesOnlyTheMessageField(t *testing.T) {
 // window with 68 MB of debug lines took more than six seconds per profile query and exhausted the source timeout. The
 // substring stage must never drop a line the pattern counts, and the coverage query stays without a line filter.
 func TestProfileQueriesFilterByLiteralBeforeThePattern(t *testing.T) {
-	const rangeSeconds = 900
+	const rangeMillis = 900000
 
 	for _, entry := range diagnosticsProfile {
 		stages := " |= " + strconv.Quote(entry.literal) + " |~ " + strconv.Quote(messagePattern(entry.literal))
-		want := "sum by (pod) (count_over_time(" + testSelector + stages + " [900s]))"
+		want := "sum by (pod) (count_over_time(" + testSelector + stages + " [900000ms]))"
 
-		if got := countQuery("pod", testSelector, entry.literal, rangeSeconds); got != want {
+		if got := countQuery("pod", testSelector, entry.literal, rangeMillis); got != want {
 			t.Errorf("query(%q) = %s, want %s", entry.literal, got, want)
 		}
 
@@ -282,7 +284,7 @@ func TestProfileQueriesFilterByLiteralBeforeThePattern(t *testing.T) {
 		}
 	}
 
-	if got := countQuery("pod", testSelector, "", rangeSeconds); strings.Contains(got, "|") {
+	if got := countQuery("pod", testSelector, "", rangeMillis); strings.Contains(got, "|") {
 		t.Errorf("coverage query carries a line filter: %s", got)
 	}
 }
@@ -347,14 +349,14 @@ func TestLokiTruncationAndClipping(t *testing.T) {
 		t.Fatalf("byte bound = %+v", result.Report)
 	}
 
-	clipped := newTestSource(t, &fakeLoki{}, func(cfg *Config) { cfg.MaxTimeWindow = 10 * time.Minute })
+	parts := &fakeLoki{answers: map[string]string{"": vector("mx-1", "1")}}
 
 	query := testQuery(supportops.ComponentRedis)
-	result = clipped.Collect(context.Background(), query)
+	result = newTestSource(t, parts, func(cfg *Config) { cfg.MaxTimeWindow = 10 * time.Minute }).Collect(context.Background(), query)
 
-	if result.Report.Status != supportops.SourceStatusPartial || result.Report.Code != "LOKI_WINDOW_CLIPPED" ||
-		!result.Report.Coverage.From.Equal(query.Window.Until.Add(-10*time.Minute)) {
-		t.Fatalf("clip = %+v", result.Report)
+	if result.Report.Status != supportops.SourceStatusOK || !result.Report.Coverage.From.Equal(query.Window.From) ||
+		len(parts.requests) != 3*(1+2) {
+		t.Fatalf("parts = %+v after %d queries, want three parts of coverage and two Redis queries", result.Report, len(parts.requests))
 	}
 }
 

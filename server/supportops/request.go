@@ -116,14 +116,20 @@ func windowKey(window Window) string {
 	return window.From.UTC().Format(time.RFC3339Nano) + "/" + window.Until.UTC().Format(time.RFC3339Nano)
 }
 
+// windowPrecision is the precision of every planned window: the smallest unit of a range selector, so a historical
+// source can count exactly the planned window and the log events read the same one.
+const windowPrecision = time.Millisecond
+
 // planWindow bounds the requested window: From before Until, Until not in the future beyond a small skew, and at
-// most MaxWindow long.
+// most MaxWindow long. Both bounds keep whole milliseconds; finer digits are dropped.
 func planWindow(requested *Window, now time.Time) (Window, *Error) {
 	if requested == nil {
-		return Window{From: now.Add(-DefaultWindow).UTC(), Until: now.UTC()}, nil
+		now = now.UTC().Truncate(windowPrecision)
+
+		return Window{From: now.Add(-DefaultWindow), Until: now}, nil
 	}
 
-	window := Window{From: requested.From.UTC(), Until: requested.Until.UTC()}
+	window := Window{From: requested.From.UTC().Truncate(windowPrecision), Until: requested.Until.UTC().Truncate(windowPrecision)}
 
 	switch {
 	case window.From.IsZero() || window.Until.IsZero() || !window.From.Before(window.Until):

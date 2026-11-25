@@ -38,7 +38,6 @@ var DefaultLogLevels = []string{LogLevelError, LogLevelWarn}
 // Note codes of the log answers.
 const (
 	NoteLogMessagesAreNotIncidents = "LOG_MESSAGES_ARE_NOT_INCIDENTS"
-	NoteLogBucketsExceedWindow     = "LOG_BUCKETS_EXCEED_WINDOW"
 
 	// NoteLogNoCoverage means no instance logged any line in the window: an empty message list proves nothing.
 	NoteLogNoCoverage = "LOG_NO_COVERAGE"

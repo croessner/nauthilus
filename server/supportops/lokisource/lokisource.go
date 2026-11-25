@@ -63,14 +63,14 @@ type Source struct {
 // New validates the boundary and builds the source. The HTTP client never follows redirects.
 func New(cfg Config) (*Source, error) {
 	count := func(literal string) func(int64) string {
-		return func(rangeSeconds int64) string {
-			return countQuery(cfg.InstanceLabel, streamSelector(cfg.Selector), literal, rangeSeconds)
+		return func(rangeMillis int64) string {
+			return countQuery(cfg.InstanceLabel, streamSelector(cfg.Selector), literal, rangeMillis)
 		}
 	}
 
 	engine, err := windowsource.New(cfg, windowsource.Profile{Name: supportops.SourceLoki, CodePrefix: codePrefix,
 		QueryPath: queryPath, RangePath: rangePath, SeriesPath: seriesPath, TimeParam: lokiTime, Basis: supportops.BasisLogWindow, View: supportops.CoverageLogLabels,
-		MinCoverage: minCoverageLines, Coverage: count(""), Entries: profileQueries(count)})
+		MinCoverage: minCoverageLines, Coverage: count(""), Entries: profileQueries(count), ClosedRangeEnd: true})
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +101,10 @@ func streamSelector(selector map[string]string) string {
 	return "{" + strings.Join(matchers, ",") + "}"
 }
 
-// countQuery returns the metric query counting matching lines per instance over rangeSeconds. A profile literal
-// is matched only as the value of the log message field, never anywhere in the line.
-func countQuery(instanceLabel string, selector string, literal string, rangeSeconds int64) string {
-	return fmt.Sprintf("sum by (%s) (count_over_time(%s%s [%ds]))", instanceLabel, selector, lineFilter(literal), rangeSeconds)
+// countQuery returns the metric query counting matching lines per instance over rangeMillis milliseconds. A
+// profile literal is matched only as the value of the log message field, never anywhere in the line.
+func countQuery(instanceLabel string, selector string, literal string, rangeMillis int64) string {
+	return fmt.Sprintf("sum by (%s) (count_over_time(%s%s [%dms]))", instanceLabel, selector, lineFilter(literal), rangeMillis)
 }
 
 // lineFilter returns the line filter stages of a profile literal, and none for the coverage query. Loki applies the

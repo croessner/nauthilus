@@ -25,129 +25,148 @@ import (
 	"github.com/croessner/nauthilus/v4/server/supportops"
 )
 
-// alignmentTolerance is how far an evaluation may be from a bucket end and still count for that bucket.
-const alignmentTolerance = time.Second
+// BucketSeries is one counted series of a bucketed collection: its labels and its whole count per bucket.
+type BucketSeries struct {
+	Labels map[string]string
+	Counts []int64
+}
 
-// RangeResult is the answer of one bucketed range collection: the completeness report with the covered instances and
-// time span, the bucket grid, and the series of every range query in query order. A failed query has nil series.
-type RangeResult struct {
-	Series  [][]Series
+// BucketResult is the answer of one bucketed collection: the completeness report with the covered instances and
+// time span, the bucket grid, and the series of every build in build order. A build whose every query failed has
+// nil series.
+type BucketResult struct {
+	Series  [][]BucketSeries
 	Buckets []supportops.Window
 	Report  supportops.SourceReport
 }
 
-// CollectRange proves coverage with the coverage query and runs the range queries over a grid of at most buckets
-// equal buckets that ends at the covered window end. Each build receives the bucket width in seconds and must count
-// over exactly that range, so the evaluations tile the grid. The grid can start up to buckets-1 seconds before the
-// window; the report states the span it really covers.
-func (e *Engine) CollectRange(ctx context.Context, query supportops.Query, buckets int, builds []func(stepSeconds int64) string) RangeResult {
-	ctx, cancel := context.WithTimeout(ctx, e.spec.Timeout)
+// bucketCount is one instant query of a bucketed collection: the build, the bucket, and the part of that bucket.
+type bucketCount struct {
+	span   supportops.Window
+	build  int
+	bucket int
+}
+
+// CollectBuckets proves coverage with the coverage query and counts every build in every bucket of a grid of at
+// most buckets buckets that tile the covered window exactly. Each bucket is counted by instant queries over its
+// parts of at most MaxTimeWindow, evaluated at the exact part end, so no count depends on how the endpoint aligns
+// range evaluations, no line is counted twice or outside the window, and a line on a bucket edge counts in the
+// bucket that starts there.
+func (e *Engine) CollectBuckets(ctx context.Context, query supportops.Query, buckets int, builds []func(rangeMillis int64) string) BucketResult {
+	parts, window, clipped := e.windowParts(query.Window)
+	grid := BucketGrid(window, buckets)
+	result := BucketResult{Buckets: grid, Series: make([][]BucketSeries, len(builds))}
+
+	ctx, cancel := context.WithTimeout(ctx, e.budget(parts))
 	defer cancel()
 
-	window, clipped := e.coveredWindow(query.Window)
 	collection := newCollection(e, query, window)
 
 	if clipped {
 		collection.degrade(supportops.SourceStatusPartial, e.code("WINDOW_CLIPPED"))
 	}
 
-	grid, step := BucketGrid(window, buckets)
-	covered := supportops.Window{From: grid[0].From, Until: window.Until}
+	slots := make(chan struct{}, maxParallelQueries)
 
-	coverage, ok := collection.run(ctx, e.spec.Coverage, true)
+	coverage, ok := collection.sumParts(ctx, slots, e.spec.Coverage, parts, true)
 	if !ok {
-		return RangeResult{Buckets: grid, Report: collection.report(nil, covered), Series: make([][]Series, len(builds))}
+		result.Report = collection.report(nil, window)
+
+		return result
 	}
 
-	series := make([][]Series, len(builds))
-	failures := make([]error, len(builds))
+	result.Series = collection.countBuckets(ctx, slots, e.bucketCounts(grid, len(builds)), builds, len(grid))
+	result.Report = collection.report(collection.instances(coverage), window)
+
+	return result
+}
+
+// bucketCounts lists the instant queries of a grid: every build in every part of every bucket.
+func (e *Engine) bucketCounts(grid []supportops.Window, builds int) []bucketCount {
+	var counts []bucketCount
+
+	for build := range builds {
+		for bucket, span := range grid {
+			for _, part := range SplitWindow(span, e.partLength()) {
+				counts = append(counts, bucketCount{span: part, build: build, bucket: bucket})
+			}
+		}
+	}
+
+	return counts
+}
+
+// countBuckets runs the instant queries and adds their samples per build, series, and bucket. A build whose every
+// query failed has nil series; when every query of every build failed, the collection becomes unavailable.
+func (c *collection) countBuckets(ctx context.Context, slots chan struct{}, counts []bucketCount,
+	builds []func(rangeMillis int64) string, buckets int) [][]BucketSeries {
+	answers := make([][]Sample, len(counts))
+	succeeded := make([]bool, len(counts))
 
 	var wait sync.WaitGroup
 
-	for index, build := range builds {
+	for index, count := range counts {
 		wait.Go(func() {
-			series[index], failures[index] = collection.runRange(ctx, build(int64(step/time.Second)), grid[0].Until, window.Until, step)
+			slots <- struct{}{}
+			defer func() { <-slots }()
+
+			answers[index], succeeded[index] = c.run(ctx, builds[count.build], count.span, false)
 		})
 	}
 
 	wait.Wait()
-	collection.failAll(ctx, failures)
 
-	return RangeResult{Series: series, Buckets: grid, Report: collection.report(collection.instances(coverage), covered)}
-}
+	series := make([][]BucketSeries, len(builds))
+	positions := make([]map[string]int, len(builds))
+	answered := make([]bool, len(builds))
 
-// runRange executes one range query; a failure degrades the collection to partial or timeout and is returned.
-func (c *collection) runRange(ctx context.Context, query string, start time.Time, end time.Time, step time.Duration) ([]Series, error) {
-	series, truncated, err := c.engine.client.Range(ctx, query, start, end, step)
-	if truncated {
-		c.markTruncated()
-	}
-
-	if err != nil {
-		c.fail(ctx, err, false)
-
-		return nil, err
-	}
-
-	return series, nil
-}
-
-// failAll makes the collection unavailable when every range query failed, so an answer without any counted series
-// never reads as a quiet window.
-func (c *collection) failAll(ctx context.Context, failures []error) {
-	if len(failures) == 0 || slices.Contains(failures, nil) {
-		return
-	}
-
-	c.fail(ctx, failures[0], true)
-}
-
-// BucketGrid splits window into at most buckets equal buckets of whole seconds that end at the window end. The first
-// bucket starts at or before the window start.
-func BucketGrid(window supportops.Window, buckets int) ([]supportops.Window, time.Duration) {
-	total := max(int64(math.Ceil(window.Until.Sub(window.From).Seconds())), 1)
-	stepSeconds := max((total+int64(max(buckets, 1))-1)/int64(max(buckets, 1)), 1)
-	count := (total + stepSeconds - 1) / stepSeconds
-	step := time.Duration(stepSeconds) * time.Second
-
-	grid := make([]supportops.Window, 0, count)
-
-	for index := range count {
-		from := window.Until.Add(-time.Duration(count-index) * step)
-		grid = append(grid, supportops.Window{From: from.UTC(), Until: from.Add(step).UTC()})
-	}
-
-	return grid, step
-}
-
-// BucketCounts maps the points of one series onto the grid by their evaluation time, which is the bucket end, and
-// rounds every count to a whole number. A point that is not within a second of a bucket end, for example after a query
-// frontend aligned the evaluations to the step, is dropped and reported, so a count never lands in a bucket whose span
-// it does not cover.
-func BucketCounts(series Series, grid []supportops.Window) ([]int64, bool) {
-	counts := make([]int64, len(grid))
-	misaligned := false
-
-	if len(grid) == 0 {
-		return counts, len(series.Points) > 0
-	}
-
-	step := grid[0].Until.Sub(grid[0].From)
-
-	for _, point := range series.Points {
-		offset := point.At.Sub(grid[0].Until)
-		index := int(math.Round(float64(offset) / float64(step)))
-
-		if index < 0 || index >= len(grid) || (offset-time.Duration(index)*step).Abs() > alignmentTolerance {
-			misaligned = true
-
+	for index, count := range counts {
+		if !succeeded[index] {
 			continue
 		}
 
-		counts[index] = saturatingAdd(counts[index], point.Value)
+		answered[count.build] = true
+
+		if positions[count.build] == nil {
+			positions[count.build], series[count.build] = map[string]int{}, []BucketSeries{}
+		}
+
+		series[count.build] = addBucketSamples(series[count.build], positions[count.build], answers[index], count.bucket, buckets)
 	}
 
-	return counts, misaligned
+	if !slices.Contains(answered, true) {
+		c.escalate()
+	}
+
+	return series
+}
+
+// addBucketSamples adds the rounded samples of one query to their series in one bucket.
+func addBucketSamples(series []BucketSeries, positions map[string]int, samples []Sample, bucket int, buckets int) []BucketSeries {
+	for _, sample := range samples {
+		key := labelsKey(sample.Labels)
+
+		position, seen := positions[key]
+		if !seen {
+			position, positions[key] = len(series), len(series)
+
+			series = append(series, BucketSeries{Labels: sample.Labels, Counts: make([]int64, buckets)})
+		}
+
+		series[position].Counts[bucket] = saturatingAdd(series[position].Counts[bucket], sample.Value)
+	}
+
+	return series
+}
+
+// BucketGrid splits window into at most buckets buckets that tile it exactly and end at the window end: every bucket
+// spans the same whole number of seconds, except the first, which starts at the window start and may be shorter. The
+// bucket bounds keep the millisecond precision of the window.
+func BucketGrid(window supportops.Window, buckets int) []supportops.Window {
+	buckets = max(buckets, 1)
+	total := max(int64(math.Ceil(window.Until.Sub(window.From).Seconds())), 1)
+
+	return SplitWindow(window, time.Duration((total+int64(buckets)-1)/int64(buckets))*time.Second)
 }
 
 // saturatingAdd adds a rounded non-negative value to a count without overflowing.

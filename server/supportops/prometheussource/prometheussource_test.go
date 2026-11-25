@@ -21,7 +21,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,8 +42,10 @@ const (
 )
 
 // fakePrometheus answers instant queries from a table keyed by the symptom of the profile entry that the query
-// belongs to ("coverage" for the coverage query) and records every request it saw.
+// belongs to ("coverage" for the coverage query) and records every request it saw. respond, when set, answers every
+// request instead of the table.
 type fakePrometheus struct {
+	respond  func(*http.Request) string
 	answers  map[string]string
 	status   int
 	delay    time.Duration
@@ -70,7 +74,11 @@ func (f *fakePrometheus) ServeHTTP(writer http.ResponseWriter, request *http.Req
 	}
 
 	answer, ok := f.answers[querySymptom(request.URL.Query().Get("query"))]
-	if !ok {
+
+	switch {
+	case f.respond != nil:
+		answer = f.respond(request)
+	case !ok:
 		answer = vector()
 	}
 
@@ -78,19 +86,33 @@ func (f *fakePrometheus) ServeHTTP(writer http.ResponseWriter, request *http.Req
 	_, _ = writer.Write([]byte(answer))
 }
 
-// querySymptom returns the symptom of the profile entry whose query a request carries, "coverage" for the coverage
-// query, and "unknown query" for anything else.
-func querySymptom(query string) string {
-	const rangeSeconds = 1800
+// queryRange matches the first range of a query in milliseconds.
+var queryRange = regexp.MustCompile(`\[(\d+)ms[\]:]`)
 
+// queryRangeMillis returns the first range of a query in milliseconds, or 0.
+func queryRangeMillis(query string) int64 {
+	match := queryRange.FindStringSubmatch(query)
+	if match == nil {
+		return 0
+	}
+
+	millis, _ := strconv.ParseInt(match[1], 10, 64)
+
+	return millis
+}
+
+// querySymptom returns the symptom of the profile entry whose query a request carries, whatever its range,
+// "coverage" for the coverage query, and "unknown query" for anything else.
+func querySymptom(query string) string {
+	rangeMillis := queryRangeMillis(query)
 	fixed := fixedMatchers(map[string]string{"app": "nauthilus", "job": "nauthilus"})
 
-	if query == coverageQuery(testLabel, fixed)(rangeSeconds) {
+	if query == coverageQuery(testLabel, fixed)(rangeMillis) {
 		return coverageToken
 	}
 
 	for _, entry := range diagnosticsProfile {
-		if query == entry.query(testLabel, fixed)(rangeSeconds) {
+		if query == entry.query(testLabel, fixed)(rangeMillis) {
 			return entry.symptom
 		}
 	}
@@ -213,14 +235,14 @@ func TestPrometheusQueryBoundary(t *testing.T) {
 	newTestSource(t, fake, nil).Collect(context.Background(), testQuery(supportops.ComponentLDAP, supportops.ComponentClickHouseExport))
 
 	want := []string{
-		`sum by (instance) (count_over_time(nauthilus_version_info{app="nauthilus",job="nauthilus"}[1800s]))`,
-		`sum by (instance) (increase(ldap_errors_total{op="bind",code="49",app="nauthilus",job="nauthilus"}[1800s]))`,
-		`sum by (instance) (increase(ldap_errors_total{op!="bind",app="nauthilus",job="nauthilus"}[1800s]) or ` +
-			`increase(ldap_errors_total{op="bind",code!="49",app="nauthilus",job="nauthilus"}[1800s]))`,
+		`sum by (instance) (count_over_time(nauthilus_version_info{app="nauthilus",job="nauthilus"}[1800000ms]))`,
+		`sum by (instance) (increase(ldap_errors_total{op="bind",code="49",app="nauthilus",job="nauthilus"}[1800000ms]))`,
+		`sum by (instance) (increase(ldap_errors_total{op!="bind",app="nauthilus",job="nauthilus"}[1800000ms]) or ` +
+			`increase(ldap_errors_total{op="bind",code!="49",app="nauthilus",job="nauthilus"}[1800000ms]))`,
 		`sum by (instance) (increase(label_replace({__name__=~"nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_flush_batches_total",` +
-			`result=~"http_error|status_error|no_url",app="nauthilus",job="nauthilus"}, "family", "$1", "__name__", "(.+)")[1800s:15s]))`,
+			`result=~"http_error|status_error|no_url",app="nauthilus",job="nauthilus"}, "family", "$1", "__name__", "(.+)")[1800000ms:15s]))`,
 		`sum by (instance) (increase(label_replace({__name__=~"nauthilus_plugin_(?:[a-z0-9_]+_)?clickhouse(?:_[a-z0-9_]+)?_queued_rows_total",` +
-			`result=~"dropped|dropped_reject_limit|encode_error",app="nauthilus",job="nauthilus"}, "family", "$1", "__name__", "(.+)")[1800s:15s]))`,
+			`result=~"dropped|dropped_reject_limit|encode_error",app="nauthilus",job="nauthilus"}, "family", "$1", "__name__", "(.+)")[1800000ms:15s]))`,
 	}
 
 	if len(fake.requests) != len(want) {
@@ -326,13 +348,21 @@ func TestPrometheusTruncationAndClipping(t *testing.T) {
 		t.Fatalf("byte bound = %+v", result.Report)
 	}
 
-	clipped := newTestSource(t, &fakePrometheus{}, func(cfg *Config) { cfg.MaxTimeWindow = 10 * time.Minute })
+	parts := &fakePrometheus{answers: map[string]string{coverageToken: vector("mx-1", "9")}}
 
 	query := testQuery(supportops.ComponentRedis)
-	result = clipped.Collect(context.Background(), query)
+	result = newTestSource(t, parts, func(cfg *Config) { cfg.MaxTimeWindow = 10 * time.Minute }).Collect(context.Background(), query)
+
+	if result.Report.Status != supportops.SourceStatusOK || !result.Report.Coverage.From.Equal(query.Window.From) ||
+		len(parts.requests)%3 != 0 {
+		t.Fatalf("parts = %+v after %d queries, want every query once per ten-minute part", result.Report, len(parts.requests))
+	}
+
+	query.Window.From = query.Window.Until.Add(-5 * time.Hour)
+	result = newTestSource(t, &fakePrometheus{}, func(cfg *Config) { cfg.MaxTimeWindow = 10 * time.Minute }).Collect(context.Background(), query)
 
 	if result.Report.Status != supportops.SourceStatusPartial || result.Report.Code != "PROMETHEUS_WINDOW_CLIPPED" ||
-		!result.Report.Coverage.From.Equal(query.Window.Until.Add(-10*time.Minute)) {
+		!result.Report.Coverage.From.Equal(query.Window.Until.Add(-4*time.Hour)) {
 		t.Fatalf("clip = %+v", result.Report)
 	}
 }

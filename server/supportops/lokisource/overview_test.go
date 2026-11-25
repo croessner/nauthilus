@@ -27,39 +27,27 @@ import (
 	"github.com/croessner/nauthilus/v4/server/supportops"
 )
 
-// overviewSeries is one series of a fake range answer: its labels and its values per evaluation time.
-type overviewSeries struct {
-	values map[time.Time]string
-	pod    string
-	level  string
-	msg    string
+// overviewSample is one series of a fake instant answer with the overview label names.
+type overviewSample struct {
+	pod   string
+	level string
+	msg   string
+	value string
 }
 
-// matrix renders a success matrix answer of the series with the overview label names.
-func matrix(series ...overviewSeries) string {
-	rendered := make([]string, 0, len(series))
+// overviewVector renders a success vector answer of the samples.
+func overviewVector(samples ...overviewSample) string {
+	rendered := make([]string, 0, len(samples))
 
-	for _, entry := range series {
-		times := make([]time.Time, 0, len(entry.values))
-		for at := range entry.values {
-			times = append(times, at)
-		}
-
-		slices.SortFunc(times, func(left, right time.Time) int { return left.Compare(right) })
-
-		points := make([]string, 0, len(times))
-		for _, at := range times {
-			points = append(points, fmt.Sprintf(`[%d,%q]`, at.Unix(), entry.values[at]))
-		}
-
-		rendered = append(rendered, fmt.Sprintf(`{"metric":{"pod":%q,%q:%q,%q:%q},"values":[%s]}`, entry.pod,
-			overviewLevelLabel, entry.level, overviewMessageLabel, entry.msg, strings.Join(points, ",")))
+	for _, sample := range samples {
+		rendered = append(rendered, fmt.Sprintf(`{"metric":{"pod":%q,%q:%q,%q:%q},"value":[1763452800.0,%q]}`, sample.pod,
+			overviewLevelLabel, sample.level, overviewMessageLabel, sample.msg, sample.value))
 	}
 
-	return `{"status":"success","data":{"resultType":"matrix","result":[` + strings.Join(rendered, ",") + `]}}`
+	return `{"status":"success","data":{"resultType":"vector","result":[` + strings.Join(rendered, ",") + `]}}`
 }
 
-// overviewFake answers the coverage query and one range answer per log format parser.
+// overviewFake answers the coverage query and one fixed answer per log format parser, the same for every bucket.
 func overviewFake(json string, logfmt string) *fakeLoki {
 	return &fakeLoki{answers: map[string]string{"": vector("mx-1", "500", "mx-2", "300", "mx-3", "200"),
 		"| json": json, "| logfmt": logfmt}}
@@ -78,16 +66,19 @@ func overviewQuery(levels ...string) supportops.LogOverviewQuery {
 // a profiled message.
 func TestLogOverviewReportsUnprofiledWarningsAndErrors(t *testing.T) {
 	until := testQuery().Window.Until
-	fake := overviewFake(
-		matrix(overviewSeries{pod: "mx-1", level: "WARN", msg: "WebAuthn sign count anomaly",
-			values: map[time.Time]string{until: "2", until.Add(-20 * time.Minute): "1"}}),
-		matrix(overviewSeries{pod: "mx-2", level: "ERROR", msg: "RBL check failed",
-			values: map[time.Time]string{until.Add(-15 * time.Minute): "3"}},
-			overviewSeries{pod: "mx-2", level: "ERROR", msg: "LDAP connection error",
-				values: map[time.Time]string{until: "4"}}),
-	)
+	store := &storeLoki{entries: []storeEntry{
+		windowLine("mx-1", "WARN", "WebAuthn sign count anomaly", until.Add(-time.Nanosecond)),
+		windowLine("mx-1", "WARN", "WebAuthn sign count anomaly", until.Add(-time.Second)),
+		windowLine("mx-1", "WARN", "WebAuthn sign count anomaly", until.Add(-20*time.Minute)),
+		windowLine("mx-1", "WARN", "WebAuthn sign count anomaly", until),
+		logfmtLine("mx-2", "ERROR", "RBL check failed", until.Add(-15*time.Minute)),
+		logfmtLine("mx-2", "ERROR", "RBL check failed", until.Add(-15*time.Minute+time.Second)),
+		logfmtLine("mx-2", "ERROR", "RBL check failed", until.Add(-15*time.Minute+2*time.Second)),
+		windowLine("mx-2", "ERROR", "LDAP connection error", until.Add(-time.Minute)),
+		windowLine("mx-3", "INFO", "started", until.Add(-29*time.Minute)),
+	}}
 
-	result := newTestSource(t, fake, nil).LogOverview(context.Background(), overviewQuery())
+	result := newTestSource(t, store.fake(), nil).LogOverview(context.Background(), overviewQuery(warnAndError...))
 
 	assertFullOverviewGrid(t, result, until)
 
@@ -108,6 +99,12 @@ func TestLogOverviewReportsUnprofiledWarningsAndErrors(t *testing.T) {
 	}
 }
 
+// logfmtLine stores one distinct slog text line of pod at a time.
+func logfmtLine(pod string, level string, message string, at time.Time) storeEntry {
+	return storeEntry{labels: storeLabels(pod), ts: at.UnixNano(),
+		line: fmt.Sprintf("time=%s level=%s msg=%q seq=%d", at.Format(time.RFC3339Nano), level, message, windowSequence.Add(1))}
+}
+
 // assertFullOverviewGrid checks a complete report over all three instances and the 30-minute grid ending at until.
 func assertFullOverviewGrid(t *testing.T, result supportops.LogOverviewSourceResult, until time.Time) {
 	t.Helper()
@@ -123,63 +120,61 @@ func assertFullOverviewGrid(t *testing.T, result supportops.LogOverviewSourceRes
 	}
 }
 
-// TestLogOverviewQueryBoundary pins the exact range queries: fixed selector, a level prefilter from the fixed
-// vocabulary, both log format parsers with dedicated label names, and the bucket step.
+// TestLogOverviewQueryBoundary pins the exact instant queries: fixed selector, a level prefilter from the fixed
+// vocabulary, both log format parsers with dedicated label names, the bucket range in milliseconds, and an
+// evaluation one nanosecond before every bucket end, so each count covers exactly its bucket.
 func TestLogOverviewQueryBoundary(t *testing.T) {
-	fake := overviewFake(matrix(), matrix())
-	newTestSource(t, fake, nil).LogOverview(context.Background(), overviewQuery(supportops.LogLevelError))
+	fake := overviewFake(overviewVector(), overviewVector())
+	result := newTestSource(t, fake, nil).LogOverview(context.Background(), overviewQuery(supportops.LogLevelError))
 
-	want := map[string]bool{
-		`sum by (pod) (count_over_time(` + testSelector + ` [1800s]))`: false,
+	want := map[string]int{
+		`sum by (pod) (count_over_time(` + testSelector + ` [1800000ms]))`: 1,
 		`sum by (pod, nauthilus_level, nauthilus_msg) (count_over_time(` + testSelector +
-			` |~ "\"level\":\"(ERROR)\"" | json nauthilus_level="level", nauthilus_msg="msg" | __error__="" | nauthilus_level=~"ERROR" [150s]))`: false,
+			` |~ "\"level\":\"(ERROR)\"" | json nauthilus_level="level", nauthilus_msg="msg" | __error__="" | nauthilus_level=~"ERROR" [150000ms]))`: overviewBuckets,
 		`sum by (pod, nauthilus_level, nauthilus_msg) (count_over_time(` + testSelector +
-			` !~ "^\\s*\\{" |~ "(^|\\s)level=(ERROR)(\\s|$)" | logfmt nauthilus_level="level", nauthilus_msg="msg" | __error__="" | nauthilus_level=~"ERROR" [150s]))`: false,
+			` !~ "^\\s*\\{" |~ "(^|\\s)level=(ERROR)(\\s|$)" | logfmt nauthilus_level="level", nauthilus_msg="msg" | __error__="" | nauthilus_level=~"ERROR" [150000ms]))`: overviewBuckets,
+	}
+	ends := map[string]bool{}
+
+	for _, bucket := range result.Buckets {
+		ends[fmt.Sprint(bucket.Until.UnixNano()-1)] = true
 	}
 
 	for _, request := range fake.requests {
 		query := request.URL.Query()
-		if _, ok := want[query.Get("query")]; !ok {
-			t.Fatalf("unexpected query %q", query.Get("query"))
+		if _, ok := want[query.Get("query")]; !ok || !strings.HasSuffix(request.URL.Path, "/query") || !ends[query.Get("time")] {
+			t.Fatalf("unexpected request %s %v", request.URL.Path, query)
 		}
 
-		want[query.Get("query")] = true
-
-		if strings.HasSuffix(request.URL.Path, "/query_range") && (query.Get("step") != "150" ||
-			query.Get("end") != fmt.Sprint(testQuery().Window.Until.UnixNano())) {
-			t.Fatalf("range parameters = %v", query)
-		}
+		want[query.Get("query")]--
 	}
 
-	for query, seen := range want {
-		if !seen {
-			t.Errorf("query never sent: %s", query)
+	for query, missing := range want {
+		if missing != 0 {
+			t.Errorf("query sent %d times too few: %s", missing, query)
 		}
 	}
 }
 
-// TestLogOverviewFailuresAndBounds pins partial results for a failed parser query, truncation of the series bound
-// with the most frequent groups kept, and unavailability without coverage.
+// TestLogOverviewFailuresAndBounds pins partial results for a failed parser query, truncation of the series bound,
+// and unavailability without coverage.
 func TestLogOverviewFailuresAndBounds(t *testing.T) {
-	until := testQuery().Window.Until
-	busy := overviewFake(matrix(
-		overviewSeries{pod: "mx-1", level: "WARN", msg: "rare", values: map[time.Time]string{until: "1"}},
-		overviewSeries{pod: "mx-1", level: "WARN", msg: "frequent", values: map[time.Time]string{until: "9"}},
-	), `{"status":"error"}`)
+	busy := overviewFake(overviewVector(overviewSample{pod: "mx-1", level: "WARN", msg: "rare", value: "1"}), `{"status":"error"}`)
 
 	result := newTestSource(t, busy, func(cfg *Config) { cfg.MaxSeries = 3 }).LogOverview(context.Background(), overviewQuery())
-	if result.Report.Status != supportops.SourceStatusPartial || result.Report.Code != "LOKI_QUERY_REJECTED" {
-		t.Fatalf("a failed parser query must make the overview partial: %+v", result.Report)
+	if result.Report.Status != supportops.SourceStatusPartial || result.Report.Code != "LOKI_QUERY_REJECTED" ||
+		total(seriesFor(t, result, "rare").Counts) != overviewBuckets {
+		t.Fatalf("a failed parser query must make the overview partial: %+v", result)
 	}
 
-	truncated := newTestSource(t, overviewFake(matrix(
-		overviewSeries{pod: "mx-1", level: "WARN", msg: "rare", values: map[time.Time]string{until: "1"}},
-		overviewSeries{pod: "mx-1", level: "WARN", msg: "frequent", values: map[time.Time]string{until: "9"}},
-	), matrix()), func(cfg *Config) { cfg.MaxSeries = 1 })
+	truncated := newTestSource(t, overviewFake(overviewVector(
+		overviewSample{pod: "mx-1", level: "WARN", msg: "frequent", value: "9"},
+		overviewSample{pod: "mx-1", level: "WARN", msg: "rare", value: "1"},
+	), overviewVector()), func(cfg *Config) { cfg.MaxSeries = 1 })
 
 	result = truncated.LogOverview(context.Background(), overviewQuery())
-	if !result.Report.Truncated || len(result.Series) != 1 || result.Series[0].Message != "frequent" {
-		t.Fatalf("truncation must keep the most frequent group: %+v", result)
+	if !result.Report.Truncated || result.Report.Status != supportops.SourceStatusPartial || len(result.Series) != 1 {
+		t.Fatalf("a cut answer must be stated: %+v", result)
 	}
 
 	outage := newTestSource(t, &fakeLoki{status: http.StatusBadGateway}, nil).LogOverview(context.Background(), overviewQuery())
@@ -214,23 +209,13 @@ func total(counts []int64) int64 {
 	return sum
 }
 
-// TestLogOverviewUnavailableAndMisaligned pins that an overview whose every range query failed is unavailable, never a
-// quiet window, and that a point off the bucket grid (an aligning query frontend) is dropped with a partial status.
-func TestLogOverviewUnavailableAndMisaligned(t *testing.T) {
+// TestLogOverviewUnavailable pins that an overview whose every count query failed is unavailable, never a quiet
+// window.
+func TestLogOverviewUnavailable(t *testing.T) {
 	rejected := overviewFake(`{"status":"error"}`, `{"status":"error"}`)
 
 	result := newTestSource(t, rejected, nil).LogOverview(context.Background(), overviewQuery())
 	if result.Report.Status != supportops.SourceStatusUnavailable || result.Report.Code != "LOKI_QUERY_REJECTED" {
-		t.Fatalf("all range queries failed = %+v", result.Report)
-	}
-
-	until := testQuery().Window.Until
-	shifted := overviewFake(matrix(overviewSeries{pod: "mx-1", level: "WARN", msg: "shifted",
-		values: map[time.Time]string{until: "1", until.Add(-75 * time.Second): "4"}}), matrix())
-
-	result = newTestSource(t, shifted, nil).LogOverview(context.Background(), overviewQuery())
-	if result.Report.Status != supportops.SourceStatusPartial || result.Report.Code != "LOKI_BUCKETS_MISALIGNED" ||
-		total(seriesFor(t, result, "shifted").Counts) != 1 {
-		t.Fatalf("misaligned = %+v %+v", result.Report, result.Series)
+		t.Fatalf("all count queries failed = %+v", result.Report)
 	}
 }

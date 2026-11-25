@@ -102,8 +102,8 @@ func fixedMatchers(selector map[string]string) []string {
 func coverageQuery(instanceLabel string, fixed []string) func(int64) string {
 	selector := seriesSelector{name: metricnames.VersionInfo}
 
-	return func(rangeSeconds int64) string {
-		return fmt.Sprintf("sum by (%s) (count_over_time(%s[%ds]))", instanceLabel, selector.render(fixed), rangeSeconds)
+	return func(rangeMillis int64) string {
+		return fmt.Sprintf("sum by (%s) (count_over_time(%s[%dms]))", instanceLabel, selector.render(fixed), rangeMillis)
 	}
 }
 
@@ -127,17 +127,17 @@ type seriesSelector struct {
 	anyName  bool
 }
 
-// increase renders the increase of the selector's series over rangeSeconds. increase() drops the metric name, so
+// increase renders the increase of the selector's series over rangeMillis milliseconds. increase() drops the metric name, so
 // series of different families that share every other label would collide ("vector cannot contain metrics with the
 // same labelset"); a selector that matches names by pattern therefore keeps the family as a label and runs on a
 // subquery, which the label rewrite needs.
-func (s seriesSelector) increase(fixed []string, rangeSeconds int64) string {
+func (s seriesSelector) increase(fixed []string, rangeMillis int64) string {
 	if s.anyName {
-		return fmt.Sprintf(`increase(label_replace(%s, %s, "$1", %s, "(.+)")[%ds:%ds])`, s.render(fixed),
-			strconv.Quote(familyLabel), strconv.Quote(nameLabel), rangeSeconds, subqueryStepSeconds)
+		return fmt.Sprintf(`increase(label_replace(%s, %s, "$1", %s, "(.+)")[%dms:%ds])`, s.render(fixed),
+			strconv.Quote(familyLabel), strconv.Quote(nameLabel), rangeMillis, subqueryStepSeconds)
 	}
 
-	return fmt.Sprintf("increase(%s[%ds])", s.render(fixed), rangeSeconds)
+	return fmt.Sprintf("increase(%s[%dms])", s.render(fixed), rangeMillis)
 }
 
 // render returns the selector with the fixed matchers appended.

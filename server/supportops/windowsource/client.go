@@ -41,7 +41,6 @@ const (
 	userAgent     = "nauthilus-operations-diagnostics"
 	statusSuccess = "success"
 	resultVector  = "vector"
-	resultMatrix  = "matrix"
 	resultStreams = "streams"
 
 	// directionBackward asks a log query for the newest entries first.
@@ -110,18 +109,6 @@ type Sample struct {
 	Value  float64
 }
 
-// Point is one evaluation of a range series.
-type Point struct {
-	At    time.Time
-	Value float64
-}
-
-// Series is one series of a range matrix: its labels and its points in time order.
-type Series struct {
-	Labels map[string]string
-	Points []Point
-}
-
 // LogEntry is one log line of a stream with its nanosecond timestamp.
 type LogEntry struct {
 	At   time.Time
@@ -141,18 +128,6 @@ type streamsResponse struct {
 		Result     []struct {
 			Stream map[string]string `json:"stream"`
 			Values [][]string        `json:"values"`
-		} `json:"result"`
-	} `json:"data"`
-	Status string `json:"status"`
-}
-
-// matrixResponse is the subset of a range query answer that is read; nothing else is decoded.
-type matrixResponse struct {
-	Data struct {
-		ResultType string `json:"resultType"`
-		Result     []struct {
-			Metric map[string]string   `json:"metric"`
-			Values [][]json.RawMessage `json:"values"`
 		} `json:"result"`
 	} `json:"data"`
 	Status string `json:"status"`
@@ -199,24 +174,6 @@ func (c *Client) Instant(ctx context.Context, query string, at time.Time) ([]Sam
 	}
 
 	return c.decode(body)
-}
-
-// Range runs one range query with evaluations from start to end every step. It returns the series, a truncation flag,
-// and an error for a failed or rejected request. A truncated answer keeps the maxSeries series with the largest sums.
-func (c *Client) Range(ctx context.Context, query string, start time.Time, end time.Time, step time.Duration) ([]Series, bool, error) {
-	if c.rangePath == "" || step < time.Second {
-		return nil, false, ErrRejected
-	}
-
-	values := c.rangeValues(query, start, end)
-	values.Set("step", strconv.FormatInt(int64(step/time.Second), 10))
-
-	body, err := c.get(ctx, c.rangePath, values)
-	if err != nil {
-		return nil, errors.Is(err, ErrTruncated), err
-	}
-
-	return c.decodeMatrix(body)
 }
 
 // Streams runs one log query from start to end that returns at most limit entries, newest first. A response above
@@ -396,60 +353,6 @@ func (c *Client) decode(body []byte) ([]Sample, bool, error) {
 	return samples, false, nil
 }
 
-// decodeMatrix reads a success matrix answer and keeps the maxSeries series with the largest sums.
-func (c *Client) decodeMatrix(body []byte) ([]Series, bool, error) {
-	var answer matrixResponse
-
-	if err := json.Unmarshal(body, &answer); err != nil {
-		return nil, false, err
-	}
-
-	if answer.Status != statusSuccess || answer.Data.ResultType != resultMatrix {
-		return nil, false, ErrRejected
-	}
-
-	type ranked struct {
-		key    string
-		series Series
-		sum    float64
-	}
-
-	entries := make([]ranked, 0, len(answer.Data.Result))
-
-	for _, raw := range answer.Data.Result {
-		entry := ranked{key: labelsKey(raw.Metric), series: Series{Labels: raw.Metric, Points: make([]Point, 0, len(raw.Values))}}
-
-		for _, pair := range raw.Values {
-			point, ok := matrixPoint(pair)
-			if !ok {
-				return nil, false, ErrRejected
-			}
-
-			entry.series.Points = append(entry.series.Points, point)
-			entry.sum += point.Value
-		}
-
-		entries = append(entries, entry)
-	}
-
-	slices.SortFunc(entries, func(left, right ranked) int {
-		if order := cmpDescending(left.sum, right.sum); order != 0 {
-			return order
-		}
-
-		return strings.Compare(left.key, right.key)
-	})
-
-	kept := min(len(entries), c.maxSeries)
-	series := make([]Series, 0, kept)
-
-	for _, entry := range entries[:kept] {
-		series = append(series, entry.series)
-	}
-
-	return series, len(entries) > kept, nil
-}
-
 // decodeStreams reads a success streams answer; every entry carries a nanosecond timestamp string.
 func decodeStreams(body []byte) ([]Stream, error) {
 	var answer streamsResponse
@@ -496,23 +399,6 @@ func cmpDescending(left float64, right float64) int {
 	default:
 		return 0
 	}
-}
-
-// matrixPoint reads the [timestamp, "value"] pair of a matrix point; the timestamp is in seconds.
-func matrixPoint(raw []json.RawMessage) (Point, bool) {
-	value, ok := sampleValue(raw)
-	if !ok {
-		return Point{}, false
-	}
-
-	var seconds float64
-	if err := json.Unmarshal(raw[0], &seconds); err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 {
-		return Point{}, false
-	}
-
-	whole, fraction := math.Modf(seconds)
-
-	return Point{At: time.Unix(int64(whole), int64(math.Round(fraction*1e9))).UTC(), Value: value}, true
 }
 
 // sampleValue reads the [timestamp, "value"] pair of a vector sample.

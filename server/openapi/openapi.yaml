@@ -2130,6 +2130,10 @@ components:
       type: object
       additionalProperties: false
       required: [from, until]
+      description: >-
+        A half-open window kept in whole milliseconds; finer digits are dropped. A window longer than the max_time_window
+        of a historical source is counted in parts of at most max_time_window; only a window that needs more than 24
+        parts is clipped to its newest parts, which the source report states.
       properties:
         from: {type: string, format: date-time, description: Inclusive lower bound.}
         until: {type: string, format: date-time, description: Exclusive upper bound; not in the future.}
@@ -2278,7 +2282,7 @@ components:
         schema_version: {type: string, pattern: "^1$"}
         window:
           $ref: "#/components/schemas/SupportOperationsWindow"
-          description: Defaults to the last 15 minutes; at most 24 hours. The log source may clip it to its configured maximum.
+          description: Defaults to the last 15 minutes; at most 24 hours.
         levels: {$ref: "#/components/schemas/SupportOperationsLogLevels"}
         page: {$ref: "#/components/schemas/SupportOperationsLogGroupPage"}
         audit_reference: {$ref: "#/components/schemas/SupportHistoryAuditReference"}
@@ -2321,8 +2325,13 @@ components:
         schema_version: {type: string, pattern: "^1$"}
         scope: {$ref: "#/components/schemas/SupportOperationsScope"}
         source: {$ref: "#/components/schemas/SupportOperationsSourceReport"}
-        buckets: {type: array, items: {$ref: "#/components/schemas/SupportOperationsWindow"}}
-        bucket_seconds: {type: integer, minimum: 0}
+        buckets:
+          type: array
+          items: {$ref: "#/components/schemas/SupportOperationsWindow"}
+          description: >-
+            At most 12 buckets that tile the window exactly and end at its end; a line counts in the bucket whose
+            half-open span holds its time. Only the first bucket may be shorter than bucket_seconds.
+        bucket_seconds: {type: integer, minimum: 0, description: Width of every bucket but the first.}
         messages: {type: array, items: {$ref: "#/components/schemas/SupportOperationsLogMessageGroup"}}
         page:
           type: object
@@ -2343,7 +2352,7 @@ components:
         schema_version: {type: string, pattern: "^1$"}
         window:
           $ref: "#/components/schemas/SupportOperationsWindow"
-          description: Defaults to the last 15 minutes; at most 24 hours. The log source may clip it to its configured maximum.
+          description: Defaults to the last 15 minutes; at most 24 hours.
         levels: {$ref: "#/components/schemas/SupportOperationsLogLevels"}
         instance: {type: string, maxLength: 256, description: Only lines of this instance label value.}
         message: {type: string, minLength: 1, maxLength: 4096, description: "Only lines with exactly this message, as an overview group names it."}

@@ -78,13 +78,16 @@ func (s *Service) logOverview(ctx context.Context, plan logOverviewPlan, now tim
 	return result, nil
 }
 
-// bucketSeconds returns the width of the grid buckets, or 0 without a grid.
+// bucketSeconds returns the width of the full grid buckets, or 0 without a grid. The grid ends at the window end, so
+// the last bucket is full; only the first may be shorter.
 func bucketSeconds(buckets []Window) int64 {
 	if len(buckets) == 0 {
 		return 0
 	}
 
-	return int64(buckets[0].Until.Sub(buckets[0].From) / time.Second)
+	last := buckets[len(buckets)-1]
+
+	return int64(last.Until.Sub(last.From) / time.Second)
 }
 
 // groupLogSeries merges the series of one level and one exact message across instances; different messages always
@@ -195,10 +198,6 @@ func logOverviewNotes(result *LogOverviewResult) []string {
 
 	notes = append(notes, pageNotes(result.Page.NextCursor != nil, result.Page.Offset > 0)...)
 	notes = append(notes, logSourceNotes(result.Source)...)
-
-	if from := result.Source.Coverage.From; from != nil && from.Before(result.Scope.Window.From) {
-		notes = append(notes, NoteLogBucketsExceedWindow)
-	}
 
 	return notes
 }

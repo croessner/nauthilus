@@ -426,6 +426,19 @@ of different sources are never merged; hypotheses relate them, are listed separa
 confidence (only when current state and log evidence agree), and always carry caveats. A failing or truncated source
 never fails the call; its report says `partial`, `timeout`, `unavailable`, `not_configured`, or `not_requested`.
 
+**Windows and parts.** Every window of the operations requests is half open, `[from, until)`, and kept in whole
+milliseconds (finer digits are dropped), the precision of a range selector; the answer states the window it used. A
+historical count covers exactly that window: an instant query with the window length in milliseconds as its range,
+evaluated at the window end, for Loki one nanosecond before it, because Loki counts `(t-range, t]`. No count uses a
+range query, so how a query frontend aligns range evaluations (`align_queries_with_step`) never matters. A window
+longer than the source's `max_time_window` (the longest span one query covers, default `1h`) is split into
+consecutive parts of at most `max_time_window` that end at the window end, and their counts are added; the log events
+read part by part. One window takes at most 24 parts, so with `max_time_window: 1h` every window up to the 24-hour
+maximum is answered completely. A longer window keeps its newest 24 parts and is stated as clipped
+(`LOKI_WINDOW_CLIPPED`, `PROMETHEUS_WINDOW_CLIPPED`, source `partial`). The source timeout applies per part, within
+the timeout of the call; a source that runs out of time reports `timeout`. A twelve-hour diagnostics call with eight profile
+queries sends 12 × 9 Loki queries, at most four at a time.
+
 ### `nauthilus_runtime` (instance-local, side-effect free)
 
 Reads the in-process Prometheus registry; it never dials a backend and does not use `/healthz`.
@@ -452,7 +465,7 @@ fails without replacing its VM, and a plugin that reports a fault inside a succe
 ### `loki` (optional, historical)
 
 Only the compiled `nauthilus_diagnostics` profile runs: instant metric queries
-`sum by (<instance_label>) (count_over_time(<selector> |= "<literal>" |~ "<msg field pattern>" [<window>s]))` plus one
+`sum by (<instance_label>) (count_over_time(<selector> |= "<literal>" |~ "<msg field pattern>" [<window>ms]))` plus one
 coverage query without a line filter. The substring stage drops every line without the literal before the pattern
 runs, so a query stays cheap on windows with many lines, for example after a restart with debug logging. The pattern
 matches the literal only as the complete `msg` field of a slog JSON line
@@ -465,7 +478,7 @@ log pipeline. The selector, tenant (`X-Scope-OrgID`), credentials, and endpoint 
 caller value reaches a diagnostics query (only the log events take a quoted instance and message, section 7.2),
 redirects are never followed, and answers are bounded by
 `max_response_bytes` and `max_series` (truncation marks the source `partial`). Windows above `max_time_window` are
-clipped to their newest part (`LOKI_WINDOW_CLIPPED`). The literals are bound to the log messages of the code base by
+counted in parts ("Windows and parts" above). The literals are bound to the log messages of the code base by
 a test:
 
 | Component | Symptom | Log message |
@@ -506,7 +519,8 @@ collide.
 The selector (for example `{job: nauthilus}`), tenant (`X-Scope-OrgID`, read by Mimir and Cortex), credentials, and
 endpoint are fixed in the configuration; no caller value reaches a query, no series leaves Prometheus, redirects are
 never followed, and answers are bounded by `max_response_bytes` and `max_series` (truncation marks the source
-`partial`). Windows above `max_time_window` are clipped to their newest part (`PROMETHEUS_WINDOW_CLIPPED`). Failure
+`partial`). Windows above `max_time_window` are counted in parts ("Windows and parts" above); the increase of each
+part is estimated by `increase()`, so the sum can differ from one long increase by a fraction. Failure
 codes are `PROMETHEUS_UNREACHABLE`, `PROMETHEUS_QUERY_REJECTED`, `PROMETHEUS_RESULT_TRUNCATED`, and
 `PROMETHEUS_TIMEOUT`.
 
@@ -545,13 +559,15 @@ beyond the `loki` source and uses its selector, tenant, credentials, timeout, `m
 
 Request: `schema_version`, optional `window` (default the last 15 minutes, at most 24 hours), optional `levels`
 (`error`, `warn`, `notice`, `info`, `debug`; `error` and `warn` when absent), optional `page` (`limit` default 50, at
-most 200; `cursor` from the previous answer), and `audit_reference`. Loki receives one coverage query and one range
-query per slog encoder, so the overview needs no knowledge of the log format:
+most 200; `cursor` from the previous answer), and `audit_reference`. Loki receives one coverage query per window part
+and, for every bucket (and every part of a bucket longer than `max_time_window`), one instant count per slog encoder,
+evaluated one nanosecond before the bucket end, so the overview needs no knowledge of the log format and each count
+covers exactly its bucket:
 
 ```text
 sum by (<instance_label>, nauthilus_level, nauthilus_msg) (count_over_time(<selector>
   |~ "\"level\":\"(ERROR|WARN)\"" | json nauthilus_level="level", nauthilus_msg="msg"
-  | __error__="" | nauthilus_level=~"ERROR|WARN" [<bucket>s]))
+  | __error__="" | nauthilus_level=~"ERROR|WARN" [<bucket>ms]))
 ```
 
 and the same with the text filters `!~ "^\s*\{" |~ "(^|\s)level=(ERROR|WARN)(\s|$)"` and `| logfmt`. A text line
@@ -564,8 +580,10 @@ The answer holds:
 
 - `source`: the Loki report with status, code, truncation, and the coverage (instances that logged any line in the
   window, covered time span). An instance in the coverage without a message group logged nothing at these levels.
-- `buckets` and `bucket_seconds`: up to 12 equal buckets that end at the window end. Their width is a whole number of
-  seconds, so the first bucket can start up to 11 seconds before the window (`LOG_BUCKETS_EXCEED_WINDOW`).
+- `buckets` and `bucket_seconds`: up to 12 buckets that tile the window exactly and end at its end. Every bucket spans
+  `bucket_seconds` (a whole number of seconds), except the first, which starts at the window start and may be
+  shorter. A line counts in the bucket whose `[from, until)` holds its time, so the bucket counts add up to exactly the
+  lines `operational_log_events` returns for the same window and filters.
 - `messages`: one page of groups, most frequent first (more severe levels first at equal counts), each with `id` (its
   position in the whole answer), `level`, the complete `message`, the total `count`, one count per bucket in `counts`,
   `first_bucket_from` and `last_bucket_until` of the buckets with a count, and the per-instance counts. Identical
@@ -575,8 +593,8 @@ The answer holds:
   carries its `component` and `symptom`.
 - `page`: `limit`, `offset`, `total` (every group of the answer), and `next_cursor` (null on the last page).
 - `notes`: always `VALUES_ARE_UNTRUSTED_DATA` and `LOG_MESSAGES_ARE_NOT_INCIDENTS`; when they apply
-  `LOG_SECRETS_REDACTED`, `LOG_MORE_PAGES`, `LOG_PAGES_REQUERY_THE_SOURCE`, `LOG_BUCKETS_EXCEED_WINDOW`,
-  `HISTORICAL_SOURCE_INCOMPLETE` (partial, clipped, truncated, misaligned, or timed out), `NO_HISTORICAL_SOURCE`, and
+  `LOG_SECRETS_REDACTED`, `LOG_MORE_PAGES`, `LOG_PAGES_REQUERY_THE_SOURCE`,
+  `HISTORICAL_SOURCE_INCOMPLETE` (partial, clipped, truncated, or timed out), `NO_HISTORICAL_SOURCE`, and
   `LOG_NO_COVERAGE` (no instance logged any line in the window: check the selector and retention).
 
 Every group has the status `observed`. A counted warning is evidence that a code path logged, not an outage: retries,
@@ -589,14 +607,14 @@ A cursor carries the window of the first page, so a follow-up may repeat the req
 window must be the same); a cursor of another window or level set is `INVALID_CURSOR`. A window in the past is stable; a window that still
 receives lines can shift between pages (`LOG_PAGES_REQUERY_THE_SOURCE`).
 
-**Bounds.** `max_series` bounds the series per range query (instance × level × message); a truncated answer keeps the
-series with the largest counts and marks the source `partial` with `truncated: true`. A response above
-`max_response_bytes` is dropped as a whole for that encoder (`LOKI_RESULT_TRUNCATED`). When both range queries fail, the
-source is `unavailable`, never an empty `ok`. Windows above `max_time_window` are clipped to their newest part
-(`LOKI_WINDOW_CLIPPED`). Messages with variable content (counters, addresses) are separate groups and raise the series
-count; a Loki `max_query_series` limit below the series count rejects the query. A point that is not within one second
-of a bucket end (a query frontend with `align_queries_with_step`) is dropped and the source reads `partial` with
-`LOKI_BUCKETS_MISALIGNED`.
+**Bounds.** `max_series` bounds the series per count query (instance × level × message); a truncated answer keeps the
+first series in label order and marks the source `partial` with `truncated: true`. A response above
+`max_response_bytes` drops that count (`LOKI_RESULT_TRUNCATED`). A failed count makes the source `partial`; when every
+count fails, the source is `unavailable`, never an empty `ok`. Windows above `max_time_window` are counted in parts
+("Windows and parts" above). Messages with variable content (counters, addresses) are separate groups and raise the
+series count; a Loki `max_query_series` limit below the series count rejects the query. A window of 1 hour sends 25
+instant queries (one coverage, 12 buckets × 2 encoders), a 24-hour window with `max_time_window: 1h` 72 (24 coverage
+parts, 12 buckets of two parts × 2 encoders), at most four at a time.
 
 ### 7.2 Log events (`operational_log_events`)
 
@@ -657,9 +675,12 @@ When a Loki answer exceeds `max_response_bytes`, the read halves down to one lin
 bound itself is found by a read without line texts and read with its stream at its time; when that read still exceeds
 the bound, the stream's lines at that time are listed in `gaps` with `LINES_EXCEED_SOURCE_BYTE_BOUND` (raise the
 source's `max_response_bytes` to read them), and paging continues. Every page with a gap reads `partial` with
-`LOKI_GAPS`; nothing is skipped without a gap entry. `max_time_window` clips the window like the overview, and one
-failed encoder query makes the source `partial`, both `unavailable`. An answer above the MCP bound arrives in segments
-(section 6, "Large answers").
+`LOKI_GAPS`; nothing is skipped without a gap entry. One read spans at most `max_time_window` before its end ("Windows
+and parts" above): when it returns no line, the next older part is read in the same call; when a part ends the read
+before the window start, the page carries `next_cursor` at the part start, so a page can hold fewer lines than
+`limit` while older parts remain. A part of which nothing could be read (`unavailable`, `timeout`) is never passed
+over; the page ends without a cursor and the request can be repeated. One failed encoder query makes the source
+`partial`, both `unavailable`. An answer above the MCP bound arrives in segments (section 6, "Large answers").
 
 ## 8. Limits and known gaps
 

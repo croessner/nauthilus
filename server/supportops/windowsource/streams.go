@@ -27,32 +27,61 @@ import (
 
 // StreamsResult is the answer of one log stream collection: the streams of every query in query order (nil for a
 // failed query), the completeness report, and whether an answer exceeded the byte bound, in which case the caller
-// may retry with a smaller limit. A byte-bound answer does not degrade the report by itself.
+// may retry with a smaller limit. A byte-bound answer does not degrade the report by itself. Window is the covered
+// window and ReadFrom the start of the part that was read: lines before ReadFrom inside the window are not part of
+// this read.
 type StreamsResult struct {
+	ReadFrom      time.Time
 	Streams       [][]Stream
 	Report        supportops.SourceReport
 	Window        supportops.Window
 	OverByteBound bool
+
+	// Failed is set when any query of the read failed, so the read part may miss lines.
+	Failed bool
 }
 
-// CollectStreams runs the log queries over the covered window up to end (exclusive), each returning at most limit
-// entries, newest first. A zero end means the window end; an end outside the window is clipped to it.
+// CollectStreams runs the log queries over the newest part of the covered window up to end (exclusive), each
+// returning at most limit entries, newest first. A zero end means the window end; an end outside the window is
+// clipped to it. One read spans at most MaxTimeWindow; when no query returns a line, the next older part is read, so
+// a long quiet span does not end a page empty while older lines exist.
 func (e *Engine) CollectStreams(ctx context.Context, query supportops.Query, end time.Time, limit int, queries []string) StreamsResult {
+	_, window, clipped := e.windowParts(query.Window)
+
+	if end.IsZero() || end.After(window.Until) {
+		end = window.Until
+	}
+
+	for until := end; ; {
+		from := until.Add(-e.partLength())
+		if from.Before(window.From) {
+			from = window.From
+		}
+
+		result := e.readStreams(ctx, query, window, supportops.Window{From: from, Until: until}, limit, queries, clipped)
+		if !from.After(window.From) || result.Failed || result.OverByteBound || holdsLines(result.Streams) {
+			result.Report.Coverage.Until = supportops.TimePointer(end)
+
+			return result
+		}
+
+		until = from
+	}
+}
+
+// readStreams runs the log queries over one part within the source timeout; clipped states a clipped window.
+func (e *Engine) readStreams(ctx context.Context, query supportops.Query, window supportops.Window, part supportops.Window,
+	limit int, queries []string, clipped bool) StreamsResult {
 	ctx, cancel := context.WithTimeout(ctx, e.spec.Timeout)
 	defer cancel()
 
-	window, clipped := e.coveredWindow(query.Window)
 	collection := newCollection(e, query, window)
 
 	if clipped {
 		collection.degrade(supportops.SourceStatusPartial, e.code("WINDOW_CLIPPED"))
 	}
 
-	if end.IsZero() || end.After(window.Until) {
-		end = window.Until
-	}
-
-	result := StreamsResult{Streams: make([][]Stream, len(queries)), Window: window}
+	result := StreamsResult{Streams: make([][]Stream, len(queries)), Window: window, ReadFrom: part.From}
 	overBound := make([]bool, len(queries))
 	failed := make([]bool, len(queries))
 
@@ -60,7 +89,7 @@ func (e *Engine) CollectStreams(ctx context.Context, query supportops.Query, end
 
 	for index, text := range queries {
 		wait.Go(func() {
-			streams, err := e.client.Streams(ctx, text, window.From, end, limit)
+			streams, err := e.client.Streams(ctx, text, part.From, part.Until, limit)
 
 			switch {
 			case errors.Is(err, ErrTruncated):
@@ -77,17 +106,28 @@ func (e *Engine) CollectStreams(ctx context.Context, query supportops.Query, end
 
 	wait.Wait()
 
-	for _, over := range overBound {
-		result.OverByteBound = result.OverByteBound || over
-	}
+	result.OverByteBound, result.Failed = slices.Contains(overBound, true), slices.Contains(failed, true)
 
 	if !slices.Contains(failed, false) {
 		collection.escalate()
 	}
 
-	result.Report = collection.report(nil, supportops.Window{From: window.From, Until: end})
+	result.Report = collection.report(nil, part)
 
 	return result
+}
+
+// holdsLines reports whether any stream of any query holds a line.
+func holdsLines(results [][]Stream) bool {
+	for _, streams := range results {
+		for _, stream := range streams {
+			if len(stream.Entries) > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // escalate turns a partial collection into an unavailable one, for a collection in which every query failed.
@@ -112,7 +152,7 @@ func (e *Engine) CollectSeries(ctx context.Context, query supportops.Query, sele
 	ctx, cancel := context.WithTimeout(ctx, e.spec.Timeout)
 	defer cancel()
 
-	window, _ := e.coveredWindow(query.Window)
+	_, window, _ := e.windowParts(query.Window)
 	collection := newCollection(e, query, window)
 
 	streams, truncated, err := e.client.Series(ctx, selector, start, end, supportops.MaxLogEventRead)

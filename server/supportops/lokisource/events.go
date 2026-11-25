@@ -74,7 +74,7 @@ func (s *Source) LogEvents(ctx context.Context, query supportops.LogEventsQuery)
 
 		result, complete, runAt := s.pageLines(collected, query, read)
 		if complete {
-			return result
+			return continuePart(result, collected)
 		}
 
 		if !read.grow() {
@@ -85,6 +85,23 @@ func (s *Source) LogEvents(ctx context.Context, query supportops.LogEventsQuery)
 			return s.tieEvents(ctx, query, runAt)
 		}
 	}
+}
+
+// continuePart continues a page whose read covered only the newest part of the window: when the page holds every
+// line the read returned and older parts remain, the next page reads before the part start. Lines at exactly the
+// part start belonged to the read part, so the position is exclusive. A part of which nothing could be read
+// (unavailable or timed out) is never passed over, so the same request can be repeated; a part with one failed log
+// format continues like before, and its page states partial.
+func continuePart(result supportops.LogEventsSourceResult, collected windowsource.StreamsResult) supportops.LogEventsSourceResult {
+	status := result.Report.Status
+	if result.More || !collected.ReadFrom.After(collected.Window.From) || status == supportops.SourceStatusUnavailable ||
+		status == supportops.SourceStatusTimeout {
+		return result
+	}
+
+	result.More, result.Next = true, &supportops.LogPosition{Before: collected.ReadFrom, Exclusive: true}
+
+	return result
 }
 
 // probeLine replaces every line of a probe read, so the read returns only times and streams.

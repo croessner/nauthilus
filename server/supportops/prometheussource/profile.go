@@ -39,11 +39,11 @@ type profileEntry struct {
 
 // query returns the instant query that sums the increase of the entry's series per instance over a window.
 func (e profileEntry) query(instanceLabel string, fixed []string) func(int64) string {
-	return func(rangeSeconds int64) string {
+	return func(rangeMillis int64) string {
 		increases := make([]string, 0, len(e.selectors))
 
 		for _, selector := range e.selectors {
-			increases = append(increases, selector.increase(fixed, rangeSeconds))
+			increases = append(increases, selector.increase(fixed, rangeMillis))
 		}
 
 		return fmt.Sprintf("sum by (%s) (%s)", instanceLabel, strings.Join(increases, " or "))
