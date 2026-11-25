@@ -58,6 +58,10 @@ var quotedSpan = regexp.MustCompile("\"[^\"]*\"|`[^`]*`|(^|[\\s=:(\\[])'[^']*'")
 // urlPattern matches a URL as a whole, before the colon separator would split it.
 var urlPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S*`)
 
+// colonPath matches a word of three or more colon-joined parts, such as a Redis key "nauthilus:bf:jdoe", which the
+// colon separator would otherwise split into innocent-looking words.
+var colonPath = regexp.MustCompile(`[^\s:]*(?::[^\s:]+){2,}`)
+
 // hexColonGroups matches IPv6-like hex groups, which the colon separator would otherwise split into words.
 var hexColonGroups = regexp.MustCompile(`(?i)\b[0-9a-f]{0,4}(:[0-9a-f]{0,4}){2,}\b`)
 
@@ -113,6 +117,7 @@ func normalizeLogMessage(raw string) (string, string) {
 	})
 
 	unquoted = urlPattern.ReplaceAllString(unquoted, " "+placeholderValue+" ")
+	unquoted = colonPath.ReplaceAllString(unquoted, " "+placeholderValue+" ")
 	unquoted = hexColonGroups.ReplaceAllString(unquoted, " "+placeholderValue+" ")
 
 	text := supportaccess.SanitizeText(maskWords(splitWords(unquoted)), maxMessageRunes)

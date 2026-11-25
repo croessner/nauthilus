@@ -520,7 +520,8 @@ resolver address, a client IP in quotes, a counter). Before a message leaves the
 
 - Control and format characters become spaces, so a tab or newline cannot join a value to a keyword; the text is then
   cleaned like other free text.
-- Quoted spans become `<quoted>`; URLs and IPv6-like hex groups become `<value>`.
+- Quoted spans become `<quoted>`; URLs (also with credentials), words of three or more colon-joined parts (Redis keys
+  such as `nauthilus:bf:user:jdoe` inside an error text), and IPv6-like hex groups become `<value>`.
 - The message is split into words at whitespace and at `: , ; ( ) [ ] { } - ! ?`. A word becomes `<value>` when it
   carries a digit, an invalid character, one of `` @ = % \ # & + $ < > " ' ` ~ * | ^ ``, an inner dot (host names, dotted
   names), a path (`/` at either end or more than one `/`), more than one lower-to-upper case change (encoded tokens),
@@ -533,9 +534,11 @@ resolver address, a client IP in quotes, a counter). Before a message leaves the
 
 `message_form` is `literal` only for an unchanged message. Series that normalize to the same text merge; a group is
 `normalized` as soon as one merged series was, and only an all-literal group keeps a profiled symptom. The residual
-risk: a letter-only value that follows neither a keyword nor quotes nor brackets (for example the second word of
-`user: alice smith`, or a bare name in a Lua plugin message) cannot be told apart from a word and stays; grant
-`nauthilus:operations_read` only to support staff that may see such values.
+risk: a letter-only value that follows neither a keyword nor quotes nor brackets cannot be told apart from a word
+and stays. `account jdoe locked` becomes `account <value> locked`, but `jdoe locked out`, the second word of
+`user: alice smith`, or a bare name in a Lua plugin message stay verbatim. The tests pin this gap as a known case. Grant
+`nauthilus:operations_read` only to support staff that may see such values. Error texts logged as the message (Redis,
+LDAP, resolver errors) carry addresses, DNs, and keys; the rules above mask the forms these take today.
 
 ## 8. Limits and known gaps
 

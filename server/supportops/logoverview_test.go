@@ -91,7 +91,37 @@ func TestNormalizeLogMessage(t *testing.T) {
 		"Connection #12 closed":                                            {"Connection <value> closed", MessageFormNormalized},
 		"Session aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa expired":             {"Session <value> expired", MessageFormNormalized},
 		"Error \u202ehidden\n text":                                        {"Error hidden text", MessageFormNormalized},
-		"  ":                                                               {placeholderEmpty, MessageFormNormalized},
+		// Bypasses found in review.
+		"user\talice\nfailed":                   {"user <value> failed", MessageFormNormalized},
+		"user:alice locked":                     {"user:<value> locked", MessageFormNormalized},
+		"unknown user-alice":                    {"unknown user-<value>", MessageFormNormalized},
+		"authentication failed for alice":       {"authentication failed for <value>", MessageFormNormalized},
+		"client alice.smith disconnected":       {"client <value> disconnected", MessageFormNormalized},
+		"request by alice,bob,carol":            {"request by <value>,<value>,<value>", MessageFormNormalized},
+		"cannot open /home/alice/Maildir":       {"cannot open <value>", MessageFormNormalized},
+		"Bearer QWxhZGRpbjpvcGVu rejected":      {"Bearer <value> rejected", MessageFormNormalized},
+		"session ABCDEFGH invalid":              {"session <value> invalid", MessageFormNormalized},
+		"peer dead:beef::cafe refused":          {"peer <value> refused", MessageFormNormalized},
+		"lookup mail.example.com: no such host": {"lookup <value>: no such host", MessageFormNormalized},
+		"login failed (alice)":                  {"login failed (<value>)", MessageFormNormalized},
+		"password is wrong for José":            {"password is wrong for <value>", MessageFormNormalized},
+		"user not found":                        {"user not found", MessageFormLiteral},
+		"account is locked":                     {"account is locked", MessageFormLiteral},
+		"token expired":                         {"token expired", MessageFormLiteral},
+		// Runtime-built warning and error messages of the code base (security review cases).
+		"Client IP '203.0.113.7' not matching [10.0.0.0/8 192.168.0.0/16]":                           {"Client IP <quoted> not matching [<value>]", MessageFormNormalized},
+		"Pipeline EXISTS ban-key failed: dial tcp 10.0.0.5:6379: i/o timeout":                        {"Pipeline EXISTS ban-key failed: dial tcp <value>: i/o timeout", MessageFormNormalized},
+		"Pipeline EVAL bucket counters failed: WRONGTYPE wrong kind of value nauthilus:bf:user:jdoe": {"Pipeline EVAL bucket counters failed: WRONGTYPE wrong kind of value <value>", MessageFormNormalized},
+		"Burst gate script error: ERR key nauthilus:pw_hist_ips:jdoe":                                {"Burst gate script error: ERR key <value>", MessageFormNormalized},
+		`LDAP Result Code 32 "No Such Object": uid=jdoe,ou=people,dc=example,dc=org`:                 {"LDAP Result Code <value>,<value>,<value>,<value>", MessageFormNormalized},
+		"Cipher suite TLS_FAKE_WITH_NOTHING not found":                                               {"Cipher suite TLS_FAKE_WITH_NOTHING not found", MessageFormLiteral},
+		"lookup 4.3.2.1.zen.spamhaus.org on 10.96.0.10:53: i/o timeout":                              {"lookup <value> on <value>: i/o timeout", MessageFormNormalized},
+		"Login of jdoe@example.org from fe80::1 via 2001:db8::5 rejected":                            {"Login of <value> from <value> via <value> rejected", MessageFormNormalized},
+		"Fetch https://user:pw@idp.example.org/metadata failed":                                      {"Fetch <value> failed", MessageFormNormalized},
+		"account jdoe locked": {"account <value> locked", MessageFormNormalized},
+		// Documented residual gap: a letter-only value that follows no keyword, quote, or bracket stays.
+		"jdoe locked out": {"jdoe locked out", MessageFormLiteral},
+		"  ":              {placeholderEmpty, MessageFormNormalized},
 	} {
 		text, form := normalizeLogMessage(raw)
 		if text != want[0] || form != want[1] {
@@ -99,8 +129,9 @@ func TestNormalizeLogMessage(t *testing.T) {
 		}
 	}
 
-	if text, _ := normalizeLogMessage(strings.Repeat("word ", 100)); len([]rune(text)) > maxMessageRunes+1 {
-		t.Errorf("normalized message exceeds the bound: %d runes", len([]rune(text)))
+	if text, form := normalizeLogMessage(strings.Repeat("word ", 100)); len([]rune(text)) != maxMessageRunes+1 ||
+		!strings.HasSuffix(text, "…") || form != MessageFormNormalized {
+		t.Errorf("an over-long message must be cut and normalized: %d runes, %q", len([]rune(text)), form)
 	}
 }
 
@@ -263,5 +294,24 @@ func TestLogOverviewCoverageAndMergedForms(t *testing.T) {
 		if group := result.Messages[0]; group.MessageForm != MessageFormNormalized || group.Symptom != "" || group.Count != 2 {
 			t.Fatalf("merged group = %+v", group)
 		}
+	}
+}
+
+// TestLogOverviewMergeNeverExposesRawValues pins that two raw messages which normalize to one text form a normalized
+// group whose message holds neither raw value.
+func TestLogOverviewMergeNeverExposesRawValues(t *testing.T) {
+	source := newLogSource(
+		LogSeries{Instance: "mx-1", Level: LogLevelWarn, Message: "Client IP '198.51.100.1' not matching [10.0.0.0/8]", Counts: []int64{1, 0, 0}},
+		LogSeries{Instance: "mx-2", Level: LogLevelWarn, Message: "Client IP '198.51.100.2' not matching [172.16.0.0/12]", Counts: []int64{0, 1, 0}},
+	)
+
+	result, err := newTestService(t, &auditLog{}, source).LogOverview(context.Background(), operator(), overviewRequest())
+	if err != nil || len(result.Messages) != 1 {
+		t.Fatalf("merge = %+v, %v", result, err)
+	}
+
+	group := result.Messages[0]
+	if group.MessageForm != MessageFormNormalized || group.Count != 2 || strings.ContainsAny(group.Message, "0123456789") {
+		t.Fatalf("merged group exposes a raw value: %+v", group)
 	}
 }
