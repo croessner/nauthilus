@@ -33,9 +33,6 @@ const (
 	mailProtocolSMTP        = "smtp"
 	mailProtocolLMTP        = "lmtp"
 	mailResultOK            = "ok"
-	mailResultError         = "error"
-	mailResultCanceled      = "canceled"
-	mailResultTimeout       = "timeout"
 )
 
 var (
@@ -117,7 +114,7 @@ func (f *MailFacade) Send(ctx context.Context, message pluginapi.MailMessage) er
 	}
 
 	if err := ctx.Err(); err != nil {
-		f.logFailure(ctx, prepared, mailErrorResult(err), 0)
+		f.logFailure(ctx, prepared, contextFailureResult(ctx, err), 0)
 
 		return err
 	}
@@ -131,7 +128,7 @@ func (f *MailFacade) Send(ctx context.Context, message pluginapi.MailMessage) er
 	}
 
 	if err := sender.SendMail(prepared.options); err != nil {
-		result := mailErrorResult(err)
+		result := contextFailureResult(ctx, err)
 		f.logFailure(ctx, prepared, result, time.Since(started))
 
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -247,18 +244,6 @@ func mailProtocol(message pluginapi.MailMessage) string {
 	}
 
 	return mailProtocolSMTP
-}
-
-// mailErrorResult maps transport errors into bounded result labels.
-func mailErrorResult(err error) string {
-	switch {
-	case errors.Is(err, context.Canceled):
-		return mailResultCanceled
-	case errors.Is(err, context.DeadlineExceeded):
-		return mailResultTimeout
-	default:
-		return mailResultError
-	}
 }
 
 // mailLogFields returns bounded structured fields for one mail facade call.

@@ -215,7 +215,7 @@ func (f *HTTPFacade) Do(ctx context.Context, request pluginapi.HTTPRequest) (plu
 
 	response, err := f.client.Do(httpRequest)
 	if err != nil {
-		return f.failHTTP(callCtx, span, prepared, httpErrorResult(err), 0, started, err)
+		return f.failHTTP(callCtx, span, prepared, httpErrorResult(callCtx, err), 0, started, err)
 	}
 	defer func() {
 		_ = response.Body.Close()
@@ -223,7 +223,7 @@ func (f *HTTPFacade) Do(ctx context.Context, request pluginapi.HTTPRequest) (plu
 
 	body, err := readBoundedHTTPBody(response.Body, prepared.maxResponseBytes)
 	if err != nil {
-		return f.failHTTP(callCtx, span, prepared, httpErrorResult(err), response.StatusCode, started, err)
+		return f.failHTTP(callCtx, span, prepared, httpErrorResult(callCtx, err), response.StatusCode, started, err)
 	}
 
 	return f.completeHTTP(callCtx, span, prepared, response, body, started), nil
@@ -569,18 +569,13 @@ func httpStatusResult(status int) string {
 	return fmt.Sprintf("%dxx", status/100)
 }
 
-// httpErrorResult maps transport and response-body errors to bounded labels.
-func httpErrorResult(err error) string {
-	switch {
-	case errors.Is(err, pluginapi.ErrHTTPResponseTooLarge):
+// httpErrorResult maps transport and response-body errors of one call to bounded labels.
+func httpErrorResult(ctx context.Context, err error) string {
+	if errors.Is(err, pluginapi.ErrHTTPResponseTooLarge) {
 		return httpResultBodyTooLarge
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	default:
-		return "error"
 	}
+
+	return contextFailureResult(ctx, err)
 }
 
 // httpResultLabels returns metric labels in declaration order.

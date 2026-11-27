@@ -153,6 +153,65 @@ func TestHostHTTPFacadeClassifiesBodyReadFailures(t *testing.T) {
 	}
 }
 
+// TestHostHTTPFacadeClassifiesCanceledCallContexts verifies that a canceled or expired call is labeled from the
+// call context, because net/http returns context.Cause and a custom cause would otherwise read as a plain error.
+func TestHostHTTPFacadeClassifiesCanceledCallContexts(t *testing.T) {
+	errClientGone := errors.New("client disconnected")
+
+	for _, test := range []struct {
+		context func() (context.Context, context.CancelFunc)
+		want    error
+		name    string
+		result  string
+	}{
+		{
+			name: "plain cancel", result: "canceled", want: context.Canceled,
+			context: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				return ctx, cancel
+			},
+		},
+		{
+			name: "cancel with cause", result: "canceled", want: errClientGone,
+			context: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancelCause(context.Background())
+				cancel(errClientGone)
+
+				return ctx, func() {}
+			},
+		},
+		{
+			name: "deadline with cause", result: "timeout", want: errClientGone,
+			context: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadlineCause(context.Background(), time.Now().Add(-time.Second), errClientGone)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+
+			ctx, cancel := test.context()
+			defer cancel()
+
+			client := &http.Client{Transport: &http.Transport{}}
+			host := NewHost(WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))), WithHTTPClient(client))
+
+			_, err := host.HTTP(facadeHTTPService).Do(ctx, pluginapi.HTTPRequest{
+				Method: http.MethodPost, URL: facadeHTTPURL, Service: facadeHTTPService,
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("HTTP Do() error = %v, want %v", err, test.want)
+			}
+
+			if !strings.Contains(logs.String(), `"http_result":"`+test.result+`"`) {
+				t.Fatalf("HTTP cancellation mislabeled: %s", logs.String())
+			}
+		})
+	}
+}
+
 // bodyFailureReader simulates a response interrupted while its body is read.
 type bodyFailureReader struct {
 	err error

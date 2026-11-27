@@ -195,9 +195,23 @@ func pluginCallResult(record CallRecord) string {
 		return pluginCallResultOK
 	case errors.Is(record.Err, errCallbackAdmissionLimited):
 		return pluginCallResultAdmissionLimited
-	case errors.Is(record.Err, context.Canceled):
+	default:
+		return contextFailureResult(context.Background(), record.Err)
+	}
+}
+
+// contextFailureResult maps a failed host-service call to the bounded canceled, timeout, or error label. A call
+// context that already ended decides first, because net/http returns context.Cause and a custom cancel cause would
+// otherwise hide the cancellation behind a plain error.
+func contextFailureResult(ctx context.Context, err error) string {
+	if ctx != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+
+	switch {
+	case errors.Is(err, context.Canceled):
 		return pluginCallResultCanceled
-	case errors.Is(record.Err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded):
 		return pluginCallResultTimeout
 	default:
 		return pluginCallResultError
